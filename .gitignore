@@ -1,0 +1,14 @@
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# Node (if tooling is added later)
+node_modules/
+
+# BMAD — personal, machine-scoped config. The installer regenerates these
+# on every run and marks them as personal; do not commit.
+_bmad/config.user.toml
+_bmad/custom/config.user.toml
