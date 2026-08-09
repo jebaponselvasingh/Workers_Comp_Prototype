@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LINEWORKER — Target Architecture Deck</title>
+<style>
+  :root{
+    --bg:#0b0f14; --panel:#121821; --panel2:#0e141c; --line:#223042;
+    --tx:#dbe4ee; --dim:#8898aa; --ac:#4da3ff; --ok:#3ecf8e; --wn:#f5b83d; --er:#ff6b6b;
+    --mono:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:var(--bg);color:var(--tx);font:15px/1.55 -apple-system,'Segoe UI',Inter,Roboto,sans-serif;overflow:hidden}
+  .deck{height:100vh;position:relative}
+  .slide{position:absolute;inset:0;display:none;flex-direction:column;padding:48px 64px 84px;overflow-y:auto}
+  .slide.on{display:flex;animation:fade .35s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  .kick{color:var(--ac);font-size:12px;letter-spacing:.18em;text-transform:uppercase;font-weight:700;margin-bottom:10px}
+  h1{font-size:44px;line-height:1.15;font-weight:800;margin-bottom:14px}
+  h2{font-size:30px;font-weight:750;margin-bottom:18px}
+  h3{font-size:16px;font-weight:700;margin-bottom:8px}
+  p.lead{color:var(--dim);font-size:17px;max-width:860px}
+  .grid{display:grid;gap:14px;margin-top:20px}
+  .cols2{grid-template-columns:1fr 1fr}
+  .cols3{grid-template-columns:1fr 1fr 1fr}
+  .cols4{grid-template-columns:repeat(4,1fr)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .card h3{color:var(--ac)}
+  .card p,.card li{color:var(--dim);font-size:13.5px}
+  .card ul{padding-left:18px;margin-top:6px}
+  .tag{display:inline-block;background:#16324e;color:var(--ac);border-radius:999px;padding:2px 10px;font-size:11px;font-weight:700;letter-spacing:.05em;margin:0 6px 6px 0}
+  .tag.ok{background:#123527;color:var(--ok)}
+  .tag.wn{background:#3a2d10;color:var(--wn)}
+  .tag.er{background:#3a1717;color:var(--er)}
+  table{border-collapse:collapse;width:100%;margin-top:14px;font-size:13.5px}
+  th{color:var(--ac);text-align:left;font-size:11px;letter-spacing:.1em;text-transform:uppercase;border-bottom:1px solid var(--line);padding:8px 12px}
+  td{border-bottom:1px solid #182231;padding:8px 12px;color:var(--tx);vertical-align:top}
+  td.dim{color:var(--dim)}
+  code{font-family:var(--mono);font-size:12.5px;background:#0a2236;color:#8fc7ff;border-radius:5px;padding:1px 6px}
+  .diagram{background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:18px;margin-top:18px;overflow-x:auto}
+  svg{display:block;margin:0 auto;max-width:100%}
+  .nb{fill:var(--panel);stroke:var(--line);rx:10}
+  .nb.hi{stroke:var(--ac);stroke-width:1.6}
+  .nb.gn{stroke:var(--ok)}
+  .nb.am{stroke:var(--wn)}
+  .nt{fill:var(--tx);font:600 13px -apple-system,'Segoe UI',sans-serif}
+  .ns{fill:var(--dim);font:11px -apple-system,'Segoe UI',sans-serif}
+  .ed{stroke:#3b4f6b;stroke-width:1.4;fill:none;marker-end:url(#arr)}
+  .lbl{fill:var(--dim);font:10.5px var(--mono)}
+  .nav{position:fixed;bottom:0;left:0;right:0;display:flex;align-items:center;gap:14px;padding:14px 28px;background:linear-gradient(transparent,rgba(6,9,13,.92) 40%)}
+  .nav button{background:var(--panel);color:var(--tx);border:1px solid var(--line);border-radius:8px;padding:7px 16px;cursor:pointer;font-size:13px}
+  .nav button:hover{border-color:var(--ac)}
+  .dots{display:flex;gap:7px;flex:1;justify-content:center}
+  .dot{width:9px;height:9px;border-radius:50%;background:#233145;cursor:pointer;transition:.2s}
+  .dot.on{background:var(--ac);transform:scale(1.25)}
+  .pn{color:var(--dim);font-size:12px;font-family:var(--mono)}
+  .foot{color:#54637a;font-size:11.5px;margin-top:auto;padding-top:22px}
+  .big{font-size:56px;font-weight:800;color:var(--ac);font-family:var(--mono)}
+  .kv{display:flex;gap:26px;flex-wrap:wrap;margin-top:18px}
+  .kv div{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 20px;min-width:150px}
+  .kv b{display:block;font-size:22px;color:var(--ac)}
+  .kv span{color:var(--dim);font-size:12px}
+  .adg{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:18px}
+  .ad{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--ac);border-radius:10px;padding:12px 14px}
+  .ad b{color:var(--ac);font-family:var(--mono);font-size:12px}
+  .ad p{font-size:12.5px;color:var(--dim);margin-top:4px}
+  @media(max-width:900px){.cols2,.cols3,.cols4,.adg{grid-template-columns:1fr}.slide{padding:28px 22px 90px}h1{font-size:32px}}
+</style>
+</head>
+<body>
+<div class="deck" id="deck">
+
+<!-- 1 · Title -->
+<section class="slide on">
+  <div class="kick">Architecture Walkthrough · v1.2 · 2026-08-09</div>
+  <h1>LINEWORKER<br>Prototype → Production</h1>
+  <p class="lead">Rebuilding the Manufacturing Workers' Comp claims console as a three-tier system with a fully local AI copilot — no cloud model APIs, every answer grounded in scoped, audited data.</p>
+  <div class="kv">
+    <div><b>14</b><span>architecture decisions (AD-1…14)</span></div>
+    <div><b>~14</b><span>relational entities from the Excel spec</span></div>
+    <div><b>0</b><span>cloud AI calls — Ollama only</span></div>
+    <div><b>1</b><span>PostgreSQL owning all state</span></div>
+    <div><b>17</b><span>research claims adversarially verified</span></div>
+  </div>
+  <div class="foot">Inputs: Workers_Comp_Prototype.html · WC_Feature_Element_Details.xlsx · BRD · deep-research (21 sources) — governing contract: ARCHITECTURE-SPINE.md · use ← → keys</div>
+</section>
+
+<!-- 2 · From prototype -->
+<section class="slide">
+  <div class="kick">Starting point</div>
+  <h2>The prototype is a spec, not a seed</h2>
+  <div class="grid cols3">
+    <div class="card"><h3>What it is</h3><p>One 560&nbsp;KB HTML file: ~100 claims hardcoded in JS, all logic in the browser, role scoping client-side, zero persistence, copilot always falling back to canned <code>cp*</code> answers.</p></div>
+    <div class="card"><h3>Why it's valuable</h3><p>The Excel maps all 93 UI elements to calculation logic and target <code>Table.Column</code>. The BRD enumerates every FR. Together they are a near-complete requirements + data-model spec.</p></div>
+    <div class="card"><h3>The clean split it reveals</h3><p><b style="color:var(--ok)">Deterministic rules</b> (benefit, priority, reserve) · <b style="color:var(--wn)">AI narration</b> (7 quick-action prompts) · <b style="color:var(--ac)">rendering</b>. The architecture preserves exactly this split.</p></div>
+  </div>
+  <div class="grid cols3" style="margin-top:10px">
+    <div class="card"><h3 style="color:var(--er)">Must not survive</h3><p>Client-side <code>HANDLER_MAP</code> scoping · derived flags stored beside inputs · credential-less cloud fetch · canned <code>offlineAnswer</code> text presented as AI · <code>alert()</code> dialogs · logic in <code>innerHTML</code> templates.</p></div>
+    <div class="card"><h3 style="color:var(--ok)">Ports almost verbatim</h3><p>SVG body map · the 7 <code>QAS</code> prompt templates · benefit/priority/reserve formulas · the 100-claim dataset as seed data.</p></div>
+    <div class="card"><h3>Hard constraints</h3><p>AI inference fully <b>local via Ollama</b> — no cloud APIs. Agent layer on <b>LangChain + LangGraph</b>. HIPAA-adjacent PHI stays on-prem.</p></div>
+  </div>
+</section>
+
+<!-- 3 · Stack -->
+<section class="slide">
+  <div class="kick">Decisions</div>
+  <h2>Stack at a glance</h2>
+  <table>
+    <tr><th>Layer</th><th>Choice</th><th>Why (verified mid-2026)</th></tr>
+    <tr><td><b>Frontend</b></td><td>React 19 · Vite 8 · TS 7 · shadcn/ui · TanStack Query v5 / Table v8 · Recharts 3</td><td class="dim">Internal console — no SEO ⇒ SPA over Next.js; vendored components; one queryKeys registry</td></tr>
+    <tr><td><b>Chat UI</b></td><td>assistant-ui <code>react-langgraph</code></td><td class="dim">Native streaming, interrupt(), cancellation — no hand-rolled SSE</td></tr>
+    <tr><td><b>API</b></td><td>FastAPI · Python 3.12 · SQLAlchemy 2 · Alembic</td><td class="dim">Same language as the agent layer; async SSE; proven HIPAA-adjacent pattern</td></tr>
+    <tr><td><b>Agents</b></td><td>LangGraph (Python) 1.2 · langchain-ollama ≥0.3</td><td class="dim">Python leads JS in features & integrations (~98 vs ~33 providers); json_schema structured output</td></tr>
+    <tr><td><b>Models</b></td><td>Ollama: <code>qwen3:14b/32b</code> chat · <code>bge-m3</code> embeddings</td><td class="dim">Qwen3 = verified tool-calling pick; bge-m3 won retrieval benchmark 72% vs 59/57%</td></tr>
+    <tr><td><b>Data</b></td><td>PostgreSQL 18 + pgvector ≥0.8.2</td><td class="dim">One DB for rows + vectors + checkpoints + audit; pgvector verified fine &lt;10M vectors</td></tr>
+    <tr><td><b>Rules</b></td><td>GoRules ZEN (embedded, MIT)</td><td class="dim">JSON rules, Python SDK in-process, visual editor — no Drools JVM</td></tr>
+    <tr><td><b>Deploy</b></td><td>Docker Compose · on-prem · NVIDIA toolkit</td><td class="dim">Single site; encrypted volumes; GPU-served Ollama; no K8s yet</td></tr>
+  </table>
+</section>
+
+<!-- 4 · Layering -->
+<section class="slide">
+  <div class="kick">System shape · AD-1</div>
+  <h2>Layered & API-first — agents behind the same boundary</h2>
+  <div class="diagram">
+  <svg viewBox="0 0 900 360" width="900">
+    <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#3b4f6b"/></marker></defs>
+    <rect class="nb hi" x="330" y="16" width="240" height="52"/><text class="nt" x="450" y="38" text-anchor="middle">web/ — React 19 SPA</text><text class="ns" x="450" y="55" text-anchor="middle">renders + captures input, nothing else</text>
+    <rect class="nb" x="330" y="106" width="240" height="46"/><text class="nt" x="450" y="126" text-anchor="middle">api/ — FastAPI</text><text class="ns" x="450" y="142" text-anchor="middle">routers · auth deps · SSE</text>
+    <rect class="nb am" x="640" y="106" width="220" height="46"/><text class="nt" x="750" y="126" text-anchor="middle">agents/ — LangGraph</text><text class="ns" x="750" y="142" text-anchor="middle">supervisor graph + tools</text>
+    <rect class="nb gn" x="240" y="196" width="420" height="46"/><text class="nt" x="450" y="216" text-anchor="middle">services/ — claims · financials · worklist · derivations · rag · audit</text><text class="ns" x="450" y="232" text-anchor="middle">every calculation & audited command lives here</text>
+    <rect class="nb" x="120" y="288" width="240" height="46"/><text class="nt" x="240" y="308" text-anchor="middle">data/ — repositories</text><text class="ns" x="240" y="324" text-anchor="middle">scope-enforced (AD-7)</text>
+    <rect class="nb" x="400" y="288" width="200" height="46"/><text class="nt" x="500" y="308" text-anchor="middle">rules/ — ZEN + JDM</text><text class="ns" x="500" y="324" text-anchor="middle">versioned tunables</text>
+    <rect class="nb am" x="660" y="288" width="200" height="46"/><text class="nt" x="760" y="308" text-anchor="middle">Ollama</text><text class="ns" x="760" y="324" text-anchor="middle">internal network only</text>
+    <path class="ed" d="M450 68 V106"/><text class="lbl" x="460" y="92">REST + SSE</text>
+    <path class="ed" d="M570 129 H640"/>
+    <path class="ed" d="M450 152 V196"/>
+    <path class="ed" d="M750 152 V196 H660"/><text class="lbl" x="700" y="180">tools only</text>
+    <path class="ed" d="M330 242 L240 288"/>
+    <path class="ed" d="M500 242 V288"/>
+    <path class="ed" d="M760 242 V288" transform="translate(0,-46)" opacity="0"/>
+    <path class="ed" d="M660 219 H760 V288"/><text class="lbl" x="770" y="260">inference</text>
+  </svg>
+  </div>
+  <p class="lead" style="margin-top:12px">Dependencies point one way. If a number appears on screen, a service computed it. Agents consume services as LangGraph tools — never SQLAlchemy, never the API, never unscoped data.</p>
+</section>
+
+<!-- 5 · Invariants -->
+<section class="slide">
+  <div class="kick">The contract</div>
+  <h2>Fourteen invariants keep independent builders aligned</h2>
+  <div class="adg">
+    <div class="ad"><b>AD-1</b><p>SPA renders only; every computation & mutation behind FastAPI</p></div>
+    <div class="ad"><b>AD-2</b><p>Financial logic exists once in Python; LLM narrates tool output, never originates figures</p></div>
+    <div class="ad"><b>AD-3</b><p>One PostgreSQL owns rows + vectors + checkpoints + cache + audit</p></div>
+    <div class="ad"><b>AD-4</b><p>Writes are version-guarded (CAS) service commands with same-transaction, append-only audit events</p></div>
+    <div class="ad"><b>AD-5</b><p>Local-only Ollama; model names are config; no cloud path exists</p></div>
+    <div class="ad"><b>AD-6</b><p>One copilot StateGraph; single-flight (scope, user, seq) threads; AI writes require interrupt() and fail safe when stale</p></div>
+    <div class="ad"><b>AD-7</b><p>One app_user + assignment model scopes every role, enforced in repositories — scope gates visibility, role gates capability</p></div>
+    <div class="ad"><b>AD-8</b><p>JDM owns parameters & decision tables; Python owns formulas; never both</p></div>
+    <div class="ad"><b>AD-9</b><p>TanStack Query + shared queryKeys; optimistic updates for user-entered scalars only; 409 renders the conflict inline</p></div>
+    <div class="ad"><b>AD-10</b><p>One registered computer per derived field (embeddings included); AI narratives live in the ai_insight cache</p></div>
+    <div class="ad"><b>AD-11</b><p>Everything claim-derived is PHI-class — audit diffs included: encrypted, log-banned, one purge cascade with redact-in-place audit</p></div>
+    <div class="ad"><b>AD-12</b><p>Exactly one write-owning service per entity (capability map = registry)</p></div>
+    <div class="ad"><b>AD-13</b><p>Agent tools are thin registry entries wrapping one service call; write tools never LLM-selectable — execute only after approval</p></div>
+    <div class="ad"><b>AD-14</b><p>Quick actions route deterministically before any LLM call; outages degrade honestly — no canned answers, claim ops unaffected</p></div>
+  </div>
+  <div class="foot">Full Binds / Prevents / Rule text in ARCHITECTURE-SPINE.md — reviewed by 6 independent lenses (rubric, web-verify, adversarial, compliance, BRD & Excel reconciles) + agent-hardening & gap-review passes</div>
+</section>
+
+<!-- 6 · Data -->
+<section class="slide">
+  <div class="kick">Data · AD-3 / 10 / 12</div>
+  <h2>One database, one owner per table, one computer per derived value</h2>
+  <div class="diagram">
+  <svg viewBox="0 0 900 300" width="900">
+    <rect class="nb hi" x="330" y="110" width="240" height="60"/><text class="nt" x="450" y="135" text-anchor="middle">CLAIM (WC-nnnn)</text><text class="ns" x="450" y="152" text-anchor="middle">owner: services/claims</text>
+    <rect class="nb" x="40" y="20" width="180" height="42"/><text class="nt" x="130" y="38" text-anchor="middle">EMPLOYER · EMPLOYEE</text><text class="ns" x="130" y="54" text-anchor="middle">+ app_user assignment (RBAC, all roles)</text>
+    <rect class="nb" x="40" y="120" width="180" height="42"/><text class="nt" x="130" y="138" text-anchor="middle">DOCUMENT · PHOTO</text><text class="ns" x="130" y="154" text-anchor="middle">BlobStore protocol</text>
+    <rect class="nb" x="40" y="220" width="180" height="42"/><text class="nt" x="130" y="238" text-anchor="middle">TIMELINE_EVENT</text><text class="ns" x="130" y="254" text-anchor="middle">emitted by owning commands</text>
+    <rect class="nb gn" x="660" y="20" width="200" height="42"/><text class="nt" x="760" y="38" text-anchor="middle">BILL · EXPENSE · SCHEDULE</text><text class="ns" x="760" y="54" text-anchor="middle">owner: services/financials</text>
+    <rect class="nb am" x="660" y="120" width="200" height="42"/><text class="nt" x="760" y="138" text-anchor="middle">AI_INSIGHT · EMBEDDINGS</text><text class="ns" x="760" y="154" text-anchor="middle">owner: services/rag</text>
+    <rect class="nb" x="660" y="220" width="200" height="42"/><text class="nt" x="760" y="238" text-anchor="middle">AUDIT_EVENT</text><text class="ns" x="760" y="254" text-anchor="middle">INSERT-only · redact-on-purge · 7-yr</text>
+    <rect class="nb" x="330" y="220" width="240" height="42"/><text class="nt" x="450" y="238" text-anchor="middle">STATE_RATE · PATH_FORM · GLOSSARY</text><text class="ns" x="450" y="254" text-anchor="middle">reference data</text>
+    <path class="ed" d="M220 41 L330 116"/><path class="ed" d="M220 141 H330"/><path class="ed" d="M220 241 L330 168"/>
+    <path class="ed" d="M570 122 L660 47"/><path class="ed" d="M570 141 H660"/><path class="ed" d="M570 160 L660 235"/>
+    <path class="ed" d="M450 170 V220"/>
+  </svg>
+  </div>
+  <div class="grid cols3" style="margin-top:8px">
+    <div class="card"><h3>Derived, never stored editable</h3><p><code>days_open</code>, <code>risk</code>, <code>payment_due</code>, <code>rtw_blocked</code>, totals — one registered function each in <code>services/derivations</code>; queue chip and detail badge can't disagree.</p></div>
+    <div class="card"><h3>Canonical payment transition</h3><p>Approve ⇒ <code>payment_scheduled</code>; only the payment batch marks <code>paid</code>. Money is integer cents in DB, API, and across the ZEN boundary.</p></div>
+    <div class="card"><h3>Write-back = audited, version-guarded commands</h3><p>The Excel's Review / Confirm / Approve-Payment semantics become service commands that CAS on <code>version</code> — concurrent edits get a 409 with fresh state, never a silent clobber; worklist and ledgers stay in sync by reading the same row.</p></div>
+  </div>
+</section>
+
+<!-- 7 · Rules -->
+<section class="slide">
+  <div class="kick">Rules · AD-2 / AD-8</div>
+  <h2>Two tiers: business-tunable parameters vs statutory formulas</h2>
+  <div class="grid cols2">
+    <div class="card"><h3 style="color:var(--wn)">ZEN JDM documents (config)</h3>
+      <ul><li>Priority-score weights (+40 litigation, +35 SIU, …)</li><li>Reserve adequacy bands (115% / 60%)</li><li>SLA targets (pick &lt;1d · approve &lt;5d · settle &lt;30d · RTW &gt;80%)</li><li>Worklist 7-item cap · handler-benchmark thresholds</li></ul>
+      <p style="margin-top:8px">Versioned in the DB with effective dates · visual graph editor · hot reload · git-diffable JSON.</p></div>
+    <div class="card"><h3 style="color:var(--ok)">Typed Python (code)</h3>
+      <ul><li>Benefit calc: comp-rate % of AWW, clamped to state statutory min/max, 7-day wait</li><li>Score arithmetic & schedule construction</li><li>Reserve-check computation</li><li>SLA aggregation</li></ul>
+      <p style="margin-top:8px">Property-tested (Hypothesis) against statutory ranges · reads its tunables from ZEN.</p></div>
+  </div>
+  <p class="lead" style="margin-top:16px">A rule element exists in exactly one tier — never both. That single sentence closes the fork the prototype invites, where the same weight could live in a config table <i>and</i> a formula.</p>
+</section>
+
+<!-- 8 · AI models -->
+<section class="slide">
+  <div class="kick">AI · AD-5</div>
+  <h2>Local models — nothing leaves the network</h2>
+  <table>
+    <tr><th>Role</th><th>Model</th><th>Footprint</th><th>Note</th></tr>
+    <tr><td>Agent / chat</td><td><code>qwen3:14b</code></td><td>~9 GB — fits 24 GB GPU</td><td class="dim">Native tool template; <code>qwen3:32b</code> on 48 GB</td></tr>
+    <tr><td>Embeddings</td><td><code>bge-m3</code></td><td>1.2 GB · 8K ctx</td><td class="dim">Verified best retrieval: 72% vs 59/57%</td></tr>
+    <tr><td>Long-form drafting</td><td><code>llama3.3:70b</code></td><td>43 GB — dual-GPU only</td><td class="dim">Optional; skip unless hardware exists</td></tr>
+    <tr><td>CPU-only dev</td><td><code>qwen3:8b</code> + <code>nomic-embed-text</code></td><td>fits 16 GB RAM</td><td class="dim">Verified pairing for laptops</td></tr>
+  </table>
+  <div class="grid cols3" style="margin-top:16px">
+    <div class="card"><h3>Structured output</h3><p><code>with_structured_output(method="json_schema")</code> — Ollama's native constrained generation; fraud lists & action rankings validate against Pydantic before the UI sees them.</p></div>
+    <div class="card"><h3>No cloud path</h3><p>The prototype's credential-less fetch to api.anthropic.com has no successor — not even as fallback. Ollama's port is never published.</p></div>
+    <div class="card"><h3>Re-benchmark before pinning</h3><p>Model rankings are practitioner-blog grade and move quarterly; qwen3 is directional until tested on project prompts (Deferred).</p></div>
+  </div>
+</section>
+
+<!-- 9 · Agent graph -->
+<section class="slide">
+  <div class="kick">AI · AD-2 / 6 / 7 / 13 / 14</div>
+  <h2>One copilot graph · figures from tools · writes human-gated</h2>
+  <div class="diagram">
+  <svg viewBox="0 0 900 330" width="900">
+    <rect class="nb" x="20" y="140" width="150" height="50"/><text class="nt" x="95" y="161" text-anchor="middle">chat / quick action</text><text class="ns" x="95" y="178" text-anchor="middle">QAS keys: static map, no LLM</text>
+    <rect class="nb hi" x="230" y="140" width="150" height="50"/><text class="nt" x="305" y="161" text-anchor="middle">copilot router</text><text class="ns" x="305" y="178" text-anchor="middle">single-flight (scope, user, seq)</text>
+    <rect class="nb" x="450" y="20" width="180" height="42"/><text class="nt" x="540" y="45" text-anchor="middle">labor-law RAG</text>
+    <rect class="nb" x="450" y="80" width="180" height="42"/><text class="nt" x="540" y="105" text-anchor="middle">similar-case RAG</text>
+    <rect class="nb" x="450" y="140" width="180" height="42"/><text class="nt" x="540" y="165" text-anchor="middle">reserve / fraud / actions</text>
+    <rect class="nb am" x="450" y="200" width="180" height="42"/><text class="nt" x="540" y="225" text-anchor="middle">RTW letter node</text>
+    <rect class="nb" x="450" y="262" width="180" height="42"/><text class="nt" x="540" y="287" text-anchor="middle">grounded chat</text>
+    <rect class="nb gn" x="700" y="80" width="180" height="102"/><text class="nt" x="790" y="110" text-anchor="middle">scoped tools</text><text class="ns" x="790" y="130" text-anchor="middle">computeBenefit · reserveCheck</text><text class="ns" x="790" y="146" text-anchor="middle">priorityScore · claim reader</text><text class="ns" x="790" y="162" text-anchor="middle">pgvector search (scope-filtered)</text>
+    <rect class="nb am" x="700" y="210" width="180" height="46"/><text class="nt" x="790" y="230" text-anchor="middle">interrupt()</text><text class="ns" x="790" y="246" text-anchor="middle">handler approves → audited write</text>
+    <path class="ed" d="M170 165 H230"/>
+    <path class="ed" d="M380 155 L450 41"/><path class="ed" d="M380 160 L450 101"/><path class="ed" d="M380 165 H450"/><path class="ed" d="M380 172 L450 221"/><path class="ed" d="M380 178 L450 283"/>
+    <path class="ed" d="M630 101 H700"/><path class="ed" d="M630 161 L700 140"/><path class="ed" d="M630 41 L700 95"/><path class="ed" d="M630 283 L700 170"/>
+    <path class="ed" d="M630 221 H700 V210" transform="translate(0,12)"/>
+  </svg>
+  </div>
+  <div class="grid cols3" style="margin-top:8px">
+    <div class="card"><p><b style="color:var(--ok)">Figures from tools</b> — the reserve node calls <code>reserveCheck</code> and narrates; it cannot invent an adequacy verdict. Tools are thin registry entries wrapping exactly one service call (AD-13).</p></div>
+    <div class="card"><p><b style="color:var(--ac)">Scope in graph state, re-resolved</b> — the registry injects the caller's book-of-business into every tool call; scope is re-resolved on every run start and resume, so a resumed thread never replays yesterday's assignments.</p></div>
+    <div class="card"><p><b style="color:var(--wn)">Writes gated & stale-safe</b> — write tools are never LLM-selectable; the model only proposes. Approval executes a version-guarded AD-4 command — stale approvals fail safe. Ollama down? Deterministic actions keep working; LLM routes return <code>ai_unavailable</code>, never canned text (AD-14).</p></div>
+  </div>
+</section>
+
+<!-- 10 · Security -->
+<section class="slide">
+  <div class="kick">Compliance · AD-4 / 7 / 11</div>
+  <h2>PHI posture — WC data is HIPAA-adjacent</h2>
+  <table>
+    <tr><th>Control</th><th>Mechanism</th></tr>
+    <tr><td><b>Authorization</b></td><td class="dim">Repository-layer RBAC from <code>app_user</code> + <code>user_employer_assignment</code> (one model for all roles; scope gates visibility, role gates capability) — REST, aggregates, agent tools, and vector search all scoped; no caller-supplied scope, no role bypass, ever</td></tr>
+    <tr><td><b>Audit</b></td><td class="dim">Fixed-schema event per mutation, same transaction; <code>audit_event</code> INSERT-only for the app role (sole exception: the <code>audit_redactor</code> role used by purge/retention jobs); 7-year default retention; pgaudit beneath, DML value-logging disabled</td></tr>
+    <tr><td><b>Encryption</b></td><td class="dim">TLS at ingress & to Postgres; encrypted volumes (DB logs included); backups encrypted before leaving the host</td></tr>
+    <tr><td><b>AI containment</b></td><td class="dim">Local inference only; chat checkpoints classified PHI; prompts & outputs never in operational logs; write tools never LLM-selectable; outages degrade honestly</td></tr>
+    <tr><td><b>Lifecycle</b></td><td class="dim">One purge cascade (owner: <code>services/audit</code>) covers rows, embeddings, checkpoints, cache, binaries — and redacts audit diffs in place, so purged claims aren't resurrectable from audit</td></tr>
+  </table>
+  <p class="lead" style="margin-top:16px">The one-database decision is load-bearing: exactly one place PHI lives, one backup stream to encrypt, one purge implementation to audit. Local-only AI removes the model-vendor BAA problem entirely.</p>
+</section>
+
+<!-- 11 · Deployment -->
+<section class="slide">
+  <div class="kick">Operations</div>
+  <h2>On-prem Docker Compose, single site</h2>
+  <div class="diagram">
+  <svg viewBox="0 0 900 250" width="900">
+    <rect x="20" y="20" width="860" height="210" rx="14" fill="none" stroke="#223042" stroke-dasharray="5 5"/>
+    <text class="ns" x="40" y="44">Docker host — encrypted volumes · internal network</text>
+    <rect class="nb hi" x="60" y="70" width="180" height="56"/><text class="nt" x="150" y="94" text-anchor="middle">nginx</text><text class="ns" x="150" y="111" text-anchor="middle">TLS · SPA static · /api proxy</text>
+    <rect class="nb" x="310" y="70" width="200" height="56"/><text class="nt" x="410" y="94" text-anchor="middle">api</text><text class="ns" x="410" y="111" text-anchor="middle">FastAPI + LangGraph + batch jobs</text>
+    <rect class="nb am" x="580" y="70" width="180" height="56"/><text class="nt" x="670" y="94" text-anchor="middle">ollama (GPU)</text><text class="ns" x="670" y="111" text-anchor="middle">qwen3 · bge-m3 · not published</text>
+    <rect class="nb gn" x="310" y="160" width="200" height="56"/><text class="nt" x="410" y="184" text-anchor="middle">postgres:18</text><text class="ns" x="410" y="201" text-anchor="middle">pgvector · pgaudit</text>
+    <rect class="nb" x="580" y="160" width="180" height="56"/><text class="nt" x="670" y="184" text-anchor="middle">backup job</text><text class="ns" x="670" y="201" text-anchor="middle">encrypted → off-host · drills</text>
+    <path class="ed" d="M240 98 H310"/><path class="ed" d="M510 98 H580"/><path class="ed" d="M410 126 V160"/><path class="ed" d="M580 188 H510"/>
+  </svg>
+  </div>
+  <div class="grid cols3" style="margin-top:8px">
+    <div class="card"><h3>Hardware</h3><p>24 GB GPU (4090-class) runs <code>qwen3:14b</code> + <code>bge-m3</code>; 48 GB unlocks 32B. VRAM floor = Q4 download size + 2–6 GB KV cache.</p></div>
+    <div class="card"><h3>Environments</h3><p><code>dev</code>: Compose, CPU models OK. <code>prod</code>: GPU, TLS, encrypted volumes, off-host backups. No K8s until scale demands.</p></div>
+    <div class="card"><h3>CI gate</h3><p>Lint + typecheck + tests each merge; migrations apply clean to a fresh DB; financials carry property-based tests.</p></div>
+  </div>
+</section>
+
+<!-- 12 · Roadmap -->
+<section class="slide">
+  <div class="kick">Execution</div>
+  <h2>Six phases, then epics</h2>
+  <table>
+    <tr><th>#</th><th>Phase</th><th>Delivers</th></tr>
+    <tr><td>1</td><td><b>Schema & seed</b></td><td class="dim">Alembic migrations from the Excel map · 100 prototype claims as seed · scope-enforcing repositories</td></tr>
+    <tr><td>2</td><td><b>Deterministic core</b></td><td class="dim">financials / derivations / worklist services + property tests · ZEN wrapper + first JDM docs</td></tr>
+    <tr><td>3</td><td><b>API + SPA shell</b></td><td class="dim">Audited commands · queue + stage-adaptive detail + inline edits · supervisor dashboard w/ drill-through</td></tr>
+    <tr><td>4</td><td><b>RAG foundation</b></td><td class="dim">bge-m3 pipeline: closed-claim corpus + labor-law KB in pgvector</td></tr>
+    <tr><td>5</td><td><b>Copilot</b></td><td class="dim">Copilot graph, 7 deterministic quick-action routes, registered scoped tools, checkpointing, interrupt() on RTW letter, honest degradation, assistant-ui panel</td></tr>
+    <tr><td>6</td><td><b>Hardening</b></td><td class="dim">Encryption + backups + restore drill · pgaudit · purge cascade · health checks · CI complete</td></tr>
+  </table>
+  <div style="margin-top:14px">
+    <span class="tag wn">Deferred</span><span class="tag">IdP choice</span><span class="tag">MinIO vs volume (BlobStore)</span><span class="tag">batch scheduler</span><span class="tag">analyst deep drill-down</span><span class="tag">email/calendar egress</span><span class="tag">statutory data refresh</span><span class="tag">model tag pinning</span><span class="tag">observability stack</span><span class="tag">fraud-score modeling</span><span class="tag">Ollama capacity (demo-scoped)</span><span class="tag">dashboard-scope copilot</span>
+  </div>
+  <div class="foot">Docs: Architecture-LINEWORKER.md (this deck's long form) · ARCHITECTURE-SPINE.md (build contract) · reviewer reports under _bmad-output/…/reviews/</div>
+</section>
+
+</div>
+
+<div class="nav">
+  <button id="prev">← Prev</button>
+  <div class="dots" id="dots"></div>
+  <span class="pn" id="pn"></span>
+  <button id="next">Next →</button>
+</div>
+
+<script>
+const slides=[...document.querySelectorAll('.slide')];
+const dots=document.getElementById('dots');
+let i=0;
+slides.forEach((_,k)=>{const d=document.createElement('div');d.className='dot'+(k===0?' on':'');d.onclick=()=>go(k);dots.appendChild(d);});
+function go(n){
+  i=Math.max(0,Math.min(slides.length-1,n));
+  slides.forEach((s,k)=>s.classList.toggle('on',k===i));
+  [...dots.children].forEach((d,k)=>d.classList.toggle('on',k===i));
+  document.getElementById('pn').textContent=(i+1)+' / '+slides.length;
+}
+document.getElementById('prev').onclick=()=>go(i-1);
+document.getElementById('next').onclick=()=>go(i+1);
+addEventListener('keydown',e=>{
+  if(e.key==='ArrowRight'||e.key==='PageDown'||e.key===' ')go(i+1);
+  if(e.key==='ArrowLeft'||e.key==='PageUp')go(i-1);
+  if(e.key==='Home')go(0); if(e.key==='End')go(slides.length-1);
+});
+go(0);
+</script>
+</body>
+</html>

@@ -297,12 +297,15 @@ body{background:var(--bg);color:var(--tx);font-family:Inter,sans-serif;font-size
 .wktbl{width:100%;border-collapse:collapse;font-size:11.5px;}
 .wktbl th{padding:6px 9px;font-size:10px;color:var(--ft);text-align:left;border-bottom:2px solid var(--hr);}
 .wktbl td{padding:6px 9px;border-bottom:1px solid var(--hr);}
+.wktbl tbody tr:hover td{background:var(--sld);}
 .wkstat{font-size:9.5px;font-weight:700;padding:2px 8px;border-radius:10px;text-transform:uppercase;white-space:nowrap;}
 .wkstat.Paid{background:var(--okd);color:var(--ok);}
+.wkstat.PaymentScheduled{background:var(--sld);color:var(--st);}
 .wkstat.Upcoming{background:var(--p2);color:var(--ft);border:1px solid var(--bd);}
 .wkstat.DueThisWeek{background:var(--wnd);color:var(--wn);}
 .wkstat.PendingApproval{background:var(--erd);color:var(--er);}
 .billrow{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--hr);}
+.billrow:hover{background:var(--sld);}
 .billrow:last-child{border-bottom:none;}
 .billl{font-size:12px;font-weight:600;}
 .billsub{font-size:10px;color:var(--ft);margin-top:1px;}
@@ -753,6 +756,8 @@ function buildPaymentSchedule(c){
     else if(we<refDate)status="Paid";
     else if(ws<=refDate&&refDate<=we){status="DueThisWeek";if(!nextDue)nextDue=ws;}
     else{status="Upcoming";if(!nextDue)nextDue=ws;}
+    const ov=scheduleStatusOverride[c.claimId+"::"+(i+1)];
+    if(ov)status=ov;
     if(status==="Paid")paidSoFar+=b.weekly;
     rows.push({week:i+1,start:ws,end:we,amount:b.weekly,status});
   }
@@ -771,50 +776,131 @@ function buildBills(c){
   if((c.treatmentPlan||[]).some(t=>/PT|physical|therapy/i.test(t)))addItem("Physical Therapy Session Bundle",2200,c.stage==="settled"?["Paid"]:["Paid","PendingSubmission"]);
   addItem("Follow-Up Physician Visit",320,c.stage==="settled"?["Paid"]:["Paid","UnderReview"]);
   if(c.disability==="Temporary"||c.disability==="Permanent")addItem("Prescription / Pharmacy",180,["Paid"]);
-  return items;
+  return items.map(it=>{
+    const ov=billStatusOverride[c.claimId+"::"+it.label];
+    return ov?{...it,status:ov}:it;
+  });
 }
-function buildActions(c){
-  const acts=[];const add=(id,label,tag,urgency)=>acts.push({id,label,tag,urgency});
-  if(c.stage==="treatment"){
-    add("bill_review","Review latest medical bill for coding accuracy","Bill Review","med");
-    add("checkin","Complete weekly diary check-in with claimant","Diary","low");
-  }
-  if(c.surgeryRequired&&c.stage!=="settled")add("surg_auth","Confirm surgical pre-authorization is on file","Medical","high");
-  if(c.rtwBlocked)add("rtw_followup","Follow up on RTW — recommended return date has passed with no update","RTW","high");
-  else if(c.stage==="treatment"&&c.disability==="Temporary")add("rtw_check","Check light-duty / modified-duty availability with employer","RTW","med");
-  if(c.litigationFlag)add("legal_coord","Coordinate with defense counsel on discovery / deposition schedule","Legal","high");
-  if(c.siuReview)add("siu","Escalate claim to SIU for fraud indicator review","SIU","high");
-  if(c.oshaRecordable&&c.stage!=="settled")add("osha","Verify OSHA 300/301 log entry is complete and filed","Compliance","med");
-  if(c.paymentDue)add("pay_disp","Confirm indemnity payment is scheduled to disburse on time","Payment","med");
-  if(c.status==="Initial"||c.status==="CH Assessment Process")add("approve","Complete initial claim assessment and issue approval decision","Approval","high");
-  if(acts.length<3){
-    add("reserve_check","Reassess reserve adequacy against current treatment trajectory","Reserve","low");
-    add("contact","Verify claimant contact information is current","Admin","low");
-  }
-  return acts.slice(0,6);
-}
-const actionStatus={};
-function markAction(claimId,actionId){
-  const key=claimId+"::"+actionId;
-  actionStatus[key]=!actionStatus[key];
-  renderDet();
+function buildExpenses(c){
+  const h=hashStr(c.claimId+"::exp");let idx=0;const items=[];
+  const addItem=(label,baseAmt,statusPool)=>{
+    const amt=Math.round(baseAmt*(0.75+((h>>(idx*3))&7)/10));
+    const status=statusPool[(h>>(idx*2))%statusPool.length];
+    items.push({label,amount:amt,status});idx++;
+  };
+  addItem("Mileage & Travel Reimbursement",95,c.stage==="settled"?["Paid"]:["Paid","UnderReview"]);
+  if(c.stage!=="intake")addItem("Durable Medical Equipment",340,c.stage==="settled"?["Paid"]:["UnderReview","Paid"]);
+  if(c.surgeryRequired)addItem("Prosthetic / Assistive Device",c.disability==="Permanent"?2600:900,c.stage==="settled"?["Paid"]:["PendingSubmission","UnderReview"]);
+  if(c.disability==="Permanent")addItem("Home / Workstation Modification Assessment",1750,c.stage==="settled"?["Paid"]:["PendingSubmission","UnderReview"]);
+  addItem("Miscellaneous Claim-Related Expense",85,c.stage==="settled"?["Paid"]:["Paid","UnderReview"]);
+  return items.map(it=>{
+    const ov=expenseStatusOverride[c.claimId+"::"+it.label];
+    return ov?{...it,status:ov}:it;
+  });
 }
 
-// ── Action → contextual "go to" button + status-toggle label ──
-const ACTION_META={
-  bill_review:{goto:{label:"View Bill",kind:"bills"},statusLabel:"Mark Reviewed"},
-  pay_disp:{goto:{label:"View Bill",kind:"bills"},statusLabel:"Mark Confirmed"},
-  checkin:{goto:{label:"Log Diary Entry",kind:"diary"},statusLabel:"Mark Logged"},
-  surg_auth:{goto:{label:"View Documents",kind:"documents"},statusLabel:"Mark Confirmed"},
-  osha:{goto:{label:"View Documents",kind:"documents"},statusLabel:"Mark Verified"},
-  rtw_followup:{goto:{label:"Open RTW Policy",kind:"rtw"},statusLabel:"Mark Followed Up"},
-  rtw_check:{goto:{label:"Open RTW Policy",kind:"rtw"},statusLabel:"Mark Followed Up"},
-  legal_coord:{goto:{label:"Schedule Meeting",kind:"meeting"},statusLabel:"Mark Coordinated"},
-  siu:{goto:{label:"View Fraud Indicators",kind:"fraud"},statusLabel:"Mark Escalated"},
-  approve:{goto:{label:"Approve Assessment",kind:"approve"},statusLabel:null},
-  reserve_check:{goto:null,statusLabel:"Mark Reviewed"},
-  contact:{goto:null,statusLabel:"Mark Verified"},
-};
+// ── Upcoming Actions: shared review/confirm/approve state (persists for the session; in a production build this maps to real DB writes) ──
+const billStatusOverride={};
+const expenseStatusOverride={};
+const docReviewState={};
+const BILL_STATUS_LABEL={UnderReview:"Under Review",PendingSubmission:"Payment Scheduled",Paid:"Paid"};
+function billStatusLabel(s){return BILL_STATUS_LABEL[s]||s||"Pending";}
+function nextBatchDate(){
+  const d=new Date();
+  // Batches run Tuesdays and Fridays — find the next one from today.
+  for(let i=1;i<=7;i++){
+    const c=new Date(d);c.setDate(d.getDate()+i);
+    if(c.getDay()===2||c.getDay()===5)return c;
+  }
+  return d;
+}
+function fmtBatchDate(d){return d.toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"});}
+function approvePayment(claimId,kind,label){
+  const map=kind==="expense"?expenseStatusOverride:billStatusOverride;
+  map[claimId+"::"+label]="PendingSubmission";
+  renderDet();
+}
+function reviewLineItem(claimId,kind,label){
+  const c=ALL_CLAIMS.find(x=>x.claimId===claimId);if(!c)return;
+  const items=kind==="expense"?buildExpenses(c):buildBills(c);
+  const it=items.find(x=>x.label===label);if(!it)return;
+  const canApprove=it.status==="UnderReview";
+  const nb=fmtBatchDate(nextBatchDate());
+  const body=`<div class="dsheet"><div class="dsh">${it.label.toUpperCase()}</div>
+    <div class="line"><span>Claim ID</span><span>${c.claimId}</span></div>
+    <div class="line"><span>Employee</span><span>${c.name} (${c.employeeId})</span></div>
+    <div class="line"><span>Category</span><span>${kind==="expense"?"Claim Expense":"Medical Bill"}</span></div>
+    <div class="line"><span>Provider / Vendor</span><span>${c.plant}</span></div>
+    <div class="line"><span>Amount</span><span>${$m(it.amount)}</span></div>
+    <div class="line"><span>Status</span><span>${billStatusLabel(it.status)}</span></div>
+    <div class="line"><span>Claim handler</span><span>${c.handler}</span></div>
+    </div>
+    ${canApprove?`<button class="actbtn go" style="margin-top:12px;width:100%" onclick="approvePayment('${claimId}','${kind}','${label.replace(/'/g,"\\'")}');closeModal();">✓ Approve Payment</button>`:it.status==="PendingSubmission"?`<div style="margin-top:12px;font-size:11.5px;color:var(--st);font-weight:700">✓ Scheduled for next payment batch — ${nb}</div>`:`<div style="margin-top:12px;font-size:11.5px;color:var(--ok);font-weight:700">✓ Payment already made</div>`}`;
+  showModal(it.label,body);
+}
+
+// ── Indemnity payment schedule: same click-to-view/approve pattern as bills & expenses, applied to every status (Pending Approval, Due This Week, Upcoming) ──
+const scheduleStatusOverride={};
+const SCHEDULE_STATUS_LABEL={PendingApproval:"Pending Approval",DueThisWeek:"Due This Week",Upcoming:"Upcoming",PaymentScheduled:"Payment Scheduled",Paid:"Paid"};
+function scheduleStatusLabel(s){return SCHEDULE_STATUS_LABEL[s]||s||"Pending";}
+function approveScheduleWeek(claimId,week){
+  scheduleStatusOverride[claimId+"::"+week]="PaymentScheduled";
+  renderDet();
+}
+function reviewScheduleWeek(claimId,week){
+  const c=ALL_CLAIMS.find(x=>x.claimId===claimId);if(!c)return;
+  const sch=buildPaymentSchedule(c);
+  const row=sch.rows.find(r=>r.week===week);if(!row)return;
+  const canApprove=row.status!=="Paid"&&row.status!=="PaymentScheduled";
+  const nb=fmtBatchDate(nextBatchDate());
+  const body=`<div class="dsheet"><div class="dsh">INDEMNITY PAYMENT — WEEK ${row.week}</div>
+    <div class="line"><span>Claim ID</span><span>${c.claimId}</span></div>
+    <div class="line"><span>Employee</span><span>${c.name} (${c.employeeId})</span></div>
+    <div class="line"><span>Benefit type</span><span>${sch.benefit.indemnityType}</span></div>
+    <div class="line"><span>Period</span><span>${fmtDateShort(row.start)} – ${fmtDateShort(row.end)}</span></div>
+    <div class="line"><span>Amount</span><span>${$m(row.amount)}</span></div>
+    <div class="line"><span>Status</span><span>${scheduleStatusLabel(row.status)}</span></div>
+    <div class="line"><span>Claim handler</span><span>${c.handler}</span></div>
+    </div>
+    ${canApprove?`<button class="actbtn go" style="margin-top:12px;width:100%" onclick="approveScheduleWeek('${claimId}',${row.week});closeModal();">✓ Approve Payment</button>`:row.status==="PaymentScheduled"?`<div style="margin-top:12px;font-size:11.5px;color:var(--st);font-weight:700">✓ Scheduled for next payment batch — ${nb}</div>`:`<div style="margin-top:12px;font-size:11.5px;color:var(--ok);font-weight:700">✓ Payment already made</div>`}`;
+  showModal(`Week ${row.week} — Indemnity Payment`,body);
+}
+function docsByTypes(c,types){
+  return (c.documents||[]).map((d,i)=>({d,i})).filter(x=>types.includes(x.d.type));
+}
+function reviewDocument(claimId,i){
+  const c=ALL_CLAIMS.find(x=>x.claimId===claimId);if(!c)return;
+  docReviewState[claimId+"::"+i]={...(docReviewState[claimId+"::"+i]||{}),reviewed:true};
+  openDoc(c,i);
+  renderDet();
+}
+function confirmDocument(claimId,i){
+  const key=claimId+"::"+i;
+  const st=docReviewState[key]||{};
+  if(!st.reviewed)return;
+  docReviewState[key]={...st,confirmed:!st.confirmed};
+  renderDet();
+}
+function viewDocSummary(claimId,i){
+  const c=ALL_CLAIMS.find(x=>x.claimId===claimId);if(!c)return;
+  const d=c.documents[i];if(!d)return;
+  let body;
+  if(d.type==="MEDAUTH"){
+    body=`<div class="kv"><span class="k">Document</span><span class="v" style="font-family:Inter">${d.name}</span></div>
+    <div class="kv"><span class="k">Injury / diagnosis</span><span class="v">${c.injuryType} — ${c.bodyPart}</span></div>
+    <div class="kv"><span class="k">ICD-10</span><span class="v">${c.icd}</span></div>
+    <div class="ratbox"><b>Summary:</b> Medical documentation on file covering treatment authorization for ${c.injuryType.toLowerCase()}. Treatment plan includes: ${(c.treatmentPlan||[]).slice(0,3).join("; ")}. Prognosis: MMI ${c.prognosis?.mmi||"—"}, RTW outlook ${c.prognosis?.rtw||"—"}.</div>`;
+  }else if(d.type==="WAGE"){
+    body=`<div class="kv"><span class="k">Document</span><span class="v" style="font-family:Inter">${d.name}</span></div>
+    <div class="kv"><span class="k">AWW</span><span class="v">${$m(c.aww)}</span></div>
+    <div class="ratbox"><b>Summary:</b> Average Weekly Wage calculated at ${$m(c.aww)} based on wage records filed by ${c.employer}. This figure drives the indemnity benefit calculation shown on the Financials tab.</div>`;
+  }else{
+    body=`<div class="kv"><span class="k">Document</span><span class="v" style="font-family:Inter">${d.name}</span></div>
+    <div class="kv"><span class="k">Filed</span><span class="v">${d.date}</span></div>
+    <div class="ratbox"><b>Summary:</b> ${d.name} filed on ${d.date} for claim ${c.claimId} (${c.name}). On file with the claim record — no outstanding action beyond review/confirmation.</div>`;
+  }
+  showModal(d.name+" — Summary",body);
+}
 function handleActionGoto(claimId,kind){
   selectedId=claimId;
   if(kind==="bills"||kind==="documents"||kind==="overview"){activeTab=kind;renderDet();}
@@ -1117,15 +1203,54 @@ function stageStepperHTML(c){
   const idx=Math.max(0,stages.findIndex(s=>s.k===c.stage));
   return `<div class="stagestep">${stages.map((s,i)=>`<div class="ss-item${i<idx?" done":i===idx?" current":""}"><div class="ss-dot"></div><div class="ss-label">${s.l}</div></div>${i<stages.length-1?`<div class="ss-line${i<idx?" done":""}"></div>`:""}`).join("")}</div>`;
 }
+function lineItemRowHTML(c,kind,it){
+  const safeLabel=it.label.replace(/'/g,"\\'");
+  const scheduled=it.status==="PendingSubmission";
+  return `<div class="actitem"><div class="acti-l"><span class="acti-tag ${it.status==="UnderReview"?"high":scheduled?"low":"med"}">${billStatusLabel(it.status)}</span><span class="acti-label">${it.label} — ${$m(it.amount)}</span></div><div class="acti-r">
+    <button class="actbtn go" onclick="reviewLineItem('${c.claimId}','${kind}','${safeLabel}')">Review</button>
+    ${scheduled?`<button class="actbtn fu on" disabled>✓ Scheduled</button>`:`<button class="actbtn fu" onclick="approvePayment('${c.claimId}','${kind}','${safeLabel}')">Approve Payment</button>`}
+  </div></div>`;
+}
+function docRowHTML(c,d,i,{summary=true}={}){
+  const st=docReviewState[c.claimId+"::"+i]||{};
+  return `<div class="actitem"><div class="acti-l"><span class="acti-tag ${st.confirmed?"low":st.reviewed?"med":"high"}">${st.confirmed?"Confirmed":st.reviewed?"Reviewed":"Pending"}</span><span class="acti-label">${d.name}${d.date?` — filed ${d.date}`:""}</span></div><div class="acti-r">
+    <button class="actbtn go" onclick="reviewDocument('${c.claimId}',${i})">Review</button>
+    <button class="actbtn fu${st.confirmed?" on":""}" ${st.reviewed?"":"disabled"} onclick="confirmDocument('${c.claimId}',${i})">${st.confirmed?"✓ Confirmed":"Confirm"}</button>
+    ${summary?`<button class="actbtn" onclick="viewDocSummary('${c.claimId}',${i})">View Summary</button>`:""}
+  </div></div>`;
+}
+// ── Upcoming actions: paid bills/expenses drop off once settled; total rows across all
+// categories capped at 7 so the panel stays a real, workable worklist rather than a dump. ──
 function actionsBlockHTML(c){
-  const acts=buildActions(c);
-  const actionsHTML=acts.map(a=>{
-    const key=c.claimId+"::"+a.id, done=actionStatus[key], meta=ACTION_META[a.id]||{};
-    const gotoBtn=meta.goto?`<button class="actbtn go" onclick="handleActionGoto('${c.claimId}','${meta.goto.kind}')">${meta.goto.label}</button>`:"";
-    const statusBtn=meta.statusLabel?`<button class="actbtn fu${done?" on":""}" onclick="markAction('${c.claimId}','${a.id}')">${done?"✓ "+meta.statusLabel.replace("Mark ",""):meta.statusLabel}</button>`:"";
-    return `<div class="actitem"><div class="acti-l"><span class="acti-tag ${a.urgency}">${a.tag}</span><span class="acti-label">${a.label}</span></div><div class="acti-r">${gotoBtn}${statusBtn}</div></div>`;
-  }).join("");
-  return `<div class="card" style="margin-bottom:10px"><h3>⏰ Upcoming actions required</h3>${actionsHTML||`<div style="font-size:11.5px;color:var(--ft)">No outstanding actions — claim is on track.</div>`}</div>`;
+  const medReports=docsByTypes(c,["MEDAUTH"]).map(({d,i})=>docRowHTML(c,d,i));
+  const bills=buildBills(c).filter(b=>b.status!=="Paid").map(it=>lineItemRowHTML(c,"bill",it));
+  const expenses=buildExpenses(c).filter(b=>b.status!=="Paid").map(it=>lineItemRowHTML(c,"expense",it));
+  const wageDocs=docsByTypes(c,["WAGE"]).map(({d,i})=>docRowHTML(c,d,i));
+  const rtw=[`<div class="actitem"><div class="acti-l"><span class="acti-tag ${c.rtwBlocked?"high":"med"}">${c.rtwBlocked?"Overdue":"Review"}</span><span class="acti-label">Review Return-to-Work policy &amp; offer letter</span></div><div class="acti-r"><button class="actbtn go" onclick="handleActionGoto('${c.claimId}','rtw')">Open RTW Policy</button></div></div>`];
+  const claimDocs=docsByTypes(c,["FROI","INCIDENT","LEGAL","RTW"]).map(({d,i})=>docRowHTML(c,d,i,{summary:false}));
+
+  const sections=[
+    {icon:"🩺",title:"Medical Reports",rows:medReports},
+    {icon:"💵",title:"Medical Bills",rows:bills},
+    {icon:"🧾",title:"Expenses",rows:expenses},
+    {icon:"📋",title:"Wage Statement (AWW)",rows:wageDocs},
+    {icon:"🤝",title:"RTW Policy",rows:rtw},
+    {icon:"📁",title:"Claim Documents (FROI, Incident, OSHA, Legal)",rows:claimDocs},
+  ];
+
+  let budget=7;
+  const shown=[];
+  for(const s of sections){
+    if(budget<=0)break;
+    const rows=s.rows.slice(0,budget);
+    if(rows.length){shown.push({...s,rows});budget-=rows.length;}
+  }
+
+  const bodyHtml=shown.length
+    ? shown.map(s=>`<div style="margin-bottom:14px"><div style="font-size:11.5px;font-weight:700;color:var(--tx);margin-bottom:4px">${s.icon} ${s.title}</div>${s.rows.join("")}</div>`).join("")
+    : `<div style="font-size:11.5px;color:var(--ft)">No outstanding actions — claim is on track.</div>`;
+
+  return `<div class="card" style="margin-bottom:10px"><h3>⏰ Upcoming actions required</h3>${bodyHtml}</div>`;
 }
 function benefitCardHTML(c){
   const b=computeBenefit(c);
@@ -1198,13 +1323,6 @@ function coordinationCheck(c){
   return {label:"✓ Coordination On Track",color:"var(--ok)",bg:"var(--okd)",note:`Communication status: "${c.commStatus}". Employer, claimant, and provider are aligned — no gaps identified.`};
 }
 function intakeOverviewHTML(c){
-  const di=t=>({FROI:"C-1 First Report of Injury",INCIDENT:"Incident Report",MEDAUTH:"Medical Authorization & Release",WAGE:"Wage Statement — AWW Calculation",RTW:"RTW Documentation",LEGAL:"Legal Representation Notice"})[t]||t;
-  const required=["FROI","MEDAUTH","WAGE","INCIDENT"];
-  const have=(c.documents||[]).reduce((m,d)=>{m[d.type]=d;return m;},{});
-  const checklist=required.map(t=>{
-    const d=have[t];
-    return `<div class="actitem"><div class="acti-l"><span class="acti-tag ${d?"low":"high"}">${d?"Received":"Missing"}</span><span class="acti-label">${di(t)}${d?` — filed ${d.date}`:" — not yet on file"}</span></div></div>`;
-  }).join("");
   return `<div class="g2">
     <div class="card"><h3>Intake summary</h3>
       <div class="kv"><span class="k">Employee</span><span class="v">${c.name} (${c.employeeId})</span></div>
@@ -1224,7 +1342,6 @@ function intakeOverviewHTML(c){
       <div class="kv"><span class="k">Initial reserve</span><span class="v">${$m(c.reserve)}</span></div>
     </div>
   </div>
-  <div class="card" style="margin-bottom:10px"><h3>📋 Intake document checklist</h3>${checklist}</div>
   ${actionsBlockHTML(c)}
   <div class="card"><h3>Case timeline</h3><ul class="tl">${(c.timeline||[]).map(t=>`<li><span class="tld">${t.date||""}</span><span class="tlt">${t.desc}</span><span class="tlg">${t.tag}</span></li>`).join("")}</ul></div>`;
 }
@@ -1302,34 +1419,43 @@ function reserveCheck(c,sch,bills){
 function billsHTML(c){
   const sch=buildPaymentSchedule(c);
   const bills=buildBills(c);
+  const expenses=buildExpenses(c);
   const totalBilled=bills.reduce((s,b)=>s+b.amount,0);
   const paidBills=bills.filter(b=>b.status==="Paid").reduce((s,b)=>s+b.amount,0);
+  const totalExpenses=expenses.reduce((s,b)=>s+b.amount,0);
+  const paidExpenseItems=expenses.filter(b=>b.status==="Paid").reduce((s,b)=>s+b.amount,0);
   const nextRow=sch.rows.find(r=>r.status==="DueThisWeek")||sch.rows.find(r=>r.status==="Upcoming");
-  const paidToDate=c.totalPaid||( c.paidIndemnity+c.paidMedical+c.paidExpense);
+  const staticPaid=c.paidIndemnity+c.paidMedical+c.paidExpense;
+  // For claims still in treatment, the static paidIndemnity/paidMedical/paidExpense snapshot is often 0
+  // even though the schedule/bills/expenses above already show real disbursements — derive the
+  // breakdown from those live numbers so the summary reflects what's actually been paid so far.
+  const effIndemnity=staticPaid>0?c.paidIndemnity:sch.paidSoFar;
+  const effMedical=staticPaid>0?c.paidMedical:paidBills;
+  const effExpense=staticPaid>0?c.paidExpense:paidExpenseItems;
+  const paidToDate=staticPaid>0?(c.totalPaid||staticPaid):(effIndemnity+effMedical+effExpense);
   const totalClaimAmount=paidToDate+c.reserve;
   const rc=reserveCheck(c,sch,bills);
-  const wkRows=sch.rows.map(r=>`<tr><td style="font-family:'JetBrains Mono'">Wk ${r.week}</td><td>${fmtDateShort(r.start)} – ${fmtDateShort(r.end)}</td><td style="font-family:'JetBrains Mono';font-weight:600">${$m(r.amount)}</td><td><span class="wkstat ${r.status}">${r.status.replace(/([A-Z])/g," $1").trim()}</span></td></tr>`).join("");
-  const billRows=bills.map(b=>`<div class="billrow"><div><div class="billl">${b.label}</div><div class="billsub">${c.plant}</div></div><div style="display:flex;align-items:center;gap:10px"><span class="billamt">${$m(b.amount)}</span><span class="billstat ${b.status}">${b.status.replace(/([A-Z])/g," $1").trim()}</span></div></div>`).join("");
+  const pI=paidToDate?(effIndemnity/paidToDate*100).toFixed(0):0,pM=paidToDate?(effMedical/paidToDate*100).toFixed(0):0,pE=paidToDate?(effExpense/paidToDate*100).toFixed(0):0;
+  const wkRows=sch.rows.map(r=>`<tr style="cursor:pointer" onclick="reviewScheduleWeek('${c.claimId}',${r.week})"><td style="font-family:'JetBrains Mono'">Wk ${r.week}</td><td>${fmtDateShort(r.start)} – ${fmtDateShort(r.end)}</td><td style="font-family:'JetBrains Mono';font-weight:600">${$m(r.amount)}</td><td><span class="wkstat ${r.status}">${scheduleStatusLabel(r.status)}</span></td></tr>`).join("");
+  const billRows=bills.map(b=>`<div class="billrow" style="cursor:pointer" onclick="reviewLineItem('${c.claimId}','bill','${b.label.replace(/'/g,"\\'")}')"><div><div class="billl">${b.label}</div><div class="billsub">${c.plant}</div></div><div style="display:flex;align-items:center;gap:10px"><span class="billamt">${$m(b.amount)}</span><span class="billstat ${b.status}">${billStatusLabel(b.status)}</span></div></div>`).join("");
+  const expenseRows=expenses.map(b=>`<div class="billrow" style="cursor:pointer" onclick="reviewLineItem('${c.claimId}','expense','${b.label.replace(/'/g,"\\'")}')"><div><div class="billl">${b.label}</div><div class="billsub">${c.plant}</div></div><div style="display:flex;align-items:center;gap:10px"><span class="billamt">${$m(b.amount)}</span><span class="billstat ${b.status}">${billStatusLabel(b.status)}</span></div></div>`).join("");
   return `<div class="card" style="margin-bottom:10px"><h3>Claim financial summary</h3>
     <div class="krow kr4">
-      <div class="paycard"><div class="pv">${$m(totalClaimAmount)}</div><div class="pl">Total Claim Amount (Projected)</div></div>
-      <div class="paycard"><div class="pv" style="color:var(--ok)">${$m(paidToDate)}</div><div class="pl">Paid To Date</div></div>
+      <div class="paycard"><div class="pv" style="color:var(--ok)">${$m(paidToDate)}</div><div class="pl">Total Paid To Date</div></div>
+      <div class="paycard"><div class="pv">${$m(totalClaimAmount)}</div><div class="pl">Total Claim (Projected)</div></div>
       <div class="paycard"><div class="pv">${$m(c.reserve)}</div><div class="pl">Reserve Remaining</div></div>
       <div class="paycard"><div class="pv" style="color:${rc.color};font-size:13px">${rc.label}</div><div class="pl">Reserve Check</div></div>
     </div>
+    <div style="margin-top:4px"><div class="cbar">${paidToDate>0?`<div style="width:${pI}%;background:var(--st)"></div><div style="width:${pM}%;background:var(--ac)"></div><div style="width:${pE}%;background:var(--ft)"></div>`:`<div style="width:100%;background:var(--hr)"></div>`}</div><div class="cleg"><span><i style="background:var(--st)"></i>Indemnity ${$m(effIndemnity)} (${pI}%)</span><span><i style="background:var(--ac)"></i>Medical ${$m(effMedical)} (${pM}%)</span><span><i style="background:var(--ft)"></i>Expenses ${$m(effExpense)} (${pE}%)</span></div>${paidToDate<=0?`<div style="padding:6px 0 0;font-size:11px;color:var(--ft)">No payments disbursed yet — reserve of ${$m(c.reserve)} held against projected exposure.</div>`:""}</div>
     <div class="ratbox" style="background:${rc.bg};border-color:${rc.color};color:${rc.color}"><b style="color:var(--tx)">Reserve check:</b> <span style="color:var(--tx)">${rc.note}</span></div>
-  </div>
-  <div class="krow kr4" style="margin-bottom:12px">
-    <div class="paycard"><div class="pv">${$m(sch.weekly)}</div><div class="pl">Weekly Indemnity</div></div>
-    <div class="paycard"><div class="pv">${sch.rows.filter(r=>r.status==="Paid").length}/${sch.weeks}</div><div class="pl">Installments Paid</div></div>
-    <div class="paycard"><div class="pv">${nextRow?fmtDateShort(nextRow.start):"—"}</div><div class="pl">Next Payment Due</div></div>
-    <div class="paycard"><div class="pv">${bills.length}</div><div class="pl">Bills On File</div></div>
+    <div style="margin-top:8px;font-size:10.5px;color:var(--ft);font-style:italic">Approved payments are disbursed in the next scheduled batch run (Tuesdays &amp; Fridays). Next batch: ${fmtBatchDate(nextBatchDate())}.</div>
   </div>
   <div class="card" style="margin-bottom:10px"><h3>Indemnity payment schedule — week by week</h3>
-    <div style="font-size:11px;color:var(--mt);margin-bottom:8px">${c.indemnityType||computeBenefit(c).indemnityType} · ${$m(sch.weekly)}/wk · ${sch.weeks}-week schedule shown · ${$m(sch.paidSoFar)} disbursed to date of ${$m(sch.totalScheduled)} scheduled</div>
+    <div style="font-size:11px;color:var(--mt);margin-bottom:8px">${c.indemnityType||computeBenefit(c).indemnityType} · ${$m(sch.weekly)}/wk · ${sch.weeks}-week schedule shown · ${$m(sch.paidSoFar)} disbursed to date of ${$m(sch.totalScheduled)} scheduled${nextRow?` · next due ${fmtDateShort(nextRow.start)}`:""}</div>
     <table class="wktbl"><tr><th>Week</th><th>Period</th><th>Amount</th><th>Status</th></tr>${wkRows}</table>
   </div>
-  <div class="card"><h3>Medical bills — ${bills.length} on file (${$m(paidBills)} of ${$m(totalBilled)} paid)</h3>${billRows}</div>`;
+  <div class="card" style="margin-bottom:10px"><h3>Medical bills — ${bills.length} on file (${$m(paidBills)} of ${$m(totalBilled)} paid)</h3>${billRows}</div>
+  <div class="card"><h3>Expenses — ${expenses.length} on file (${$m(paidExpenseItems)} of ${$m(totalExpenses)} paid)</h3>${expenseRows||`<div style="font-size:11.5px;color:var(--ft)">No expenses filed for this claim.</div>`}</div>`;
 }
 
 function injHTML(c){
