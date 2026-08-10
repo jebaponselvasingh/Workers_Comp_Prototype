@@ -13,6 +13,10 @@ node_modules/
 web/dist/
 *.tsbuildinfo
 
+# Intermediate of `npm run generate:api` — the committed artifact is
+# web/src/api/schema.d.ts, regenerated and diffed in CI.
+web/openapi.json
+
 # Env files — only *.env.example templates are committed
 .env
 .env.*

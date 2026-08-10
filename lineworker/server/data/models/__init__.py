@@ -7,6 +7,7 @@ from data.models.core import (
     Employer,
     UserEmployerAssignment,
 )
+from data.models.session import Session
 
 __all__ = [
     "AppUser",
@@ -15,5 +16,6 @@ __all__ = [
     "Claim",
     "Employee",
     "Employer",
+    "Session",
     "UserEmployerAssignment",
 ]

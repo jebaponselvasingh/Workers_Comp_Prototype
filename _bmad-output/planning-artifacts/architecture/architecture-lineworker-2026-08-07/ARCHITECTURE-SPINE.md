@@ -170,8 +170,10 @@ Dependency rule: arrows only point downward/rightward as drawn. `web/` knows onl
 | Ollama | current stable server, image digest pinned at deploy; chat `qwen3:14b` (24 GB GPU) or `qwen3:32b` (48 GB); embeddings `bge-m3` |
 | GoRules ZEN (`zen-engine` PyPI, MIT) | current release, pinned at project init |
 | React / Vite / TypeScript | 19 / 8 / 7.0 |
+| react-router | 8.x — SPA routing and the auth route guard (added in Story 1.3; approved by the product owner, pending architect ratification) |
 | shadcn/ui (Radix + Tailwind 4) | vendored |
 | TanStack Query / Table | v5 / v8 |
+| openapi-typescript (dev) / openapi-fetch | 7.x / 0.17.x — the "one generated OpenAPI client" the Lists convention names; types generated from the server's OpenAPI document, committed, and diffed in CI (added in Story 1.3) |
 | Recharts | 3.x |
 | assistant-ui (`@assistant-ui/react-langgraph`) | 0.14.x (0.13-era HITL interrupt bugs documented — integration-test the approve/edit/reject round-trip on upgrade) |
 | Playwright (`@playwright/test`) | 1.62.x (1.62.1 current, 2026-07-30), pinned at project init; Chromium is the gate browser |

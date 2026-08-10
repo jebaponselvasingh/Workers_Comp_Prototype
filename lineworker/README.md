@@ -24,17 +24,18 @@ defaults (the compose file ships working dev values; compose auto-loads
 ```text
 lineworker/
   web/                     # React 19 SPA (Vite)
-    src/features/          #   queue/ claim-detail/ dashboard/ copilot/ diary/
+    src/features/          #   shell/ (chrome: top bar, shells, route guard)
+                           #   login/ queue/ claim-detail/ dashboard/ copilot/ diary/
     src/components/ui/     #   vendored shadcn/ui
-    src/api/               #   generated OpenAPI client + queryKeys (later)
+    src/api/               #   generated OpenAPI client + queryKeys
   server/
-    api/                   # FastAPI app factory, /healthz
+    api/                   # FastAPI app factory, auth deps, routers
     services/              #   claims/ financials/ worklist/ derivations/ rag/ audit/ blobstore
     rules/                 #   ZEN engine + JDM documents (arrives Epic 2/3)
     agents/                #   LangGraph copilot (arrives Epic 6)
-    data/                  #   SQLAlchemy models + Alembic migrations
+    data/                  #   SQLAlchemy models, repositories, Alembic
   e2e/                     # Playwright story-gate suite (AD-15)
-    fixtures/              #   DB reset, selector policy
+    fixtures/              #   DB reset, persona login, selector policy
     stories/               #   one spec per story, named by sprint story key
   deploy/                  # compose.yaml, compose.e2e.yaml, nginx/, *.env.example
 ```
@@ -59,7 +60,26 @@ npm run dev                 # Vite dev server (proxies /api to the compose
                             # VITE_PROXY_TARGET for a host-run uvicorn)
 npm test                    # vitest
 npm run lint && npm run typecheck
+npm run generate:api        # regenerate src/api/schema.d.ts from the
+                            # server's OpenAPI document (needs uv)
 ```
+
+`src/api/schema.d.ts` is generated and **committed**; CI regenerates it and
+fails on a diff, so an endpoint whose signature changed without the client
+being regenerated is caught at build time. Nothing in `web/` may `fetch`
+`/api` directly — go through `src/api/client.ts`.
+
+### Signing in
+
+There is no identity provider yet (a Deferred architecture decision, due
+before the first non-dev deployment). Until then the login screen lists the
+seeded personas and `POST /api/auth/login` mints a server-side session for
+the chosen one. The cookie holds an opaque session id and nothing else:
+role and employer scope are re-resolved from the database on every request,
+which is the AD-7 invariant every later endpoint depends on.
+
+Routes: `/` (login), `/dashboard` (supervisor, analyst), `/workspace`
+(handler). Unauthenticated access to either shell redirects to `/`.
 
 ## E2E (story gate)
 

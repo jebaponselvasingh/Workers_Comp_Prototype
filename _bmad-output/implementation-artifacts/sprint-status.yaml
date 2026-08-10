@@ -54,8 +54,8 @@ development_status:
   epic-1: in-progress
   1-1-running-project-skeleton: done
   1-2-persisted-claim-portfolio-schema-seed: done
-  1-3-role-persona-login: ready-for-dev
-  1-4-scoped-top-bar-caseload-stats: ready-for-dev
+  1-3-role-persona-login: done
+  1-4-scoped-top-bar-caseload-stats: review
   1-5-sla-strip-for-every-role: ready-for-dev
   1-6-domain-glossary: ready-for-dev
   epic-1-retrospective: optional

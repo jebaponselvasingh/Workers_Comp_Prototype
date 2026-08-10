@@ -38,7 +38,17 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["api", "services", "rules", "agents", "data", "config.py", "logging_config.py", "tests"]
+files = [
+    "api",
+    "services",
+    "rules",
+    "agents",
+    "data",
+    "scripts",
+    "config.py",
+    "logging_config.py",
+    "tests",
+]
 
 [[tool.mypy.overrides]]
 module = ["asyncpg.*"]
