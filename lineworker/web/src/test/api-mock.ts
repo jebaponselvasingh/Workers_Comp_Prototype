@@ -21,6 +21,7 @@ export interface StubRoutes {
   personas?: StubRoute;
   login?: StubRoute;
   stats?: StubRoute;
+  sla?: StubRoute;
 }
 
 const problem = (status: number, detail: string) => ({
@@ -53,6 +54,33 @@ export const ME_HANDLER = {
 export const TOPBAR_STATS = {
   status: 200,
   body: { caseload: 27, activeTx: 5, highRisk: 10 },
+};
+
+/**
+ * Jennifer Park's real seed strip: three missed targets and one made one,
+ * so a test can tell pass styling from warn styling without inventing a
+ * shape the server never sends. Verdicts and precision are the server's —
+ * the component under test must not recompute either.
+ */
+export const SLA_STRIP = {
+  status: 200,
+  body: {
+    pick: { value: 2.7, target: 1, direction: "below", decimals: 1, status: "warn" },
+    approve: { value: 8.1, target: 5, direction: "below", decimals: 1, status: "warn" },
+    settle: { value: 62, target: 30, direction: "below", decimals: 0, status: "warn" },
+    rtwRate: { value: 95, target: 80, direction: "above", decimals: 0, status: "pass" },
+  },
+};
+
+/** A brand-new handler's empty book — every segment `no_data` (NFR-3). */
+export const SLA_NO_DATA = {
+  status: 200,
+  body: {
+    pick: { value: null, target: 1, direction: "below", decimals: 1, status: "no_data" },
+    approve: { value: null, target: 5, direction: "below", decimals: 1, status: "no_data" },
+    settle: { value: null, target: 30, direction: "below", decimals: 0, status: "no_data" },
+    rtwRate: { value: null, target: 80, direction: "above", decimals: 0, status: "no_data" },
+  },
 };
 
 export const SEEDED_PERSONAS = {
@@ -125,6 +153,9 @@ export function stubApi(routes: StubRoutes): void {
       }
       if (url.includes("/api/stats/topbar")) {
         return answer(routes.stats ?? TOPBAR_STATS);
+      }
+      if (url.includes("/api/stats/sla")) {
+        return answer(routes.sla ?? SLA_STRIP);
       }
       if (url.includes("/api/auth/logout")) {
         return respond(204, null);

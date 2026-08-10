@@ -13,6 +13,7 @@ code did.
 """
 
 import json
+from decimal import ROUND_HALF_UP, Decimal
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -71,3 +72,61 @@ def expected_topbar_stats(persona_name: str, role: str) -> dict[str, int]:
 
 def expected_claim_ids(persona_name: str, role: str) -> set[str]:
     return {claim["claim_id"] for claim in claims_for(persona_name, role)}
+
+
+# --- Story 1.5: the SLA strip, restated independently -------------------
+#
+# Same principle as HIGH_RISK_MIN above: the targets and the metric
+# definitions are written out here rather than imported from
+# `config.Settings` or `services.worklist.sla`, so this stays an oracle
+# rather than an echo. If the two ever disagree, one of them is wrong and
+# the test says so — which is the entire value of the arrangement.
+
+SLA_TARGETS = {"pick": 1.0, "approve": 5.0, "settle": 30.0, "rtwRate": 80.0}
+FULLY_RECOVERED = "returned_and_fully_recovered"
+
+
+def _mean(values: list[int], decimals: int) -> float:
+    """Half-up, matching the display precision the service rounds to."""
+    quantized = (Decimal(sum(values)) / Decimal(len(values))).quantize(
+        Decimal(1).scaleb(-decimals), rounding=ROUND_HALF_UP
+    )
+    return float(quantized)
+
+
+def expected_sla_strip(persona_name: str, role: str) -> dict[str, dict[str, Any]]:
+    """`{metric: {value, status}}` for a persona's seeded book.
+
+    `target` and `direction` are not restated per metric here — they are
+    asserted once against `SLA_TARGETS` in the endpoint test, and repeating
+    them in every expectation would add noise, not coverage.
+    """
+    visible = claims_for(persona_name, role)
+    settled = [c for c in visible if c["stage"] == "settled"]
+
+    picks = [c["sla_pick_days"] for c in visible if c["sla_pick_days"] is not None]
+    approves = [c["sla_approve_days"] for c in visible if c["sla_approve_days"] is not None]
+    settles = [c["settlement_days"] for c in settled if c["settlement_days"] is not None]
+
+    values: dict[str, float | None] = {
+        "pick": _mean(picks, 1) if picks else None,
+        "approve": _mean(approves, 1) if approves else None,
+        "settle": _mean(settles, 0) if settles else None,
+        "rtwRate": (
+            _mean([100 if c["return_status"] == FULLY_RECOVERED else 0 for c in settled], 0)
+            if settled
+            else None
+        ),
+    }
+
+    def status(metric: str, value: float | None) -> str:
+        if value is None:
+            return "no_data"
+        target = SLA_TARGETS[metric]
+        met = value > target if metric == "rtwRate" else value < target
+        return "pass" if met else "warn"
+
+    return {
+        metric: {"value": value, "status": status(metric, value)}
+        for metric, value in values.items()
+    }

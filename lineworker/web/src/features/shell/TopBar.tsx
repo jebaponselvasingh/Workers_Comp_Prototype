@@ -11,10 +11,13 @@
  * prototype's `getMine()` + `setStats()` pair, which filtered a global
  * claim array in the browser, is precisely what this replaces.
  *
- * Two seams are deliberately inert here and belong to sibling stories:
- * the 📖 Glossary button (Story 1.6 opens the panel) and the SLA strip slot
- * (Story 1.5 fills it). Both are rendered rather than omitted so those
- * stories add content to a frame instead of relitigating this layout.
+ * One seam is still deliberately inert and belongs to a sibling story:
+ * the 📖 Glossary button (Story 1.6 opens the panel). It is rendered
+ * rather than omitted so that story adds content to a frame instead of
+ * relitigating this layout. Story 1.5 filled the other seam — the SLA
+ * strip now renders between the tiles and the user chip, and it fetches
+ * its own data rather than taking props, so the bar stays the layout and
+ * the strip owns its own loading and failure states.
  */
 import { useNavigate } from "react-router";
 
@@ -23,6 +26,7 @@ import { useMe, useLogout } from "@/api/auth";
 import { useTopBarStats } from "@/api/stats";
 
 import { LOGIN_ROUTE } from "./routes";
+import { SlaStrip } from "./SlaStrip";
 
 /** Badge text, verbatim from the prototype (UX notes). */
 const ROLE_BADGE: Record<UserRole, string> = {
@@ -196,10 +200,10 @@ export function TopBar() {
         isPending={stats.isPending}
       />
 
-      {/* Seam for Story 1.5: the SLA strip renders here, between the tiles
-          and the user chip. Empty until then — not a skeleton, because
-          nothing is loading. */}
-      <div data-testid="sla-strip-slot" className="contents" />
+      {/* Story 1.5 fills the seam 1.4 left here, between the tiles and the
+          user chip. It is in the shared bar rather than either shell, which
+          is what makes "for every role" structural instead of a promise. */}
+      <SlaStrip />
 
       {me.data && (
         <div

@@ -15,6 +15,24 @@ afterEach(cleanup);
  * base URL by design (that is what makes the session cookie ride along),
  * so the fix belongs here rather than in the client.
  */
+/**
+ * Second jsdom gap: no `ResizeObserver`. Radix's floating layer measures
+ * its trigger and arrow with one, so any tooltip, popover or select throws
+ * on mount under vitest while working perfectly in a browser.
+ *
+ * A no-op observer is the right stub rather than a lie: the tests that
+ * need it assert that the tooltip *content* is reachable and says the
+ * right thing, never where it was positioned — positioning is the
+ * browser's job and the e2e suite's to check.
+ */
+if (!("ResizeObserver" in globalThis)) {
+  globalThis.ResizeObserver = class {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  } as unknown as typeof ResizeObserver;
+}
+
 const NodeRequest = globalThis.Request;
 
 function withDocumentBase(input: RequestInfo | URL): RequestInfo | URL {

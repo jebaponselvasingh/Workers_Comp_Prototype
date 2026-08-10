@@ -29,9 +29,11 @@ with the scope filter and can only ever narrow the result.
 """
 
 from collections.abc import Mapping, Sequence
+from typing import Any
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import InstrumentedAttribute
 from sqlalchemy.sql.elements import ColumnElement
 
 from data.context import AllEmployers, CallerContext
@@ -59,6 +61,31 @@ async def list_claims(db: AsyncSession, ctx: CallerContext) -> Sequence[Claim]:
     left to the database so a paged version cannot silently repeat rows.
     """
     rows = await db.scalars(sa.select(Claim).where(employer_scope(ctx)).order_by(Claim.claim_id))
+    return rows.all()
+
+
+async def select_claim_columns(
+    db: AsyncSession,
+    ctx: CallerContext,
+    columns: Sequence[InstrumentedAttribute[Any]],
+) -> Sequence[sa.Row[Any]]:
+    """The caller's claims, projected to the columns a service asks for.
+
+    The counterpart to `count_claims_matching` for aggregates the database
+    cannot express in one `COUNT(… ) FILTER (…)` — the SLA strip (Story
+    1.5) averages four different subsets of the same scoped set, so it
+    reads five narrow columns and aggregates them in Python rather than
+    issuing four scans.
+
+    *Which* columns is the service's business (this module must not learn
+    what an SLA duration is); *which rows* is this module's, and it is the
+    same `employer_scope` predicate as everywhere else. `select_from(Claim)`
+    for the same reason it is load-bearing below: the FROM clause is a
+    property of the repository, never of the caller's expressions.
+    """
+    rows = await db.execute(
+        sa.select(*columns).select_from(Claim).where(employer_scope(ctx)).order_by(Claim.claim_id)
+    )
     return rows.all()
 
 

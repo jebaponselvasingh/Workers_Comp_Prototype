@@ -101,11 +101,16 @@ test("the glossary seam is present but disabled until Story 1.6 wires it", async
   expect(glossary).toHaveAttribute("title", expect.stringMatching(/glossary/i));
 });
 
-test("the SLA strip slot is rendered empty for Story 1.5 to fill", async () => {
+test("the SLA strip fills the seam Story 1.4 left, on the shared bar (FR-SLA-1)", async () => {
+  // Story 1.4 asserted this slot was *empty*; 1.5 fills it. The assertion
+  // is kept rather than deleted because the point it defends is unchanged:
+  // the strip belongs to the bar both shells render, so no role can end up
+  // without one.
   renderTopBar({ me: ME_SUPERVISOR, stats: TOPBAR_STATS });
 
-  const slot = await screen.findByTestId("sla-strip-slot");
-  expect(slot).toBeEmptyDOMElement();
+  const strip = await screen.findByTestId("sla-strip");
+  expect(strip).toBeVisible();
+  await waitFor(() => expect(screen.getByTestId("sla-pick-value")).toHaveTextContent(/^2\.7d$/));
 });
 
 test("Switch survives an unresolved session (the bar renders before /me answers)", async () => {

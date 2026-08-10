@@ -96,6 +96,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/stats/sla": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * SLA strip for the session's persona
+         * @description The strip, for whoever holds the session cookie — and no one else.
+         *
+         *     Parameter-free for the same reason `/stats/topbar` is, and with no role
+         *     branch of any kind: FR-SLA-1 is the statement that a supervisor,
+         *     analyst and handler all get *their* caseload's strip from one
+         *     computation, so a branch here would be the defect rather than a
+         *     feature.
+         */
+        get: operations["sla_stats_sla_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/stats/topbar": {
         parameters: {
             query?: never;
@@ -162,6 +188,58 @@ export interface components {
             nextCursor?: string | null;
             /** Total */
             total: number;
+        };
+        /**
+         * SlaDirection
+         * @description Which side of the target is good.
+         *
+         *     Reported alongside the target because the UI writes the comparison out
+         *     (`✓ <1d`, `⚠ >5d`, `✓ >80%`): deriving the operator client-side would
+         *     put half of each rule in the browser, where nothing checks it.
+         * @enum {string}
+         */
+        SlaDirection: "below" | "above";
+        /**
+         * SlaMetricResponse
+         * @description One SLA tile, decided entirely server-side (AD-1).
+         *
+         *     `value` is `null` exactly when `status` is `no_data` — a segment with
+         *     no qualifying claims. The SPA renders that as an em dash; what it must
+         *     never do is substitute a number, which is the prototype behaviour this
+         *     story exists to remove.
+         *
+         *     `target`, `direction` and `decimals` travel with the value so the UI
+         *     can write the comparison out (`✓ <1d`, `⚠ >5d`) and format the figure
+         *     without holding an operator, a threshold or a precision of its own.
+         */
+        SlaMetricResponse: {
+            /** Decimals */
+            decimals: number;
+            direction: components["schemas"]["SlaDirection"];
+            status: components["schemas"]["SlaStatus"];
+            /** Target */
+            target: number;
+            /** Value */
+            value: number | null;
+        };
+        /**
+         * SlaStatus
+         * @description The server's verdict. `no_data` is a first-class answer, not an error.
+         *
+         *     (`passing` rather than `pass`, which is a Python keyword — the wire
+         *     value is `pass`, which is what the contract and the UI see.)
+         * @enum {string}
+         */
+        SlaStatus: "pass" | "warn" | "no_data";
+        /**
+         * SlaStripResponse
+         * @description `{pick, approve, settle, rtwRate}` — camelCase via `ApiModel`.
+         */
+        SlaStripResponse: {
+            approve: components["schemas"]["SlaMetricResponse"];
+            pick: components["schemas"]["SlaMetricResponse"];
+            rtwRate: components["schemas"]["SlaMetricResponse"];
+            settle: components["schemas"]["SlaMetricResponse"];
         };
         /**
          * TopBarStatsResponse
@@ -347,6 +425,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PersonaList"];
+                };
+            };
+        };
+    };
+    sla_stats_sla_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SlaStripResponse"];
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
                 };
             };
         };

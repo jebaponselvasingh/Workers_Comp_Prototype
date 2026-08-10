@@ -29,6 +29,10 @@ export const PERSONAS = {
   scopedSupervisor: { name: "Jennifer Park", role: "supervisor" as Role, home: "/dashboard" },
   analyst: { name: "David Bline", role: "analyst" as Role, home: "/dashboard" },
   handler: { name: "Kaya Johnson", role: "handler" as Role, home: "/workspace" },
+  // Added by Story 1.5: the one seeded book whose return-to-work rate
+  // clears its target, so a spec can see a *passing* tile rather than
+  // asserting warn styling four times and calling it coverage.
+  passingRtwSupervisor: { name: "Ken Stoker", role: "supervisor" as Role, home: "/dashboard" },
 };
 
 export async function selectRole(page: Page, role: Role): Promise<void> {

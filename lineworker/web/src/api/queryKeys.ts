@@ -21,5 +21,6 @@ export const queryKeys = {
   personas: ["personas"] as const,
   stats: {
     topbar: ["stats", "topbar"] as const,
+    sla: ["stats", "sla"] as const,
   },
 } as const;

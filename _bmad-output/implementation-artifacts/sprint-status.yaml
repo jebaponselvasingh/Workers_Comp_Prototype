@@ -1,5 +1,5 @@
 # generated: 2026-08-09
-# last_updated: 2026-08-09
+# last_updated: 2026-08-10
 # project: Workers_Comp_Prototype
 # project_key: NOKEY
 # tracking_system: file-system
@@ -56,7 +56,7 @@ development_status:
   1-2-persisted-claim-portfolio-schema-seed: done
   1-3-role-persona-login: done
   1-4-scoped-top-bar-caseload-stats: review
-  1-5-sla-strip-for-every-role: ready-for-dev
+  1-5-sla-strip-for-every-role: review
   1-6-domain-glossary: ready-for-dev
   epic-1-retrospective: optional
 

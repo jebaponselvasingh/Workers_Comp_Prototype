@@ -115,7 +115,10 @@ test.describe("@story:1-4 @epic:1 scoped top bar & caseload stats", () => {
 
     // Story 1.6 owns the glossary; until then the affordance says so.
     await expect(byRole(page, "button", /Glossary/)).toBeDisabled();
-    // Story 1.5 fills this; it exists so that story adds content, not layout.
-    await expect(byTestId(page, "sla-strip-slot")).toBeAttached();
+    // The other seam was filled by Story 1.5. The assertion follows it
+    // rather than being deleted: what this story guaranteed was a slot in
+    // the shared bar, and the strip now occupying it is that guarantee
+    // being kept. (Its contents are 1-5's spec to check.)
+    await expect(byTestId(page, "sla-strip")).toBeVisible();
   });
 });

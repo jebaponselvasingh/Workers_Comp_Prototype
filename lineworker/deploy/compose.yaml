@@ -29,6 +29,18 @@ services:
   api:
     build:
       context: ../server
+    # Every `Settings` field is settable from deploy/.env, not just the
+    # handful named below. Compose auto-loads .env for `${…}` interpolation
+    # but does *not* pass it into containers, and the image has no .env of
+    # its own — so before this line, an operator following .env.example and
+    # setting SESSION_TTL_HOURS, RISK_HIGH_MIN or SLA_SETTLE_TARGET_DAYS
+    # got silence: the file was read, the value interpolated nothing, and
+    # the app kept its default with nothing to indicate why.
+    # required: false — .env is git-ignored and absent on a clean checkout,
+    # which must stay a working `docker compose up`.
+    env_file:
+      - path: .env
+        required: false
     environment:
       # Two-role model (Story 1.2): uvicorn connects as the app role (no
       # DDL); the entrypoint's alembic upgrade runs as the owner role and

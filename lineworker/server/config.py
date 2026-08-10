@@ -76,6 +76,25 @@ class Settings(BaseSettings):
     risk_high_min: int = Field(default=65, ge=0, le=100)
     risk_med_min: int = Field(default=35, ge=0, le=100)
 
+    # --- SLA targets (Story 1.5) -------------------------------------
+    # TODO(JDM): AD-8 assigns SLA targets to the ZEN JDM tier — the same
+    # migration the risk bands above are waiting for. Until ZEN lands
+    # (Epic 2/3) they live here, and `services/worklist/sla.py` reads them
+    # by name; moving them to a JDM document changes `targets_for()` and
+    # nothing else. What is *not* negotiable either way: the aggregation
+    # names no target of its own (BRD §7.1 — pick <1d, approve <5d,
+    # settle <30d, RTW >80%).
+    #
+    # gt=0 on the day targets: a zero or negative target can never be met
+    # (the comparison is strict), so every tile would warn for ever with no
+    # way to tell a missed target from a misconfigured one.
+    sla_pick_target_days: float = Field(default=1.0, gt=0)
+    sla_approve_target_days: float = Field(default=5.0, gt=0)
+    sla_settle_target_days: float = Field(default=30.0, gt=0)
+    # A rate target of 100 is likewise unreachable (strictly above), and one
+    # above 100 or below 0 is not a percentage at all.
+    sla_rtw_target_pct: float = Field(default=80.0, ge=0, lt=100)
+
     @model_validator(mode="after")
     def _bands_must_not_overlap(self) -> "Settings":
         # An inverted pair would put scores in two bands at once, and the
