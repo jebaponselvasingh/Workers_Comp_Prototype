@@ -16,6 +16,7 @@ so that routine copilot queries are fast and trustworthy.
 2. **Given** each QAS node, **when** it executes, **then** it declares `requires_llm`, invokes its registered read tools, and may use the LLM only to narrate tool output — quoting `display` values verbatim, never originating figures (AD-2, AD-13).
 3. **Given** the similar-case action, **when** it answers, **then** it discloses staleness beyond the configured `embedded_at` threshold (AD-12), and the labor-law action grounds in scoped `knowledge_chunk` retrieval.
 4. **Given** a tool failure, **when** it occurs, **then** the node streams a structured error message — never a raw stack trace, never silently swallowed (AD-13).
+5. **Given** retrieved content (labor-law `knowledge_chunk` or similar-case text), **when** it enters model context, **then** each chunk is individually delimited and tagged with its source id, and a knowledge chunk seeded with injection text cannot alter routing, tool selection, or scope — the QAS key→node map and registry-injected caller context are the only control inputs (AD-14, AD-16).
 
 ## Tasks / Subtasks
 

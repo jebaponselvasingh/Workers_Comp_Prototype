@@ -4,10 +4,10 @@
 | | |
 |---|---|
 | **Product** | LINEWORKER — Manufacturing Workers' Compensation Console (US) |
-| **Status** | Final — v1.4, 2026-08-10 (v1.1 agent-hardening pass added AD-13/14; v1.2 gap-review amendments: audit redaction, unified user/scope model, write concurrency, embedding staleness, dashboard-copilot deferral; v1.3 agent-runtime modernization: the copilot's tool-calling core is now LangChain v1 `create_agent` + middleware, with `HumanInTheLoopMiddleware` as the write-approval gate; v1.4 gate-remediation: one node-agnostic gated write step all paths route through, one write/turn, marker-keyed approval, `edit`-arg constraints, rag-refresh carve-out) |
+| **Status** | Final — v1.5, 2026-08-10 (v1.1 agent-hardening pass added AD-13/14; v1.2 gap-review amendments: audit redaction, unified user/scope model, write concurrency, embedding staleness, dashboard-copilot deferral; v1.3 agent-runtime modernization: the copilot's tool-calling core is now LangChain v1 `create_agent` + middleware, with `HumanInTheLoopMiddleware` as the write-approval gate; v1.4 gate-remediation: one node-agnostic gated write step all paths route through, one write/turn, marker-keyed approval, `edit`-arg constraints, rag-refresh carve-out; v1.5 untrusted-content pass: AD-16 prompt-injection discipline — one instruction channel, delimited data, no data-derived control flow, approval honesty, containment-floor safety case) |
 | **Inputs** | `Workers_Comp_Prototype.html` (as-built prototype) · `WC_Feature_Element_Details.xlsx` (field-level spec, 93 rows) · `BRD-Workers-Comp-Console.md` (reverse-engineered BRD) · deep-research run over 21 web sources (verification method: Appendix A) |
 | **Hard constraints** | AI inference fully local via **Ollama** (no cloud LLM APIs) · agent layer on **LangChain v1 (`create_agent` + middleware) over LangGraph** |
-| **The spine** | `_bmad-output/planning-artifacts/architecture/architecture-lineworker-2026-08-07/ARCHITECTURE-SPINE.md` — the build contract holding decisions AD-1…AD-14, which this document narrates |
+| **The spine** | `_bmad-output/planning-artifacts/architecture/architecture-lineworker-2026-08-07/ARCHITECTURE-SPINE.md` — the build contract holding decisions AD-1…AD-16, which this document narrates |
 
 ---
 
@@ -24,9 +24,9 @@ The target system is a conventional, boring-on-purpose three-tier architecture w
 - **Rules** — GoRules ZEN engine (embedded, MIT) owns business-tunable parameters as versioned JSON; typed, property-tested Python owns statutory formulas.
 - **Deployment** — on-prem Docker Compose, single site, GPU-served Ollama, encrypted volumes, off-host encrypted backups.
 
-Fourteen architecture decisions fix the invariants; everything else is intentionally left to the code. Section 10 lists what was deliberately deferred.
+Sixteen architecture decisions fix the invariants; everything else is intentionally left to the code. Section 10 lists what was deliberately deferred.
 
-### 1.1 The fourteen decisions at a glance
+### 1.1 The sixteen decisions at a glance
 
 | AD | One-line rule |
 |---|---|
@@ -44,6 +44,8 @@ Fourteen architecture decisions fix the invariants; everything else is intention
 | AD-12 | Every entity has exactly one write-owning service (the spine's Capability → Architecture Map is the registry) |
 | AD-13 | Agent tools are thin registry entries wrapping exactly one service call; write tools are registered but `HumanInTheLoopMiddleware`-gated — they execute only after approve/edit |
 | AD-14 | Quick actions route deterministically before any LLM call; AI outages degrade honestly — no canned answers, and claim operations never depend on the agent runtime |
+| AD-15 | One story-scoped Playwright E2E suite is the Definition of Done — every story ships a spec that must pass against the composed stack (model-stub profile) before it moves to review/done |
+| AD-16 | Only `agents/prompts/` carries instructions; all other text in model context — claim data, diary, documents, retrieved chunks — is delimited untrusted data that can never select tools, change routes, name scope, or misstate an approval |
 
 ---
 
@@ -181,12 +183,13 @@ graph LR
   HITL -->|approve or edit| W["audited command write"]
 ```
 
-The prototype's seven `QAS` quick-action prompts become the router's named routes — their prompt templates carry over nearly verbatim, versioned as files in `agents/prompts/`. But routing is **deterministic** (AD-14): a static key→node map dispatches quick actions *before* any LLM call; only free-text messages reach the LLM router. Five invariants govern every node:
+The prototype's seven `QAS` quick-action prompts become the router's named routes — their prompt templates carry over nearly verbatim, versioned as files in `agents/prompts/`. But routing is **deterministic** (AD-14): a static key→node map dispatches quick actions *before* any LLM call; only free-text messages reach the LLM router. Six invariants govern every node:
 
 - **Figures come from tools** (AD-2, §3.2): the reserve-review node calls `reserveCheck` and narrates its output.
 - **Tools are thin, registered, context-injected** (AD-13): every tool wraps exactly one service command or query — no business logic, no composed writes — declared `read`, `write`, or `refresh` in a single registry with typed schemas. Results enter the model context as `{ok, data, display}`; prompts instruct the model to quote the service-formatted `display` strings for money and dates verbatim. **Write tools are gated, not hidden**: every `write` tool is registered on the agent but wrapped by `HumanInTheLoopMiddleware` (`interrupt_on`, decisions approve/edit/reject) — the model may select it, but the middleware pauses before execution and, on approval, records a marker in graph state keyed by the tool-call id; the tool executes only when that marker matches (the registry's raise-without-marker is defence-in-depth, not a second gate). QAS write nodes hold no write tools — they route proposals into the same single gated step. The AI-insight refresh is the one carve-out: an agent→`services/rag` command, not a `write` tool, so it is gate- and raise-exempt but audited.
 - **Scope rides the run context — and is re-resolved** (AD-7): every tool call carries the caller's scope context on the agent's `context_schema` (never a checkpointed state channel, never a model-suppliable parameter); the similar-case vector search filters by it. On every run start **and every resume**, the auth dependency re-resolves scope from `app_user` + `user_employer_assignment`, so a resumed thread never replays yesterday's book of business — and if a resume's re-resolved scope no longer covers a pending write's target, that approval fails safe like a stale one. An agent can never narrate another handler's claim.
 - **Writes are human-gated and stale-safe** (AD-6): a claim-entity write executes in exactly one gated step, which every path (free-chat and QAS) routes through — the model is capped at one write per turn, so the interrupt is always a single pending write and only the thread's own user may resume (approve / edit / reject); assistant-ui renders the interrupt natively. On `edit` the human may revise only non-identity arguments — never the target entity or the versions it was drafted against. The gated call records those versions; approval executes as a version-guarded AD-4 command, so approving a claim that changed since drafting fails safe (re-propose, never force-write). All three outcomes are recorded content-free via `record_copilot_approval` (an AD-4-shaped event). AI-insight cache writes skip the gate but not the audit trail.
+- **Injected text is data, never instructions** (AD-16): exactly one instruction channel exists — the versioned prompt files in `agents/prompts/`. Everything else the model reads is untrusted, *including content the org itself stored*: claim narratives, diary notes, and documents originate from injured workers, employers, and providers, and RAG chunks quote them back. Tool results enter context only inside the `{ok, data, display}` envelope; retrieved chunks are per-chunk delimited with their source id; system prompts carry a standing data-not-commands instruction. Nothing parsed from that content may select a tool, alter a route, name a scope, or trigger a refresh — routing, scope, and tool arguments come only from the QAS map, the injected caller context, and typed schemas. The safety case is the containment floor, not detection: a fully hijacked model still cannot write unapproved (AD-6), read out of scope (AD-7/13), or exfiltrate (AD-5, no egress tools). The approval UI renders the middleware's actual pending tool call — name and typed arguments — never the model's paraphrase; assistant prose renders as sanitized markdown only, structured outputs validate against Pydantic before the UI, and URLs in model output are never auto-fetched. Adversarial injection fixtures (seeded into a claim field, a diary note, and a knowledge chunk) run in the graph tests and the E2E suite.
 - **Degradation is honest** (AD-14): each route declares `requires_llm`. When Ollama is unavailable, deterministic actions keep working; LLM-dependent ones return a typed `ai_unavailable` error with bounded retry — no cloud fallback, and no canned text presented as model output (the prototype's `offlineAnswer` pattern is explicitly banned). The UI disables exactly the affected inputs, and claim screens have no hard dependency on the agent runtime.
 
 ### 5.3 RAG design
@@ -230,6 +233,7 @@ WC claims data is HIPAA-adjacent PHI (diagnoses, ICD-10, wages, disability statu
 | Audit | Every mutation emits a fixed-schema audit event in the same transaction; `audit_event` is INSERT-only for the app role, with one registered exception: an `audit_redactor` role, usable only by `services/audit`'s purge and retention jobs, may redact `before`/`after` diffs and delete rows past the 7-year retention floor. pgaudit adds DB-level capture with DML statement/parameter logging disabled (value history is the audit table's job, not the log's). | AD-4 |
 | Encryption | TLS at ingress and to Postgres; encrypted volumes at rest (DB log destination included); backups encrypted before leaving the host. | AD-11 |
 | AI containment | Local-only inference; internal-network Ollama; no cloud path; prompts/outputs never logged; agent writes human-gated and version-guarded through one node-agnostic gated step (`HumanInTheLoopMiddleware`, approve/edit/reject); outages degrade honestly, never with canned answers. | AD-5/6/13/14/11 |
+| Prompt-injection containment | Single instruction channel (`agents/prompts/`); all other model-context text is delimited untrusted data with no path into tool selection, routing, or scope; approval UI shows the server's actual pending tool call; sanitized-markdown-only output, no URL auto-fetch; blast radius bounded by the write gate, repository scoping, and zero egress — verified by adversarial fixtures in CI. | AD-16 (floor: AD-5/6/7/13) |
 | PHI lifecycle | All claim-derived stores (checkpoints, embeddings, cache, audit diffs, binaries) are PHI-class; one purge cascade owned by `services/audit` — with **redact-in-place** for `audit_event`: purge preserves the who/what/when skeleton but overwrites the PHI-bearing diffs, so action history survives purge and purged claims are not resurrectable from audit. | AD-11 |
 | Data egress | Prototype "emails" are logs; real SMTP/ICS egress is a deferred epic with its own compliance review. | Deferred |
 
@@ -269,7 +273,7 @@ graph LR
 | **2. Deterministic core** | `financials`, `derivations`, `worklist` services with property tests; ZEN wrapper + first JDM documents (priority weights, reserve bands, SLA targets) | AD-2, AD-8, AD-10 |
 | **3. API + SPA shell** | Auth deps, claims/worklist routes, audited commands; queue + stage-adaptive detail + inline edits; supervisor dashboard with drill-through | AD-1, AD-4, AD-9, AD-12 |
 | **4. RAG foundation** | bge-m3 embedding pipeline for closed claims + labor-law KB in pgvector, owned by `services/rag` | AD-5, AD-10 |
-| **5. Copilot** | Deterministic router + `create_agent` core (7 quick-action routes, registered scoped tools), Postgres checkpointing, `HumanInTheLoopMiddleware` gate on RTW letter; assistant-ui panel; honest-degradation paths | AD-2, AD-5, AD-6, AD-7, AD-13, AD-14 |
+| **5. Copilot** | Deterministic router + `create_agent` core (7 quick-action routes, registered scoped tools), Postgres checkpointing, `HumanInTheLoopMiddleware` gate on RTW letter; assistant-ui panel; honest-degradation paths; untrusted-content discipline with adversarial injection fixtures | AD-2, AD-5, AD-6, AD-7, AD-13, AD-14, AD-16 |
 | **6. Hardening** | Encrypted volumes/backups + restore drill, pgaudit, purge cascade, health checks, CI gate complete | AD-4, AD-11 |
 | Later epics | See §10 | Deferred |
 
@@ -292,6 +296,7 @@ Decisions intentionally pushed down, each with the trigger that reopens it:
 - **Dashboard-scope copilot** — v1 copilot is claim-context only; supervisor/analyst copilot capabilities are their own epic (the thread key already reserves `scope = 'dashboard'`). Reopen with the analyst-workspace epic.
 - **Kubernetes / HA Postgres** — only if adoption exceeds one site.
 - **Fraud-score modeling and SIU workflow** — a separate initiative; AD-10 keeps the field derivable.
+- **Injection detection/filtering heuristics** (content classifiers, canary tokens, semantic filters on retrieved chunks) — AD-16 deliberately claims containment, not detection. Reopen when documents or emails from external parties are ingested at scale (the email/calendar egress epic), or if a red-team exercise shows the containment floor being probed in practice.
 
 ---
 

@@ -16,7 +16,9 @@ so that AI never mutates a claim on its own.
 2. **Given** an approval, **when** resumed via `Command(resume=…)` by the thread's own user (others 403), **then** the write executes through AD-4 commands CAS-guarded on the recorded versions — a stale approval 409s, the graph discards the proposal, tells the user the claim changed, and may re-propose from fresh state; it never force-writes.
 3. **Given** a rejection, **when** it resolves, **then** the proposal is discarded, `pending_approval` clears, an assistant message confirms cancellation, and both branches record a content-free `record_copilot_approval` audit event — the only persistence on the reject branch.
 4. **Given** the 📄 Review RTW Policy quick action, **when** clicked, **then** its QAS node merges claim fields from tool output, the LLM drafts surrounding prose only (AD-2), the letter presents in the wide editable modal with ✏ Edit / 🖨 Print / 📋 Copy (UX-DR10), and saving it to the claim passes the interrupt gate (FR-H-11).
-5. **Given** the graph tests, **when** CI runs, **then** a stub chat model covers the approve/reject round-trip and one integration test drives the real SSE + assistant-ui protocol end to end (NFR-7).
+5. **Given** the interrupt reaches the approval UI, **when** the pending write renders, **then** the dialog shows the middleware's actual pending tool call — tool name and typed arguments, server-supplied — never the model's prose paraphrase of it, so the user approves exactly the payload that will execute (AD-16).
+6. **Given** the stub model is scripted to attempt a write tool call the user never asked for (an injection-shaped turn), **when** the run executes, **then** it pauses at the same gate as any write — no mutation occurs, reject leaves the claim untouched, and the marker-less registry raise covers any path around the middleware (AD-6, AD-13, AD-16).
+7. **Given** the graph tests, **when** CI runs, **then** a stub chat model covers the approve/reject round-trip and one integration test drives the real SSE + assistant-ui protocol end to end (NFR-7).
 
 ## Tasks / Subtasks
 
