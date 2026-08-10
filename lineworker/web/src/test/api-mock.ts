@@ -22,6 +22,7 @@ export interface StubRoutes {
   login?: StubRoute;
   stats?: StubRoute;
   sla?: StubRoute;
+  glossary?: StubRoute;
 }
 
 const problem = (status: number, detail: string) => ({
@@ -81,6 +82,77 @@ export const SLA_NO_DATA = {
     settle: { value: null, target: 30, direction: "below", decimals: 0, status: "no_data" },
     rtwRate: { value: null, target: 80, direction: "above", decimals: 0, status: "no_data" },
   },
+};
+
+/**
+ * Six of the 25 seeded glossary terms, verbatim from
+ * `server/data/seed/glossary_terms.json` and in its order.
+ *
+ * A subset rather than the whole file: component tests check the *predicate
+ * and the states*, not the contents of the reference data — that is
+ * `test_glossary.py`'s job against the database and the e2e spec's against
+ * the seed file. The six are chosen so one query can hit each searchable
+ * field on its own: "havs" only an abbreviation, "maximum medical" only a
+ * term, "audiogram" only a definition.
+ */
+export const GLOSSARY_TERMS = {
+  status: 200,
+  body: {
+    items: [
+      {
+        abbreviation: "FNOL",
+        term: "First Notice of Loss",
+        definition:
+          "Initial injury report to employer/carrier, starting notice-deadline clock and claims workflow.",
+      },
+      {
+        abbreviation: "MMI",
+        term: "Maximum Medical Improvement",
+        definition:
+          "Condition has stabilized and won't improve further. Triggers PPD rating and settlement discussions.",
+      },
+      {
+        abbreviation: "HAVS",
+        term: "Hand-Arm Vibration Syndrome",
+        definition:
+          "Occupational disease from prolonged vibrating tool use. Causes Raynaud's phenomenon (Vibration White Finger) in manufacturing workers.",
+      },
+      {
+        abbreviation: "NIHL",
+        term: "Noise-Induced Hearing Loss",
+        definition:
+          "Permanent hearing loss from manufacturing floor noise exposure — measurable by audiogram.",
+      },
+      // Both prototype quirks, so a test can see that neither was cleaned
+      // up: a multi-word abbreviation, and a term that is its own.
+      {
+        abbreviation: "OSHA 300",
+        term: "OSHA Recordkeeping Log",
+        definition:
+          "Federal Form 300 — mandatory recording of workplace injuries/illnesses for manufacturers with 10+ employees.",
+      },
+      {
+        abbreviation: "Apportionment",
+        term: "Apportionment",
+        definition:
+          "Dividing disability liability between current occupational injury and pre-existing/non-occupational conditions.",
+      },
+    ],
+    nextCursor: null,
+    total: 6,
+  },
+};
+
+/**
+ * A *successful* response carrying nothing — 0006 applied without 0007, a
+ * `downgrade 0006`, a table someone emptied. Not a hypothetical: it is the
+ * one way the panel can be handed no terms without any error to report, and
+ * the branch it takes decides whether a handler is told the glossary is
+ * unavailable or told their term does not exist.
+ */
+export const GLOSSARY_EMPTY = {
+  status: 200,
+  body: { items: [], nextCursor: null, total: 0 },
 };
 
 export const SEEDED_PERSONAS = {
@@ -156,6 +228,9 @@ export function stubApi(routes: StubRoutes): void {
       }
       if (url.includes("/api/stats/sla")) {
         return answer(routes.sla ?? SLA_STRIP);
+      }
+      if (url.includes("/api/glossary")) {
+        return answer(routes.glossary ?? GLOSSARY_TERMS);
       }
       if (url.includes("/api/auth/logout")) {
         return respond(204, null);

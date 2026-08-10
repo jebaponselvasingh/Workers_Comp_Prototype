@@ -5,6 +5,7 @@ from data.models.core import (
     Claim,
     Employee,
     Employer,
+    GlossaryTerm,
     UserEmployerAssignment,
 )
 from data.models.session import Session
@@ -16,6 +17,7 @@ __all__ = [
     "Claim",
     "Employee",
     "Employer",
+    "GlossaryTerm",
     "Session",
     "UserEmployerAssignment",
 ]

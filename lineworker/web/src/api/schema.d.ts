@@ -45,6 +45,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/glossary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Every WC glossary term, in display order
+         * @description Deliberately without `Cache-Control: no-store`.
+         *
+         *     `/me` and `/stats/*` set it because their payloads are specific to one
+         *     persona's identity or scope, and a cache upstream serving one
+         *     supervisor's caseload to another would be a scope leak. Nothing about
+         *     this response is caller-specific: every authenticated session gets
+         *     byte-identical bytes, there is no PHI in them, and the worst a shared
+         *     cache could do is serve the industry's definition of "FNOL" to someone
+         *     who had not logged in. Marking it `no-store` anyway would say the
+         *     payload was sensitive, which is a claim the next reader would have to
+         *     disprove.
+         */
+        get: operations["glossary_glossary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -143,6 +173,39 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * GlossaryList
+         * @description The `{items, nextCursor, total}` envelope (Lists convention).
+         *
+         *     `nextCursor` is structurally always null: the glossary is one fixed
+         *     page. The envelope is here so the generated client sees one list shape
+         *     across the whole API, the same reasoning `PersonaList` records.
+         */
+        GlossaryList: {
+            /** Items */
+            items: components["schemas"]["GlossaryTermResponse"][];
+            /** Nextcursor */
+            nextCursor?: string | null;
+            /** Total */
+            total: number;
+        };
+        /**
+         * GlossaryTermResponse
+         * @description One term. No `id` and no `sortOrder` on the wire.
+         *
+         *     Order is carried by the array — the SPA renders the list as given — and
+         *     a surrogate key nothing links to would be an invitation to link to it,
+         *     which is exactly the `glossary_term`↔`claim` join this story is not
+         *     building.
+         */
+        GlossaryTermResponse: {
+            /** Abbreviation */
+            abbreviation: string;
+            /** Definition */
+            definition: string;
+            /** Term */
+            term: string;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -346,6 +409,44 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    glossary_glossary_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlossaryList"];
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
             };
         };
     };

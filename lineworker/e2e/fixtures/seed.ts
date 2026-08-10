@@ -17,6 +17,9 @@ import { fileURLToPath } from "node:url";
  */
 
 const SEED_PATH = fileURLToPath(new URL("../../server/data/seed/seed_data.json", import.meta.url));
+const GLOSSARY_PATH = fileURLToPath(
+  new URL("../../server/data/seed/glossary_terms.json", import.meta.url),
+);
 
 /** Independent restatement of `services/derivations/risk` — see above. */
 const HIGH_RISK_MIN = 65;
@@ -144,4 +147,56 @@ export function expectedSlaFor(name: string, role: string): Record<string, Expec
     settle: tile(settles, 0, "d", SLA_TARGETS.settle),
     rtwRate: tile(recovered, 0, "%", SLA_TARGETS.rtwRate, true),
   };
+}
+
+/**
+ * Story 1.6 — the glossary, read from the file the migration seeds.
+ *
+ * Not an independent restatement like the two oracles above, because there
+ * is no rule to restate: the glossary's whole contract is "the seed file's
+ * rows, verbatim, in the file's order". The one thing worth restating is
+ * the *search predicate*, which is a rule, so `glossaryMatching` spells it
+ * out rather than importing it from the component under test.
+ *
+ * Both functions return a fresh array. Handing out the module-level
+ * `glossary` would let one spec's in-place `.sort()` rewrite the
+ * expectation for every spec that runs after it in the same worker, and the
+ * failure would surface in an unrelated file.
+ */
+export interface SeedGlossaryTerm {
+  abbreviation: string;
+  term: string;
+  definition: string;
+  sort_order: number;
+}
+
+const glossary = (JSON.parse(readFileSync(GLOSSARY_PATH, "utf8")) as SeedGlossaryTerm[])
+  .slice()
+  .sort((a, b) => a.sort_order - b.sort_order);
+
+/** Every seeded term, in the prototype's display order. */
+export function expectedGlossary(): SeedGlossaryTerm[] {
+  return glossary.slice();
+}
+
+/**
+ * The **implemented** predicate, restated: case-insensitive substring
+ * across abbreviation OR term OR definition, over a trimmed query.
+ *
+ * The trim is deliberate and is knowingly reproduced here. `GlossaryPanel`
+ * trims where the prototype's `renderGloss` does not — a named deviation,
+ * argued in that component's `matches()` docstring — so an oracle that
+ * restated the *prototype's* rule would disagree with the shipped console
+ * on any query carrying a stray space, and the spec would be asserting
+ * behaviour nothing implements.
+ */
+export function glossaryMatching(query: string): SeedGlossaryTerm[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return glossary.slice();
+  return glossary.filter(
+    (t) =>
+      t.abbreviation.toLowerCase().includes(q) ||
+      t.term.toLowerCase().includes(q) ||
+      t.definition.toLowerCase().includes(q),
+  );
 }

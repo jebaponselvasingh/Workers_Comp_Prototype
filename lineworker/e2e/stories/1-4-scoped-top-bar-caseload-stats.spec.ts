@@ -110,15 +110,16 @@ test.describe("@story:1-4 @epic:1 scoped top bar & caseload stats", () => {
     expect(smuggled).toEqual(expectedStatsFor("Jennifer Park", "supervisor"));
   });
 
-  test("the sibling-story seams are visible and inert (Tasks 4)", async ({ page }) => {
+  test("the sibling-story seams are visible and filled (Tasks 4)", async ({ page }) => {
     await loginAs(page, PERSONAS.fullPortfolioSupervisor);
 
-    // Story 1.6 owns the glossary; until then the affordance says so.
-    await expect(byRole(page, "button", /Glossary/)).toBeDisabled();
-    // The other seam was filled by Story 1.5. The assertion follows it
-    // rather than being deleted: what this story guaranteed was a slot in
-    // the shared bar, and the strip now occupying it is that guarantee
-    // being kept. (Its contents are 1-5's spec to check.)
+    // Both seams this story framed have since been filled — 1.5 the SLA
+    // strip, 1.6 the glossary — and the assertions follow them rather than
+    // being deleted. What this story guaranteed was a *slot in the shared
+    // bar* for each; something occupying it is that guarantee being kept,
+    // and a deleted test would leave "every role gets one" resting on
+    // nothing structural. (The contents are 1-5's and 1-6's specs to check.)
+    await expect(byRole(page, "button", /Glossary/)).toBeEnabled();
     await expect(byTestId(page, "sla-strip")).toBeVisible();
   });
 });

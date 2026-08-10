@@ -23,4 +23,10 @@ export const queryKeys = {
     topbar: ["stats", "topbar"] as const,
     sla: ["stats", "sla"] as const,
   },
+  // Reference data (Story 1.6): one key with nothing under it, because
+  // there is one glossary. No search term in the key either — the panel
+  // filters the cached list in the browser (the sanctioned AD-7 exception
+  // for scope-free, PHI-free reference data), so a query per keystroke
+  // would be a cache entry per keystroke for the same 25 rows.
+  glossary: ["glossary"] as const,
 } as const;

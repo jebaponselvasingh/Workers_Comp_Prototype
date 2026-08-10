@@ -1,5 +1,6 @@
 import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { afterEach, expect, test, vi } from "vitest";
 
@@ -93,12 +94,25 @@ test("a failed stats request degrades honestly instead of showing a zero", async
   }
 });
 
-test("the glossary seam is present but disabled until Story 1.6 wires it", async () => {
+test("the glossary button fills its seam and opens the panel (FR-GLOS-1)", async () => {
+  // Story 1.4 asserted this affordance was *disabled*; 1.6 wires it. The
+  // assertion follows the seam rather than being deleted: what 1.4
+  // guaranteed was a glossary affordance in the bar both shells render, and
+  // it now doing something is that guarantee being kept. (What the panel
+  // contains is GlossaryPanel.test.tsx's business.)
+  const user = userEvent.setup();
   renderTopBar({ me: ME_SUPERVISOR, stats: TOPBAR_STATS });
 
   const glossary = await screen.findByRole("button", { name: /Glossary/ });
-  expect(glossary).toBeDisabled();
-  expect(glossary).toHaveAttribute("title", expect.stringMatching(/glossary/i));
+  expect(glossary).toBeEnabled();
+  // 1.4's title assertion is re-pointed too, not dropped: the tooltip that
+  // used to explain why the button did nothing now explains what it does,
+  // and a button whose only label is an emoji and the word "Glossary" does
+  // not otherwise say that the definitions are searchable.
+  expect(glossary).toHaveAttribute("title", expect.stringMatching(/search/i));
+
+  await user.click(glossary);
+  await waitFor(() => expect(screen.getByTestId("glossary-panel")).toBeVisible());
 });
 
 test("the SLA strip fills the seam Story 1.4 left, on the shared bar (FR-SLA-1)", async () => {

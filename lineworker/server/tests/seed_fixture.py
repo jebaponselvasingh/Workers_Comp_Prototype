@@ -130,3 +130,32 @@ def expected_sla_strip(persona_name: str, role: str) -> dict[str, dict[str, Any]
         metric: {"value": value, "status": status(metric, value)}
         for metric, value in values.items()
     }
+
+
+# --- Story 1.6: the glossary, read from its own seed file ----------------
+#
+# Not an independent restatement like the two above — there is no rule to
+# restate. The glossary's whole contract is "the file's rows, verbatim, in
+# the file's order", so the file *is* the oracle, and a test that typed 25
+# into itself would go stale the day the prototype's GLOSS changed.
+
+GLOSSARY_PATH = SEED_PATH.parent / "glossary_terms.json"
+
+
+@lru_cache
+def _glossary_terms_cached() -> list[dict[str, Any]]:
+    with GLOSSARY_PATH.open(encoding="utf-8") as handle:
+        terms: list[dict[str, Any]] = json.load(handle)
+    return sorted(terms, key=lambda term: term["sort_order"])
+
+
+def glossary_terms() -> list[dict[str, Any]]:
+    """Every seeded term, in the prototype's display order.
+
+    A copy per call, not the cached list itself. `lru_cache` handing out its
+    own object means one caller's in-place `.sort()` or `.reverse()` — a
+    reasonable thing to write in a test about ordering — silently rewrites
+    the expectation for every later test in the session, and the failure
+    surfaces in a different file with no visible cause.
+    """
+    return [dict(term) for term in _glossary_terms_cached()]

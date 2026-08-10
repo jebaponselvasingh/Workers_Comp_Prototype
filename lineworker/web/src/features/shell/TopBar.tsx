@@ -11,19 +11,21 @@
  * prototype's `getMine()` + `setStats()` pair, which filtered a global
  * claim array in the browser, is precisely what this replaces.
  *
- * One seam is still deliberately inert and belongs to a sibling story:
- * the 📖 Glossary button (Story 1.6 opens the panel). It is rendered
- * rather than omitted so that story adds content to a frame instead of
- * relitigating this layout. Story 1.5 filled the other seam — the SLA
- * strip now renders between the tiles and the user chip, and it fetches
- * its own data rather than taking props, so the bar stays the layout and
- * the strip owns its own loading and failure states.
+ * Both of Story 1.4's seams are now filled, and both by the same pattern:
+ * the bar owns the slot, the sibling component owns its own data, loading
+ * and failure states. Story 1.5 put the SLA strip between the tiles and the
+ * user chip; Story 1.6 turned the 📖 Glossary button from a disabled
+ * affordance into the trigger of the glossary panel. The button markup
+ * stays here — it is bar chrome, and every role gets it from this one
+ * place, which is what "one click away everywhere" means structurally.
  */
+import { useState } from "react";
 import { useNavigate } from "react-router";
 
 import type { UserRole } from "@/api/auth";
 import { useMe, useLogout } from "@/api/auth";
 import { useTopBarStats } from "@/api/stats";
+import { GlossaryPanel } from "@/features/glossary/GlossaryPanel";
 
 import { LOGIN_ROUTE } from "./routes";
 import { SlaStrip } from "./SlaStrip";
@@ -105,6 +107,9 @@ export function TopBar() {
   const logout = useLogout();
   const me = useMe();
   const stats = useTopBarStats();
+  // Local UI state, which is exactly what AD-9 assigns to React: nothing
+  // about whether a panel is open belongs to the server.
+  const [glossaryOpen, setGlossaryOpen] = useState(false);
 
   const role = me.data?.role;
 
@@ -135,17 +140,28 @@ export function TopBar() {
 
       <div className="flex-1" />
 
-      <button
-        type="button"
-        // Seam for Story 1.6: the glossary panel does not exist yet, so the
-        // affordance is disabled and says why rather than being hidden —
-        // a button that appears between stories reads as a regression.
-        disabled
-        title="The domain glossary arrives in Story 1.6."
-        className="flex items-center gap-[5px] rounded-full border border-border bg-surface-2 px-[11px] py-[5px] text-[11.5px] font-semibold text-muted-text disabled:opacity-60"
-      >
-        📖 Glossary
-      </button>
+      {/* The bar holds the open state and the button; the panel wraps the
+          button as its Radix trigger, which is what returns focus here when
+          the panel closes (Task 3) instead of leaving it on a removed
+          node. */}
+      <GlossaryPanel open={glossaryOpen} onOpenChange={setGlossaryOpen}>
+        <button
+          type="button"
+          // Story 1.4 gave this button a title explaining why it did
+          // nothing; a button that now does something still owes the reader
+          // a sentence, so the tooltip was re-pointed rather than dropped —
+          // "📖 Glossary" alone does not say that the definitions are
+          // searchable. `disabled:opacity-60` stays in the class list even
+          // though nothing disables the button today: the ✕ Switch button
+          // beside it carries the same class, and a future pending or
+          // offline state should render distinguishably by default instead
+          // of looking identical to a working control.
+          title="Open the WC glossary — search domain terms by abbreviation, name or definition"
+          className="flex items-center gap-[5px] rounded-full border border-border bg-surface-2 px-[11px] py-[5px] text-[11.5px] font-semibold text-muted-text hover:border-steel hover:text-steel disabled:opacity-60"
+        >
+          📖 Glossary
+        </button>
+      </GlossaryPanel>
 
       <button
         type="button"

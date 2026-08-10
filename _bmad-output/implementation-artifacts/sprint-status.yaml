@@ -57,7 +57,7 @@ development_status:
   1-3-role-persona-login: done
   1-4-scoped-top-bar-caseload-stats: review
   1-5-sla-strip-for-every-role: review
-  1-6-domain-glossary: ready-for-dev
+  1-6-domain-glossary: review
   epic-1-retrospective: optional
 
   # Epic 2: Handler Caseload & Case File

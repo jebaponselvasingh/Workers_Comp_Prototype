@@ -101,12 +101,14 @@ jobs:
       # AD-4 grants, downgrade→upgrade round trip, session lifecycle and
       # the AD-7 context builder (Story 1.3), the scoped claim repository,
       # the derivations registry's SQL/Python agreement and the per-persona
-      # top-bar aggregates (Story 1.4), and the per-persona SLA strip
-      # (Story 1.5 — its pure aggregation tests run in the server job).
+      # top-bar aggregates (Story 1.4), the per-persona SLA strip
+      # (Story 1.5 — its pure aggregation tests run in the server job), and
+      # the seeded glossary, its SELECT-only grant and its endpoint
+      # (Story 1.6).
       - run: |
           uv run pytest tests/test_schema_seed.py tests/test_no_derived_columns.py \
             tests/test_auth.py tests/test_scoped_repository.py tests/test_derivations.py \
-            tests/test_topbar_stats.py tests/test_sla_endpoint.py
+            tests/test_topbar_stats.py tests/test_sla_endpoint.py tests/test_glossary.py
         working-directory: lineworker/server
         env:
           MIGRATION_TEST_DATABASE_URL: postgresql://lineworker:ci@localhost:5432/lineworker

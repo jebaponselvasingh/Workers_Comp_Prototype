@@ -1,5 +1,5 @@
 """Core entities: employer, employee, claim, app_user, user_employer_assignment,
-audit_event (Story 1.2).
+audit_event (Story 1.2), glossary_term (Story 1.6).
 
 Naming is canonical per docs/WC_Feature_Element_Details.xlsx. Money columns
 are integer cents (Excel names kept, values in cents). No derived value
@@ -150,6 +150,50 @@ class Claim(Base):
     sla_settle_days: Mapped[int | None] = mapped_column(Integer)
 
     version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+
+
+class GlossaryTerm(Base):
+    """WC domain reference data (Story 1.6, FR-GLOS-1) — the prototype's GLOSS.
+
+    Read-only to the application, which is why three things other tables
+    have are deliberately absent:
+
+    - **No `version` column.** Compare-and-swap exists to arbitrate
+      concurrent writers, and this table has none: rows arrive in a seed
+      migration and change only in a later one. `AuditEvent` and `Session`
+      set the same precedent for different reasons.
+    - **No audit wiring.** AD-4 audits *commands*; there are none here, and
+      a migration that edits reference data is already reviewed in the diff.
+    - **No employer column and no claim FK.** The ERD's dotted
+      `GLOSSARY_TERM }o--o{ CLAIM` association has no story behind it, so no
+      join table is invented here. Nothing about a term is scoped to
+      anybody, which is what makes the AD-7 exception in
+      `data/repositories/glossary.py` legitimate rather than convenient.
+
+    `sort_order` carries the prototype's display order (FNOL first, then the
+    acronym cluster, then the manufacturing hazards). It is unique so the
+    ordering is total — a repository that sorted on a column with ties would
+    be free to repeat or drop a row once anything pages it.
+    """
+
+    __tablename__ = "glossary_term"
+
+    id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+    # "OSHA 300" and "Arc Flash" are multi-word, and "Apportionment" repeats
+    # its term verbatim — prototype data, preserved rather than normalized.
+    #
+    # Unique, and that constraint is load-bearing on the wire:
+    # `GlossaryTermResponse` deliberately publishes neither `id` nor
+    # `sortOrder` (a surrogate key is an implementation detail, and the
+    # client has no use for one), which leaves the abbreviation as the only
+    # stable identity a React list key can use. Enforcing it here is what
+    # makes that payload keyable by construction instead of by luck — the
+    # alternative, exposing `id` purely to key a list, leaks the surrogate
+    # into a public contract to solve a problem the data does not have.
+    abbreviation: Mapped[str] = mapped_column(Text, unique=True)
+    term: Mapped[str] = mapped_column(Text)
+    definition: Mapped[str] = mapped_column(Text)
+    sort_order: Mapped[int] = mapped_column(Integer, unique=True)
 
 
 class AuditEvent(Base):

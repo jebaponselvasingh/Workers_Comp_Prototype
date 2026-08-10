@@ -1,0 +1,152 @@
+[
+ {
+  "abbreviation": "FNOL",
+  "term": "First Notice of Loss",
+  "definition": "Initial injury report to employer/carrier, starting notice-deadline clock and claims workflow.",
+  "sort_order": 0
+ },
+ {
+  "abbreviation": "TTD",
+  "term": "Temporary Total Disability",
+  "definition": "Wage-replacement benefits while a worker is completely unable to work, before MMI.",
+  "sort_order": 1
+ },
+ {
+  "abbreviation": "PPD",
+  "term": "Permanent Partial Disability",
+  "definition": "Compensation for lasting impairment that doesn't prevent all work — rated by body part/%. Critical for amputation and crush claims.",
+  "sort_order": 2
+ },
+ {
+  "abbreviation": "PTD",
+  "term": "Permanent Total Disability",
+  "definition": "Benefits when an injury prevents any gainful employment — common in high-severity amputation or multiple body part cases.",
+  "sort_order": 3
+ },
+ {
+  "abbreviation": "MMI",
+  "term": "Maximum Medical Improvement",
+  "definition": "Condition has stabilized and won't improve further. Triggers PPD rating and settlement discussions.",
+  "sort_order": 4
+ },
+ {
+  "abbreviation": "IME",
+  "term": "Independent Medical Examination",
+  "definition": "Evaluation by a neutral physician to verify diagnosis, MMI, or treatment appropriateness.",
+  "sort_order": 5
+ },
+ {
+  "abbreviation": "AWW",
+  "term": "Average Weekly Wage",
+  "definition": "Pre-injury earnings base used to calculate indemnity benefits — sourced from payroll records.",
+  "sort_order": 6
+ },
+ {
+  "abbreviation": "RTW",
+  "term": "Return to Work",
+  "definition": "Structured plan — light duty, modified duty, or full duty — to transition injured worker back to employment.",
+  "sort_order": 7
+ },
+ {
+  "abbreviation": "CTS",
+  "term": "Carpal Tunnel Syndrome",
+  "definition": "Median nerve compression at wrist. Most common repetitive motion injury in manufacturing assembly environments.",
+  "sort_order": 8
+ },
+ {
+  "abbreviation": "HAVS",
+  "term": "Hand-Arm Vibration Syndrome",
+  "definition": "Occupational disease from prolonged vibrating tool use. Causes Raynaud's phenomenon (Vibration White Finger) in manufacturing workers.",
+  "sort_order": 9
+ },
+ {
+  "abbreviation": "NIHL",
+  "term": "Noise-Induced Hearing Loss",
+  "definition": "Permanent hearing loss from manufacturing floor noise exposure — measurable by audiogram.",
+  "sort_order": 10
+ },
+ {
+  "abbreviation": "OSHA 300",
+  "term": "OSHA Recordkeeping Log",
+  "definition": "Federal Form 300 — mandatory recording of workplace injuries/illnesses for manufacturers with 10+ employees.",
+  "sort_order": 11
+ },
+ {
+  "abbreviation": "FROI",
+  "term": "First Report of Injury",
+  "definition": "State-required form (C-1, FROI-1, etc.) to formally open a WC claim.",
+  "sort_order": 12
+ },
+ {
+  "abbreviation": "ICD-10",
+  "term": "Diagnosis Code",
+  "definition": "International Classification code standardizing diagnoses for WC billing and reporting.",
+  "sort_order": 13
+ },
+ {
+  "abbreviation": "Reserve",
+  "term": "Claim Reserve",
+  "definition": "Adjuster's estimate of total remaining cost to close — medical, indemnity, legal, expense.",
+  "sort_order": 14
+ },
+ {
+  "abbreviation": "Subro",
+  "term": "Subrogation",
+  "definition": "Carrier's right to recover costs from a third party — equipment manufacturer, maintenance vendor, contractor.",
+  "sort_order": 15
+ },
+ {
+  "abbreviation": "PPE",
+  "term": "Personal Protective Equipment",
+  "definition": "Machine guards, gloves, hearing protection, eye protection, foot protection — critical in manufacturing WC prevention.",
+  "sort_order": 16
+ },
+ {
+  "abbreviation": "EMG",
+  "term": "Electromyography",
+  "definition": "Nerve conduction test used to confirm and grade carpal tunnel syndrome severity.",
+  "sort_order": 17
+ },
+ {
+  "abbreviation": "ORIF",
+  "term": "Open Reduction Internal Fixation",
+  "definition": "Surgical fracture repair using rods, plates, or screws — common in forklift and machinery fracture cases.",
+  "sort_order": 18
+ },
+ {
+  "abbreviation": "Arc Flash",
+  "term": "Electrical Arc Flash",
+  "definition": "Explosive electrical energy release — severe burn and blast hazard in manufacturing electrical work.",
+  "sort_order": 19
+ },
+ {
+  "abbreviation": "SLA",
+  "term": "Service Level Agreement",
+  "definition": "Claims handling targets: pick claim <1 day, approve <5 days, settle <30 days from FNOL.",
+  "sort_order": 20
+ },
+ {
+  "abbreviation": "LTD",
+  "term": "Loss to Date",
+  "definition": "Total cumulative payments (medical + indemnity + expense) from claim inception to current date.",
+  "sort_order": 21
+ },
+ {
+  "abbreviation": "WPI",
+  "term": "Whole Person Impairment",
+  "definition": "AMA Guides-based rating expressing permanent impairment as % of the whole person.",
+  "sort_order": 22
+ },
+ {
+  "abbreviation": "Apportionment",
+  "term": "Apportionment",
+  "definition": "Dividing disability liability between current occupational injury and pre-existing/non-occupational conditions.",
+  "sort_order": 23
+ },
+ {
+  "abbreviation": "VR",
+  "term": "Vocational Rehabilitation",
+  "definition": "Retraining or job placement when a worker can't return to their prior manufacturing role due to permanent restrictions.",
+  "sort_order": 24
+ }
+]
