@@ -3,6 +3,7 @@ title: 'Story 1.6: Domain Glossary'
 type: 'feature'
 created: '2026-08-10'
 baseline_revision: '9291f8364dcbe51372348241b5e01758742359d1'
+final_revision: 'd3dba378d00841daebef9dfae6ccb4c011fee5df'
 status: 'done'
 review_loop_iteration: 0
 followup_review_recommended: true # 12 patches across schema, API semantics, UI empty-state, and a11y — breadth and volume warrant an independent look
