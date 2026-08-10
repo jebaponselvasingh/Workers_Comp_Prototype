@@ -4,9 +4,9 @@
 | | |
 |---|---|
 | **Product** | LINEWORKER — Manufacturing Workers' Compensation Console (US) |
-| **Status** | Final — v1.2, 2026-08-09 (v1.1 agent-hardening pass added AD-13/14; v1.2 gap-review amendments: audit redaction, unified user/scope model, write concurrency, embedding staleness, dashboard-copilot deferral) |
+| **Status** | Final — v1.4, 2026-08-10 (v1.1 agent-hardening pass added AD-13/14; v1.2 gap-review amendments: audit redaction, unified user/scope model, write concurrency, embedding staleness, dashboard-copilot deferral; v1.3 agent-runtime modernization: the copilot's tool-calling core is now LangChain v1 `create_agent` + middleware, with `HumanInTheLoopMiddleware` as the write-approval gate; v1.4 gate-remediation: one node-agnostic gated write step all paths route through, one write/turn, marker-keyed approval, `edit`-arg constraints, rag-refresh carve-out) |
 | **Inputs** | `Workers_Comp_Prototype.html` (as-built prototype) · `WC_Feature_Element_Details.xlsx` (field-level spec, 93 rows) · `BRD-Workers-Comp-Console.md` (reverse-engineered BRD) · deep-research run over 21 web sources (verification method: Appendix A) |
-| **Hard constraints** | AI inference fully local via **Ollama** (no cloud LLM APIs) · agent layer on **LangChain + LangGraph** |
+| **Hard constraints** | AI inference fully local via **Ollama** (no cloud LLM APIs) · agent layer on **LangChain v1 (`create_agent` + middleware) over LangGraph** |
 | **The spine** | `_bmad-output/planning-artifacts/architecture/architecture-lineworker-2026-08-07/ARCHITECTURE-SPINE.md` — the build contract holding decisions AD-1…AD-14, which this document narrates |
 
 ---
@@ -20,7 +20,7 @@ The target system is a conventional, boring-on-purpose three-tier architecture w
 - **Frontend** — React 19 SPA (Vite), shadcn/ui, TanStack Query/Table, Recharts; copilot chat via assistant-ui's LangGraph runtime.
 - **Backend** — FastAPI (Python 3.12), SQLAlchemy 2, service-layer commands with transactional audit events.
 - **Data** — one PostgreSQL 18 instance holding relational entities, pgvector embeddings, LangGraph chat checkpoints, the AI-insight cache, and the audit log.
-- **AI** — Ollama on the internal network only: `qwen3` for chat/agents, `bge-m3` for embeddings; LangGraph (Python) supervisor graph with human-in-the-loop gates on any AI-initiated claim write.
+- **AI** — Ollama on the internal network only: `qwen3` for chat/agents, `bge-m3` for embeddings; a deterministic LangGraph supervisor graph whose tool-calling core is LangChain v1 `create_agent`, with `HumanInTheLoopMiddleware` gating any AI-initiated claim write.
 - **Rules** — GoRules ZEN engine (embedded, MIT) owns business-tunable parameters as versioned JSON; typed, property-tested Python owns statutory formulas.
 - **Deployment** — on-prem Docker Compose, single site, GPU-served Ollama, encrypted volumes, off-host encrypted backups.
 
@@ -35,14 +35,14 @@ Fourteen architecture decisions fix the invariants; everything else is intention
 | AD-3 | One PostgreSQL owns relational + vector + checkpoints + cache + audit |
 | AD-4 | All writes are version-guarded (CAS) service commands emitting same-transaction, append-only, fixed-schema audit events |
 | AD-5 | All inference via internal-network Ollama; model names are config; no cloud path exists |
-| AD-6 | One copilot StateGraph; single-flight threads keyed `(scope, user, seq)`; AI writes require `interrupt()` approval and fail safe when stale |
+| AD-6 | One copilot graph — deterministic router + `create_agent` core; single-flight threads keyed `(scope, user, seq)`; AI writes require `HumanInTheLoopMiddleware` approval and fail safe when stale |
 | AD-7 | One `app_user` + `user_employer_assignment` model scopes every role; enforced in the repository layer on every path, including agent tools and vector search — scope gates visibility, role gates capability |
 | AD-8 | JDM documents own parameters/decision tables; Python owns formulas; never both |
 | AD-9 | TanStack Query with shared queryKeys; optimistic updates for user-entered scalars only; 409 rolls back and renders the conflict inline |
 | AD-10 | One registered computer per derived field (embeddings included); AI narratives live in the `ai_insight` cache |
 | AD-11 | Everything claim-derived is PHI-class — audit diffs included: encrypted, log-banned, single purge cascade with redact-in-place for audit |
 | AD-12 | Every entity has exactly one write-owning service (the spine's Capability → Architecture Map is the registry) |
-| AD-13 | Agent tools are thin registry entries wrapping exactly one service call; write tools are never LLM-selectable — they execute only after `interrupt()` approval |
+| AD-13 | Agent tools are thin registry entries wrapping exactly one service call; write tools are registered but `HumanInTheLoopMiddleware`-gated — they execute only after approve/edit |
 | AD-14 | Quick actions route deterministically before any LLM call; AI outages degrade honestly — no canned answers, and claim operations never depend on the agent runtime |
 
 ---
@@ -54,6 +54,7 @@ Each major choice below was checked against current (mid-2026) web sources (veri
 | Decision | Rationale (verified) |
 |---|---|
 | **LangGraph Python over LangGraph.js** | Both hit 1.0 GA (Oct 2025) with core parity (Postgres checkpointer, `interrupt()`, streaming), but Python gets features first, has ~3× the model integrations (~98 vs ~33) and the far larger community — and keeps agents in the same language as RAG/document tooling. |
+| **`create_agent` (LangChain v1) over a hand-rolled tool-calling loop** | LangGraph's own docs now position it as the *low-level* runtime and recommend LangChain's prebuilt `create_agent` for common LLM/tool-calling loops; `langgraph.prebuilt.create_react_agent` is deprecated in v1 (removal in v2). `create_agent` runs on LangGraph and its middleware layer — `HumanInTheLoopMiddleware` (approve/edit/reject write gate), `Model`/`ToolCallLimitMiddleware` (per-run bounds) — replaces exactly the interrupt/limit plumbing AD-6/AD-14 would otherwise hand-roll. The deterministic QAS router stays custom LangGraph — its documented sweet spot: mixing deterministic and agentic steps. |
 | **Ollama + qwen3 for agents** | Qwen3 is the recommended modern local model for tool calling (native tool template; ~75.7 % BFCL v3 at 32B). `langchain-ollama ≥0.3` defaults structured output to Ollama's native `json_schema` API — schema-constrained generation, not prompt-and-pray. |
 | **bge-m3 for embeddings** | Won the only verified head-to-head retrieval benchmark: 72 % accuracy vs 59.25 % (mxbai-embed-large) and 57.25 % (nomic-embed-text) on ~6,257 chunks; strongest on long queries (92.5 %) — matching verbose claim narratives and labor-law text. Cost: 1.2 GB. |
 | **PostgreSQL + pgvector, no separate vector DB** | pgvector is the verified recommendation under ~10 M vectors — orders of magnitude above this corpus. One database also simplifies compliance (§4.3). Floor ≥ 0.8.2 (HNSW parallel-build CVE-2026-3172 fix). |
@@ -163,7 +164,7 @@ Ollama runs on the internal Docker network with its port never published; model 
 
 ### 5.2 The copilot graph (AD-6)
 
-One compiled LangGraph `StateGraph` serves all copilot traffic — built on LangGraph's supervisor-router pattern, no relation to the WC Supervisor user role — checkpointed with `AsyncPostgresSaver`. Threads are keyed `(scope, user_id, conversation_seq)`, where `scope` is a claim business ID (`dashboard` is a reserved key shape, unused in v1); `thread_id` is minted server-side, threads are **single-flight** (a new message on a running or interrupt-paused thread gets a 409), and "new conversation" increments the sequence, freezing prior threads as read-only history:
+One compiled LangGraph `StateGraph` serves all copilot traffic: a **deterministic supervisor-router** (no relation to the WC Supervisor user role) whose free-text / tool-calling core is a **`langchain.agents.create_agent`** harness — LangChain v1's supported agent constructor, successor to the now-deprecated `langgraph.prebuilt.create_react_agent` and the prebuilt tool-calling loop the LangGraph docs recommend, compiled to a graph and embedded as the free-chat node. It is checkpointed with `AsyncPostgresSaver`; its closed state is the agent's `state_schema` and the caller context rides its `context_schema`. Threads are keyed `(scope, user_id, conversation_seq)`, where `scope` is a claim business ID (`dashboard` is a reserved key shape, unused in v1); `thread_id` is minted server-side, threads are **single-flight** (a new message on a running or interrupt-paused thread gets a 409), and "new conversation" increments the sequence, freezing prior threads as read-only history:
 
 ```mermaid
 graph LR
@@ -176,16 +177,16 @@ graph LR
   R -->|rtw| RTW["RTW letter node"]
   R -->|free chat| CH["grounded-chat node"]
   LL & SC & RV & FR & NA & CH --> T["tools: computeBenefit · reserveCheck · priorityScore · claim reader (all scope-enforced)"]
-  RTW --> HITL{{"interrupt(): handler approves"}}
-  HITL -->|approved| W["audited command write"]
+  RTW --> HITL{{"HumanInTheLoopMiddleware: approve / edit / reject"}}
+  HITL -->|approve or edit| W["audited command write"]
 ```
 
 The prototype's seven `QAS` quick-action prompts become the router's named routes — their prompt templates carry over nearly verbatim, versioned as files in `agents/prompts/`. But routing is **deterministic** (AD-14): a static key→node map dispatches quick actions *before* any LLM call; only free-text messages reach the LLM router. Five invariants govern every node:
 
 - **Figures come from tools** (AD-2, §3.2): the reserve-review node calls `reserveCheck` and narrates its output.
-- **Tools are thin, registered, context-injected** (AD-13): every tool wraps exactly one service command or query — no business logic, no composed writes — declared `read` or `write` in a single registry with typed schemas. Results enter the model context as `{ok, data, display}`; prompts instruct the model to quote the service-formatted `display` strings for money and dates verbatim. **Write tools are never in any LLM tool-selection set**: the model can only *propose* a write as a `pending_approval` payload; the write tool executes solely after approval, and the registry raises if invoked without the approval token.
-- **Scope rides in graph state — and is re-resolved** (AD-7): every tool call carries the caller's scope context, injected by the registry, never a model-suppliable parameter; the similar-case vector search filters by it. On every run start **and every resume**, the auth dependency re-resolves scope from `app_user` + `user_employer_assignment`, so a resumed thread never replays yesterday's book of business. An agent can never narrate another handler's claim.
-- **Writes are human-gated and stale-safe** (AD-6): any write to an owned entity must pass `interrupt()` and get explicit approval — assistant-ui renders the interrupt natively, and only the thread's own user may resume. `pending_approval` records the entity versions it was drafted against; approval executes as a version-guarded AD-4 command, so approving a claim that changed since drafting fails safe (re-propose, never force-write). Approve and reject outcomes are both recorded content-free via `record_copilot_approval`. AI-insight cache writes skip the gate but not the audit trail.
+- **Tools are thin, registered, context-injected** (AD-13): every tool wraps exactly one service command or query — no business logic, no composed writes — declared `read`, `write`, or `refresh` in a single registry with typed schemas. Results enter the model context as `{ok, data, display}`; prompts instruct the model to quote the service-formatted `display` strings for money and dates verbatim. **Write tools are gated, not hidden**: every `write` tool is registered on the agent but wrapped by `HumanInTheLoopMiddleware` (`interrupt_on`, decisions approve/edit/reject) — the model may select it, but the middleware pauses before execution and, on approval, records a marker in graph state keyed by the tool-call id; the tool executes only when that marker matches (the registry's raise-without-marker is defence-in-depth, not a second gate). QAS write nodes hold no write tools — they route proposals into the same single gated step. The AI-insight refresh is the one carve-out: an agent→`services/rag` command, not a `write` tool, so it is gate- and raise-exempt but audited.
+- **Scope rides the run context — and is re-resolved** (AD-7): every tool call carries the caller's scope context on the agent's `context_schema` (never a checkpointed state channel, never a model-suppliable parameter); the similar-case vector search filters by it. On every run start **and every resume**, the auth dependency re-resolves scope from `app_user` + `user_employer_assignment`, so a resumed thread never replays yesterday's book of business — and if a resume's re-resolved scope no longer covers a pending write's target, that approval fails safe like a stale one. An agent can never narrate another handler's claim.
+- **Writes are human-gated and stale-safe** (AD-6): a claim-entity write executes in exactly one gated step, which every path (free-chat and QAS) routes through — the model is capped at one write per turn, so the interrupt is always a single pending write and only the thread's own user may resume (approve / edit / reject); assistant-ui renders the interrupt natively. On `edit` the human may revise only non-identity arguments — never the target entity or the versions it was drafted against. The gated call records those versions; approval executes as a version-guarded AD-4 command, so approving a claim that changed since drafting fails safe (re-propose, never force-write). All three outcomes are recorded content-free via `record_copilot_approval` (an AD-4-shaped event). AI-insight cache writes skip the gate but not the audit trail.
 - **Degradation is honest** (AD-14): each route declares `requires_llm`. When Ollama is unavailable, deterministic actions keep working; LLM-dependent ones return a typed `ai_unavailable` error with bounded retry — no cloud fallback, and no canned text presented as model output (the prototype's `offlineAnswer` pattern is explicitly banned). The UI disables exactly the affected inputs, and claim screens have no hard dependency on the agent runtime.
 
 ### 5.3 RAG design
@@ -195,7 +196,7 @@ Two retrieval corpora, both in pgvector, both embedded with `bge-m3` by `service
 1. **Similar cases** — closed-claim summaries embedded and filtered by injury type / body part / severity band / sector, powering the "Similar case outcomes" card and quick action (exactly what the Excel's row 77 specifies for production).
 2. **Labor-law knowledge base** — chunked state WC statutes/rules, powering state-specific briefings with the disclaimer the prototype already carries ("informational only — not legal advice").
 
-Structured outputs (fraud indicator lists, ranked next actions) use `with_structured_output(method="json_schema")` so responses validate against Pydantic models before the UI sees them.
+Structured outputs (fraud indicator lists, ranked next actions) validate against Pydantic models before the UI sees them — via `create_agent`'s `response_format` for the agent's final structured output, or `with_structured_output(method="json_schema")` inside a deterministic node — both backed by `langchain-ollama`'s native `json_schema` structured-output API.
 
 Embeddings are derived data (AD-10): any command that mutates an embedded source field marks the embedding stale in the same transaction (through `services/rag`, the sole embeddings owner and sole embeddings client of Ollama); the scheduled refresh re-embeds stale rows first, and similar-case results carry `embedded_at`, with answers disclosing staleness beyond a configured threshold — retrieval can lag an edit, but never invisibly.
 
@@ -213,7 +214,7 @@ Checkpointed conversations quote diagnoses, wages, and fraud indicators, so they
 - **TanStack Table v8** drives the claim queue (priority sort, 8 filters, stage grouping) and the bills/schedule ledgers.
 - **Recharts 3** renders KPI donuts and payout stacked bars; every supervisor chart segment drills through to the underlying scoped claim list.
 - **The SVG body map ports as-is** — the coordinate dictionary and severity-colored markers become a typed React component.
-- **Copilot panel** uses `@assistant-ui/react-langgraph` over SSE: token streaming, `interrupt()` approval UI, and cancellation come from the runtime instead of custom plumbing.
+- **Copilot panel** uses `@assistant-ui/react-langgraph` over SSE: token streaming, the `HumanInTheLoopMiddleware` approve/edit/reject approval UI, and cancellation come from the runtime instead of custom plumbing.
 - API access goes through a **generated OpenAPI client** — the backend contract is the single source of TS types (camelCase via Pydantic alias generation).
 
 ---
@@ -228,7 +229,7 @@ WC claims data is HIPAA-adjacent PHI (diagnoses, ICD-10, wages, disability statu
 | Authentication | OIDC-ready session auth via FastAPI dependency; roles/personas resolved server-side (IdP choice deferred). | no AD — spine conventions |
 | Audit | Every mutation emits a fixed-schema audit event in the same transaction; `audit_event` is INSERT-only for the app role, with one registered exception: an `audit_redactor` role, usable only by `services/audit`'s purge and retention jobs, may redact `before`/`after` diffs and delete rows past the 7-year retention floor. pgaudit adds DB-level capture with DML statement/parameter logging disabled (value history is the audit table's job, not the log's). | AD-4 |
 | Encryption | TLS at ingress and to Postgres; encrypted volumes at rest (DB log destination included); backups encrypted before leaving the host. | AD-11 |
-| AI containment | Local-only inference; internal-network Ollama; no cloud path; prompts/outputs never logged; agent writes human-gated and version-guarded; write tools never LLM-selectable; outages degrade honestly, never with canned answers. | AD-5/6/13/14/11 |
+| AI containment | Local-only inference; internal-network Ollama; no cloud path; prompts/outputs never logged; agent writes human-gated and version-guarded through one node-agnostic gated step (`HumanInTheLoopMiddleware`, approve/edit/reject); outages degrade honestly, never with canned answers. | AD-5/6/13/14/11 |
 | PHI lifecycle | All claim-derived stores (checkpoints, embeddings, cache, audit diffs, binaries) are PHI-class; one purge cascade owned by `services/audit` — with **redact-in-place** for `audit_event`: purge preserves the who/what/when skeleton but overwrites the PHI-bearing diffs, so action history survives purge and purged claims are not resurrectable from audit. | AD-11 |
 | Data egress | Prototype "emails" are logs; real SMTP/ICS egress is a deferred epic with its own compliance review. | Deferred |
 
@@ -268,7 +269,7 @@ graph LR
 | **2. Deterministic core** | `financials`, `derivations`, `worklist` services with property tests; ZEN wrapper + first JDM documents (priority weights, reserve bands, SLA targets) | AD-2, AD-8, AD-10 |
 | **3. API + SPA shell** | Auth deps, claims/worklist routes, audited commands; queue + stage-adaptive detail + inline edits; supervisor dashboard with drill-through | AD-1, AD-4, AD-9, AD-12 |
 | **4. RAG foundation** | bge-m3 embedding pipeline for closed claims + labor-law KB in pgvector, owned by `services/rag` | AD-5, AD-10 |
-| **5. Copilot** | Supervisor graph with 7 deterministic quick-action routes, registered scoped tools, Postgres checkpointing, `interrupt()` on RTW letter; assistant-ui panel; honest-degradation paths | AD-2, AD-5, AD-6, AD-7, AD-13, AD-14 |
+| **5. Copilot** | Deterministic router + `create_agent` core (7 quick-action routes, registered scoped tools), Postgres checkpointing, `HumanInTheLoopMiddleware` gate on RTW letter; assistant-ui panel; honest-degradation paths | AD-2, AD-5, AD-6, AD-7, AD-13, AD-14 |
 | **6. Hardening** | Encrypted volumes/backups + restore drill, pgaudit, purge cascade, health checks, CI gate complete | AD-4, AD-11 |
 | Later epics | See §10 | Deferred |
 

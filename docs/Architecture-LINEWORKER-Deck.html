@@ -74,7 +74,7 @@
 
 <!-- 1 · Title -->
 <section class="slide on">
-  <div class="kick">Architecture Walkthrough · v1.2 · 2026-08-09</div>
+  <div class="kick">Architecture Walkthrough · v1.4 · 2026-08-10</div>
   <h1>LINEWORKER<br>Prototype → Production</h1>
   <p class="lead">Rebuilding the Manufacturing Workers' Comp claims console as a three-tier system with a fully local AI copilot — no cloud model APIs, every answer grounded in scoped, audited data.</p>
   <div class="kv">
@@ -99,7 +99,7 @@
   <div class="grid cols3" style="margin-top:10px">
     <div class="card"><h3 style="color:var(--er)">Must not survive</h3><p>Client-side <code>HANDLER_MAP</code> scoping · derived flags stored beside inputs · credential-less cloud fetch · canned <code>offlineAnswer</code> text presented as AI · <code>alert()</code> dialogs · logic in <code>innerHTML</code> templates.</p></div>
     <div class="card"><h3 style="color:var(--ok)">Ports almost verbatim</h3><p>SVG body map · the 7 <code>QAS</code> prompt templates · benefit/priority/reserve formulas · the 100-claim dataset as seed data.</p></div>
-    <div class="card"><h3>Hard constraints</h3><p>AI inference fully <b>local via Ollama</b> — no cloud APIs. Agent layer on <b>LangChain + LangGraph</b>. HIPAA-adjacent PHI stays on-prem.</p></div>
+    <div class="card"><h3>Hard constraints</h3><p>AI inference fully <b>local via Ollama</b> — no cloud APIs. Agent layer on <b>LangChain v1 (<code>create_agent</code> + middleware) over LangGraph</b>. HIPAA-adjacent PHI stays on-prem.</p></div>
   </div>
 </section>
 
@@ -110,9 +110,9 @@
   <table>
     <tr><th>Layer</th><th>Choice</th><th>Why (verified mid-2026)</th></tr>
     <tr><td><b>Frontend</b></td><td>React 19 · Vite 8 · TS 7 · shadcn/ui · TanStack Query v5 / Table v8 · Recharts 3</td><td class="dim">Internal console — no SEO ⇒ SPA over Next.js; vendored components; one queryKeys registry</td></tr>
-    <tr><td><b>Chat UI</b></td><td>assistant-ui <code>react-langgraph</code></td><td class="dim">Native streaming, interrupt(), cancellation — no hand-rolled SSE</td></tr>
+    <tr><td><b>Chat UI</b></td><td>assistant-ui <code>react-langgraph</code></td><td class="dim">Native streaming, HITL approve/edit/reject, cancellation — no hand-rolled SSE</td></tr>
     <tr><td><b>API</b></td><td>FastAPI · Python 3.12 · SQLAlchemy 2 · Alembic</td><td class="dim">Same language as the agent layer; async SSE; proven HIPAA-adjacent pattern</td></tr>
-    <tr><td><b>Agents</b></td><td>LangGraph (Python) 1.2 · langchain-ollama ≥0.3</td><td class="dim">Python leads JS in features & integrations (~98 vs ~33 providers); json_schema structured output</td></tr>
+    <tr><td><b>Agents</b></td><td>langchain 1.x <code>create_agent</code> + middleware · LangGraph (Python) 1.2 · langchain-ollama 1.x</td><td class="dim">v1 <code>create_agent</code> harness on LangGraph (<code>HumanInTheLoopMiddleware</code> write gate); supersedes deprecated <code>create_react_agent</code>; json_schema structured output</td></tr>
     <tr><td><b>Models</b></td><td>Ollama: <code>qwen3:14b/32b</code> chat · <code>bge-m3</code> embeddings</td><td class="dim">Qwen3 = verified tool-calling pick; bge-m3 won retrieval benchmark 72% vs 59/57%</td></tr>
     <tr><td><b>Data</b></td><td>PostgreSQL 18 + pgvector ≥0.8.2</td><td class="dim">One DB for rows + vectors + checkpoints + audit; pgvector verified fine &lt;10M vectors</td></tr>
     <tr><td><b>Rules</b></td><td>GoRules ZEN (embedded, MIT)</td><td class="dim">JSON rules, Python SDK in-process, visual editor — no Drools JVM</td></tr>
@@ -129,7 +129,7 @@
     <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#3b4f6b"/></marker></defs>
     <rect class="nb hi" x="330" y="16" width="240" height="52"/><text class="nt" x="450" y="38" text-anchor="middle">web/ — React 19 SPA</text><text class="ns" x="450" y="55" text-anchor="middle">renders + captures input, nothing else</text>
     <rect class="nb" x="330" y="106" width="240" height="46"/><text class="nt" x="450" y="126" text-anchor="middle">api/ — FastAPI</text><text class="ns" x="450" y="142" text-anchor="middle">routers · auth deps · SSE</text>
-    <rect class="nb am" x="640" y="106" width="220" height="46"/><text class="nt" x="750" y="126" text-anchor="middle">agents/ — LangGraph</text><text class="ns" x="750" y="142" text-anchor="middle">supervisor graph + tools</text>
+    <rect class="nb am" x="640" y="106" width="220" height="46"/><text class="nt" x="750" y="126" text-anchor="middle">agents/ — create_agent</text><text class="ns" x="750" y="142" text-anchor="middle">det. router + tools (on LangGraph)</text>
     <rect class="nb gn" x="240" y="196" width="420" height="46"/><text class="nt" x="450" y="216" text-anchor="middle">services/ — claims · financials · worklist · derivations · rag · audit</text><text class="ns" x="450" y="232" text-anchor="middle">every calculation & audited command lives here</text>
     <rect class="nb" x="120" y="288" width="240" height="46"/><text class="nt" x="240" y="308" text-anchor="middle">data/ — repositories</text><text class="ns" x="240" y="324" text-anchor="middle">scope-enforced (AD-7)</text>
     <rect class="nb" x="400" y="288" width="200" height="46"/><text class="nt" x="500" y="308" text-anchor="middle">rules/ — ZEN + JDM</text><text class="ns" x="500" y="324" text-anchor="middle">versioned tunables</text>
@@ -157,14 +157,14 @@
     <div class="ad"><b>AD-3</b><p>One PostgreSQL owns rows + vectors + checkpoints + cache + audit</p></div>
     <div class="ad"><b>AD-4</b><p>Writes are version-guarded (CAS) service commands with same-transaction, append-only audit events</p></div>
     <div class="ad"><b>AD-5</b><p>Local-only Ollama; model names are config; no cloud path exists</p></div>
-    <div class="ad"><b>AD-6</b><p>One copilot StateGraph; single-flight (scope, user, seq) threads; AI writes require interrupt() and fail safe when stale</p></div>
+    <div class="ad"><b>AD-6</b><p>One copilot graph — deterministic router + create_agent core; single-flight threads; every claim write routes through one node-agnostic gated step (HumanInTheLoopMiddleware, one write/turn) and fails safe when stale</p></div>
     <div class="ad"><b>AD-7</b><p>One app_user + assignment model scopes every role, enforced in repositories — scope gates visibility, role gates capability</p></div>
     <div class="ad"><b>AD-8</b><p>JDM owns parameters & decision tables; Python owns formulas; never both</p></div>
     <div class="ad"><b>AD-9</b><p>TanStack Query + shared queryKeys; optimistic updates for user-entered scalars only; 409 renders the conflict inline</p></div>
     <div class="ad"><b>AD-10</b><p>One registered computer per derived field (embeddings included); AI narratives live in the ai_insight cache</p></div>
     <div class="ad"><b>AD-11</b><p>Everything claim-derived is PHI-class — audit diffs included: encrypted, log-banned, one purge cascade with redact-in-place audit</p></div>
     <div class="ad"><b>AD-12</b><p>Exactly one write-owning service per entity (capability map = registry)</p></div>
-    <div class="ad"><b>AD-13</b><p>Agent tools are thin registry entries wrapping one service call; write tools never LLM-selectable — execute only after approval</p></div>
+    <div class="ad"><b>AD-13</b><p>Agent tools are thin registry entries wrapping one service call; write tools are registered but HumanInTheLoopMiddleware-gated — execute only after approve/edit</p></div>
     <div class="ad"><b>AD-14</b><p>Quick actions route deterministically before any LLM call; outages degrade honestly — no canned answers, claim ops unaffected</p></div>
   </div>
   <div class="foot">Full Binds / Prevents / Rule text in ARCHITECTURE-SPINE.md — reviewed by 6 independent lenses (rubric, web-verify, adversarial, compliance, BRD & Excel reconciles) + agent-hardening & gap-review passes</div>
@@ -241,9 +241,9 @@
     <rect class="nb" x="450" y="80" width="180" height="42"/><text class="nt" x="540" y="105" text-anchor="middle">similar-case RAG</text>
     <rect class="nb" x="450" y="140" width="180" height="42"/><text class="nt" x="540" y="165" text-anchor="middle">reserve / fraud / actions</text>
     <rect class="nb am" x="450" y="200" width="180" height="42"/><text class="nt" x="540" y="225" text-anchor="middle">RTW letter node</text>
-    <rect class="nb" x="450" y="262" width="180" height="42"/><text class="nt" x="540" y="287" text-anchor="middle">grounded chat</text>
+    <rect class="nb" x="450" y="262" width="180" height="42"/><text class="nt" x="540" y="287" text-anchor="middle">create_agent (free chat)</text>
     <rect class="nb gn" x="700" y="80" width="180" height="102"/><text class="nt" x="790" y="110" text-anchor="middle">scoped tools</text><text class="ns" x="790" y="130" text-anchor="middle">computeBenefit · reserveCheck</text><text class="ns" x="790" y="146" text-anchor="middle">priorityScore · claim reader</text><text class="ns" x="790" y="162" text-anchor="middle">pgvector search (scope-filtered)</text>
-    <rect class="nb am" x="700" y="210" width="180" height="46"/><text class="nt" x="790" y="230" text-anchor="middle">interrupt()</text><text class="ns" x="790" y="246" text-anchor="middle">handler approves → audited write</text>
+    <rect class="nb am" x="700" y="210" width="180" height="46"/><text class="nt" x="790" y="230" text-anchor="middle">HumanInTheLoop mw</text><text class="ns" x="790" y="246" text-anchor="middle">approve/edit → audited write</text>
     <path class="ed" d="M170 165 H230"/>
     <path class="ed" d="M380 155 L450 41"/><path class="ed" d="M380 160 L450 101"/><path class="ed" d="M380 165 H450"/><path class="ed" d="M380 172 L450 221"/><path class="ed" d="M380 178 L450 283"/>
     <path class="ed" d="M630 101 H700"/><path class="ed" d="M630 161 L700 140"/><path class="ed" d="M630 41 L700 95"/><path class="ed" d="M630 283 L700 170"/>
@@ -253,7 +253,7 @@
   <div class="grid cols3" style="margin-top:8px">
     <div class="card"><p><b style="color:var(--ok)">Figures from tools</b> — the reserve node calls <code>reserveCheck</code> and narrates; it cannot invent an adequacy verdict. Tools are thin registry entries wrapping exactly one service call (AD-13).</p></div>
     <div class="card"><p><b style="color:var(--ac)">Scope in graph state, re-resolved</b> — the registry injects the caller's book-of-business into every tool call; scope is re-resolved on every run start and resume, so a resumed thread never replays yesterday's assignments.</p></div>
-    <div class="card"><p><b style="color:var(--wn)">Writes gated & stale-safe</b> — write tools are never LLM-selectable; the model only proposes. Approval executes a version-guarded AD-4 command — stale approvals fail safe. Ollama down? Deterministic actions keep working; LLM routes return <code>ai_unavailable</code>, never canned text (AD-14).</p></div>
+    <div class="card"><p><b style="color:var(--wn)">Writes gated & stale-safe</b> — a claim write executes in exactly one gated step every path routes through (<code>HumanInTheLoopMiddleware</code>, approve/edit/reject, one write/turn); the model may select a write tool, never execute it unapproved. Approval executes a version-guarded AD-4 command — stale approvals fail safe. Ollama down? Deterministic actions keep working; LLM routes return <code>ai_unavailable</code>, never canned text (AD-14).</p></div>
   </div>
 </section>
 
@@ -266,7 +266,7 @@
     <tr><td><b>Authorization</b></td><td class="dim">Repository-layer RBAC from <code>app_user</code> + <code>user_employer_assignment</code> (one model for all roles; scope gates visibility, role gates capability) — REST, aggregates, agent tools, and vector search all scoped; no caller-supplied scope, no role bypass, ever</td></tr>
     <tr><td><b>Audit</b></td><td class="dim">Fixed-schema event per mutation, same transaction; <code>audit_event</code> INSERT-only for the app role (sole exception: the <code>audit_redactor</code> role used by purge/retention jobs); 7-year default retention; pgaudit beneath, DML value-logging disabled</td></tr>
     <tr><td><b>Encryption</b></td><td class="dim">TLS at ingress & to Postgres; encrypted volumes (DB logs included); backups encrypted before leaving the host</td></tr>
-    <tr><td><b>AI containment</b></td><td class="dim">Local inference only; chat checkpoints classified PHI; prompts & outputs never in operational logs; write tools never LLM-selectable; outages degrade honestly</td></tr>
+    <tr><td><b>AI containment</b></td><td class="dim">Local inference only; chat checkpoints classified PHI; prompts & outputs never in operational logs; write tools <code>HumanInTheLoopMiddleware</code>-gated (approve/edit/reject); outages degrade honestly</td></tr>
     <tr><td><b>Lifecycle</b></td><td class="dim">One purge cascade (owner: <code>services/audit</code>) covers rows, embeddings, checkpoints, cache, binaries — and redacts audit diffs in place, so purged claims aren't resurrectable from audit</td></tr>
   </table>
   <p class="lead" style="margin-top:16px">The one-database decision is load-bearing: exactly one place PHI lives, one backup stream to encrypt, one purge implementation to audit. Local-only AI removes the model-vendor BAA problem entirely.</p>
@@ -305,7 +305,7 @@
     <tr><td>2</td><td><b>Deterministic core</b></td><td class="dim">financials / derivations / worklist services + property tests · ZEN wrapper + first JDM docs</td></tr>
     <tr><td>3</td><td><b>API + SPA shell</b></td><td class="dim">Audited commands · queue + stage-adaptive detail + inline edits · supervisor dashboard w/ drill-through</td></tr>
     <tr><td>4</td><td><b>RAG foundation</b></td><td class="dim">bge-m3 pipeline: closed-claim corpus + labor-law KB in pgvector</td></tr>
-    <tr><td>5</td><td><b>Copilot</b></td><td class="dim">Copilot graph, 7 deterministic quick-action routes, registered scoped tools, checkpointing, interrupt() on RTW letter, honest degradation, assistant-ui panel</td></tr>
+    <tr><td>5</td><td><b>Copilot</b></td><td class="dim">Deterministic router + create_agent core, 7 quick-action routes, registered scoped tools, checkpointing, HumanInTheLoopMiddleware gate on RTW letter, honest degradation, assistant-ui panel</td></tr>
     <tr><td>6</td><td><b>Hardening</b></td><td class="dim">Encryption + backups + restore drill · pgaudit · purge cascade · health checks · CI complete</td></tr>
   </table>
   <div style="margin-top:14px">

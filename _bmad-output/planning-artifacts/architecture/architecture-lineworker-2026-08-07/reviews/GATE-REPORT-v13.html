@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LINEWORKER · v1.3 Agent-Runtime Amendment — Reviewer Gate Report</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#151b24; --panel2:#1b2330; --bd:#26303d; --tx:#e6edf3; --dim:#9aa7b4;
+    --ac:#6ea8fe; --ok:#3fb950; --wn:#d29922; --er:#f85149; --hi:#a371f7;
+    --crit:#f85149; --high:#ff8c42; --med:#d29922; --low:#58a6ff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1080px;margin:0 auto;padding:40px 24px 80px}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.86em;background:#0b1017;border:1px solid var(--bd);border-radius:5px;padding:1px 5px;color:#cbd5e1}
+  h1{font-size:26px;margin:0 0 4px;letter-spacing:-.3px}
+  h2{font-size:19px;margin:38px 0 12px;padding-bottom:6px;border-bottom:1px solid var(--bd)}
+  h3{font-size:15px;margin:22px 0 8px;color:var(--dim);text-transform:uppercase;letter-spacing:.08em;font-weight:600}
+  .kick{color:var(--ac);font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;margin-bottom:10px}
+  .sub{color:var(--dim);font-size:13px}
+  .meta{display:flex;flex-wrap:wrap;gap:8px 22px;margin:14px 0 8px;color:var(--dim);font-size:13px}
+  .meta b{color:var(--tx);font-weight:600}
+  .verdict{margin:26px 0;border:1px solid var(--er);background:linear-gradient(180deg,rgba(248,81,73,.12),rgba(248,81,73,.03));border-radius:12px;padding:20px 22px}
+  .verdict .tag{display:inline-block;background:var(--er);color:#0d1117;font-weight:800;font-size:12px;letter-spacing:.06em;padding:3px 10px;border-radius:20px;text-transform:uppercase}
+  .verdict p{margin:12px 0 0;color:var(--tx)}
+  .verdict .fix{color:var(--dim);font-size:13.5px}
+  .callout{background:var(--panel);border:1px solid var(--bd);border-left:3px solid var(--hi);border-radius:10px;padding:16px 18px;margin:16px 0}
+  .callout ol{margin:8px 0 0;padding-left:20px}
+  .callout li{margin:6px 0}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px}
+  th,td{text-align:left;padding:9px 11px;border-bottom:1px solid var(--bd);vertical-align:top}
+  th{color:var(--dim);font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;font-weight:600;background:var(--panel2)}
+  tr:last-child td{border-bottom:none}
+  .scorecard td:first-child{font-weight:600;white-space:nowrap}
+  .v-pass{color:var(--ok);font-weight:700}
+  .v-passf{color:var(--wn);font-weight:700}
+  .v-fail{color:var(--er);font-weight:700}
+  .sev{font-weight:800;font-size:11px;letter-spacing:.04em;padding:2px 8px;border-radius:5px;white-space:nowrap;display:inline-block}
+  .s-high{background:rgba(255,140,66,.16);color:var(--high);border:1px solid rgba(255,140,66,.4)}
+  .s-med{background:rgba(210,153,34,.15);color:var(--med);border:1px solid rgba(210,153,34,.4)}
+  .s-low{background:rgba(88,166,255,.14);color:var(--low);border:1px solid rgba(88,166,255,.4)}
+  .cf{font-weight:700;color:var(--tx);white-space:nowrap}
+  .flag{color:var(--dim);font-size:12px}
+  .findings td:nth-child(4){color:var(--dim);font-size:12.5px}
+  .rem{counter-reset:step;list-style:none;padding:0;margin:12px 0}
+  .rem li{position:relative;padding:12px 14px 12px 46px;background:var(--panel);border:1px solid var(--bd);border-radius:9px;margin:8px 0}
+  .rem li::before{counter-increment:step;content:counter(step);position:absolute;left:12px;top:12px;width:24px;height:24px;border-radius:50%;background:var(--ac);color:#0d1117;font-weight:800;font-size:13px;display:flex;align-items:center;justify-content:center}
+  .rem li b{color:var(--tx)}
+  .rem li span{color:var(--dim);font-size:12px}
+  .links{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin:12px 0}
+  .links a{display:block;background:var(--panel);border:1px solid var(--bd);border-radius:9px;padding:12px 14px;color:var(--tx);text-decoration:none;font-size:13px}
+  .links a:hover{border-color:var(--ac)}
+  .links a code{background:none;border:none;padding:0;color:var(--ac);font-size:12px}
+  .foot{margin-top:44px;color:var(--dim);font-size:12px;border-top:1px solid var(--bd);padding-top:14px}
+  @media (max-width:640px){table{font-size:12.5px}.wrap{padding:28px 16px 60px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="kick">LINEWORKER · Architecture Reviewer Gate</div>
+  <h1>v1.3 Agent-Runtime Amendment — Validation Report</h1>
+  <div class="sub">The copilot's tool-calling core moved to LangChain v1 <code>create_agent</code> + <code>HumanInTheLoopMiddleware</code>. This is the pre-handoff review of that change.</div>
+
+  <div class="meta">
+    <span><b>Target</b> ARCHITECTURE-SPINE.md — AD-6 / AD-13 / AD-14 + Stack</span>
+    <span><b>Intent</b> Validate → Remediated (v1.4 applied)</span>
+    <span><b>Date</b> 2026-08-10</span>
+  </div>
+
+  <div class="verdict" style="border-color:var(--ok);background:linear-gradient(180deg,rgba(63,185,80,.12),rgba(63,185,80,.03))">
+    <span class="tag" style="background:var(--ok)">Remediated — no HIGH open</span>
+    <p><b>v1.3 gate: FAIL for parallel build (5 HIGH). v1.4 remediation: all closed.</b> The findings below were applied to the spine + both renderings; a confirmation gate then verified all 12 findings CLOSED and all 5 original HIGH closed. The re-attack surfaced 2 new HIGH the edits introduced (<code>caller</code>-in-AD-13, QAS→gate handoff) — both fixed with the reviewer's prescribed wording; residual implementation-mechanism nits are named under <i>Deferred › Copilot approval-gate wiring</i> for the agent spike.</p>
+    <p class="fix">This banner records the remediated state; the tables below preserve the original v1.3 findings that drove it. Full outcome at the foot of this report.</p>
+  </div>
+
+  <div class="callout">
+    <b style="color:var(--hi)">Root cause — one move relocated the gate but left four things unreconciled.</b>
+    The write-approval gate went from a <b>node-agnostic</b> step (v1.2: any writing node passes <code>interrupt()</code>; registry raises without an approval token) to a <b>core-bound middleware</b> on the <code>create_agent</code> free-chat node. The rest of the spine still assumes:
+    <ol>
+      <li><b>Not every write goes through the core.</b> The RTW-letter write is a deterministic QAS router node (AD-14, routes <i>before</i> any LLM call) — it never enters the middleware's loop.</li>
+      <li><b>The middleware's decision model is richer.</b> The new <code>edit</code> decision and multi-tool batching don't map onto AD-6's single <code>pending_approval</code> + version-CAS.</li>
+      <li><b>One write is deliberately gate-exempt</b> (AI-insight refresh) — but AD-13's registry raise forbids <i>any</i> unapproved write.</li>
+      <li><b>The double gate</b> (middleware + registry raise) has no specified handshake — so it deadlocks or is vacuous.</li>
+    </ol>
+  </div>
+
+  <h2>Scorecard</h2>
+  <table class="scorecard">
+    <tr><th>Reviewer</th><th>Verdict</th><th>Headline</th></tr>
+    <tr><td><code>lint_spine.py</code> (mechanical)</td><td class="v-pass">PASS</td><td>0 findings — no placeholders, dup IDs, missing Binds/Prevents/Rule, or unpinned versions</td></tr>
+    <tr><td>Rubric walker</td><td class="v-passf">PASS w/ findings</td><td>Legacy residue cleanly scrubbed; 1 HIGH (RTW path), 2 MED, 2 LOW</td></tr>
+    <tr><td>Web / version reality-check</td><td class="v-pass">PASS</td><td>All 7 LangChain / LangGraph / assistant-ui claims current; 3 hygiene notes</td></tr>
+    <tr><td>Amendment-integrity (F1–F13)</td><td class="v-pass">PASS</td><td>11 still-closed · 2 weakened · <b>0 reopened</b></td></tr>
+    <tr><td>Adversarial (two-unit divergence)</td><td class="v-fail">FAIL</td><td>5 HIGH + 2 MED conforming-but-incompatible pairs</td></tr>
+  </table>
+
+  <h2>Consolidated findings</h2>
+  <div class="sub" style="margin-bottom:6px">Deduped across reviewers, severity-ranked. The “flagged by” column shows independent convergence.</div>
+  <table class="findings">
+    <tr><th>#</th><th>Sev</th><th>Finding</th><th>Flagged by</th><th>Fix direction</th></tr>
+    <tr><td class="cf">CF-1</td><td><span class="sev s-high">HIGH</span></td><td><b>RTW / QAS router-node writes are ungated.</b> The gate is bound to the core, but the RTW letter routes before any LLM call (AD-14). Its write bypasses the middleware → the node-vs-tool F1 divergence, reintroduced.</td><td class="flag">Rubric · Adversarial F6 · Integrity F8</td><td>Make the gate <b>node-agnostic</b>: exactly one gated step where a claim write executes; QAS write nodes route through it too.</td></tr>
+    <tr><td class="cf">CF-2</td><td><span class="sev s-high">HIGH</span></td><td><b>Multi-write turn vs. single-flight.</b> A model turn can select two write tools; the middleware surfaces them as <i>one</i> multi-action interrupt — contradicting the singular <code>pending_approval</code> and “second write = second interrupt.”</td><td class="flag">Adversarial F2 · Integrity F5 · Rubric</td><td>Cap writes to one per turn (write-scoped <code>ToolCallLimitMiddleware</code>) <i>or</i> make <code>pending_approval</code> plural with per-action CAS.</td></tr>
+    <tr><td class="cf">CF-3</td><td><span class="sev s-high">HIGH</span></td><td><b><code>edit</code> can defeat version-CAS / retarget the entity.</b> “Frozen recorded versions” vs “re-resolve on approval” reads two ways — one crosses entities, the other nullifies stale-safety.</td><td class="flag">Adversarial F1 · Integrity · Rubric</td><td>Constrain <code>edit</code> to non-identity args; CAS on drafted versions; a version change forces re-draft, never force-write.</td></tr>
+    <tr><td class="cf">CF-4</td><td><span class="sev s-high">HIGH</span></td><td><b>Middleware↔registry handshake unspecified.</b> AD-13’s “registry raises without the middleware’s approval in graph state” names no signal — so it deadlocks (raises on approved writes) or is vacuous.</td><td class="flag">Adversarial F4 · Rubric</td><td>Name the approval marker (graph-state, keyed by tool-call id) <i>or</i> collapse to a single gate.</td></tr>
+    <tr><td class="cf">CF-5</td><td><span class="sev s-high">HIGH</span></td><td><b>AI-insight refresh: gate-it vs. carve-it-out.</b> Refresh is a write (AD-12), interrupt-exempt (AD-6), yet AD-13’s raise forbids any unapproved write. As a core tool the rules collide.</td><td class="flag">Adversarial F3</td><td>State refresh is <b>not</b> a <code>kind: write</code> copilot tool — an agent→<code>services/rag</code> command exempt from both gates.</td></tr>
+    <tr><td class="cf">CF-6</td><td><span class="sev s-med">MED</span></td><td><b>approve/edit/reject wire shape unmapped</b> backend↔assistant-ui. The runtime surfaces the raw interrupt; mapping decisions + resume <code>Command</code> is developer-owned and the stream convention doesn’t specify per-decision payloads.</td><td class="flag">Adversarial F5 · Web-verify</td><td>Define the resume payload per decision in AD-6 / AD-9 / Copilot-stream. Keep the AD-15 round-trip test.</td></tr>
+    <tr><td class="cf">CF-7</td><td><span class="sev s-med">MED</span></td><td><b>Scope narrowed mid-approval is undefined.</b> AD-7 covers resume-actor 403 + stale-version, but not “same user, fewer employers now” → a resumed approval could write to a now-out-of-scope claim.</td><td class="flag">Adversarial F7</td><td>Re-resolve scope on resume; out-of-scope drafted entity fails safe like a stale approval.</td></tr>
+    <tr><td class="cf">CF-8</td><td><span class="sev s-med">MED</span></td><td><b><code>record_copilot_approval</code> shape drift.</b> The approve/reject audit command isn’t pinned to the fixed AD-4 event schema.</td><td class="flag">Adversarial F8</td><td>Spec the payload against AD-4 (action, claim, actor, at — no content).</td></tr>
+    <tr><td class="cf">CF-9</td><td><span class="sev s-low">LOW</span></td><td><b><code>caller</code> in both <code>state_schema</code> and <code>context_schema</code>.</b> F7 wants it context-only, re-resolved each run — never a checkpointed channel.</td><td class="flag">Integrity · Adversarial ~F7</td><td>Move <code>caller</code> to <code>context_schema</code> only.</td></tr>
+    <tr><td class="cf">CF-10</td><td><span class="sev s-low">LOW</span></td><td><b><code>edit</code> not in F11 audit wording.</b> AD-6 says “both branches record” (approve/reject) — should be all three decisions.</td><td class="flag">Integrity · Web-verify</td><td>Reword to “all three decisions record via <code>record_copilot_approval</code>.”</td></tr>
+    <tr><td class="cf">CF-11</td><td><span class="sev s-low">LOW</span></td><td><b>Version hygiene.</b> <code>langchain 1.x</code> is now 1.3.x — pin a concrete minor. The middleware also has a 4th decision (<code>respond</code>); approve/edit/reject is a valid subset.</td><td class="flag">Web-verify</td><td><code>langchain &gt;=1.3,&lt;1.4</code>; one-line note on <code>respond</code>.</td></tr>
+    <tr><td class="cf">CF-12</td><td><span class="sev s-low">LOW</span></td><td><b>“F1 gate” is undefined jargon in AD-6.</b> <code>companions: []</code>, so the internal cross-reference resolves to nothing for a reader.</td><td class="flag">Rubric</td><td>Replace with plain wording or a footnote.</td></tr>
+  </table>
+
+  <h2>Recommended remediation — one coherent v1.4 amendment</h2>
+  <div class="sub" style="margin-bottom:4px">All five HIGH findings collapse into one architectural move plus reconciliation of the richer decision model.</div>
+  <ol class="rem">
+    <li><b>Re-establish the single node-agnostic write gate as the AD-6 invariant</b> — <i>exactly one step where a claim write executes, always behind approval.</i> Realized via the middleware on the core <b>and</b> by routing QAS write nodes through that same gated step. <span>(CF-1, CF-4)</span></li>
+    <li><b>Reconcile single-flight with batching</b> — one pending write per interrupt, or plural <code>pending_approval</code> with per-action CAS. <span>(CF-2)</span></li>
+    <li><b>Constrain <code>edit</code></b> — args-only, never the target entity; CAS on drafted versions; audit all three decisions. <span>(CF-3, CF-10)</span></li>
+    <li><b>Carve out rag-refresh</b> explicitly as a non-gated, non-write-tool command. <span>(CF-5)</span></li>
+    <li><b>Specify the resume wire contract</b> per decision, and mid-approval scope re-resolution; move <code>caller</code> to context-only. <span>(CF-6, CF-7, CF-9)</span></li>
+    <li><b>Pin <code>langchain</code> to a concrete minor</b>; note the 4th decision; drop the “F1 gate” jargon; pin <code>record_copilot_approval</code> to AD-4. <span>(CF-8, CF-11, CF-12)</span></li>
+  </ol>
+
+  <h2>Per-reviewer detail</h2>
+  <div class="links">
+    <a href="review-rubric-agent-v13.md">Rubric walker — good-spine checklist<br><code>review-rubric-agent-v13.md</code></a>
+    <a href="review-web-verify-agent-v13.md">Web / version reality-check<br><code>review-web-verify-agent-v13.md</code></a>
+    <a href="review-adversarial-agent-v13.md">Adversarial two-unit divergence<br><code>review-adversarial-agent-v13.md</code></a>
+    <a href="review-amendment-integrity-agent-v13.md">Amendment-integrity (F1–F13)<br><code>review-amendment-integrity-agent-v13.md</code></a>
+  </div>
+
+  <h2>v1.4 Remediation Outcome</h2>
+  <div class="callout" style="border-left-color:var(--ok)">
+    <b style="color:var(--ok)">Confirmation gate — all HIGH closed.</b>
+    <table style="margin-top:8px">
+      <tr><th>Check</th><th>Result</th></tr>
+      <tr><td><code>lint_spine.py</code> (re-run)</td><td class="v-pass">PASS — 0 findings</td></tr>
+      <tr><td>CF-closure verifier (CF-1…CF-12)</td><td class="v-pass">PASS — 12 closed · 0 partial · 0 open</td></tr>
+      <tr><td>Adversarial re-attack (5 prior HIGH)</td><td class="v-pass">All 5 CLOSED</td></tr>
+      <tr><td>Adversarial re-attack (new seams)</td><td class="v-passf">2 new HIGH found → both fixed</td></tr>
+    </table>
+    <p style="margin:12px 0 0"><b>NEW-F1</b> — <code>caller</code> moved to <code>context_schema</code> but AD-13 still read it “from graph state” → fixed (AD-13 reads it from the run context). <b>NEW-F2</b> — QAS→gate handoff ambiguous → fixed (QAS writes hand to the core as a write-tool call; one identical interrupt/resume shape; AD-15 now tests both write paths). Plus 3 MED fixed (refresh <code>kind</code>, one-write wording, non-identity definition); 4 lower-altitude mechanism nits named under <b>Deferred › Copilot approval-gate wiring</b>.</p>
+    <p class="sub" style="margin:10px 0 0">A third independent adversarial pass on the two NEW-F fixes was not run — the fixes are the reviewer's prescribed wording applied verbatim; available on request. Detail: <code>review-adversarial-agent-v14.md</code>, <code>review-closure-verify-agent-v14.md</code>.</p>
+  </div>
+
+  <div class="foot">
+    Generated by the <code>bmad-architecture</code> Reviewer Gate. v1.3 Validate pass → v1.4 remediation applied to spine + renderings → confirmation gate (above). Companion markdown: <code>GATE-REPORT-v13.md</code>.
+  </div>
+
+</div>
+</body>
+</html>
