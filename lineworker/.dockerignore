@@ -1,0 +1,16 @@
+# Applies to builds whose context is lineworker/ (web/Dockerfile via compose).
+# Keeps host-installed artifacts out of images and the build context small.
+**/node_modules/
+web/dist/
+server/.venv/
+**/__pycache__/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+e2e/test-results/
+e2e/playwright-report/
+.env
+.env.*
+*.env
+!*.env.example
+.DS_Store

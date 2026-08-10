@@ -1,0 +1,102 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/*
+ * LINEWORKER design tokens — UX-DR12.
+ * Canonical hex values ported 1:1 from the prototype's :root
+ * (docs/Workers_Comp_Prototype.html). The palette is light by design;
+ * do not add a dark theme without a change request. Corollary: vendored
+ * shadcn components have their stock `dark:` utilities stripped — Tailwind
+ * v4's default `dark:` is prefers-color-scheme with no opt-in, so they
+ * would fire against no dark palette on any OS set to dark mode.
+ *
+ * Naming note: the prototype's --ac orange is exposed as `brand`, not
+ * `accent` — shadcn/ui already owns the `accent` utility name for its
+ * subtle hover/focus wash (mapped to brand-soft below), and letting the
+ * two collide made focus states render solid orange (WCAG fail).
+ * Same reason the prototype's --mt is `muted-text`, not `muted`: shadcn
+ * spends `muted` on a *background* (bg-muted in table, skeleton, tabs,
+ * sidebar…), so the text color must not own that name.
+ */
+@theme {
+  --color-bg: #eef1f4; /* --bg  app background        */
+  --color-surface: #ffffff; /* --pn  panel/card surface    */
+  --color-surface-2: #f5f7f9; /* --p2  secondary surface     */
+  --color-border: #dce1e7; /* --bd  border                */
+  --color-brand: #e8560a; /* --ac  accent (orange)       */
+  --color-brand-soft: #fee9dc; /* --acd accent soft           */
+  --color-steel: #1d6a96; /* --st  info / stage          */
+  --color-steel-soft: #dae9f4; /* --sld info soft             */
+  --color-text: #1a2228; /* --tx  primary text          */
+  --color-muted-text: #57636e; /* --mt  muted text            */
+  --color-faint: #8b95a1; /* --ft  faint text            */
+  --color-ok: #1d7a45; /* --ok  success               */
+  --color-ok-soft: #d9f0e4; /* --okd success soft          */
+  --color-warn: #9a6e06; /* --wn  warning               */
+  --color-warn-soft: #fbf0d6; /* --wnd warning soft          */
+  --color-error: #c73e2d; /* --er  error                 */
+  --color-error-soft: #faddda; /* --erd error soft            */
+  --color-hairline: rgba(20, 30, 40, 0.06); /* --hr hairline/divider */
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Space Grotesk", "Inter", ui-sans-serif, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+/* shadcn/ui semantic variables ride the LINEWORKER tokens. */
+:root {
+  --radius: 0.5rem;
+  --background: var(--color-bg);
+  --foreground: var(--color-text);
+  --card: var(--color-surface);
+  --card-foreground: var(--color-text);
+  --popover: var(--color-surface);
+  --popover-foreground: var(--color-text);
+  --primary: var(--color-brand);
+  --primary-foreground: #ffffff;
+  --secondary: var(--color-surface-2);
+  --secondary-foreground: var(--color-text);
+  --muted: var(--color-surface-2);
+  --muted-foreground: var(--color-muted-text);
+  --accent: var(--color-brand-soft);
+  --accent-foreground: var(--color-text);
+  --destructive: var(--color-error);
+  --destructive-foreground: #ffffff;
+  --border: var(--color-border);
+  --input: var(--color-border);
+  --ring: var(--color-brand);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-bg font-sans text-text antialiased;
+  }
+}

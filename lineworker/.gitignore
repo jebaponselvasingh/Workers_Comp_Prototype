@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+*.egg-info/
+dist/
+
+# Node
+node_modules/
+web/dist/
+*.tsbuildinfo
+
+# Env files — only *.env.example templates are committed
+.env
+.env.*
+*.env
+!*.env.example
+
+# E2E artifacts
+e2e/test-results/
+e2e/playwright-report/
+e2e/blob-report/
+
+# OS / editor
+.DS_Store
+*.swp

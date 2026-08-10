@@ -1,0 +1,155 @@
+# LINEWORKER CI gate (Story 1.1, AD-15).
+#
+# Provider choice: GitHub Actions — the repo is GitHub-hosted; the CI provider
+# is a conventional default, not architecture-pinned (see Story 1.1 Project
+# Structure Notes). All four jobs are configured as required checks for merge
+# to main (repo settings). Merge to main additionally runs the full e2e suite;
+# the sprint-status ↔ e2e/stories bijection lint lands with a later story.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+defaults:
+  run:
+    working-directory: lineworker
+
+jobs:
+  server:
+    name: server lint+typecheck+pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --frozen
+        working-directory: lineworker/server
+      - run: uv run ruff check . && uv run ruff format --check .
+        working-directory: lineworker/server
+      - run: uv run mypy .
+        working-directory: lineworker/server
+      - run: uv run pytest
+        working-directory: lineworker/server
+
+  web:
+    name: web lint+typecheck+vitest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: lineworker/web/package-lock.json
+      - run: npm ci
+        working-directory: lineworker/web
+      - run: npm run lint
+        working-directory: lineworker/web
+      - run: npm run typecheck
+        working-directory: lineworker/web
+      - run: npm test
+        working-directory: lineworker/web
+
+  migrations:
+    name: alembic upgrade against fresh DB
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg18
+        env:
+          POSTGRES_USER: lineworker
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: lineworker
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U lineworker -d lineworker"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --frozen
+        working-directory: lineworker/server
+      - run: uv run alembic upgrade head
+        working-directory: lineworker/server
+        env:
+          DATABASE_URL: postgresql://lineworker:ci@localhost:5432/lineworker
+      # DB-backed verification (Story 1.2+): seed counts, scope rows,
+      # AD-4 grants, downgrade→upgrade round trip.
+      - run: uv run pytest tests/test_schema_seed.py tests/test_no_derived_columns.py
+        working-directory: lineworker/server
+        env:
+          MIGRATION_TEST_DATABASE_URL: postgresql://lineworker:ci@localhost:5432/lineworker
+
+  e2e:
+    name: playwright story specs + smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: lineworker/e2e/package-lock.json
+      - run: npm ci
+        working-directory: lineworker/e2e
+      # Playwright transpiles specs with esbuild and never type-checks them,
+      # so tsc is the only thing that reads e2e/tsconfig.json. Runs before the
+      # stack build so a type error fails in seconds, not after a 15-min image.
+      - run: npm run typecheck
+        working-directory: lineworker/e2e
+      - run: docker compose -f deploy/compose.e2e.yaml up -d --build --wait
+        timeout-minutes: 15
+      - run: npx playwright install --with-deps chromium
+        working-directory: lineworker/e2e
+      # PR runs: the PR's declared story spec(s) + the @smoke set (AD-15).
+      # Story keys are derived from the branch name and PR labels and only
+      # count when a matching spec file exists; if none is derivable the
+      # FULL suite runs instead — the gate can narrow, never go vacuous.
+      # Story-tag grep is anchored (\b) so @story:1-1 never matches 1-10.
+      - name: derive story grep (PR)
+        if: github.event_name == 'pull_request'
+        id: story
+        working-directory: lineworker/e2e
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ' ') }}
+        run: |
+          candidates=$(printf '%s %s' "$HEAD_REF" "$PR_LABELS" | grep -oE '[0-9]+-[0-9]+' | sort -u || true)
+          keys=""
+          for k in $candidates; do
+            if ls stories/"$k"-*.spec.ts >/dev/null 2>&1; then keys="$keys $k"; fi
+          done
+          if [ -n "$keys" ]; then
+            pattern=""
+            for k in $keys; do pattern="${pattern}@story:${k}\\b|"; done
+            echo "grep=${pattern}@smoke\\b" >> "$GITHUB_OUTPUT"
+            echo "mode=story" >> "$GITHUB_OUTPUT"
+            echo "Derived story keys:$keys"
+          else
+            echo "mode=full" >> "$GITHUB_OUTPUT"
+            echo "No story key derivable from branch/labels — running the FULL e2e suite."
+          fi
+      - name: run story + smoke specs (PR)
+        if: github.event_name == 'pull_request' && steps.story.outputs.mode == 'story'
+        run: npx playwright test --grep "${{ steps.story.outputs.grep }}"
+        working-directory: lineworker/e2e
+      - name: run full e2e suite (main / PR fallback)
+        if: github.event_name == 'push' || (github.event_name == 'pull_request' && steps.story.outputs.mode == 'full')
+        run: npx playwright test
+        working-directory: lineworker/e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: lineworker/e2e/playwright-report
+      - run: docker compose -f deploy/compose.e2e.yaml down -v
+        if: always()

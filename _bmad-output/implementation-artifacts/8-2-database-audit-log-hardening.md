@@ -30,7 +30,7 @@ so that operational visibility never becomes a leak.
   - [ ] Runtime test: capture structlog output while exercising representative flows (an audited claim edit, a copilot run against the test stub, a purge job summary) and assert no seeded PHI values (worker names, ICD-10 codes, wage figures, prompt/model text) appear in any emitted line
   - [ ] Add a structlog processor as a belt-and-braces guard (drop/redact keys not on the allowlist) — the lint is the gate, the processor is defense in depth
 - [ ] Task 4: DB role-grant verification (AC: 1)
-  - [ ] Automated pytest asserting, from `information_schema`/`pg_catalog`: the application DB role holds INSERT-only on `audit_event` (no UPDATE/DELETE/TRUNCATE), and the `audit_redactor` role (Story 8.1) holds exactly UPDATE on `before`/`after` plus the RLS-scoped DELETE — nothing else, no other role holds writes on `audit_event`
+  - [ ] Automated pytest asserting, from `information_schema`/`pg_catalog`: the application DB role holds INSERT-only on `audit_event` (no UPDATE/DELETE/TRUNCATE), and the `audit_redactor` role (Story 8.1) holds exactly SELECT (which the qualified UPDATE/DELETE cannot run without), UPDATE on `before`/`after`, plus the RLS-scoped DELETE — nothing else, no other role holds writes on `audit_event`
   - [ ] Run this assertion in CI against the fresh-migration DB so grant drift in any future migration fails the gate
 - [ ] Task 5: TLS at ingress and to Postgres (AC: 3)
   - [ ] Prod compose nginx: TLS server block (cert/key mounted from the host secret store per the config conventions — never in VCS), HTTP→HTTPS redirect, keeping the existing `/api` proxy + SSE settings intact; dev profile stays plain HTTP (Story 1.1 decision)

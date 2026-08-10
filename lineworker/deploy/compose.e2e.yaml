@@ -1,0 +1,70 @@
+# LINEWORKER e2e profile (AD-15) — identical topology to dev, but:
+#   * DB is ephemeral (no volume) and gets the e2e-only owner role that the
+#     per-spec reset runs under (the runtime app role must not be able to
+#     drop schema once AD-4 grants land in Story 1.2+).
+#   * web publishes 8081 so an e2e stack can run beside a dev stack.
+#
+#   docker compose -f deploy/compose.e2e.yaml up -d --build --wait
+#
+# model-stub: added by Story 6.1 — a deterministic Ollama-API-compatible
+# container serving scripted chat/embedding responses. Placeholder only.
+
+name: lineworker-e2e
+
+services:
+  web:
+    build:
+      context: ..
+      dockerfile: web/Dockerfile
+    ports:
+      - "8081:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:80/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  api:
+    build:
+      context: ../server
+    environment:
+      DATABASE_URL: postgresql://lineworker_app:lineworker_app_e2e@postgres:5432/lineworker
+      ALEMBIC_DATABASE_URL: postgresql://lineworker:lineworker_e2e_stack@postgres:5432/lineworker
+      APP_DB_PASSWORD: lineworker_app_e2e
+      ENV: e2e
+      LOG_LEVEL: INFO
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  postgres:
+    image: pgvector/pgvector:pg18
+    # Ephemeral: no volume. Internal network only, no published port.
+    environment:
+      POSTGRES_USER: lineworker
+      POSTGRES_PASSWORD: lineworker_e2e_stack
+      POSTGRES_DB: lineworker
+    volumes:
+      - ./e2e-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lineworker -d lineworker"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # model-stub:   (Story 6.1 — do not add before then)
