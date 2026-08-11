@@ -243,7 +243,9 @@ export const CLAIM_QUEUE = {
       settled: stageGroup([]),
     },
     rulesVersion: 1,
+    thresholdsVersion: 1,
     unfilteredTotal: 3,
+    filteredTotal: 3,
   },
 };
 
@@ -263,14 +265,22 @@ export const CLAIM_QUEUE_EMPTY = {
       settled: stageGroup([]),
     },
     rulesVersion: 1,
+    thresholdsVersion: 1,
     unfilteredTotal: 0,
+    filteredTotal: 0,
   },
 };
 
-/** No group matched, but the handler has 45 claims — a filter miss. */
+/**
+ * No group matched, but the handler has 45 claims — a filter miss.
+ *
+ * `filteredTotal: 0` beside `unfilteredTotal: 45` is the whole distinction,
+ * and it is the server's to make: the groups are byte-identical to
+ * `CLAIM_QUEUE_EMPTY`'s.
+ */
 export const CLAIM_QUEUE_NO_MATCH = {
   status: 200,
-  body: { ...CLAIM_QUEUE_EMPTY.body, unfilteredTotal: 45 },
+  body: { ...CLAIM_QUEUE_EMPTY.body, unfilteredTotal: 45, filteredTotal: 0 },
 };
 
 /** A treatment group with more claims than its page — "Show more" appears. */
@@ -284,7 +294,9 @@ export const CLAIM_QUEUE_PAGED = {
       settled: stageGroup([]),
     },
     rulesVersion: 1,
+    thresholdsVersion: 1,
     unfilteredTotal: 2,
+    filteredTotal: 2,
   },
 };
 
@@ -299,7 +311,9 @@ export const CLAIM_QUEUE_PAGE_TWO = {
       settled: stageGroup([]),
     },
     rulesVersion: 1,
+    thresholdsVersion: 1,
     unfilteredTotal: 2,
+    filteredTotal: 2,
   },
 };
 

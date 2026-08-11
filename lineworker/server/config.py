@@ -6,10 +6,32 @@ Every runtime knob — now and in every later story — is a field on
 
 from enum import StrEnum
 from functools import lru_cache
+from typing import Any
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
+
+# Knobs that were real fields once and are not any more. `extra="ignore"` is
+# right for a stray variable nobody meant — and exactly wrong for one an
+# operator set on purpose, which would be dropped in silence and leave the
+# app running on a default they thought they had overridden. That is the
+# failure `deploy/compose.yaml`'s env_file comment exists to describe; it
+# would be a poor joke to reintroduce it while retiring a setting.
+#
+# Story 2.1 moved the risk bands into the `derivation_thresholds` JDM
+# document, where a change is a new document version rather than an
+# environment variable.
+RETIRED_SETTINGS: dict[str, str] = {
+    "risk_high_min": (
+        "the severity bands moved to the derivation_thresholds rule document "
+        "in Story 2.1; seed a new document version instead"
+    ),
+    "risk_med_min": (
+        "the severity bands moved to the derivation_thresholds rule document "
+        "in Story 2.1; seed a new document version instead"
+    ),
+}
 
 
 class Env(StrEnum):
@@ -37,6 +59,29 @@ def _with_driver(url: str, driver: str) -> str:
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_retired_settings(cls, data: Any) -> Any:
+        """Fail loudly on a knob that used to exist.
+
+        `mode="before"` because this is the only point at which the retired
+        name is still visible: `extra="ignore"` drops it a moment later, and
+        a dropped override is indistinguishable from one that was never set.
+        Refusing at startup means an upgrade that would have silently
+        reverted a tuned band stops instead, naming where the value went.
+        """
+        if not isinstance(data, dict):
+            return data
+        retired = sorted(
+            f"{name.upper()} ({reason})"
+            for key in data
+            if (name := str(key).lower()) in RETIRED_SETTINGS
+            for reason in [RETIRED_SETTINGS[name]]
+        )
+        if retired:
+            raise ValueError("retired setting(s) present in the environment: " + "; ".join(retired))
+        return data
 
     # Runtime connection — the app role (no DDL rights from Story 1.2 on).
     database_url: str = "postgresql://lineworker:lineworker@localhost:5432/lineworker"

@@ -60,7 +60,10 @@ export function useClaimQueue(filter: QueueFilter) {
  *
  * `enabled` is the caller's expansion state. Without it every mounted group
  * with a `nextCursor` would fetch its second page on load, which is exactly
- * the eagerness pagination exists to avoid.
+ * the eagerness pagination exists to avoid. A **disabled** call still
+ * subscribes to the entry and reads whatever is in it — which is how
+ * `useLoadedClaimIds` below looks at the pages the queue pane fetched
+ * without fetching anything itself.
  */
 export function useStageGroupPages(
   filter: QueueFilter,
@@ -69,7 +72,7 @@ export function useStageGroupPages(
   enabled: boolean,
 ) {
   return useInfiniteQuery({
-    queryKey: queryKeys.claims.queuePages(filter, stage),
+    queryKey: queryKeys.claims.queuePages(filter, stage, firstCursor),
     initialPageParam: firstCursor,
     queryFn: async ({ pageParam }): Promise<StageGroup> => {
       const { data } = await api.GET("/claims/queue", {
@@ -84,4 +87,70 @@ export function useStageGroupPages(
     enabled: enabled && firstCursor !== null,
     staleTime: 15_000,
   });
+}
+
+/**
+ * What the workspace is currently holding, for one filter — the claim ids on
+ * screen, and whether that is the whole book.
+ *
+ * The queue pane and the detail pane have to agree about this or they tell a
+ * handler two different things about one claim (AD-9's "three states of one
+ * claim"): the card is highlighted in the list on the left while the pane on
+ * the right says the claim is not shown. Reading the base payload alone got
+ * that wrong the moment anyone clicked "Show more" — the revealed claim was
+ * rendered by the queue and unknown to the detail.
+ *
+ * So this reads the *same cache entries the pages queries write*, keyed the
+ * same way, with `enabled: false` throughout — no request is made here, only
+ * a subscription, so the answer moves when a page lands. The four calls are
+ * spelled out rather than mapped over `STAGE_ORDER` because they are hooks
+ * and their order has to be a property of the source, not of an array.
+ *
+ * `complete` is the other half of the answer and the reason this returns a
+ * pair. "Not in the ids" is only evidence of absence when every group has
+ * been read to its end; a group with a page nobody has asked for yet leaves
+ * the claim unaccounted for, not missing.
+ */
+export interface LoadedClaims {
+  ids: ReadonlySet<string>;
+  complete: boolean;
+}
+
+export function useLoadedClaimIds(
+  queue: ClaimQueue | undefined,
+  filter: QueueFilter,
+  expandedStages: ReadonlySet<Stage>,
+): LoadedClaims {
+  const cursorOf = (stage: Stage) => queue?.groups[stage].nextCursor ?? null;
+  const pages = {
+    intake: useStageGroupPages(filter, "intake", cursorOf("intake"), false),
+    investigation: useStageGroupPages(filter, "investigation", cursorOf("investigation"), false),
+    treatment: useStageGroupPages(filter, "treatment", cursorOf("treatment"), false),
+    settled: useStageGroupPages(filter, "settled", cursorOf("settled"), false),
+  };
+
+  const ids = new Set<string>();
+  let complete = queue !== undefined;
+  for (const stage of STAGE_ORDER) {
+    if (!queue) break;
+    for (const card of queue.groups[stage].items) ids.add(card.claimId);
+
+    // Only a group the handler actually expanded contributes its pages —
+    // the same condition `StageGroup` renders under. A cache entry left
+    // behind by an expansion that has since expired is not on screen, and
+    // counting it here would re-open the disagreement from the other side.
+    const expanded = expandedStages.has(stage);
+    const group = pages[stage];
+    if (expanded) {
+      for (const page of group.data?.pages ?? []) {
+        for (const card of page.items) ids.add(card.claimId);
+      }
+    }
+
+    const exhausted =
+      cursorOf(stage) === null || (expanded && group.isSuccess && !group.hasNextPage);
+    if (!exhausted) complete = false;
+  }
+
+  return { ids, complete };
 }

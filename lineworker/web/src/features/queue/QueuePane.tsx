@@ -19,20 +19,30 @@
  *   current filter. Only reachable with a filter applied.
  * - *No claims in this stage* — per group, owned by `StageGroup`.
  *
- * **Which of the first two applies is the server's answer, not a guess.**
- * `unfilteredTotal` is the size of the caller's scoped book before the
- * filter, and it is the only thing that separates the two: "the groups are
- * empty and the filter is `all`" is not the same fact, and a handler with
- * an empty book who had picked a filter was being told their filter was
- * wrong — the exact mis-diagnosis this note claims to avoid.
+ * **Both numbers are the server's answer, not a guess.** `unfilteredTotal`
+ * is the size of the caller's scoped book before the filter and
+ * `filteredTotal` is what the filter left; the pair is what separates the
+ * two sentences. "The groups are empty and the filter is `all`" is not the
+ * same fact, and a handler with an empty book who had picked a filter was
+ * being told their filter was wrong — the exact mis-diagnosis this note
+ * claims to avoid. Neither number is computed here: the four group totals
+ * used to be summed in this file, which is a derivation over a payload and
+ * the thing AD-1 keeps server-side.
+ *
+ * **One sentence, not four empty sections.** When nothing is on screen the
+ * pane replaces the whole list with a single line rather than rendering
+ * four "No claims in this stage." repetitions under four zero chips. AC 1's
+ * "four sections with counts" describes the populated case; NFR-3 asks for
+ * three *distinguishable* messages, and stacking the stage message four
+ * times says the same thing four times without answering which of the
+ * three situations the handler is in. `QueuePane.test.tsx` asserts the
+ * collapse so it reads as a decision rather than an oversight.
  *
  * (`GlossaryPanel` makes the same ordering argument for the same reason: a
  * successful, empty response must never be reported as "your search found
  * nothing".)
  */
-import { useMemo } from "react";
-
-import type { ClaimQueue, QueueFilter } from "@/api/claims";
+import type { ClaimQueue, QueueFilter, Stage } from "@/api/claims";
 import { STAGE_ORDER, useClaimQueue } from "@/api/claims";
 
 import { FILTER_OPTIONS, FilterSelect } from "./FilterSelect";
@@ -47,11 +57,6 @@ export function firstClaimIdOf(queue: ClaimQueue | undefined): string | null {
     if (first) return first.claimId;
   }
   return null;
-}
-
-function totalOf(queue: ClaimQueue | undefined): number {
-  if (!queue) return 0;
-  return STAGE_ORDER.reduce((sum, stage) => sum + queue.groups[stage].total, 0);
 }
 
 function CardSkeleton() {
@@ -71,18 +76,27 @@ function CardSkeleton() {
 interface QueuePaneProps {
   filter: QueueFilter;
   onFilterChange: (filter: QueueFilter) => void;
+  expandedStages: ReadonlySet<Stage>;
+  onExpandStage: (stage: Stage) => void;
+  onCollapseStage: (stage: Stage) => void;
 }
 
-export function QueuePane({ filter, onFilterChange }: QueuePaneProps) {
+export function QueuePane({
+  filter,
+  onFilterChange,
+  expandedStages,
+  onExpandStage,
+  onCollapseStage,
+}: QueuePaneProps) {
   const queue = useClaimQueue(filter);
   const firstClaimId = firstClaimIdOf(queue.data);
   const { selectedClaimId, select } = useSelectedClaim(firstClaimId);
 
-  const total = useMemo(() => totalOf(queue.data), [queue.data]);
-  const filtered = filter !== "all";
-  // The server's count of the scoped book before the filter. Undefined only
-  // while the query has not answered, where neither empty message renders.
+  // Both counts arrive on the wire. `?? 0` is a default for "the query has
+  // not answered", which is a state where neither empty message renders.
+  const total = queue.data?.filteredTotal ?? 0;
   const inScope = queue.data?.unfilteredTotal ?? 0;
+  const filtered = filter !== "all";
   const emptyBook = inScope === 0;
 
   // One line, spoken once, when the list changes under a screen reader.
@@ -148,6 +162,9 @@ export function QueuePane({ filter, onFilterChange }: QueuePaneProps) {
             stage={stage}
             group={queue.data.groups[stage]}
             filter={filter}
+            expanded={expandedStages.has(stage)}
+            onExpand={onExpandStage}
+            onCollapse={onCollapseStage}
             selectedClaimId={selectedClaimId}
             onSelect={select}
           />

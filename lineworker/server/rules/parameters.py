@@ -20,13 +20,27 @@ once and call many times.
 happens when the document is read, which is the moment the numbers actually
 arrive. Nothing else moved: the check is the same check, in the tier that
 owns the numbers.
+
+**What "validated" has to mean here.** A rule document is data an operator
+edits, so every reader below refuses three separate things: a parameter of
+the wrong *type* (`_number`, `_integer`, `_status_set`), a parameter outside
+the *range* its consumer can use (`__post_init__`), and — for the enum-valued
+one — a member that names nothing. Each refusal names the document, its
+version and the offending value, because a rules migration goes out without
+a code review of the tier that consumes it, and "riskHighMin must be between
+0 and 100" is the difference between a five-minute fix and a portfolio that
+silently bands every claim `low`. This is the first JDM document; the shape
+of these checks is the precedent the later ones copy.
 """
 
+import math
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from data.models.enums import ClaimStatus
 
 # Submodule names rather than `from rules import engine`: the package
 # `__init__` re-exports both modules, so binding through it would make this
@@ -51,6 +65,16 @@ def _number(document: LoadedDocument, result: dict[str, Any], key: str) -> float
             f"{document.key} v{document.version} has no numeric {key!r} "
             f"(got {value!r}) — the document and its parameter block disagree"
         )
+    # NaN and ±Infinity are JSON that `json.loads` accepts and arithmetic
+    # does not: `int(inf)` is an `OverflowError`, not a `ValueError`, so
+    # without this the failure would surface as a 500 from whichever caller
+    # happened to convert it rather than as the typed error every other
+    # malformed parameter produces here.
+    if not math.isfinite(value):
+        raise RuleParameterError(
+            f"{document.key} v{document.version} gives {key!r} as {value!r}, "
+            "which is not a finite number"
+        )
     return float(value)
 
 
@@ -62,6 +86,46 @@ def _integer(document: LoadedDocument, result: dict[str, Any], key: str) -> int:
             "which is not a whole number"
         )
     return int(value)
+
+
+def _status_set(
+    document: LoadedDocument, result: dict[str, Any], key: str
+) -> frozenset[ClaimStatus]:
+    """A document-authored list of `ClaimStatus` values, checked member by member.
+
+    The first enum-valued parameter in the rules tier, so it sets the shape:
+    a JSON array of the *wire* strings (`"ch_assessment_process"`, never the
+    display text), read into a `frozenset` of the enum, with every member
+    resolved here rather than compared as a string downstream.
+
+    Why resolve rather than compare: a scorer written against raw strings
+    treats a typo as "this status never matches" — a rule that silently
+    stops firing, with the queue still sorting and every test that does not
+    happen to use that status still green. Resolving turns the same typo
+    into one refusal, before a claim is scored, naming the value.
+
+    An empty list is accepted: "no status counts as pending approval" is a
+    legitimate way to switch the term off from the document, which is the
+    whole point of the parameter being here. A duplicate is accepted too —
+    it is a set, and a document repeating a member said nothing new.
+    """
+    value = result.get(key)
+    if not isinstance(value, list):
+        raise RuleParameterError(
+            f"{document.key} v{document.version} has no list {key!r} "
+            f"(got {value!r}) — the document and its parameter block disagree"
+        )
+    statuses: set[ClaimStatus] = set()
+    for member in value:
+        try:
+            statuses.add(ClaimStatus(member))
+        except ValueError as exc:
+            raise RuleParameterError(
+                f"{document.key} v{document.version} lists {member!r} in {key!r}, "
+                f"which is not a claim status; the statuses are "
+                f"{sorted(status.value for status in ClaimStatus)}"
+            ) from exc
+    return frozenset(statuses)
 
 
 @dataclass(frozen=True)
@@ -103,6 +167,15 @@ class DerivationThresholds:
                 raise RuleParameterError(
                     f"{name} must be between 0 and 100 (severity_score's range), got {bound}"
                 )
+        # The same argument for `fraud_score`, which is also a 0–100 column:
+        # `siuFraudScoreMin: 200` refers no claim at all for SIU review, and
+        # a queue where the SIU filter matches nothing and the `siuReview`
+        # term never fires looks exactly like a quiet portfolio.
+        if not 0 <= self.siu_fraud_score_min <= 100:
+            raise RuleParameterError(
+                "siuFraudScoreMin must be between 0 and 100 (fraud_score's range), "
+                f"got {self.siu_fraud_score_min}"
+            )
         # Story 1.4's `_bands_must_not_overlap`, in its new home. An
         # inverted pair puts scores in two bands at once and the derivation
         # reads them in order, so it would silently answer "high" for
@@ -148,6 +221,12 @@ class PriorityWeights:
     many carry the priority marker are operational tuning of the same
     worklist rule, and AD-8 says a rule element lives in one tier. Putting
     them in `Settings` would split one rule across two.
+
+    `pending_approval_statuses` is here for the same reason, and it is the
+    one parameter that is not a number. The +25 weight and *which statuses
+    earn it* are one rule element; leaving the set in Python while its
+    weight sat in the document meant half the rule could be retuned by an
+    operator and the other half needed a deploy. Both halves are now data.
     """
 
     version: int
@@ -155,6 +234,7 @@ class PriorityWeights:
     siu_review: float
     rtw_blocked: float
     pending_approval: float
+    pending_approval_statuses: frozenset[ClaimStatus]
     payment_due: float
     surgery: float
     severity_factor: float
@@ -174,6 +254,23 @@ class PriorityWeights:
         # for ever: the queue would render nothing and never stop asking.
         if self.page_limit < 1:
             raise RuleParameterError(f"pageLimit must be at least 1, got {self.page_limit}")
+        # The two *factors* multiply a magnitude that only ever grows, so a
+        # negative one inverts the ordering rather than merely re-weighting
+        # it: the worst-injured claim would sink below the least, and the
+        # queue would still look perfectly well sorted. Deliberately not a
+        # blanket ban on negative parameters — `settledPenalty` is negative
+        # by design (it is added, not subtracted, so the document owns the
+        # sign), and refusing every negative would forbid the one weight
+        # that has to be one.
+        for name, factor in (
+            ("severityFactor", self.severity_factor),
+            ("daysOpenFactor", self.days_open_factor),
+        ):
+            if factor < 0:
+                raise RuleParameterError(
+                    f"{name} must not be negative ({factor}) — a negative factor inverts "
+                    "the ordering it is meant to weight"
+                )
 
     @classmethod
     def of(cls, document: LoadedDocument, result: dict[str, Any]) -> "PriorityWeights":
@@ -183,6 +280,7 @@ class PriorityWeights:
             siu_review=_number(document, result, "siuReview"),
             rtw_blocked=_number(document, result, "rtwBlocked"),
             pending_approval=_number(document, result, "pendingApproval"),
+            pending_approval_statuses=_status_set(document, result, "pendingApprovalStatuses"),
             payment_due=_number(document, result, "paymentDue"),
             surgery=_number(document, result, "surgery"),
             severity_factor=_number(document, result, "severityFactor"),

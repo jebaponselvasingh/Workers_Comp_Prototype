@@ -7,6 +7,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { createQueryClient } from "@/api/queryClient";
 import {
   CLAIM_QUEUE,
+  CLAIM_QUEUE_PAGE_TWO,
   CLAIM_QUEUE_PAGED,
   ME_HANDLER,
   type StubRoutes,
@@ -88,6 +89,53 @@ test("a claim behind a Show more is not called absent either", async () => {
 
   expect(await screen.findByTestId("detail-unlisted")).toHaveTextContent("WC-20044");
   expect(screen.queryByTestId("detail-unknown")).not.toBeInTheDocument();
+});
+
+test("a claim revealed by Show more stops being unlisted", async () => {
+  // The other half of the test above, and the state it never reached. The
+  // shell read the base query's pages only, so a claim the queue had just
+  // rendered — highlighted, clickable, three inches to the left — was still
+  // reported here as "not in the part of your caseload shown". One claim,
+  // two answers, on screen at once (AD-9).
+  renderShell(
+    {
+      claimsQueue: (url) => (url.includes("cursor=") ? CLAIM_QUEUE_PAGE_TWO : CLAIM_QUEUE_PAGED),
+    },
+    "/workspace?claim=WC-20044",
+  );
+  expect(await screen.findByTestId("detail-unlisted")).toHaveTextContent("WC-20044");
+
+  await userEvent.click(screen.getByTestId("queue-group-treatment-more"));
+
+  // The card is now in the queue…
+  await waitFor(() =>
+    expect(
+      screen.getAllByTestId("queue-card").find((card) => card.dataset.claimId === "WC-20044"),
+    ).toHaveAttribute("aria-current", "true"),
+  );
+  // …and the pane beside it agrees.
+  expect(screen.getByTestId("detail-selected")).toHaveTextContent("WC-20044");
+  expect(screen.queryByTestId("detail-unlisted")).not.toBeInTheDocument();
+});
+
+test("a filter change forgets an expansion in both panes at once", async () => {
+  // The consistency the shared expansion state buys. After a filter change
+  // the accumulated pages are still in the cache; the queue stops rendering
+  // them, and the detail pane has to stop counting them, or the two are out
+  // of step again in the opposite direction.
+  renderShell({
+    claimsQueue: (url) => (url.includes("cursor=") ? CLAIM_QUEUE_PAGE_TWO : CLAIM_QUEUE_PAGED),
+  });
+  await waitFor(() => expect(screen.getByTestId("queue-group-treatment-more")).toBeInTheDocument());
+  await userEvent.click(screen.getByTestId("queue-group-treatment-more"));
+  await waitFor(() => expect(screen.getAllByTestId("queue-card")).toHaveLength(2));
+
+  await userEvent.click(screen.getByTestId("queue-filter"));
+  await userEvent.click(await screen.findByTestId("queue-filter-option-litigation"));
+  await userEvent.click(screen.getByTestId("queue-filter"));
+  await userEvent.click(await screen.findByTestId("queue-filter-option-all"));
+
+  await waitFor(() => expect(screen.getAllByTestId("queue-card")).toHaveLength(1));
 });
 
 test("a queue that failed to load is an unchecked claim, not a missing one", async () => {

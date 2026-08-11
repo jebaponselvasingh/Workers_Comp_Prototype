@@ -49,6 +49,48 @@ so that I always work the highest-risk claim first.
   - [x] `@smoke` happy path: handler logs in → queue renders 4 stage groups over seeded data → first claim auto-selected → pick a filter → list re-renders filtered → click a card → selection highlight moves
   - [x] Additional tests: empty-stage state visible for a persona/filter combination that yields one; 🔺 marker present on a known high-priority seeded claim; scoped handler never sees an out-of-scope claim ID
 
+### Review Findings
+
+Three-layer code review, 2026-08-11 (Blind Hunter · Edge Case Hunter · Acceptance Auditor), against `e889089..b4a5494`. Severity in brackets. The auditor found 5 of 6 ACs met and AC 4 partially met; nothing was found unmet.
+
+**Decisions taken (Jeba, 2026-08-11)** — each resolved to a patch. All 26 patch items below were applied on 2026-08-11 (second review pass). One item is partially complete and says so: the e2e suite now covers the collapse and filter-miss states, but the **empty-book** state remains Vitest-only, because every seeded persona has claims (the smallest, Fatima, has 4) and reaching it would need either a Story 1.2 seed change — which moves the `== 10` persona assertions in `test_schema_seed.py` and `test_auth.py` — or an HTTP stub, which the e2e suite refuses on principle.
+
+- [x] [Review][Patch] `[medium]` **Move the pending-approval status set into the JDM document.** `priority_weights.jdm.json` carries the weight `pendingApproval: 25`, but *which* statuses count is `PENDING_APPROVAL_STATUSES = frozenset({initial, ch_assessment_process})` in `services/worklist/priority.py:116` — a code change, not a document version, contrary to Task 2 and AD-8's one-tier rule. **Ruling:** the status set belongs in the document. The parameter block gains a list-of-strings field validated against the `ClaimStatus` enum at the boundary; this is the first JDM document, so that shape is the precedent every later one copies. `priority_score`'s "free of every constant it uses" docstring becomes true. — done: `pendingApprovalStatuses` added to the committed document and its 0009 seed (edited in place, the story being unreleased); `rules/parameters._status_set` resolves every member against `ClaimStatus` and refuses an unknown one by name; `tests/test_rule_parameters.py` covers the shape.
+- [x] [Review][Patch] `[medium]` **Publish `filteredTotal` beside `unfilteredTotal`.** — done: the payload carries `filteredTotal` (and `thresholdsVersion`); `QueuePane.totalOf` is gone, `StageGroup`'s `group.total - items.length` is gone with the "Show more (N)" count, and `total`/`unfilteredTotal`/`filteredTotal`/`nextCursor` are watched fields in the `noDerivation` guard.
+- [x] [Review][Patch] `[low]` **Keep the single sentence in the empty and filter-miss states.** — done: two Vitest cases assert the collapse is deliberate (no `queue-group-*` sections render), an e2e case reaches the filter-miss state against the real stack, and the Dev Notes record the AC-1 wording below.
+
+- [x] [Review][Patch] `[medium]` The cursor's two version guards are unreachable on the production path — fixed: the rule documents are resolved at `utc_today()` (or an explicit `as_of`), and the cursor's date is used only to age `days_open`. `test_claims_queue.test_a_cursor_ranked_by_a_superseded_document_is_refused` inserts a real v2 and gets the 400.
+- [x] [Review][Patch] `[medium]` A cursor naming an `as_of` before migration 0009's effective date raised `RuleDocumentMissing` → 500 — fixed: the document load no longer depends on the cursor's date, and `decode_cursor` additionally refuses a future date or one older than `MAX_CURSOR_AGE` (7 days).
+- [x] [Review][Patch] `[medium]` No test exercises a real JDM document change — fixed: `test_a_second_priority_weights_version_reranks_the_queue` inserts a genuine version 2 into `rule_document` and asserts the endpoint's ordering, marker and `rulesVersion` all move with no code change.
+- [x] [Review][Patch] `[medium]` `presenceOf` reads only the base query's first page — fixed: `useLoadedClaimIds` reads the same cache entries the pages queries write, and expansion state moved to `WorkspaceShell` (`useStageExpansion`) so both panes decide from one fact. Post-click state covered.
+- [x] [Review][Patch] `[medium]` The AC-2 guard scans less than it claims — fixed: recursive walk over `features/queue/` and `features/shell/`, a test asserting the scan reaches named files, the four count fields added, a `.reduce(` rule, and a single-pass stripper that removes whichever construct opens first.
+- [x] [Review][Patch] `[medium]` Retiring `RISK_HIGH_MIN`/`RISK_MED_MIN` reintroduced the silent-config failure the `compose.yaml` comment condemns: `extra="ignore"` dropped a deliberate override and left the app on 65/35 with nothing to indicate why. `config.py` now carries a `RETIRED_SETTINGS` map and a `mode="before"` validator that refuses a retired name and says where the setting went — `mode="before"` because that is the only moment the name is still visible. Four tests in `test_config.py`, including case-insensitivity and proof that unrelated unknown variables are still ignored. *(Applied by the orchestrator: this item was accidentally omitted from the patch agent's brief, which correctly reported it as not done.)*
+- [x] [Review][Patch] `[medium]` A refused cursor leaves a stage group unrecoverable — fixed: the error renders a *Reload this stage* button that removes the accumulated pages, collapses the group and invalidates the base queue query so a fresh first-page cursor arrives.
+- [x] [Review][Patch] `[medium]` `services/worklist/queue.py` has no pure unit tests — fixed: `tests/test_queue_assembly.py`, 37 cases with no `requires_db` — cursor round trip and property test, forged payloads, the `(-score, claim_id)` tie-break on a constructed tie, marker assignment, and the page/offset boundaries.
+- [x] [Review][Patch] `[medium]` The infinite-pages query key omits the first-page cursor — fixed: `queryKeys.claims.queuePages(filter, stage, firstCursor)`.
+- [x] [Review][Patch] `[low]` A forged cursor carrying `Infinity` — fixed: `ArithmeticError` added to the except tuple; covered at unit and endpoint level with a hand-built payload.
+- [x] [Review][Patch] `[low]` A forged cursor's `limit` is not bounded — fixed: `MIN_PAGE_LIMIT`/`MAX_PAGE_LIMIT` in `queue.py`, read by both `decode_cursor` and the route's `Query`.
+- [x] [Review][Patch] `[low]` `expandedFilter` remembers rather than expires — fixed: expansion is a set of stages reset by whoever changes the filter; the `A → B → A` case is a test.
+- [x] [Review][Patch] `[low]` `presenceOf` tests an optional field with strict `!== null` — fixed: the field is read through the shared `useLoadedClaimIds`, which normalises with `?? null` once.
+- [x] [Review][Patch] `[low]` `rulesVersion` reports only the weights version — fixed: `thresholdsVersion` published beside it, and the docstring says which is which.
+- [x] [Review][Patch] `[low]` `open_duration.py`'s opening docstring — fixed: "reconciles with **no** date in the record".
+- [x] [Review][Patch] `[low]` `priority_markers` spends a budget rather than checking positions — fixed by taking the other option: the descending precondition is now stated *and enforced* (`ValueError`), which makes the budget form and the prototype's positional `i<3` the same function. The divergence and the choice are recorded in the docstring and in `test_an_unsorted_sequence_is_refused_rather_than_marked`.
+- [x] [Review][Patch] `[low]` `siuFraudScoreMin` unbounded, non-finite parameters, negative factors — fixed in `rules/parameters.py`; `settledPenalty` stays legitimately negative and a test says so.
+- [x] [Review][Patch] `[low]` The 400 loses `Cache-Control: no-store` — fixed: carried on the `ProblemException`.
+- [x] [Review][Patch] `[low]` The e2e "three panes" test asserts two — fixed: `copilot-pane` asserted, with a note that the 1280×720 project viewport is exactly the `xl` breakpoint.
+- [x] [Review][Patch] `[low]` An e2e assertion comparing two oracle computations — fixed: re-labelled as the premise it is, with a page-touching conclusion (rendered ids equal the filtered oracle) beside it.
+- [x] [Review][Patch] `[low]` The e2e suite never collapses a group and never reaches the filter-miss or empty-book pane states — **partly done**: collapse and filter-miss are now e2e specs. The empty-book state is **not** reachable e2e — every seeded persona has claims, so it would need a Story 1.2 seed change (an eleventh `app_user`, which moves the persona-count assertions in `test_schema_seed.py` and `test_auth.py`) or an HTTP stub, which this spec file explicitly refuses. It stays covered by `QueuePane.test.tsx` and by `unfilteredTotal`'s server tests. Still exactly one `@smoke` test in the file.
+- [x] [Review][Patch] `[low]` `rules/engine.py`'s docstring is false at import time — fixed by rewording, not by breaking the chain: `priority.py` imports `PriorityWeights` from `rules/parameters.py`, which imports `rules/engine.py`, so `zen` and SQLAlchemy load at import however `RiskBand` is reached. The docstring now scopes its claim to call time and says so.
+- [x] [Review][Patch] `[low]` Accumulated minors — fixed: `STAGE_ICON`/`STAGE_LABEL` moved to `features/queue/stageLabels.ts` (which also clears the two `react-refresh` lint warnings), and `rules/engine.load` resolves its date once into `effective_on`.
+
+- [x] [Review][Defer] `[medium]` `/stats/topbar` now 500s whenever the rules tier does, and no test covers a migrated database whose `rule_document` rows are missing or not yet effective [server/api/routers/stats.py] — deferred, already recorded from the previous pass
+- [x] [Review][Defer] `[low]` `pageLimit` lives in the priority-weights document, so changing the queue's page size needs an Alembic migration and invalidates every outstanding cursor [server/rules/documents/priority_weights.jdm.json] — deferred, revisit when a second consumer needs it
+- [x] [Review][Defer] `[low]` Every "Show more" re-serialises the first page of all four groups and the client discards three of them [server/api/routers/claims.py] — deferred, pre-existing shape of the endpoint
+- [x] [Review][Defer] `[medium]` Every request reads, derives and scores the caller's entire scoped portfolio [server/services/worklist/queue.py] — deferred, already recorded from the previous pass
+- [x] [Review][Defer] `[low]` A compiled `ZenEngine` decision is held in a module-level `lru_cache` and shared across concurrent requests, and the `context` plumbing through the cache key is exercised by no test [server/rules/engine.py] — deferred
+- [x] [Review][Defer] `[low]` `uv.lock` was excluded from review, so the transitive dependency set `zen-engine==0.53.0` pulled in has not been looked at [server/uv.lock] — deferred
+- [x] [Review][Defer] `[low]` The e2e oracle resolves "today" more than once within a run, so a midnight straddle can make its own sort comparator inconsistent [lineworker/e2e/fixtures/seed.ts] — deferred, already recorded from the previous pass
+
 ## Dev Notes
 
 ### What this story is — and is not
@@ -56,6 +98,21 @@ so that I always work the highest-risk claim first.
 This story delivers the left pane of the handler 3-pane layout plus the server plumbing behind it: derivation registrations, the priority JDM document, the worklist scorer, and the queue endpoint. It also owns the **selection contract** (URL-held selected claim + auto-select-first). It does **not** build the detail pane — Story 2.2 renders the case header/overview against the selection this story establishes; until 2.2 lands, the center pane may be a minimal placeholder showing the selected claim ID. Inline editing is 2.3; the injury diagram 2.4; documents 2.5; photos 2.6. The copilot pane is Epic 6. The prototype (`docs/Workers_Comp_Prototype.html`) is a **design/behavior and DATA reference only — never a code source**; its `priorityScore`/`renderQ` JS informs behavior, none of it is ported as code.
 
 Batch-created story: at dev time, first skim the Dev Agent Records of all previously completed stories for learnings — this file predates them.
+
+### AC 1's "four sections" holds for the populated case
+
+The pane renders four collapsible stage sections with counts whenever there
+is anything to show. When there is not — an empty book, or a filter that
+matched nothing — it replaces all four with **one sentence** rather than
+stacking four "No claims in this stage." messages under four zero chips.
+
+That is a deliberate reading of NFR-3, which asks for three *distinguishable*
+messages: "no claims in your caseload", "no claims match this filter" and
+"no claims in this stage". Four repetitions of the third say nothing about
+which of the first two is true, and the first two are the ones a handler
+needs (one means "ask your supervisor", the other means "change the filter").
+`QueuePane.test.tsx` asserts the collapse in both states so it reads as a
+decision; the e2e spec reaches the filter-miss state against the real stack.
 
 ### Architecture compliance (binding ADs for this story)
 
@@ -131,6 +188,36 @@ Learnings worth carrying into 2.2–2.6 and Epic 5:
 - **Selection is a `?claim=WC-nnnn` search param on `/workspace`** — auto-select replaces, a click pushes, a blank value reads as absent, and a claim the payload cannot confirm is reported as unconfirmed rather than as missing. 2.2's detail pane should read `useSelectedClaimId()` rather than take a prop.
 - **CI trap:** the `migrations` job enumerates DB-backed test files by hand. A new DB-backed test that is not added to that list never runs in CI.
 
+Second review pass (2026-08-11), worth carrying forward:
+
+- **A rule element in one tier means the *whole* element.** `pendingApproval`
+  was a weight in the document and a `frozenset` in Python — half the rule
+  retunable by an operator, half needing a deploy. `pendingApprovalStatuses`
+  is the first non-numeric JDM parameter and its validator (resolve every
+  member against the enum at the boundary, name the document, the version
+  and the offending value) is the precedent later documents should copy.
+- **A cursor's recorded date must not choose the rules that read it.** The
+  version guards were tautologies for a whole story because the documents
+  were loaded effective on the cursor's own date. Documents resolve at
+  today's date; the cursor's date ages `days_open` and nothing else. If a
+  later story adds another versioned input to the ordering, it joins the
+  *compared* half of the cursor, not the reused half.
+- **A cursor is caller-supplied input.** It is base64, not a signature, so
+  every field is bounded in `decode_cursor` — including `limit`, which the
+  route caps and the cursor was quietly reusing past the cap.
+- **Expansion state belongs above both panes.** "Which groups did the
+  handler expand?" decides what the queue renders *and* what the detail pane
+  may say about the selected claim. Held inside `StageGroup` the two
+  disagreed about a claim that was on screen.
+- **The client computes no count.** `filteredTotal` joined `unfilteredTotal`
+  on the wire and the "Show more (N)" remainder was deleted rather than
+  moved: the server cannot know how many pages a client is holding, so there
+  is no honest number to send. `noDerivation.test.ts` now watches the count
+  fields and walks `features/shell/` too.
+- **`priority_markers` enforces its precondition.** Descending order is
+  checked, so the budget rule and the prototype's positional `i<3` coincide
+  and Epic 5's ungrouped top-30 cannot inherit an ambiguity.
+
 ### File List
 
 **New — server**
@@ -147,6 +234,8 @@ Learnings worth carrying into 2.2–2.6 and Epic 5:
 - `lineworker/server/services/worklist/queue.py`
 - `lineworker/server/tests/test_claims_queue.py`
 - `lineworker/server/tests/test_priority_score.py`
+- `lineworker/server/tests/test_queue_assembly.py`
+- `lineworker/server/tests/test_rule_parameters.py`
 - `lineworker/server/tests/test_rules_engine.py`
 
 **New — web / e2e**
@@ -159,7 +248,9 @@ Learnings worth carrying into 2.2–2.6 and Epic 5:
 - `lineworker/web/src/features/queue/QueuePane.tsx`
 - `lineworker/web/src/features/queue/StageGroup.tsx`
 - `lineworker/web/src/features/queue/noDerivation.test.ts`
+- `lineworker/web/src/features/queue/stageLabels.ts`
 - `lineworker/web/src/features/queue/useSelectedClaim.ts`
+- `lineworker/web/src/features/queue/useStageExpansion.ts`
 - `lineworker/web/src/features/shell/WorkspaceShell.test.tsx`
 
 **Changed**

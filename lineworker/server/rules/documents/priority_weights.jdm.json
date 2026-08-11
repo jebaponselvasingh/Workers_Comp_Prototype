@@ -1,7 +1,7 @@
 {
   "contentType": "application/vnd.gorules.decision",
   "name": "priority_weights",
-  "description": "Every constant the queue's priority score is built from (AD-8). The arithmetic that consumes them is services/worklist/priority.py; no weight, cap or threshold appears there.",
+  "description": "Every constant the queue's priority score is built from (AD-8). The arithmetic that consumes them is services/worklist/priority.py; no weight, cap, threshold or status set appears there. pendingApprovalStatuses is the weight's other half — which statuses count as awaiting a decision — and lives here rather than in Python so that re-scoping the term is a document version, not a deploy; rules/parameters.py validates every member against the ClaimStatus enum before a claim is scored.",
   "nodes": [
     {
       "id": "request",
@@ -35,6 +35,11 @@
             "id": "pendingApproval",
             "key": "pendingApproval",
             "value": "25"
+          },
+          {
+            "id": "pendingApprovalStatuses",
+            "key": "pendingApprovalStatuses",
+            "value": "['initial', 'ch_assessment_process']"
           },
           {
             "id": "paymentDue",

@@ -9,7 +9,14 @@ The weights below are **restated**, not imported from the seeded document.
 Same discipline as `seed_fixture.HIGH_RISK_MIN`: an expectation computed
 with the code under test agrees with it however wrong both are.
 `tests/test_rules_engine.py` is what ties these numbers back to the
-committed `priority_weights.jdm.json`.
+committed `priority_weights.jdm.json`, and
+`test_claims_queue.test_a_second_priority_weights_version_reranks_the_queue`
+is what proves a real document change moves a real queue.
+
+The pending-approval *status set* is restated here for the same reason as
+the numbers, and it is restated in the same place — inside `SEEDED_WEIGHTS`
+— because it is a parameter of the document like any other now, not a
+constant importable from the scorer.
 """
 
 from dataclasses import replace
@@ -23,7 +30,6 @@ from data.models.enums import ClaimStatus, Stage
 from rules.parameters import PriorityWeights
 from services.derivations import RiskBand
 from services.worklist.priority import (
-    PENDING_APPROVAL_STATUSES,
     QueueClaim,
     QueueFilter,
     QueueFlags,
@@ -38,6 +44,7 @@ SEEDED_WEIGHTS = PriorityWeights(
     siu_review=35,
     rtw_blocked=30,
     pending_approval=25,
+    pending_approval_statuses=frozenset({ClaimStatus.initial, ClaimStatus.ch_assessment_process}),
     payment_due=20,
     surgery=15,
     severity_factor=0.3,
@@ -122,14 +129,16 @@ def test_each_derived_flag_adds_exactly_its_weight(flag: str, expected: float) -
     assert score(BASELINE_CLAIM, flags) == expected
 
 
-@pytest.mark.parametrize("status", sorted(PENDING_APPROVAL_STATUSES))
+@pytest.mark.parametrize("status", sorted(SEEDED_WEIGHTS.pending_approval_statuses))
 def test_a_claim_awaiting_a_decision_adds_the_pending_approval_weight(
     status: ClaimStatus,
 ) -> None:
     assert score(replace(BASELINE_CLAIM, status=status), BASELINE_FLAGS) == 25.0
 
 
-@pytest.mark.parametrize("status", sorted(set(ClaimStatus) - PENDING_APPROVAL_STATUSES, key=str))
+@pytest.mark.parametrize(
+    "status", sorted(set(ClaimStatus) - SEEDED_WEIGHTS.pending_approval_statuses, key=str)
+)
 def test_every_other_status_adds_nothing(status: ClaimStatus) -> None:
     claim = replace(BASELINE_CLAIM, status=status)
     # `settled`/`settled_closed` are statuses, not stages: the −100 penalty
@@ -202,13 +211,21 @@ def test_the_settled_penalty_is_a_bias_and_not_an_absolute_floor() -> None:
 # --- the weights really are data (AD-8) ---------------------------------
 
 
-def test_a_document_with_different_weights_reorders_the_same_claims() -> None:
-    """The acceptance criterion, as a test: change the parameters, not the
-    code, and the ranking changes.
+def test_a_different_weight_block_reorders_the_same_claims() -> None:
+    """The scorer half of the acceptance criterion: change the parameters,
+    not the code, and the ranking changes.
 
     Two claims, one litigated and one with surgery. Under the seeded
-    weights litigation wins; under a fixture document that values surgery
-    more, surgery wins — with no code path different between the two runs.
+    weights litigation wins; under a block that values surgery more, surgery
+    wins — with no code path different between the two runs.
+
+    Deliberately **not** billed as "the acceptance criterion, as a test":
+    this constructs a `PriorityWeights` directly, so it proves the
+    arithmetic reads its parameters and nothing about the document →
+    parameters → score chain that produces them. The criterion is met by
+    `test_claims_queue.test_a_second_priority_weights_version_reranks_the_queue`,
+    which inserts a genuine version 2 into `rule_document` and re-requests
+    the endpoint. Both are worth having; only one of them is the criterion.
     """
     litigated = replace(BASELINE_CLAIM, claim_id="WC-0002", litigation_flag=True)
     surgical = replace(BASELINE_CLAIM, claim_id="WC-0003", surgery_required=True)
@@ -234,6 +251,11 @@ def test_no_weight_is_hardcoded_in_the_scorer() -> None:
         siu_review=0,
         rtw_blocked=0,
         pending_approval=0,
+        # Left populated on purpose: the claim below *is* pending approval,
+        # so the term fires and contributes its (zero) weight. Emptying the
+        # set would have switched the branch off instead of the weight, and
+        # a hardcoded `+ 25` beside it would have survived.
+        pending_approval_statuses=frozenset({ClaimStatus.initial}),
         payment_due=0,
         surgery=0,
         severity_factor=0,
@@ -281,19 +303,37 @@ def test_a_fourth_equally_high_claim_gets_no_marker() -> None:
 def test_the_threshold_is_strictly_greater() -> None:
     """Matching the prototype's `priorityScore(c)>30`. A claim sitting
     exactly on the threshold is not above it."""
-    assert priority_markers([30.0, 30.1], SEEDED_WEIGHTS) == [False, True]
+    assert priority_markers([30.1, 30.0], SEEDED_WEIGHTS) == [True, False]
 
 
 def test_a_group_with_nothing_above_the_threshold_carries_no_marker() -> None:
     assert priority_markers([29.0, 10.0, -100.0], SEEDED_WEIGHTS) == [False, False, False]
 
 
-def test_the_count_below_the_threshold_is_not_spent() -> None:
-    """The budget is spent on marked claims, not on inspected ones — so a
-    low-scoring claim in the middle cannot use up a marker the claims below
-    it would have had. (With a descending sort this cannot arise; the rule
-    is stated over a sequence, so it is asserted over one.)"""
-    assert priority_markers([90.0, 5.0, 80.0, 70.0], SEEDED_WEIGHTS) == [True, False, True, True]
+def test_an_unsorted_sequence_is_refused_rather_than_marked() -> None:
+    """The precondition, asserted instead of assumed.
+
+    `priority_markers` used to answer for any sequence, spending a budget on
+    marked claims rather than checking positions. Over a descending list
+    that is the prototype's `i<3 && score>30` exactly; over an unsorted one
+    the two rules diverge, and the old behaviour quietly picked one of them.
+    A caller handing this an unsorted list has a bug — the marker is a
+    statement about the top of a *ranked* list — so it is a `ValueError`
+    naming the two positions that disagree, not a plausible-looking answer.
+    """
+    with pytest.raises(ValueError, match="descending"):
+        priority_markers([90.0, 5.0, 80.0, 70.0], SEEDED_WEIGHTS)
+
+
+def test_equal_scores_are_a_descending_sequence() -> None:
+    """The check is `>`, not `>=`: a settled group where every claim pays
+    the same penalty is flat, sorted, and perfectly legitimate."""
+    assert priority_markers([50.0, 50.0, 50.0, 50.0], SEEDED_WEIGHTS) == [
+        True,
+        True,
+        True,
+        False,
+    ]
 
 
 def test_the_marker_parameters_are_data_like_every_other_weight() -> None:
@@ -306,7 +346,7 @@ def test_marking_returns_one_answer_per_score() -> None:
     """The queue zips this against its cards with `strict=True`; a length
     mismatch would be a silent misalignment of markers to claims."""
     assert len(priority_markers([], SEEDED_WEIGHTS)) == 0
-    assert len(priority_markers([1.0, 2.0, 3.0, 4.0], SEEDED_WEIGHTS)) == 4
+    assert len(priority_markers([4.0, 3.0, 2.0, 1.0], SEEDED_WEIGHTS)) == 4
 
 
 # --- properties (NFR-7) -------------------------------------------------

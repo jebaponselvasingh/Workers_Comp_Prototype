@@ -23,6 +23,8 @@
  */
 import type { ClaimCard as ClaimCardData, RiskBand, Stage } from "@/api/claims";
 
+import { STAGE_LABEL } from "./stageLabels";
+
 /** Severity band → dot colour, from the prototype's `.rdot` rules. */
 const RISK_DOT: Record<RiskBand, string> = {
   high: "bg-error",
@@ -42,14 +44,6 @@ const STAGE_PILL: Record<Stage, string> = {
   investigation: "bg-warn-soft text-warn",
   treatment: "bg-ok-soft text-ok",
   settled: "bg-surface-2 text-faint",
-};
-
-/** UI-owned labels for snake_case wire values (Enums convention). */
-const STAGE_LABEL: Record<Stage, string> = {
-  intake: "Intake",
-  investigation: "Investigation",
-  treatment: "Treatment",
-  settled: "Settled",
 };
 
 interface BadgeSpec {

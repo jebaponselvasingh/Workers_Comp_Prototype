@@ -246,24 +246,34 @@ export interface components {
         };
         /**
          * ClaimQueueResponse
-         * @description The queue, the rules version that ranked it, and the book behind it.
+         * @description The queue, the rules that ranked it, and the two totals behind it.
          *
-         *     `rulesVersion` is reported for the same reason the cursor carries it:
-         *     the ordering is only meaningful relative to a version of the
-         *     `priority_weights` document, and any conversation about "why is this
-         *     claim first" starts by establishing which weights answered.
+         *     **Both rule-document versions, not one.** `rulesVersion` names the
+         *     `priority_weights` version and `thresholdsVersion` names the
+         *     `derivation_thresholds` one. Reporting only the first was reporting half
+         *     the answer: the thresholds decide `risk`, `siuReview` and `rtwBlocked`,
+         *     which are *inputs* to every score in the payload, and the cursor already
+         *     records both for exactly that reason. Any conversation about "why is
+         *     this claim first" starts by establishing which documents answered.
          *
-         *     `unfilteredTotal` is how many claims the caller has in scope *before*
-         *     the filter — the number the four group totals sum to only when `filter`
-         *     is `all`. It exists so the pane can tell "no claims in your caseload"
-         *     from "no claims match this filter" (NFR-3) without holding an unfiltered
-         *     copy of the caseload to compare against, which is the client-side
-         *     superset AD-1 forbids.
+         *     **Both totals, and the SPA computes neither.** `unfilteredTotal` is how
+         *     many claims the caller has in scope *before* the filter; `filteredTotal`
+         *     is how many survived it. The second is the sum of the four group totals,
+         *     and it is sent anyway: a client that adds them up has re-implemented
+         *     "how big is this queue" in the browser, which is the derivation AD-1
+         *     keeps server-side and `noDerivation.test.ts` fails a build over. The pair
+         *     is what lets the pane tell "no claims in your caseload" from "no claims
+         *     match this filter" (NFR-3) without holding an unfiltered copy of the
+         *     caseload to compare against.
          */
         ClaimQueueResponse: {
+            /** Filteredtotal */
+            filteredTotal: number;
             groups: components["schemas"]["StageGroupsResponse"];
             /** Rulesversion */
             rulesVersion: number;
+            /** Thresholdsversion */
+            thresholdsVersion: number;
             /** Unfilteredtotal */
             unfilteredTotal: number;
         };

@@ -45,3 +45,23 @@ Items raised in review that were consciously deferred. Each carries the reason i
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-1-prioritized-filterable-claim-queue.md`
   summary: Both queue oracles resolve "today" independently of the server, so a test run that straddles midnight UTC disagrees with the stack by a day on every `days_open`, score, order and marker expectation.
   evidence: Real and acknowledged in `e2e/fixtures/seed.ts`'s docstring but not in `tests/seed_fixture.py`'s. The exposure is a few seconds per day, and the alternative — pinning a date the running stack does not share — trades a rare flake for a permanent fiction. Recorded because the honest fix is for the API to report the `asOf` it resolved and for both oracles to consume it, which is a small wire change better made when a second date-sensitive endpoint needs it.
+
+## Deferred from: code review of 2-1-prioritized-filterable-claim-queue (2026-08-11)
+
+Second review pass — three layers (adversarial, edge-case, acceptance audit) against `e889089..b4a5494`. Three items below restate deferrals already recorded from the first pass and are noted as such rather than duplicated in substance.
+
+- source_spec: `_bmad-output/implementation-artifacts/2-1-prioritized-filterable-claim-queue.md`
+  summary: `pageLimit` lives in the priority-weights JDM document, so changing the queue's default page size requires an Alembic migration seeding a new document version — and, because the cursor records the weights version, doing so invalidates every outstanding cursor.
+  evidence: Real and a consequence of an argument made deliberately (a rule element lives in one tier, and how many claims a page holds is worklist tuning). The cost was not priced when the placement was chosen: page size is a transport concern that operators tune far more often than they retune weights, and coupling the two means a routine paging change re-ranks nothing but invalidates every open queue. Revisit when a second consumer needs a page size — the honest split is probably `pageLimit` in config and the marker parameters in the document.
+
+- source_spec: `_bmad-output/implementation-artifacts/2-1-prioritized-filterable-claim-queue.md`
+  summary: Every "Show more" request re-computes and re-serialises the first page of all four stage groups, and the client keeps one and discards three.
+  evidence: Real. `useStageGroupPages`'s query function ends `return data!.groups[stage]`, and the endpoint's "every group is always the truth" rule — well argued for the initial load, since a response with three blank groups is indistinguishable from a caseload that has nothing in them — was never revisited for the paging path, where the same endpoint serves a fundamentally different request. At `pageLimit: 50` an incremental page can cost up to 200 fully-derived cards to deliver 50. Deferred rather than patched because the fix is a second response shape, and choosing between "a `groups` filter parameter" and "a separate per-group endpoint" is a contract decision that should be made once, with Story 5.4's top-30 list in view.
+
+- source_spec: `_bmad-output/implementation-artifacts/2-1-prioritized-filterable-claim-queue.md`
+  summary: A compiled `ZenEngine` decision object is held in a module-level `lru_cache` and shared across every concurrent request, and the `context` argument threaded through the evaluation cache key is exercised by no test.
+  evidence: Both real, both low-consequence today. Nothing in the change establishes that the pyo3 decision object is safe to evaluate concurrently; the evaluation is also synchronous on the event loop. The practical exposure is small because the evaluated result is itself cached, so a given `(key, version, content, context)` is evaluated once per process — but that is a property of the cache, not of the object, and a future decision-table document that varies by claim would evaluate per row and make both facts matter at once. The context plumbing exists solely for that future document; until one exists, the cache-key design its docstring defends is unverified.
+
+- source_spec: `_bmad-output/implementation-artifacts/2-1-prioritized-filterable-claim-queue.md`
+  summary: `uv.lock` was excluded from the review diff as a generated artifact, so the transitive dependency set that `zen-engine==0.53.0` introduced has not been read by anyone.
+  evidence: True by construction — both review passes excluded it. `zen-engine` is a Rust/pyo3 extension and the first non-pure-Python runtime dependency in the server, which makes its transitive set worth one deliberate look rather than a permanent exclusion. Belongs with a supply-chain review of the whole lock file, not with this story.

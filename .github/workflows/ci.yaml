@@ -106,7 +106,8 @@ jobs:
       # the seeded glossary, its SELECT-only grant and its endpoint
       # (Story 1.6), and the ZEN rule documents plus the scoped, filtered,
       # cursor-paginated claim queue built on them (Story 2.1 — its pure
-      # scorer tests run in the server job).
+      # scorer, parameter-validation and queue-assembly tests run in the
+      # server job).
       - run: |
           uv run pytest tests/test_schema_seed.py tests/test_no_derived_columns.py \
             tests/test_auth.py tests/test_scoped_repository.py tests/test_derivations.py \

@@ -13,32 +13,40 @@
  * is keyed by filter. Both panes call `useClaimQueue(filter)` and TanStack
  * serves the second from the first's cache entry — one request, one source
  * of truth, no prop drilling of server state (AD-9).
+ *
+ * Stage *expansion* is here for the same reason and it is the same argument
+ * one level down: a claim revealed by "Show more" is on screen, so the pane
+ * that decides whether the selected claim is shown has to know which groups
+ * were expanded. Held inside `StageGroup`, the two panes disagreed about a
+ * claim the handler was looking at.
  */
-import { useState } from "react";
+import { useCallback, useState } from "react";
 
-import type { QueueFilter } from "@/api/claims";
-import { STAGE_ORDER, useClaimQueue } from "@/api/claims";
+import type { LoadedClaims, QueueFilter, Stage } from "@/api/claims";
+import { useClaimQueue, useLoadedClaimIds } from "@/api/claims";
 import { QueuePane } from "@/features/queue/QueuePane";
 import { useSelectedClaimId } from "@/features/queue/useSelectedClaim";
+import { useStageExpansion } from "@/features/queue/useStageExpansion";
 
 import { TopBar } from "./TopBar";
-
-type QueueData = ReturnType<typeof useClaimQueue>["data"];
 
 /**
  * What the shell can honestly say about the selected claim.
  *
- * Three answers, not two. The queue payload the shell holds is *one page of
- * one filter*, so "it is not in there" is only sometimes evidence that it
- * is not in the caseload:
+ * Three answers, not two. What the workspace holds is *some pages of one
+ * filter*, so "it is not in there" is only sometimes evidence that it is not
+ * in the caseload:
  *
- * - `present` — it is on screen. The only positive answer.
- * - `absent` — the unfiltered queue answered, every group is complete, and
- *   the claim is in none of them. Then and only then is "not in this
- *   caseload" a fact.
+ * - `present` — it is on screen. The only positive answer, and it counts the
+ *   pages "Show more" accumulated as well as the base payload: a claim the
+ *   queue is rendering with a highlight on it must never be described here
+ *   as not shown.
+ * - `absent` — the unfiltered queue answered, every group has been read to
+ *   its end, and the claim is in none of them. Then and only then is "not in
+ *   this caseload" a fact.
  * - `unconfirmed` — everything else: the request is in flight, the request
- *   failed, a filter is narrowing what came back, or a group has pages the
- *   shell never asked for. A claim the handler can reach by clearing the
+ *   failed, a filter is narrowing what came back, or a group has pages
+ *   nobody has asked for. A claim the handler can reach by clearing the
  *   filter or clicking "Show more" is not missing, and telling them it is
  *   sends them looking for a claim that is three feet away.
  */
@@ -47,24 +55,32 @@ type Presence = "present" | "absent" | "unconfirmed";
 function presenceOf(
   claimId: string,
   filter: QueueFilter,
-  queue: ReturnType<typeof useClaimQueue>,
+  answered: boolean,
+  loaded: LoadedClaims,
 ): Presence {
-  const data: QueueData = queue.data;
-  if (data && STAGE_ORDER.some((s) => data.groups[s].items.some((c) => c.claimId === claimId))) {
-    return "present";
-  }
-  if (!data) return "unconfirmed";
-  // A filter narrows the payload; unfetched pages truncate it. Either way
-  // the shell is looking at a subset and cannot rule the claim out.
+  if (loaded.ids.has(claimId)) return "present";
+  if (!answered) return "unconfirmed";
+  // A filter narrows what came back; unfetched pages truncate it. Either
+  // way the workspace is looking at a subset and cannot rule the claim out.
   if (filter !== "all") return "unconfirmed";
-  if (STAGE_ORDER.some((stage) => data.groups[stage].nextCursor !== null)) return "unconfirmed";
+  if (!loaded.complete) return "unconfirmed";
   return "absent";
 }
 
-function DetailPlaceholder({ filter }: { filter: QueueFilter }) {
+function DetailPlaceholder({
+  filter,
+  expandedStages,
+}: {
+  filter: QueueFilter;
+  expandedStages: ReadonlySet<Stage>;
+}) {
   const queue = useClaimQueue(filter);
+  const loaded = useLoadedClaimIds(queue.data, filter, expandedStages);
   const selectedClaimId = useSelectedClaimId();
-  const presence = selectedClaimId === null ? null : presenceOf(selectedClaimId, filter, queue);
+  const presence =
+    selectedClaimId === null
+      ? null
+      : presenceOf(selectedClaimId, filter, queue.data !== undefined, loaded);
 
   return (
     <section
@@ -114,6 +130,20 @@ function DetailPlaceholder({ filter }: { filter: QueueFilter }) {
 
 export function WorkspaceShell() {
   const [filter, setFilter] = useState<QueueFilter>("all");
+  const expansion = useStageExpansion();
+
+  // The one place a filter changes, and therefore the one place expansion
+  // expires. "Show more" is a statement about one list of claims; the new
+  // filter is a different list, and a group that carried its expansion
+  // across would fetch a second page with nobody having clicked anything.
+  const { reset } = expansion;
+  const changeFilter = useCallback(
+    (next: QueueFilter) => {
+      setFilter(next);
+      reset();
+    },
+    [reset],
+  );
 
   return (
     <div className="flex h-screen flex-col">
@@ -123,8 +153,14 @@ export function WorkspaceShell() {
             It stays on the row rather than moving to one pane: "the claim
             workspace" is the three of them together. */}
         <section aria-label="Claim workspace" className="flex min-h-0 flex-1">
-          <QueuePane filter={filter} onFilterChange={setFilter} />
-          <DetailPlaceholder filter={filter} />
+          <QueuePane
+            filter={filter}
+            onFilterChange={changeFilter}
+            expandedStages={expansion.expanded}
+            onExpandStage={expansion.expand}
+            onCollapseStage={expansion.collapse}
+          />
+          <DetailPlaceholder filter={filter} expandedStages={expansion.expanded} />
           <aside
             aria-label="Copilot"
             data-testid="copilot-pane"

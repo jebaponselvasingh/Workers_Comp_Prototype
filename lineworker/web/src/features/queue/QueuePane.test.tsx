@@ -21,6 +21,7 @@ import {
 } from "@/test/api-mock";
 
 import { QueuePane } from "./QueuePane";
+import { useStageExpansion } from "./useStageExpansion";
 
 /**
  * Story 2.1 AC 1/2/3/6 — the pane renders a server payload and moves a
@@ -48,11 +49,29 @@ function LocationProbe() {
   );
 }
 
+/**
+ * The pane plus the state `WorkspaceShell` owns on its behalf — the filter
+ * and the stage expansion, expired together in one handler. Mirroring the
+ * shell rather than inventing a second arrangement is deliberate: these
+ * tests are about the pane under the wiring it actually ships with, and the
+ * "changing the filter forgets an expansion" cases below are only meaningful
+ * if the reset lives where the real one does.
+ */
 function Harness({ initialFilter = "all" as QueueFilter }) {
   const [filter, setFilter] = useState<QueueFilter>(initialFilter);
+  const expansion = useStageExpansion();
   return (
     <>
-      <QueuePane filter={filter} onFilterChange={setFilter} />
+      <QueuePane
+        filter={filter}
+        onFilterChange={(next) => {
+          setFilter(next);
+          expansion.reset();
+        }}
+        expandedStages={expansion.expanded}
+        onExpandStage={expansion.expand}
+        onCollapseStage={expansion.collapse}
+      />
       <LocationProbe />
     </>
   );
@@ -75,7 +94,7 @@ function renderPaneWithFilter(routes: StubRoutes, filter: QueueFilter) {
   return render(
     <QueryClientProvider client={createQueryClient()}>
       <MemoryRouter initialEntries={["/workspace"]}>
-        <QueuePane filter={filter} onFilterChange={() => {}} />
+        <Harness initialFilter={filter} />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -196,6 +215,30 @@ test("a filter that matches nothing is reported as a filter miss", async () => {
   expect(screen.queryByTestId("queue-empty-scope")).not.toBeInTheDocument();
 });
 
+test("an empty pane collapses to one sentence instead of four empty sections", async () => {
+  // Recorded as a decision, not an oversight. AC 1 asks for four sections
+  // with counts and this replaces all four with one line — because NFR-3
+  // wants three *distinguishable* messages, and four stacked "No claims in
+  // this stage." repetitions under four zero chips say the same thing four
+  // times without telling a handler which of the three situations they are
+  // in. The AC's wording holds for the populated case (see the story's Dev
+  // Notes); this is what the empty case does instead.
+  renderPane({ claimsQueue: CLAIM_QUEUE_EMPTY });
+
+  await waitFor(() => expect(screen.getByTestId("queue-empty-scope")).toBeInTheDocument());
+  for (const stage of ["intake", "investigation", "treatment", "settled"]) {
+    expect(screen.queryByTestId(`queue-group-${stage}`)).not.toBeInTheDocument();
+  }
+  expect(screen.queryAllByText("No claims in this stage.")).toHaveLength(0);
+});
+
+test("a filter miss collapses the same way, with the filter's sentence", async () => {
+  renderPaneWithFilter({ claimsQueue: CLAIM_QUEUE_NO_MATCH }, "litigation");
+
+  await waitFor(() => expect(screen.getByTestId("queue-empty-filter")).toBeInTheDocument());
+  expect(screen.queryByTestId("queue-group-treatment")).not.toBeInTheDocument();
+});
+
 test("an empty book with a filter applied is still reported as an empty book", async () => {
   // The regression this pair exists for: deciding scope-empty from
   // `filter === "all"` told a handler with no assignment that their filter
@@ -314,7 +357,9 @@ test("one claim is announced as one claim", async () => {
           settled: empty,
         },
         rulesVersion: 1,
+        thresholdsVersion: 1,
         unfilteredTotal: 1,
+        filteredTotal: 1,
       },
     },
   });
@@ -373,9 +418,18 @@ test("the button stays put while the page it asked for is in flight", async () =
   expect(button).toHaveTextContent("Loading…");
 });
 
-test("Show more never offers a negative remainder", async () => {
-  // The base query says the group holds two; the pages already in hand say
-  // three. The count is what is left, and there is no such thing as -1.
+test("Show more carries no count the browser worked out for itself", async () => {
+  // It used to read "Show more (N)" with N computed as `group.total -
+  // items.length` — a subtraction over two server numbers, done in the
+  // browser, which is the derivation `noDerivation.test.ts` now fails a
+  // build over. It also went wrong on its own terms: after a refetch
+  // overlap the accumulated pages could outnumber the total the base query
+  // last reported, and the button offered "Show more (-1)".
+  //
+  // The payload below is that exact overlap — the base query says two, the
+  // pages in hand say three — and the label is a plain invitation either
+  // way. The server does not know how many pages this client is holding, so
+  // no honest number is available to send instead.
   renderPane({
     claimsQueue: (url) =>
       url.includes("cursor=")
@@ -396,8 +450,41 @@ test("Show more never offers a negative remainder", async () => {
   await userEvent.click(screen.getByTestId("queue-group-treatment-more"));
 
   await waitFor(() => expect(screen.getAllByTestId("queue-card")).toHaveLength(3));
-  expect(screen.getByTestId("queue-group-treatment-more")).toHaveTextContent("Show more (0)");
+  expect(screen.getByTestId("queue-group-treatment-more")).toHaveTextContent("Show more");
+  expect(screen.getByTestId("queue-group-treatment-more").textContent).not.toMatch(/\d/);
 });
+
+test("a refused cursor leaves a way back rather than a group that cannot reload", async () => {
+  // The server refuses a cursor whose rules version has been superseded, and
+  // every retry replays the same rejected cursor — so a plain "try again"
+  // could never succeed. "Reload this stage" drops the accumulated pages,
+  // collapses the group and re-asks the base query, which is the only thing
+  // that can produce a cursor the server will accept.
+  let refuse = true;
+  renderPane({
+    claimsQueue: (url) =>
+      url.includes("cursor=")
+        ? refuse
+          ? { status: 400, body: { detail: "That page was ranked by priority_weights v1" } }
+          : CLAIM_QUEUE_PAGE_TWO
+        : CLAIM_QUEUE_PAGED,
+  });
+  await waitFor(() => expect(screen.getByTestId("queue-group-treatment-more")).toBeInTheDocument());
+
+  await userEvent.click(screen.getByTestId("queue-group-treatment-more"));
+  const alert = await screen.findByTestId("queue-group-treatment-error", {}, { timeout: 8000 });
+  expect(alert).toHaveTextContent(/could not be loaded/i);
+
+  refuse = false;
+  await userEvent.click(screen.getByTestId("queue-group-treatment-reload"));
+
+  // Back to the base page, the error gone, and the base query asked again.
+  await waitFor(() =>
+    expect(screen.queryByTestId("queue-group-treatment-error")).not.toBeInTheDocument(),
+  );
+  expect(screen.getAllByTestId("queue-card")).toHaveLength(1);
+  expect(queueRequests().filter((url) => !url.includes("cursor=")).length).toBeGreaterThan(1);
+}, 15000);
 
 test("a card served twice is rendered once", async () => {
   // The base page and an accumulated page can overlap after a refetch. Two
@@ -460,4 +547,41 @@ test("changing the filter does not carry an expansion into the new list", async 
   expect(
     queueRequests().filter((url) => url.includes("filter=all") && url.includes("cursor=")),
   ).toHaveLength(0);
+});
+
+test("an expansion does not survive a round trip back to the filter it was made under", async () => {
+  // The ordering the previous test cannot reach, and the one the old
+  // implementation got wrong. Expansion was held as *which filter it was
+  // asked for* (`expandedFilter === filter`), which does not expire — it
+  // sleeps. Expand under `all`, switch away, switch back, and the group is
+  // expanded again with nobody having clicked anything: the infinite query
+  // re-enables against a cached page 2, and past its `staleTime` it
+  // refetches. The previous test only ever expands under the filter it
+  // *leaves*, where the memory is inert.
+  renderPane({
+    claimsQueue: (url) =>
+      url.includes("cursor=") ? CLAIM_QUEUE_PAGE_TWO : CLAIM_QUEUE_PAGED,
+  });
+  await waitFor(() => expect(screen.getByTestId("queue-group-treatment-more")).toBeInTheDocument());
+
+  const pick = async (option: string) => {
+    await userEvent.click(screen.getByTestId("queue-filter"));
+    await userEvent.click(await screen.findByTestId(`queue-filter-option-${option}`));
+  };
+
+  // A → expand.
+  await userEvent.click(screen.getByTestId("queue-group-treatment-more"));
+  await waitFor(() => expect(screen.getAllByTestId("queue-card")).toHaveLength(2));
+
+  // A → B → A.
+  await pick("litigation");
+  await waitFor(() => expect(screen.getAllByTestId("queue-card")).toHaveLength(1));
+  await pick("all");
+
+  // One page again: the expansion belonged to the list, and this is a new
+  // reading of it. `all`'s payload is cached, so the pane never falls back
+  // to skeletons and the group is never unmounted — if the state survived
+  // anywhere, the second page would be on screen here.
+  await waitFor(() => expect(screen.getByTestId("queue-group-treatment-more")).toBeInTheDocument());
+  expect(screen.getAllByTestId("queue-card")).toHaveLength(1);
 });

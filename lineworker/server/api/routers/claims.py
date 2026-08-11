@@ -24,7 +24,15 @@ from api.schemas import ApiModel
 from data.models.enums import Stage
 from services.derivations import RiskBand
 from services.worklist.priority import QueueFilter
-from services.worklist.queue import ClaimQueue, InvalidCursor, QueueCard, StageGroup, claim_queue
+from services.worklist.queue import (
+    MAX_PAGE_LIMIT,
+    MIN_PAGE_LIMIT,
+    ClaimQueue,
+    InvalidCursor,
+    QueueCard,
+    StageGroup,
+    claim_queue,
+)
 
 router = APIRouter(tags=["claims"])
 
@@ -109,24 +117,32 @@ class StageGroupsResponse(ApiModel):
 
 
 class ClaimQueueResponse(ApiModel):
-    """The queue, the rules version that ranked it, and the book behind it.
+    """The queue, the rules that ranked it, and the two totals behind it.
 
-    `rulesVersion` is reported for the same reason the cursor carries it:
-    the ordering is only meaningful relative to a version of the
-    `priority_weights` document, and any conversation about "why is this
-    claim first" starts by establishing which weights answered.
+    **Both rule-document versions, not one.** `rulesVersion` names the
+    `priority_weights` version and `thresholdsVersion` names the
+    `derivation_thresholds` one. Reporting only the first was reporting half
+    the answer: the thresholds decide `risk`, `siuReview` and `rtwBlocked`,
+    which are *inputs* to every score in the payload, and the cursor already
+    records both for exactly that reason. Any conversation about "why is
+    this claim first" starts by establishing which documents answered.
 
-    `unfilteredTotal` is how many claims the caller has in scope *before*
-    the filter — the number the four group totals sum to only when `filter`
-    is `all`. It exists so the pane can tell "no claims in your caseload"
-    from "no claims match this filter" (NFR-3) without holding an unfiltered
-    copy of the caseload to compare against, which is the client-side
-    superset AD-1 forbids.
+    **Both totals, and the SPA computes neither.** `unfilteredTotal` is how
+    many claims the caller has in scope *before* the filter; `filteredTotal`
+    is how many survived it. The second is the sum of the four group totals,
+    and it is sent anyway: a client that adds them up has re-implemented
+    "how big is this queue" in the browser, which is the derivation AD-1
+    keeps server-side and `noDerivation.test.ts` fails a build over. The pair
+    is what lets the pane tell "no claims in your caseload" from "no claims
+    match this filter" (NFR-3) without holding an unfiltered copy of the
+    caseload to compare against.
     """
 
     groups: StageGroupsResponse
     rules_version: int
+    thresholds_version: int
     unfiltered_total: int
+    filtered_total: int
 
 
 def _card(card: QueueCard) -> ClaimCardResponse:
@@ -165,7 +181,9 @@ def _queue(result: ClaimQueue) -> ClaimQueueResponse:
             settled=_group(result.groups[Stage.settled]),
         ),
         rules_version=result.rules_version,
+        thresholds_version=result.thresholds_version,
         unfiltered_total=result.unfiltered_total,
+        filtered_total=result.filtered_total,
     )
 
 
@@ -196,7 +214,11 @@ async def queue(
     ] = None,
     limit: Annotated[
         int | None,
-        Query(ge=1, le=200, description="Page size per group; defaults to the rules document's."),
+        Query(
+            ge=MIN_PAGE_LIMIT,
+            le=MAX_PAGE_LIMIT,
+            description="Page size per group; defaults to the rules document's.",
+        ),
     ] = None,
 ) -> ClaimQueueResponse:
     """The caller's queue. Filter and page it; you cannot re-scope it."""
@@ -216,10 +238,19 @@ async def queue(
         # 400 rather than 422: the cursor is syntactically a string and
         # passed validation. What failed is that it does not describe a
         # position in *this* list — a fact only the service knows.
+        #
+        # The header is re-stated here because raising abandons `response`:
+        # the exception handler builds a fresh `JSONResponse` and the
+        # injected one is never sent. A 400 that names a caller's filter and
+        # stage is as persona-specific as the 200 above it, and it is the
+        # response most likely to be retried — leaving it cacheable would
+        # let an intermediary answer the *next* handler's "Show more" with
+        # this one's refusal.
         raise ProblemException(
             status_code=status.HTTP_400_BAD_REQUEST,
             title="Bad Request",
             detail=str(exc),
             type_="/problems/invalid-cursor",
+            headers={"Cache-Control": "no-store"},
         ) from exc
     return _queue(result)

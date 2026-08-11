@@ -49,12 +49,23 @@ export const queryKeys = {
     /**
      * The pages a stage group has been expanded through ("Show more").
      *
-     * Keyed by filter *and* stage but not by cursor: this is an infinite
-     * query, so the cursors are its page params and live inside the entry
-     * rather than beside it. A cursor in the key would make every page its
-     * own cache entry and lose the accumulated list on the way back.
+     * Keyed by filter, stage, and **the cursor the accumulation starts
+     * from** — but not by the cursors after it. Those are the infinite
+     * query's own page params and live inside the entry; putting them in
+     * the key would make every page its own cache entry and lose the
+     * accumulated list on the way back.
+     *
+     * The *first* cursor is different in kind: it is not a page param the
+     * query produced, it is an input handed in from the base queue query,
+     * and it encodes the offset the accumulation is anchored at. When the
+     * base query refetches and the group has changed underneath it, the
+     * first cursor changes — and pages accumulated from the old one
+     * describe a list that no longer starts where they think it does. In
+     * the key, that is a different entry and the group reloads; out of it,
+     * page 1 and page 2 came from two different orderings and nothing
+     * anywhere would say so.
      */
-    queuePages: (filter: string, stage: string) =>
-      ["claims", "queue", filter, "pages", stage] as const,
+    queuePages: (filter: string, stage: string, firstCursor: string | null) =>
+      ["claims", "queue", filter, "pages", stage, firstCursor] as const,
   },
 } as const;

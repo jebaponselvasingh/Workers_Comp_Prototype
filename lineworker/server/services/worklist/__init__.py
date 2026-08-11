@@ -22,7 +22,6 @@ functions in their own module rather than steps inside the assembly.
 
 from services.worklist import priority, queue, sla
 from services.worklist.priority import (
-    PENDING_APPROVAL_STATUSES,
     QueueClaim,
     QueueFilter,
     QueueFlags,
@@ -31,6 +30,8 @@ from services.worklist.priority import (
     priority_score,
 )
 from services.worklist.queue import (
+    MAX_PAGE_LIMIT,
+    MIN_PAGE_LIMIT,
     STAGE_ORDER,
     ClaimQueue,
     Cursor,
@@ -45,7 +46,8 @@ from services.worklist.sla import SlaMetric, SlaMetricKey, SlaSample, SlaStatus,
 from services.worklist.stats import TopBarStats, topbar_stats
 
 __all__ = [
-    "PENDING_APPROVAL_STATUSES",
+    "MAX_PAGE_LIMIT",
+    "MIN_PAGE_LIMIT",
     "STAGE_ORDER",
     "ClaimQueue",
     "Cursor",

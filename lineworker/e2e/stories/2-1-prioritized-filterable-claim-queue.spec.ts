@@ -17,7 +17,16 @@ import { expect, test } from "../fixtures/test";
 const KAYA = { name: "Kaya Johnson", role: "handler" };
 const SARAH = { name: "Sarah Williams", role: "handler" };
 
-/** The claim ids rendered in one stage group, top to bottom. */
+/**
+ * The claim ids rendered in one stage group, top to bottom.
+ *
+ * `evaluateAll` takes a snapshot and does **not** auto-wait, which is right
+ * — several callers assert an empty group, and a helper that waited for a
+ * card could never observe one. The cost is that every caller owes an
+ * auto-retrying assertion first (`queueLoaded` below, or a `toHaveText` on a
+ * count chip), or it reads the queue before the query has answered and
+ * compares an empty set against the oracle.
+ */
 async function renderedIds(
   page: Parameters<typeof byTestId>[0],
   stage: string,
@@ -25,6 +34,11 @@ async function renderedIds(
   return byTestId(page, `queue-group-${stage}`)
     .getByTestId("queue-card")
     .evaluateAll((cards) => cards.map((card) => (card as HTMLElement).dataset.claimId ?? ""));
+}
+
+/** Wait for the queue to have answered — see `renderedIds`. */
+async function queueLoaded(page: Parameters<typeof byTestId>[0]): Promise<void> {
+  await expect(page.locator('[data-testid="queue-card"]').first()).toBeVisible();
 }
 
 test.describe("@story:2-1 @epic:2 prioritized, filterable claim queue", () => {
@@ -66,8 +80,16 @@ test.describe("@story:2-1 @epic:2 prioritized, filterable claim queue", () => {
         String(litigated[stage].length),
       );
     }
-    // The proof that the list actually narrowed rather than being restyled.
+    // A *premise*, asserted before the conclusion — two oracle computations
+    // compared to each other say nothing about the page. It is here so that
+    // a seed in which every treatment claim is litigated fails with a
+    // readable reason instead of making the assertion below vacuous.
     expect(litigated.treatment.length).toBeLessThan(expected.treatment.length);
+    // And this is the conclusion, which touches the page: the cards that
+    // are actually rendered are the narrower list, in the narrower order.
+    expect(await renderedIds(page, "treatment")).toEqual(
+      litigated.treatment.map((card) => card.claimId),
+    );
 
     // --- clicking a card moves the highlight and the URL (AC 6) --------
     await byTestId(page, "queue-filter").click();
@@ -134,6 +156,7 @@ test.describe("@story:2-1 @epic:2 prioritized, filterable claim queue", () => {
 
   test("a scoped handler never sees a claim outside her book (AD-7)", async ({ page }) => {
     await loginAs(page, PERSONAS.scopedHandler);
+    await queueLoaded(page);
 
     const mine = expectedQueueFor(SARAH.name, SARAH.role);
     const rendered = new Set(
@@ -268,9 +291,81 @@ test.describe("@story:2-1 @epic:2 prioritized, filterable claim queue", () => {
     await expect(byRole(page, "region", "Claim workspace")).toBeVisible();
     await expect(byTestId(page, "queue-pane")).toBeVisible();
     await expect(byTestId(page, "detail-pane")).toBeVisible();
+    // The third pane, which the test's own title had been promising and not
+    // checking. It is the one that matters most here: the copilot column is
+    // the only pane behind a breakpoint (`xl:block`), so it is the only one
+    // a layout change can remove without any other assertion noticing. The
+    // project's viewport is Desktop Chrome's 1280×720, which is exactly
+    // Tailwind's `xl` — so this also pins the breakpoint choice.
+    await expect(byTestId(page, "copilot-pane")).toBeVisible();
     // Story 1.4's and 1.5's seams still occupied — the workspace gained a
     // queue without losing the bar every role shares.
     await expect(byTestId(page, "top-bar")).toBeVisible();
     await expect(byTestId(page, "sla-strip")).toBeVisible();
+  });
+
+  test("a group collapses without losing its count (AC 1, UX-DR3)", async ({ page }) => {
+    // The collapsible half of AC 1, which existed only in Vitest against a
+    // stub. The count chip is the point: it reports the whole group, so
+    // closing the drawer must not change it — a chip that followed the
+    // rendered cards would read zero on every closed section.
+    await loginAs(page, PERSONAS.handler);
+    await queueLoaded(page);
+
+    const expected = expectedQueueFor(KAYA.name, KAYA.role);
+    const header = byTestId(page, "queue-group-treatment-header");
+    await expect(header).toHaveAttribute("aria-expanded", "true");
+    expect(await renderedIds(page, "treatment")).toHaveLength(expected.treatment.length);
+
+    await header.click();
+
+    await expect(header).toHaveAttribute("aria-expanded", "false");
+    expect(await renderedIds(page, "treatment")).toHaveLength(0);
+    await expect(byTestId(page, "queue-group-treatment-count")).toHaveText(
+      String(expected.treatment.length),
+    );
+    // The stage beside it is untouched — collapsing is per section.
+    expect(await renderedIds(page, "settled")).toHaveLength(expected.settled.length);
+
+    await header.click();
+    await expect(header).toHaveAttribute("aria-expanded", "true");
+    expect(await renderedIds(page, "treatment")).toEqual(
+      expected.treatment.map((card) => card.claimId),
+    );
+  });
+
+  test("a filter that matches nothing says so in its own words (NFR-3)", async ({ page }) => {
+    /**
+     * The filter-miss pane state, against the real stack.
+     *
+     * NFR-3 asks for three distinguishable messages and this is the one the
+     * server has to disambiguate: the groups come back empty either way, and
+     * only `unfilteredTotal` separates "nothing matches this filter" from
+     * "your caseload is empty". Sarah has eight 3M claims and none of them
+     * litigated, so the filtered payload is empty over a book that is not.
+     *
+     * The third state — an empty book — is deliberately absent: every seeded
+     * persona has claims, so reaching it would need either a seed change
+     * (Story 1.2's) or an HTTP stub, and this file stubs nothing. It is
+     * covered in `QueuePane.test.tsx` and by `unfilteredTotal`'s server
+     * tests, and recorded in the story's Review Findings.
+     */
+    await loginAs(page, PERSONAS.scopedHandler);
+
+    const book = expectedQueueFor(SARAH.name, SARAH.role);
+    const litigated = expectedQueueFor(SARAH.name, SARAH.role, "litigation");
+    expect(STAGES.flatMap((s) => book[s]).length).toBeGreaterThan(0);
+    expect(STAGES.flatMap((s) => litigated[s])).toHaveLength(0);
+
+    await byTestId(page, "queue-filter").click();
+    await byTestId(page, "queue-filter-option-litigation").click();
+
+    await expect(byTestId(page, "queue-empty-filter")).toContainText(
+      "No claims match this filter.",
+    );
+    // Not the empty-caseload sentence, and not four stacked stage messages:
+    // the pane collapses to one line on purpose (see `QueuePane`'s note).
+    await expect(byTestId(page, "queue-empty-scope")).toHaveCount(0);
+    await expect(byTestId(page, "queue-group-treatment")).toHaveCount(0);
   });
 });

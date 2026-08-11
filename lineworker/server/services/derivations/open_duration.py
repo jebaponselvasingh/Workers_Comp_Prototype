@@ -1,7 +1,7 @@
 """`days_open` — how long a claim has been open, from the date it opened.
 
 **Why `froi_date`.** The prototype ships a static `daysOpen` per claim that
-reconciles with any date in the record: checked against every date column
+reconciles with **no** date in the record: checked against every date column
 and every stored duration on `claim`, no consistent anchor exists, which is
 why Story 1.2 deliberately did not seed it. The First Report of Injury is
 when the claim came into existence for the carrier — the moment the pick-up

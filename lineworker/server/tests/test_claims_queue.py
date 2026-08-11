@@ -11,19 +11,24 @@ rather than importing them from `services/`. The two implementations agree
 here or one of them is wrong.
 """
 
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+import base64
+import json
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import replace
+from datetime import date, timedelta
+from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
+import sqlalchemy as sa
 
 from api import create_app
 from config import Settings
 from services.derivations import utc_today
 from services.worklist.priority import QueueFilter
-from services.worklist.queue import decode_cursor, encode_cursor
+from services.worklist.queue import MAX_CURSOR_AGE, decode_cursor, encode_cursor
 from tests import seed_fixture
 from tests.conftest import requires_db
 
@@ -31,6 +36,7 @@ pytestmark = requires_db
 
 QUEUE = "/claims/queue"
 STAGES = seed_fixture.STAGE_ORDER
+DOCUMENTS_DIR = Path(__file__).resolve().parents[1] / "rules" / "documents"
 
 # Kaya has claims in all four stages (45 of them); Sarah's 3M book is eight
 # claims with an *empty* intake group, which is the only way to test the
@@ -67,6 +73,46 @@ async def queue_for(db_url: str, name: str, role: str, **kwargs: Any) -> dict[st
 
 def ids(group: dict[str, Any]) -> list[str]:
     return [item["claimId"] for item in group["items"]]
+
+
+@contextmanager
+def superseding_weights(db_url: str, **overrides: Any) -> Iterator[None]:
+    """Insert a real version 2 of `priority_weights`, then take it away again.
+
+    A *document*, not a dataclass. The committed v1 is loaded from disk, its
+    expression node is rewritten with `overrides`, and the result is inserted
+    as version 2 effective today — the same row shape migration 0009 writes,
+    reaching the queue through the same loader, ZEN evaluation and parameter
+    validation as v1. That whole chain is what "the weights are data" means,
+    and a test that replaced a `PriorityWeights` in Python would have proved
+    none of it.
+
+    Removed on the way out because `seeded_db_url` is module-scoped: a v2
+    left behind would silently re-rank every test after this one, and the
+    failures would surface somewhere else entirely.
+    """
+    document = json.loads((DOCUMENTS_DIR / "priority_weights.jdm.json").read_text())
+    node = next(n for n in document["nodes"] if n["id"] == "weights")
+    for expression in node["content"]["expressions"]:
+        if expression["key"] in overrides:
+            expression["value"] = overrides[expression["key"]]
+
+    engine = sa.create_engine(
+        db_url.replace("postgresql://", "postgresql+psycopg://", 1), isolation_level="AUTOCOMMIT"
+    )
+    insert = sa.text(
+        "INSERT INTO rule_document (key, version, effective_from, content, created_at) "
+        "VALUES ('priority_weights', 2, :today, CAST(:content AS jsonb), now())"
+    )
+    remove = sa.text("DELETE FROM rule_document WHERE key = 'priority_weights' AND version = 2")
+    try:
+        with engine.connect() as conn:
+            conn.execute(insert, {"today": utc_today(), "content": json.dumps(document)})
+        yield
+    finally:
+        with engine.connect() as conn:
+            conn.execute(remove)
+        engine.dispose()
 
 
 # --- grouping and ordering (AC 1, 4) ------------------------------------
@@ -489,27 +535,231 @@ async def test_a_cursor_pins_the_day_the_claims_were_aged_against(seeded_db_url:
     assert decode_cursor(cursor).as_of == utc_today()
 
 
-async def test_the_rules_version_that_ranked_the_queue_is_reported(seeded_db_url: str) -> None:
+async def test_a_forged_cursor_carrying_infinity_is_a_400_not_a_500(seeded_db_url: str) -> None:
+    """`json.loads` accepts the bare literal `Infinity`, and `int(inf)` is an
+    `OverflowError` — not a `ValueError`, so it escaped `decode_cursor`'s
+    except clause and reached the unhandled-exception handler. Driven
+    through the app rather than the function because the defect was
+    *which status code the caller saw*."""
+    payload = {
+        "f": "all",
+        "s": "settled",
+        "o": float("inf"),
+        "v": 1,
+        "t": 1,
+        "d": utc_today().isoformat(),
+        "l": 5,
+    }
+    raw = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
+
+    async with make_client(seeded_db_url) as client:
+        await login_as(client, *KAYA)
+        resp = await client.get(QUEUE, params={"cursor": raw})
+
+    assert resp.status_code == 400, resp.text
+    assert resp.json()["type"] == "/problems/invalid-cursor"
+
+
+async def test_a_forged_cursor_cannot_exceed_the_routes_page_ceiling(seeded_db_url: str) -> None:
+    """`limit` inside a cursor is *reused* when the request omits one, so an
+    unbounded cursor limit is a way past the route's 1–200 validator rather
+    than a cosmetic gap."""
+    async with make_client(seeded_db_url) as client:
+        await login_as(client, *KAYA)
+        cursor = decode_cursor(
+            (await client.get(QUEUE, params={"limit": 5})).json()["groups"]["settled"]["nextCursor"]
+        )
+        oversized = encode_cursor(replace(cursor, limit=100_000))
+        resp = await client.get(QUEUE, params={"stage": "settled", "cursor": oversized})
+
+    assert resp.status_code == 400
+    assert "page size" in resp.json()["detail"]
+
+
+@pytest.mark.parametrize("offset_days", [1, -(MAX_CURSOR_AGE.days + 1)])
+async def test_a_cursor_dated_outside_the_plausible_window_is_refused(
+    seeded_db_url: str, offset_days: int
+) -> None:
+    """A future date names a list this service never cut; a date older than
+    `MAX_CURSOR_AGE` names one nobody is still reading.
+
+    Before the documents were pinned to today's date, the second of these
+    was worse than a wrong answer: the cursor's date chose which rule
+    document to load, so a date before migration 0009's effective date
+    raised `RuleDocumentMissing` — a `LookupError` the router does not
+    catch, and therefore a 500 where the module promised a 400.
+    """
+    async with make_client(seeded_db_url) as client:
+        await login_as(client, *KAYA)
+        cursor = decode_cursor(
+            (await client.get(QUEUE, params={"limit": 5})).json()["groups"]["settled"]["nextCursor"]
+        )
+        shifted = encode_cursor(replace(cursor, as_of=utc_today() + timedelta(days=offset_days)))
+        resp = await client.get(QUEUE, params={"limit": 5, "stage": "settled", "cursor": shifted})
+
+    assert resp.status_code == 400, resp.text
+    assert resp.json()["type"] == "/problems/invalid-cursor"
+
+
+async def test_a_cursor_predating_the_first_rule_document_is_still_a_400(
+    seeded_db_url: str,
+) -> None:
+    """The regression, named. Migration 0009 dates both documents 2026-08-11;
+    a cursor claiming an earlier day used to make the loader look for a
+    document effective then, find none, and raise past the router."""
+    async with make_client(seeded_db_url) as client:
+        await login_as(client, *KAYA)
+        cursor = decode_cursor(
+            (await client.get(QUEUE, params={"limit": 5})).json()["groups"]["settled"]["nextCursor"]
+        )
+        ancient = encode_cursor(replace(cursor, as_of=date(2020, 1, 1)))
+        resp = await client.get(QUEUE, params={"limit": 5, "stage": "settled", "cursor": ancient})
+
+    assert resp.status_code == 400, resp.text
+    assert resp.json()["type"] == "/problems/invalid-cursor"
+
+
+async def test_a_refused_cursor_is_not_cacheable_either(seeded_db_url: str) -> None:
+    """Raising abandons the injected `Response`, so the header has to be
+    carried onto the problem document. A 400 naming a caller's filter and
+    stage is as persona-specific as the 200 beside it — and it is the
+    response most likely to be retried."""
+    async with make_client(seeded_db_url) as client:
+        await login_as(client, *KAYA)
+        resp = await client.get(QUEUE, params={"cursor": "not-a-cursor"})
+
+    assert resp.status_code == 400
+    assert resp.headers["cache-control"] == "no-store"
+
+
+async def test_both_rule_document_versions_that_ranked_the_queue_are_reported(
+    seeded_db_url: str,
+) -> None:
+    """Reporting only the weights version was reporting half the answer: the
+    thresholds decide `risk`, `siuReview` and `rtwBlocked`, which are inputs
+    to every score in the payload. The cursor already recorded both."""
     payload = await queue_for(seeded_db_url, *KAYA)
+
     assert payload["rulesVersion"] == 1
+    assert payload["thresholdsVersion"] == 1
 
 
-async def test_the_unfiltered_total_counts_the_book_behind_the_filter(
+async def test_both_totals_are_published_so_the_client_adds_nothing_up(
     seeded_db_url: str,
 ) -> None:
     """What lets the pane tell an empty book from an empty filter (NFR-3).
 
-    Under `all` it is the sum of the four groups; under a filter it stays
-    the same while the groups shrink — which is the whole point, and the
-    thing a client could not work out for itself without holding the
-    unfiltered caseload it is not allowed to have (AD-1).
+    `unfilteredTotal` is the scoped book before the predicate;
+    `filteredTotal` is what the predicate left. The second is the sum of the
+    four group totals and is sent anyway — a client that adds them up has
+    re-implemented "how big is this queue" in the browser (AD-1), which is
+    what `web/src/features/queue/noDerivation.test.ts` fails a build over.
     """
     unfiltered = await queue_for(seeded_db_url, *KAYA)
     litigated = await queue_for(seeded_db_url, *KAYA, params={"filter": "litigation"})
 
     expected = len(seed_fixture.expected_claim_ids(*KAYA))
     assert unfiltered["unfilteredTotal"] == expected
+    assert unfiltered["filteredTotal"] == expected
     assert sum(unfiltered["groups"][stage]["total"] for stage in STAGES) == expected
 
+    # Under a filter the two part company — which is the entire reason both
+    # are on the wire.
     assert litigated["unfilteredTotal"] == expected
-    assert sum(litigated["groups"][stage]["total"] for stage in STAGES) < expected
+    assert litigated["filteredTotal"] < expected
+    assert litigated["filteredTotal"] == sum(
+        litigated["groups"][stage]["total"] for stage in STAGES
+    )
+
+
+# --- the weights really are data (AC 4, Task 2) -------------------------
+
+
+async def test_a_second_priority_weights_version_reranks_the_queue(seeded_db_url: str) -> None:
+    """**The acceptance criterion, as a test.** A real document, not a
+    dataclass.
+
+    Version 2 of `priority_weights` is inserted into `rule_document`
+    effective today, with every term zeroed but litigation. The same request
+    to the same endpoint, with no code path different between the two runs,
+    then comes back in a different order — and the order is one this test
+    can state from the seed file alone: litigated claims first, everything
+    else after, each block by claim id (the tie-break, doing real work for
+    once, since every claim in a block now scores identically).
+
+    This is the half `test_priority_score.py` structurally cannot reach. It
+    hands `priority_score` a `PriorityWeights` it built itself, which proves
+    the arithmetic reads its parameters and nothing at all about the
+    document → ZEN → validation → scorer chain that produces them.
+    """
+    zeroed = {
+        "litigation": "1",
+        "siuReview": "0",
+        "rtwBlocked": "0",
+        "pendingApproval": "0",
+        "paymentDue": "0",
+        "surgery": "0",
+        "severityFactor": "0",
+        "daysOpenFactor": "0",
+        "settledPenalty": "0",
+    }
+    treatment = [
+        claim
+        for claim in seed_fixture.claims_for(*KAYA)
+        if claim["stage"] == seed_fixture.STAGE_ORDER[2]
+    ]
+    expected = sorted(c["claim_id"] for c in treatment if c["litigation_flag"]) + sorted(
+        c["claim_id"] for c in treatment if not c["litigation_flag"]
+    )
+    assert expected, "the treatment group must not be empty for this to say anything"
+
+    before = await queue_for(seeded_db_url, *KAYA)
+    assert ids(before["groups"]["treatment"]) != expected, (
+        "v1 already ranks the group litigation-first-then-claim-id, so a change "
+        "of ordering would prove nothing"
+    )
+
+    with superseding_weights(seeded_db_url, **zeroed):
+        after = await queue_for(seeded_db_url, *KAYA)
+
+    assert after["rulesVersion"] == 2
+    assert after["thresholdsVersion"] == 1, "only one document was superseded"
+    assert ids(after["groups"]["treatment"]) == expected
+    # The marker rule is data too: with the categorical weights gone, no
+    # claim clears a threshold of 30 and no card carries a 🔺.
+    assert not any(
+        item["priorityMarker"] for stage in STAGES for item in after["groups"][stage]["items"]
+    )
+
+    # …and the superseded document really is gone again, or every test after
+    # this one would be running against v2.
+    assert (await queue_for(seeded_db_url, *KAYA))["rulesVersion"] == 1
+
+
+async def test_a_cursor_ranked_by_a_superseded_document_is_refused(seeded_db_url: str) -> None:
+    """The guard the cursor's docstring has always claimed, now reachable.
+
+    It was unreachable on the production path: `today` resolved to the
+    cursor's own recorded date, so the documents were loaded *effective on
+    that date* and `decoded.rules_version != weights.version` compared a
+    version against itself. A cursor issued under v1 therefore went on being
+    served from a v1 ranking for ever, however many versions had superseded
+    it — silently, since the payload's `rulesVersion` came from the same
+    stale lookup.
+    """
+    async with make_client(seeded_db_url) as client:
+        await login_as(client, *KAYA)
+        cursor = (await client.get(QUEUE, params={"limit": 5})).json()["groups"]["settled"][
+            "nextCursor"
+        ]
+        assert cursor is not None
+
+        with superseding_weights(seeded_db_url, settledPenalty="0"):
+            resp = await client.get(
+                QUEUE, params={"limit": 5, "stage": "settled", "cursor": cursor}
+            )
+
+    assert resp.status_code == 400, resp.text
+    assert resp.json()["type"] == "/problems/invalid-cursor"
+    assert "priority_weights v1" in resp.json()["detail"]
+    assert "v2 is now effective" in resp.json()["detail"]

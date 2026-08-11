@@ -8,12 +8,17 @@ imports `zen`.
 **Why a document is evaluated once per request, not once per claim.**
 Because it returns a parameter block, not a verdict. Story 2.1's scorer runs
 over a hundred rows; asking ZEN a hundred questions would put a rules engine
-on the hot path to answer the same thirteen constants each time, and would
-make the scorer un-Hypothesis-testable (it would need an engine, a database
-and a document to check that two weights add up). Loading the block once and
-handing it to pure Python keeps the formula testable, keeps ZEN cold, and
-makes "which document version produced this ordering?" a fact the response
-can carry — see the queue cursor.
+on the hot path to answer the same fourteen constants each time. It would
+also cost the scorer its testability: as it stands, a test hands
+`priority_score` a `PriorityWeights` it wrote by hand and no engine is
+started, no database is opened and no document is evaluated — which is what
+lets Hypothesis run it ten thousand times. (Note the honest scope of that
+claim: it is about what a *call* does, not about the import graph.
+`rules/parameters.py` defines the parameter blocks and imports this module,
+so `zen` is loaded into the process the moment anything reaches for a block
+type. Cold at run time, present at import time.) Loading the block once and
+handing it to pure Python also makes "which document version produced this
+ordering?" a fact the response can carry — see the queue cursor.
 
 **Why the compile and the evaluation are cached but the load is not.** Both
 halves of the ZEN work depend only on `(key, version)` and the context, and
@@ -92,18 +97,25 @@ async def load(db: AsyncSession, key: str, as_of: date | None = None) -> LoadedD
     legitimately share an effective date (a same-day correction), and the
     later-authored one is the one that applies. `(key, version)` is unique,
     so this ordering is total and the answer cannot depend on the plan.
+
+    The date is resolved **once**, into a local, and both the query and the
+    failure message read that local. Resolved at each use, a call landing on
+    either side of UTC midnight could report a date it did not query — the
+    one message an operator has to trust when a rules migration has not been
+    applied.
     """
+    effective_on = as_of or utc_today()
     row = (
         await db.execute(
             sa.select(RuleDocument.version, RuleDocument.content)
-            .where(RuleDocument.key == key, RuleDocument.effective_from <= (as_of or utc_today()))
+            .where(RuleDocument.key == key, RuleDocument.effective_from <= effective_on)
             .order_by(RuleDocument.version.desc())
             .limit(1)
         )
     ).first()
     if row is None:
         raise RuleDocumentMissing(
-            f"no rule document {key!r} effective on {as_of or utc_today()} — "
+            f"no rule document {key!r} effective on {effective_on} — "
             "a rules migration has not been applied"
         )
     return LoadedDocument(key=key, version=int(row.version), content=dict(row.content))

@@ -7,14 +7,23 @@ rather than a method on an ORM entity or a step inside the queue assembly:
 anything that can describe a claim can be ranked, without a session, a
 request, or a database.
 
-**Where each half of the rule lives (AD-8).** Every number in the formula —
-each weight, the severity and days-open factors, the days-open cap, the
-settled penalty — arrives in `PriorityWeights`, read from the versioned
-`priority_weights` JDM document. This module holds the *arithmetic* and not
-one constant. Grep it: there is no literal in the scoring function. That is
-what makes "re-rank the portfolio without a deploy" a data change, and what
-lets `tests/test_priority_score.py` prove the ordering shifts when the
-document does.
+**Where each half of the rule lives (AD-8).** Every parameter in the formula
+— each weight, the severity and days-open factors, the days-open cap, the
+settled penalty, and the set of statuses that counts as awaiting a decision
+— arrives in `PriorityWeights`, read from the versioned `priority_weights`
+JDM document. This module holds the *arithmetic* and not one constant. Grep
+it: there is no literal, and no hardcoded status, in the scoring function.
+That is what makes "re-rank the portfolio without a deploy" a data change,
+and what lets `tests/test_rules_engine.py` prove the ordering shifts when the
+document does — against a real second document version, not a mutated
+dataclass.
+
+The status set was the last thing here that was not data. It lived as a
+Python `frozenset` beside its own weight in the document, so retuning "which
+statuses are pending approval" was a deploy while retuning what they are
+worth was a migration: one rule element in two tiers, which is exactly what
+AD-8 forbids. `rules/parameters.py` now reads it from the document and
+resolves every member against `ClaimStatus` before a claim is scored.
 
 **Why the claim and its flags are separate arguments.** They have different
 provenance and the signature says so. `QueueClaim` is a row the repository
@@ -109,15 +118,14 @@ class QueueFlags:
     payment_due: bool
 
 
-# Two statuses mean "waiting on us to decide" (the prototype's `Initial` /
-# `CH Assessment Process`). A claim nobody has approved or denied is a claim
-# whose clock is running with no treatment authorized, which is why it
-# outranks a payment that is merely due.
-PENDING_APPROVAL_STATUSES = frozenset({ClaimStatus.initial, ClaimStatus.ch_assessment_process})
-
-
 def priority_score(claim: QueueClaim, flags: QueueFlags, weights: PriorityWeights) -> float:
-    """Rank one claim. Pure, total, and free of every constant it uses."""
+    """Rank one claim. Pure, total, and free of every parameter it uses.
+
+    "Free of every parameter" is literal and checkable: there is no number
+    and no status name below, only `weights.*` and the claim's own columns.
+    `test_no_weight_is_hardcoded_in_the_scorer` zeroes the whole block and
+    asserts the answer is zero, which no stray `+ 40` would survive.
+    """
     score = 0.0
     if claim.litigation_flag:
         score += weights.litigation
@@ -125,7 +133,11 @@ def priority_score(claim: QueueClaim, flags: QueueFlags, weights: PriorityWeight
         score += weights.siu_review
     if flags.rtw_blocked:
         score += weights.rtw_blocked
-    if claim.status in PENDING_APPROVAL_STATUSES:
+    # "Waiting on us to decide" — the document's list, not this module's.
+    # A claim nobody has approved or denied is a claim whose clock is
+    # running with no treatment authorized, which is why the seeded weight
+    # puts it above a payment that is merely due.
+    if claim.status in weights.pending_approval_statuses:
         score += weights.pending_approval
     if flags.payment_due:
         score += weights.payment_due
@@ -157,9 +169,22 @@ def priority_markers(scores: Sequence[float], weights: PriorityWeights) -> list[
 
     The rule is `markerCount` items with `score > markerThreshold`, in rank
     order. Strictly greater, matching the prototype's `priorityScore(c)>30`.
-    `scores` must already be sorted descending; the caller owns the sort
-    (and its tie-break), because the marker cannot be decided independently
-    of the order it is decided in.
+
+    **Descending order is a precondition, and it is enforced.** The caller
+    owns the sort (and its tie-break), because the marker cannot be decided
+    independently of the order it is decided in. The prototype expressed the
+    rule positionally — `i<3 && priorityScore(c)>30` over its rendered list
+    — and this expresses it as a budget spent on marked claims. Over a
+    descending sequence the two are the same function; over an unsorted one
+    they are not, and the prototype's would hand a marker to whatever
+    happened to land in the first three slots. Rather than pick a winner for
+    a case that means nothing either way, the precondition is checked: an
+    unsorted `scores` is a caller bug (the queue sorts in `_ranked_group`,
+    Epic 5's ungrouped top-30 will have to sort too), and a caller bug that
+    silently produces plausible markers is the one this function is most
+    likely to be handed. `ValueError`, not a quiet re-sort — re-sorting here
+    would give the caller back markers that do not line up with the list it
+    is about to render them against.
 
     **The marker describes the top of the list it is computed over.** The
     queue computes it after filtering, so the same claim can carry the
@@ -170,6 +195,14 @@ def priority_markers(scores: Sequence[float], weights: PriorityWeights) -> list[
     group, before any slice, so asking for page 2 can never make a fourth
     claim sprout one.
     """
+    for position, (higher, lower) in enumerate(zip(scores, scores[1:], strict=False)):
+        if lower > higher:
+            raise ValueError(
+                f"priority_markers needs a descending sequence; position {position} scores "
+                f"{higher} and position {position + 1} scores {lower}. Sort before marking — "
+                "the marker is a statement about the top of a ranked list."
+            )
+
     marked = 0
     markers: list[bool] = []
     for score in scores:

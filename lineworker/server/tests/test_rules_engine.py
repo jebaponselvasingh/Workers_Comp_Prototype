@@ -26,6 +26,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from data.models.enums import ClaimStatus
 from rules.engine import RuleDocumentMissing, evaluate, load
 from rules.parameters import (
     DERIVATION_THRESHOLDS_KEY,
@@ -55,6 +56,10 @@ EXPECTED_WEIGHTS: dict[str, Any] = {
     "siuReview": 35,
     "rtwBlocked": 30,
     "pendingApproval": 25,
+    # The other half of the same rule element: the weight is what a pending
+    # claim is worth, this is which statuses are pending. Both in the
+    # document, per AD-8 — a rule element lives in exactly one tier.
+    "pendingApprovalStatuses": ["initial", "ch_assessment_process"],
     "paymentDue": 20,
     "surgery": 15,
     "severityFactor": 0.3,
@@ -166,6 +171,9 @@ async def test_the_typed_blocks_carry_the_evaluated_values(db: AsyncSession) -> 
         siu_review=EXPECTED_WEIGHTS["siuReview"],
         rtw_blocked=EXPECTED_WEIGHTS["rtwBlocked"],
         pending_approval=EXPECTED_WEIGHTS["pendingApproval"],
+        pending_approval_statuses=frozenset(
+            ClaimStatus(value) for value in EXPECTED_WEIGHTS["pendingApprovalStatuses"]
+        ),
         payment_due=EXPECTED_WEIGHTS["paymentDue"],
         surgery=EXPECTED_WEIGHTS["surgery"],
         severity_factor=EXPECTED_WEIGHTS["severityFactor"],
