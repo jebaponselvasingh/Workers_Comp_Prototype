@@ -1,6 +1,6 @@
 # Story 1.6: Domain Glossary
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -17,27 +17,27 @@ so that domain terms are one click away everywhere.
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: `glossary_term` reference data (AC: 1)
-  - [ ] Alembic revision creating `glossary_term` (surrogate int PK; columns per the Excel mapping — abbreviation, term, definition; plus a stable sort order if the Excel calls for one). Reference data, read-only to the app: no `version` column, no audit wiring, no write commands or endpoints
-  - [ ] Seed migration loading the prototype's `GLOSS` array (`docs/Workers_Comp_Prototype.html` lines ~1772–1798) — **all 25 entries, verbatim text** (FNOL, TTD, PPD, PTD, MMI, IME, AWW, RTW, CTS, HAVS, NIHL, OSHA 300, FROI, ICD-10, Reserve, Subro, PPE, EMG, ORIF, Arc Flash, SLA, LTD, WPI, Apportionment, VR); data source only, never code
-- [ ] Task 2: Glossary endpoint (AC: 1)
-  - [ ] `GET /api/glossary` (auth-required): full term list in the `{items, nextCursor, total?}` list envelope per convention (25 rows — a single page; cursor mechanics may be trivial but the envelope shape holds), camelCase fields, prototype display order
-  - [ ] pytest: endpoint returns all seeded terms; unauthenticated request → 401 problem+json (inherited from 1.3's handler — assert it holds here)
-- [ ] Task 3: Slide-in panel UI — UX-DR10 (AC: 1, 2)
-  - [ ] `web/src/features/glossary/` (or beside the top-bar chrome): right-hand slide-in panel over a backdrop (shadcn/ui Sheet fits) — header "WC Glossary" + ✕ close, search input, scrollable term list
-  - [ ] Term row per prototype: term name with abbreviation chip, definition below — dense card styling with the 1.1 tokens (light palette per the 1.1 ruling)
-  - [ ] Open via the top-bar 📖 Glossary button — **enable the disabled seam Story 1.4 left**, removing its tooltip; close via ✕ AND backdrop click (both under test); focus moves into the panel on open, returns to the button on close (Sheet gives this — verify)
-  - [ ] Data via TanStack Query (`queryKeys.glossary`), fetched on first open and cached; loading + error states (NFR-3)
-- [ ] Task 4: Live search + no-match state (AC: 2)
-  - [ ] Search filters as the user types, case-insensitive substring across **abbreviation OR term OR definition** (the prototype's `renderGloss` predicate exactly)
-  - [ ] Filtering runs client-side over the cached full list — sanctioned scope-free reference-data exception, see Dev Notes; no per-keystroke server round-trips
-  - [ ] No-match state per prototype: muted `No matches for "query".` echoing the query — never an empty void (NFR-3)
-  - [ ] Clearing the query restores the full list; panel reopen resets to unfiltered (prototype calls `renderGloss("")` on open)
-  - [ ] Vitest: predicate matches on each of the three fields; no-match state renders with the query echoed; clear restores
-- [ ] Task 5: E2E story spec (AC: 1, 2)
-  - [ ] `e2e/stories/1-6-domain-glossary.spec.ts` tagged `@story:1-6 @epic:1`, using the login fixture (any persona — the glossary is role-independent chrome; assert it opens for a handler AND a supervisor to prove "everywhere")
-  - [ ] Open panel → terms listed; type an abbreviation (e.g. "HAVS") → filtered hit; type a definition-only word → hit (proves definition-text search); type gibberish → no-match state; close via ✕; reopen and close via backdrop click
-  - [ ] One `@smoke` happy path: login → open glossary → search "MMI" → "Maximum Medical Improvement" visible
+- [x] Task 1: `glossary_term` reference data (AC: 1)
+  - [x] Alembic revision creating `glossary_term` (surrogate int PK; columns per the Excel mapping — abbreviation, term, definition; plus a stable sort order if the Excel calls for one). Reference data, read-only to the app: no `version` column, no audit wiring, no write commands or endpoints
+  - [x] Seed migration loading the prototype's `GLOSS` array (`docs/Workers_Comp_Prototype.html` lines ~1772–1798) — **all 25 entries, verbatim text** (FNOL, TTD, PPD, PTD, MMI, IME, AWW, RTW, CTS, HAVS, NIHL, OSHA 300, FROI, ICD-10, Reserve, Subro, PPE, EMG, ORIF, Arc Flash, SLA, LTD, WPI, Apportionment, VR); data source only, never code
+- [x] Task 2: Glossary endpoint (AC: 1)
+  - [x] `GET /api/glossary` (auth-required): full term list in the `{items, nextCursor, total?}` list envelope per convention (25 rows — a single page; cursor mechanics may be trivial but the envelope shape holds), camelCase fields, prototype display order
+  - [x] pytest: endpoint returns all seeded terms; unauthenticated request → 401 problem+json (inherited from 1.3's handler — assert it holds here)
+- [x] Task 3: Slide-in panel UI — UX-DR10 (AC: 1, 2)
+  - [x] `web/src/features/glossary/` (or beside the top-bar chrome): right-hand slide-in panel over a backdrop (shadcn/ui Sheet fits) — header "WC Glossary" + ✕ close, search input, scrollable term list
+  - [x] Term row per prototype: term name with abbreviation chip, definition below — dense card styling with the 1.1 tokens (light palette per the 1.1 ruling)
+  - [x] Open via the top-bar 📖 Glossary button — **enable the disabled seam Story 1.4 left**, removing its tooltip; close via ✕ AND backdrop click (both under test); focus moves into the panel on open, returns to the button on close (Sheet gives this — verify)
+  - [x] Data via TanStack Query (`queryKeys.glossary`), fetched on first open and cached; loading + error states (NFR-3)
+- [x] Task 4: Live search + no-match state (AC: 2)
+  - [x] Search filters as the user types, case-insensitive substring across **abbreviation OR term OR definition** (the prototype's `renderGloss` predicate exactly)
+  - [x] Filtering runs client-side over the cached full list — sanctioned scope-free reference-data exception, see Dev Notes; no per-keystroke server round-trips
+  - [x] No-match state per prototype: muted `No matches for "query".` echoing the query — never an empty void (NFR-3)
+  - [x] Clearing the query restores the full list; panel reopen resets to unfiltered (prototype calls `renderGloss("")` on open)
+  - [x] Vitest: predicate matches on each of the three fields; no-match state renders with the query echoed; clear restores
+- [x] Task 5: E2E story spec (AC: 1, 2)
+  - [x] `e2e/stories/1-6-domain-glossary.spec.ts` tagged `@story:1-6 @epic:1`, using the login fixture (any persona — the glossary is role-independent chrome; assert it opens for a handler AND a supervisor to prove "everywhere")
+  - [x] Open panel → terms listed; type an abbreviation (e.g. "HAVS") → filtered hit; type a definition-only word → hit (proves definition-text search); type gibberish → no-match state; close via ✕; reopen and close via backdrop click
+  - [x] One `@smoke` happy path: login → open glossary → search "MMI" → "Maximum Medical Improvement" visible
 
 ## Dev Notes
 
@@ -195,3 +195,4 @@ Added or modified in the review round:
 
 - 2026-08-10: Story 1.6 implemented — `glossary_term` reference data created by migration 0006 with `SELECT` as its only grant and seeded by 0007 from `glossary_terms.json`, extracted verbatim from the prototype's 25-entry `GLOSS` (the epics' "24" is a documented miscount); an unscoped repository whose docstring argues its own AD-7 exemption; the parameter-free `GET /api/glossary` in the standard envelope, auth-required and deliberately without `Cache-Control`; and the UX-DR10 slide-in panel — vendored shadcn Sheet, prototype row anatomy, autofocused live search across abbreviation, term and definition, query-echoing no-match state, skeleton and error branches — opened by the 📖 Glossary button Story 1.4 shipped disabled. 15 new server tests (175 total), 14 vitest (56), 10 e2e (40) plus `@smoke`; Story 1.4's two seam assertions re-pointed rather than deleted, and the full `@epic:1` suite run green together as Epic 1's close-out. Status → review.
 - 2026-08-10: Code review — 12 findings, all 12 applied. The one that mattered was a state collapse: a successful empty payload rendered as `No matches for "<query>".`, telling a handler a term does not exist when in fact the table is empty — the NFR-3 failure the error branch exists to prevent, arriving through a 200. The empty-glossary check now runs first with its own test id, and both states are under test. Alongside it: `abbreviation` gained the unique constraint the React key was already assuming (fixed in the model and the unshipped 0006, not by exposing a surrogate id); a new non-DB test parses the prototype's `GLOSS` and pins the seed file to it, closing the "verbatim" half of AC 1 that every existing test could only assert against itself; the panel gained a polite live region, `aria-busy` and an `alert`-role error, since live filtering was announcing nothing at all; the extractor's documented path was corrected (it did not resolve) and its `assert`-based integrity guard replaced with a non-strippable check that counts entry boundaries rather than braces; 0007 gained a shape guard so a drifted seed fails with a sentence; both oracles return copies; the trim in the search predicate is now a documented, tested deviation instead of a comment claiming the predicate was unchanged; and the "AC 4" citations were corrected to Task 3, the story having only two ACs. Full gate re-run green: 177 pytest DB-backed (89 + 88 skipped without), 61 vitest, 40 Playwright + 7 `@smoke`, `alembic check` clean across a `downgrade base` → `upgrade head` round trip, `schema.d.ts` byte-identical.
+- 2026-08-11: Epic 1 close-out — code review complete with all 12 findings applied, and the full `@epic:1` Playwright suite (40/40) run green together against one freshly reset stack as the epic's exit gate; status → done. Epic 1 is closed.

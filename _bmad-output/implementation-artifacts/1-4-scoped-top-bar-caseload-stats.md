@@ -4,7 +4,7 @@ baseline_commit: 86f55cc68a873cc2a638eaefa175752028f4e3e8
 
 # Story 1.4: Scoped Top Bar & Caseload Stats
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -191,3 +191,4 @@ Six findings, all reproduced before acting. Five fixed with a regression test ea
 
 - 2026-08-10: Story 1.4 implemented — the AD-7 scope-enforcing claim repository (mandatory caller context, tautology predicate for `ALL`, no role branch), the AD-10 derivations registry with `risk` as its first entry (Python + SQL forms from one source, thresholds as AD-8 config parameters with a `TODO(JDM)`), `services/worklist` read aggregates, the parameter-free `GET /api/stats/topbar`, and the UX-DR2 top bar with three server-computed tiles, loading skeletons, honest-degradation em dashes and inert seams for Stories 1.5/1.6. 35 new server tests (101 total), 9 vitest (24), 8 e2e (23) plus `@smoke`; dev and e2e stacks verified live. Status → review.
 - 2026-08-10: Code review — 6 findings, 5 fixed with regression tests, 1 confirmed as an existing deferral. The two that mattered: the aggregate count statement inferred its FROM clause from the caller's predicates and so could drop the AD-7 scope filter entirely, and a session that ended without a logout let the next persona inherit the previous one's cached tiles. Writing the second regression test exposed an unreported infinite redirect loop between the route guard and the login screen on session expiry, fixed in the same pass. Full gate re-run green (104 pytest, 29 vitest, 23 Playwright + `@smoke`).
+- 2026-08-11: Epic 1 close-out — code review complete with all applied findings recorded above; status → done. One finding stands deliberately unfixed (session revocation on `login` for the presented cookie), carried as item 1 of `deferred-work.md` because revoking it is the single-session-vs-multi-device product decision, not a defect.

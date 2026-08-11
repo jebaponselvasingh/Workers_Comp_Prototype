@@ -4,7 +4,7 @@ baseline_commit: c7ffe4f8ff8b3adb0b0a80b4c604d738bd250cc6
 
 # Story 1.5: SLA Strip for Every Role
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -188,3 +188,4 @@ Five findings, each reproduced before acting. All five fixed; two of them were d
 
 - 2026-08-10: Story 1.5 implemented — the single AD-2 SLA aggregation in `services/worklist/sla.py` (pure `strip_of` core, exact-decimal half-up rounding, `no_data` instead of the prototype's fabricated 7.4d/42d/87%), four AD-8 configured targets with a `TODO(JDM)`, a scoped repository projection, the parameter-free `GET /api/stats/sla` for every role, and the UX-DR2 SLA strip filling Story 1.4's top-bar seam with server-decided pass/warn styling, accessible tooltips, skeletons and honest-degradation em dashes. 47 new server tests (151 total, incl. 4 Hypothesis properties per NFR-7), 18 vitest (42), 7 e2e (30) plus `@smoke`; dev and e2e stacks verified live. Status → review.
 - 2026-08-10: Code review — 5 findings, all 5 fixed with a regression test or a live verification each. The two that mattered were defects in this story's own safeguards: the AD-2 "exactly one aggregation" guard could not match `Claim.sla_pick_days` and so enforced nothing, and `deploy/.env` never reached the container, which made AC 3's "targets come from configuration" true in code and false in the shipped stack (a pre-existing gap that had also silenced Story 1.3's and 1.4's documented knobs). Display precision moved onto the wire so the client holds no rounding rule, and the e2e oracle stopped being able to predict `NaN` or round in float. Full gate re-run green (160 pytest, 42 vitest, 30 Playwright + @smoke).
+- 2026-08-11: Epic 1 close-out — code review complete with all 5 findings applied; status → done.
