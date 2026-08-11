@@ -104,11 +104,14 @@ jobs:
       # top-bar aggregates (Story 1.4), the per-persona SLA strip
       # (Story 1.5 — its pure aggregation tests run in the server job), and
       # the seeded glossary, its SELECT-only grant and its endpoint
-      # (Story 1.6).
+      # (Story 1.6), and the ZEN rule documents plus the scoped, filtered,
+      # cursor-paginated claim queue built on them (Story 2.1 — its pure
+      # scorer tests run in the server job).
       - run: |
           uv run pytest tests/test_schema_seed.py tests/test_no_derived_columns.py \
             tests/test_auth.py tests/test_scoped_repository.py tests/test_derivations.py \
-            tests/test_topbar_stats.py tests/test_sla_endpoint.py tests/test_glossary.py
+            tests/test_topbar_stats.py tests/test_sla_endpoint.py tests/test_glossary.py \
+            tests/test_rules_engine.py tests/test_claims_queue.py
         working-directory: lineworker/server
         env:
           MIGRATION_TEST_DATABASE_URL: postgresql://lineworker:ci@localhost:5432/lineworker

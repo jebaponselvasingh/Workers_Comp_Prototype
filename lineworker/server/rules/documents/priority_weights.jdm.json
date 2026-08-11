@@ -1,0 +1,108 @@
+{
+  "contentType": "application/vnd.gorules.decision",
+  "name": "priority_weights",
+  "description": "Every constant the queue's priority score is built from (AD-8). The arithmetic that consumes them is services/worklist/priority.py; no weight, cap or threshold appears there.",
+  "nodes": [
+    {
+      "id": "request",
+      "type": "inputNode",
+      "name": "request",
+      "position": { "x": 0, "y": 0 }
+    },
+    {
+      "id": "weights",
+      "type": "expressionNode",
+      "name": "weights",
+      "position": { "x": 240, "y": 0 },
+      "content": {
+        "expressions": [
+          {
+            "id": "litigation",
+            "key": "litigation",
+            "value": "40"
+          },
+          {
+            "id": "siuReview",
+            "key": "siuReview",
+            "value": "35"
+          },
+          {
+            "id": "rtwBlocked",
+            "key": "rtwBlocked",
+            "value": "30"
+          },
+          {
+            "id": "pendingApproval",
+            "key": "pendingApproval",
+            "value": "25"
+          },
+          {
+            "id": "paymentDue",
+            "key": "paymentDue",
+            "value": "20"
+          },
+          {
+            "id": "surgery",
+            "key": "surgery",
+            "value": "15"
+          },
+          {
+            "id": "severityFactor",
+            "key": "severityFactor",
+            "value": "0.3"
+          },
+          {
+            "id": "daysOpenFactor",
+            "key": "daysOpenFactor",
+            "value": "0.2"
+          },
+          {
+            "id": "daysOpenCap",
+            "key": "daysOpenCap",
+            "value": "60"
+          },
+          {
+            "id": "settledPenalty",
+            "key": "settledPenalty",
+            "value": "-100"
+          },
+          {
+            "id": "markerThreshold",
+            "key": "markerThreshold",
+            "value": "30"
+          },
+          {
+            "id": "markerCount",
+            "key": "markerCount",
+            "value": "3"
+          },
+          {
+            "id": "pageLimit",
+            "key": "pageLimit",
+            "value": "50"
+          }
+        ]
+      }
+    },
+    {
+      "id": "response",
+      "type": "outputNode",
+      "name": "response",
+      "position": { "x": 480, "y": 0 }
+    }
+  ],
+  "edges": [
+    {
+      "id": "request-weights",
+      "type": "edge",
+      "sourceId": "request",
+      "targetId": "weights"
+    },
+    {
+      "id": "weights-response",
+      "type": "edge",
+      "sourceId": "weights",
+      "targetId": "response"
+    }
+  ]
+}

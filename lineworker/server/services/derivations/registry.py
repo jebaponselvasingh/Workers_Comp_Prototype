@@ -10,18 +10,26 @@ import time. That is the failure AD-10 exists to prevent: two functions,
 each defensible on its own, disagreeing between the queue card and the
 dashboard KPI.
 
-Derivations are built *from `Settings`* rather than being plain functions,
-because AD-8 puts their parameters in configuration (and, when ZEN lands,
-in a versioned JDM document). `for_settings` is therefore the only way to
-get a usable computer, which keeps "where did this threshold come from?"
-answerable at every call site.
+Derivations are built *from their parameters* rather than being plain
+functions, because AD-8 puts every threshold in the rules tier.
+`for_thresholds` is therefore the only way to get a usable computer, which
+keeps "where did this threshold come from?" answerable at every call site.
+
+Story 1.4 wrote that argument as `Settings` with a `TODO(JDM)` beside it;
+Story 2.1 lands ZEN and replaces it with `DerivationThresholds`, a block
+read from a versioned rule document. Nothing else about the registry moved —
+which was the point of routing every derivation through one argument in the
+first place. One block for the whole registry, rather than one argument per
+derivation, is what lets a consumer load parameters once and then derive
+freely; a per-derivation signature would have made the loader's reach grow
+with every new derived value.
 """
 
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from config import Settings
+from rules.parameters import DerivationThresholds
 
 
 @dataclass(frozen=True)
@@ -30,10 +38,10 @@ class Derivation[T]:
 
     name: str
     describes: str
-    build: Callable[[Settings], T]
+    build: Callable[[DerivationThresholds], T]
 
-    def for_settings(self, settings: Settings) -> T:
-        return self.build(settings)
+    def for_thresholds(self, thresholds: DerivationThresholds) -> T:
+        return self.build(thresholds)
 
 
 _REGISTRY: dict[str, Derivation[Any]] = {}

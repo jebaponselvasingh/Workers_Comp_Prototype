@@ -29,4 +29,32 @@ export const queryKeys = {
   // for scope-free, PHI-free reference data), so a query per keystroke
   // would be a cache entry per keystroke for the same 25 rows.
   glossary: ["glossary"] as const,
+  claims: {
+    /**
+     * The queue, keyed by filter (Story 2.1).
+     *
+     * The filter *is* in the key, unlike the glossary's search term, and
+     * for the opposite reason: a filtered queue is a different server
+     * answer, computed under the caller's scope over data the client does
+     * not hold in full (AD-1 forbids re-filtering a cached superset). Two
+     * filters are two resources, so they are two cache entries — and
+     * switching back to one already fetched is instant, which is the
+     * behaviour a handler flipping between "All" and "Litigation" expects.
+     *
+     * Still no scope in the key, for the reason the stats keys record: the
+     * server answers for whoever holds the cookie, and putting an identity
+     * here would imply the client chooses whose caseload it sees.
+     */
+    queue: (filter: string) => ["claims", "queue", filter] as const,
+    /**
+     * The pages a stage group has been expanded through ("Show more").
+     *
+     * Keyed by filter *and* stage but not by cursor: this is an infinite
+     * query, so the cursors are its page params and live inside the entry
+     * rather than beside it. A cursor in the key would make every page its
+     * own cache entry and lose the accumulated list on the way back.
+     */
+    queuePages: (filter: string, stage: string) =>
+      ["claims", "queue", filter, "pages", stage] as const,
+  },
 } as const;

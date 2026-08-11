@@ -33,6 +33,27 @@ if (!("ResizeObserver" in globalThis)) {
   } as unknown as typeof ResizeObserver;
 }
 
+/**
+ * Third jsdom gap, same shape as the second: Radix's Select opens on a
+ * pointer sequence and scrolls the chosen item into view, and jsdom
+ * implements neither the Pointer Capture API nor `scrollIntoView`. Without
+ * these the filter dropdown throws the moment a test clicks it, while
+ * working in every real browser.
+ *
+ * No-ops rather than fakes, for the ResizeObserver reason: the tests that
+ * open the dropdown assert which option was chosen and what was requested
+ * as a result — never where the listbox was drawn or how far it scrolled,
+ * which are the browser's business and the e2e suite's to check.
+ */
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = () => false;
+  Element.prototype.setPointerCapture = () => {};
+  Element.prototype.releasePointerCapture = () => {};
+}
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = () => {};
+}
+
 const NodeRequest = globalThis.Request;
 
 function withDocumentBase(input: RequestInfo | URL): RequestInfo | URL {

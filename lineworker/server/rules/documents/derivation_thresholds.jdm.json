@@ -1,0 +1,68 @@
+{
+  "contentType": "application/vnd.gorules.decision",
+  "name": "derivation_thresholds",
+  "description": "Parameters the AD-10 derivation registry reads. Version 1 restates the prototype's demo tunables verbatim; a real definition changes numbers here, not call sites.",
+  "nodes": [
+    {
+      "id": "request",
+      "type": "inputNode",
+      "name": "request",
+      "position": { "x": 0, "y": 0 }
+    },
+    {
+      "id": "thresholds",
+      "type": "expressionNode",
+      "name": "thresholds",
+      "position": { "x": 240, "y": 0 },
+      "content": {
+        "expressions": [
+          {
+            "id": "riskHighMin",
+            "key": "riskHighMin",
+            "value": "65"
+          },
+          {
+            "id": "riskMedMin",
+            "key": "riskMedMin",
+            "value": "35"
+          },
+          {
+            "id": "siuFraudScoreMin",
+            "key": "siuFraudScoreMin",
+            "value": "60"
+          },
+          {
+            "id": "rtwBlockedHashModulus",
+            "key": "rtwBlockedHashModulus",
+            "value": "5"
+          },
+          {
+            "id": "paymentDueHashModulus",
+            "key": "paymentDueHashModulus",
+            "value": "3"
+          }
+        ]
+      }
+    },
+    {
+      "id": "response",
+      "type": "outputNode",
+      "name": "response",
+      "position": { "x": 480, "y": 0 }
+    }
+  ],
+  "edges": [
+    {
+      "id": "request-thresholds",
+      "type": "edge",
+      "sourceId": "request",
+      "targetId": "thresholds"
+    },
+    {
+      "id": "thresholds-response",
+      "type": "edge",
+      "sourceId": "thresholds",
+      "targetId": "response"
+    }
+  ]
+}

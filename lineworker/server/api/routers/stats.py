@@ -13,6 +13,7 @@ from fastapi import APIRouter, Response
 from api.deps import CallerContextDep, DbDep, SettingsDep
 from api.routers.auth import UNAUTHENTICATED_RESPONSE
 from api.schemas import ApiModel
+from rules.parameters import thresholds_for
 from services.worklist import topbar_stats
 from services.worklist.sla import SlaDirection, SlaMetricKey, SlaStatus, sla_strip
 
@@ -36,13 +37,16 @@ class TopBarStatsResponse(ApiModel):
 async def topbar(
     ctx: CallerContextDep,
     db: DbDep,
-    settings: SettingsDep,
     response: Response,
 ) -> TopBarStatsResponse:
     # Same reasoning as `/me`: this response is specific to one persona's
     # scope, so it must never be served to another from a cache upstream.
     response.headers["Cache-Control"] = "no-store"
-    stats = await topbar_stats(db, ctx, settings)
+    # The band cut-offs are a rule document now (Story 2.1), so the tiles
+    # cost one extra indexed read. Loading them here rather than inside
+    # `topbar_stats` keeps the aggregate a pure composition of scope and
+    # parameters — see that function's docstring.
+    stats = await topbar_stats(db, ctx, await thresholds_for(db))
     return TopBarStatsResponse(
         caseload=stats.caseload,
         active_tx=stats.active_tx,

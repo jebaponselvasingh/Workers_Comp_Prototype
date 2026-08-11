@@ -19,6 +19,7 @@ from sqlalchemy import (
     Integer,
     Text,
     UniqueConstraint,
+    func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -194,6 +195,54 @@ class GlossaryTerm(Base):
     term: Mapped[str] = mapped_column(Text)
     definition: Mapped[str] = mapped_column(Text)
     sort_order: Mapped[int] = mapped_column(Integer, unique=True)
+
+
+class RuleDocument(Base):
+    """A versioned, effective-dated ZEN JDM document (Story 2.1, AD-8).
+
+    AD-8 splits every rule in two: JDM owns the parameters, typed Python
+    owns the formula. This table is the JDM half's storage, and Story 2.1 is
+    its first consumer — the queue's priority weights and the derivation
+    registry's thresholds.
+
+    Three columns carry the whole of AD-8's "versioned in the DB with
+    effective dates":
+
+    - **`key`** names the rule, not the file. `rules/documents/*.jdm.json`
+      is where a version is *authored*; this row is what a request reads, so
+      renaming a file cannot change which rule a running server evaluates.
+    - **`version`** is monotonic per key, and unique with it. It is what the
+      queue's cursor records: "this ordering was produced by
+      `priority_weights` v1" is answerable rather than inferred.
+    - **`effective_from`** is the date the version takes over. The loader
+      picks the highest version whose date has arrived, so a rule change can
+      be migrated ahead of the day it applies — which is the operability
+      model AD-8 chose over an env-var override.
+
+    No `version` column in the AD-4 compare-and-swap sense, and no audit
+    wiring, for `GlossaryTerm`'s reasons: rows arrive in a migration and are
+    read-only at runtime (the app role holds SELECT and nothing else).
+    Superseding a document is a new row in a new migration, never an UPDATE —
+    which is also what keeps an old cursor's `version` meaningful.
+    """
+
+    __tablename__ = "rule_document"
+    __table_args__ = (UniqueConstraint("key", "version"),)
+
+    id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+    key: Mapped[str] = mapped_column(Text)
+    version: Mapped[int] = mapped_column(Integer)
+    effective_from: Mapped[date] = mapped_column(Date)
+    # JSONB rather than Text: the document is structured data the database
+    # can be asked about (which nodes, which weights), and a JSON parse
+    # error becomes a migration failure instead of a 500 at first evaluation.
+    content: Mapped[dict] = mapped_column(JSONB)  # type: ignore[type-arg]
+    # Defaulted in the database rather than left to the writer. Every row so
+    # far arrives from a seed migration that spells the timestamp out, so
+    # the column looked fine — but the first ORM insert anyone wrote would
+    # have failed on NOT NULL for a value nobody has an opinion about. When
+    # a rule version was authored is the database's fact, not the caller's.
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class AuditEvent(Base):

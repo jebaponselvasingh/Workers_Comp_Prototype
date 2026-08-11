@@ -21,11 +21,11 @@ from dataclasses import dataclass
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import Settings
 from data.context import CallerContext
 from data.models import Claim
 from data.models.enums import Stage
 from data.repositories import claims as claim_repo
+from rules.parameters import DerivationThresholds
 from services import derivations
 from services.derivations import RiskBand
 
@@ -42,9 +42,19 @@ class TopBarStats:
 async def topbar_stats(
     db: AsyncSession,
     ctx: CallerContext,
-    settings: Settings,
+    thresholds: DerivationThresholds,
 ) -> TopBarStats:
-    risk = derivations.risk.for_settings(settings)
+    """The three tiles. Takes its thresholds rather than fetching them.
+
+    Story 2.1 moved the band cut-offs into a rule document, and this
+    signature is the ripple: the caller loads the parameter block and hands
+    it down, exactly as it used to hand down `Settings`. The alternative —
+    loading the document in here — would drag the rules engine into every
+    aggregate that happens to mention a band, and would make this function
+    impossible to call without a database session it does not otherwise
+    need.
+    """
+    risk = derivations.risk.for_thresholds(thresholds)
     counts = await claim_repo.count_claims_matching(
         db,
         ctx,

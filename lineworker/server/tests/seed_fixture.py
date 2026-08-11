@@ -13,6 +13,7 @@ code did.
 """
 
 import json
+from datetime import UTC, date, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from functools import lru_cache
 from pathlib import Path
@@ -159,3 +160,162 @@ def glossary_terms() -> list[dict[str, Any]]:
     surfaces in a different file with no visible cause.
     """
     return [dict(term) for term in _glossary_terms_cached()]
+
+
+# --- Story 2.1: the queue, restated independently ------------------------
+#
+# Every rule the queue applies, written out here from the story text and the
+# prototype rather than imported from `services/` or read out of the JDM
+# documents. Same reasoning as `HIGH_RISK_MIN` above, and it matters more
+# here than anywhere else so far: the queue's payload is the product of five
+# derivations, thirteen weights, a filter predicate, a sort and a marker
+# rule, and an oracle that shared any one of them with the implementation
+# would validate the other four by accident.
+
+MED_RISK_MIN = 35
+SIU_FRAUD_SCORE_MIN = 60
+RTW_HASH_MODULUS = 5
+PAYMENT_HASH_MODULUS = 3
+
+STAGE_ORDER = ("intake", "investigation", "treatment", "settled")
+
+WEIGHTS = {
+    "litigation": 40,
+    "siu_review": 35,
+    "rtw_blocked": 30,
+    "pending_approval": 25,
+    "payment_due": 20,
+    "surgery": 15,
+}
+SEVERITY_FACTOR = 0.3
+DAYS_OPEN_FACTOR = 0.2
+DAYS_OPEN_CAP = 60
+SETTLED_PENALTY = -100
+MARKER_THRESHOLD = 30
+MARKER_COUNT = 3
+PENDING_APPROVAL_STATUSES = {"initial", "ch_assessment_process"}
+UNDER_TREATMENT = "under_treatment"
+
+
+def hash_bucket(business_id: str) -> int:
+    """The prototype's `hashStr` (line 646), restated."""
+    h = 0
+    for char in business_id:
+        h = (h * 31 + ord(char)) & 0xFFFFFFFF
+    return h
+
+
+def risk_band(severity_score: int) -> str:
+    if severity_score >= HIGH_RISK_MIN:
+        return "high"
+    if severity_score >= MED_RISK_MIN:
+        return "med"
+    return "low"
+
+
+def queue_flags(claim: dict[str, Any]) -> dict[str, Any]:
+    """The four derived values a card shows, per the prototype's pass."""
+    bucket = hash_bucket(claim["claim_id"])
+    band = risk_band(claim["severity_score"])
+    return {
+        "risk": band,
+        "siu_review": bool(claim["fraud_flag"]) and claim["fraud_score"] >= SIU_FRAUD_SCORE_MIN,
+        "rtw_blocked": (
+            claim["stage"] == "treatment"
+            and claim["return_status"] == UNDER_TREATMENT
+            and (bucket % RTW_HASH_MODULUS == 0 or band == "high")
+        ),
+        "payment_due": claim["stage"] == "treatment" and bucket % PAYMENT_HASH_MODULUS != 0,
+    }
+
+
+def days_open(claim: dict[str, Any], as_of: date) -> int:
+    froi = date.fromisoformat(claim["froi_date"])
+    return max((as_of - froi).days, 0)
+
+
+def expected_score(claim: dict[str, Any], as_of: date) -> float:
+    """The prototype's `priorityScore` (lines 1120-1132), restated."""
+    flags = queue_flags(claim)
+    score = 0.0
+    if claim["litigation_flag"]:
+        score += WEIGHTS["litigation"]
+    if flags["siu_review"]:
+        score += WEIGHTS["siu_review"]
+    if flags["rtw_blocked"]:
+        score += WEIGHTS["rtw_blocked"]
+    if claim["status"] in PENDING_APPROVAL_STATUSES:
+        score += WEIGHTS["pending_approval"]
+    if flags["payment_due"]:
+        score += WEIGHTS["payment_due"]
+    if claim["surgery_required"]:
+        score += WEIGHTS["surgery"]
+    score += claim["severity_score"] * SEVERITY_FACTOR
+    score += min(days_open(claim, as_of), DAYS_OPEN_CAP) * DAYS_OPEN_FACTOR
+    if claim["stage"] == "settled":
+        score += SETTLED_PENALTY
+    return float(score)
+
+
+def matches_filter(claim: dict[str, Any], queue_filter: str) -> bool:
+    """The prototype's `renderQ` filter mapping (lines 1155-1165), restated."""
+    flags = queue_flags(claim)
+    selected: bool = {
+        "all": True,
+        "active": claim["stage"] == "treatment",
+        "high_risk": flags["risk"] == "high",
+        "fraud": bool(claim["fraud_flag"]),
+        "litigation": bool(claim["litigation_flag"]),
+        "payment_due": flags["payment_due"],
+        "surgery": bool(claim["surgery_required"]),
+        "siu": flags["siu_review"],
+    }[queue_filter]
+    return selected
+
+
+def expected_queue(
+    persona_name: str,
+    role: str,
+    queue_filter: str = "all",
+    as_of: date | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """`{stage: [{claimId, priorityMarker, …}]}` for a persona's seeded book.
+
+    Ordering is `(-score, claim_id)` — the tie-break included, because ties
+    are common in the settled group and an oracle without it would disagree
+    with a correct implementation about which of two equal claims comes
+    first.
+    """
+    today = as_of or datetime.now(UTC).date()
+    visible = [c for c in claims_for(persona_name, role) if matches_filter(c, queue_filter)]
+
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for stage in STAGE_ORDER:
+        members = sorted(
+            (c for c in visible if c["stage"] == stage),
+            key=lambda c: (-expected_score(c, today), c["claim_id"]),
+        )
+        marked = 0
+        cards = []
+        for claim in members:
+            score = expected_score(claim, today)
+            marker = marked < MARKER_COUNT and score > MARKER_THRESHOLD
+            if marker:
+                marked += 1
+            cards.append(
+                {
+                    "claimId": claim["claim_id"],
+                    "priorityScore": score,
+                    "priorityMarker": marker,
+                    "daysOpen": days_open(claim, today),
+                    "stage": stage,
+                    **{
+                        "risk": queue_flags(claim)["risk"],
+                        "siuReview": queue_flags(claim)["siu_review"],
+                        "rtwBlocked": queue_flags(claim)["rtw_blocked"],
+                        "paymentDue": queue_flags(claim)["payment_due"],
+                    },
+                }
+            )
+        groups[stage] = cards
+    return groups

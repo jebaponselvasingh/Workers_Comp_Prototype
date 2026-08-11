@@ -16,6 +16,16 @@ import { vi } from "vitest";
  */
 export type StubRoute = { status: number; body: unknown } | "pending";
 
+/**
+ * A route that may answer differently depending on what was asked.
+ *
+ * The queue needs this and the other endpoints do not: `?filter=litigation`
+ * and `?filter=all` are two different server answers, and "changing the
+ * filter refetches rather than narrowing a cached list" (AD-1) is only
+ * observable if the stub can tell the two requests apart.
+ */
+export type StubRouteFor = StubRoute | ((url: string) => StubRoute);
+
 export interface StubRoutes {
   me?: StubRoute;
   personas?: StubRoute;
@@ -23,6 +33,7 @@ export interface StubRoutes {
   stats?: StubRoute;
   sla?: StubRoute;
   glossary?: StubRoute;
+  claimsQueue?: StubRouteFor;
 }
 
 const problem = (status: number, detail: string) => ({
@@ -155,6 +166,143 @@ export const GLOSSARY_EMPTY = {
   body: { items: [], nextCursor: null, total: 0 },
 };
 
+/**
+ * Queue fixtures built from Kaya Johnson's real seeded book — her stage
+ * counts are intake 3, investigation 1, treatment 15, settled 26.
+ *
+ * Component tests do not verify these numbers (that is
+ * `test_claims_queue.py`'s job against the database, and the e2e spec's
+ * against the seed file); they verify that whatever the server sends is
+ * what the pane renders. Real numbers are used anyway so a reader cannot
+ * mistake a stub for a computation — and because a card carrying invented
+ * flags would let a test pass against a component that derived them.
+ */
+function stageGroup(
+  items: unknown[],
+  total = items.length,
+  nextCursor: string | null = null,
+) {
+  return { items, nextCursor, total };
+}
+
+/** One fully-populated card: every badge on, marker on, high risk. */
+export const LOUD_CARD = {
+  claimId: "WC-20017",
+  daysOpen: 140,
+  risk: "high",
+  workerName: "Marcus Delgado",
+  injuryType: "Fall from Height",
+  stage: "treatment",
+  employerShortName: "Caterpillar",
+  fraudFlag: true,
+  litigationFlag: true,
+  paymentDue: true,
+  siuReview: true,
+  rtwBlocked: true,
+  priorityScore: 187.2,
+  priorityMarker: true,
+};
+
+/** Its opposite: no badge, no marker, low risk — so a test can see absence. */
+export const QUIET_CARD = {
+  claimId: "WC-20044",
+  daysOpen: 0,
+  risk: "low",
+  workerName: "Ana Ruiz",
+  injuryType: "Laceration",
+  stage: "treatment",
+  employerShortName: "GE",
+  fraudFlag: false,
+  litigationFlag: false,
+  paymentDue: false,
+  siuReview: false,
+  rtwBlocked: false,
+  priorityScore: 4.5,
+  priorityMarker: false,
+};
+
+export const INTAKE_CARD = {
+  ...QUIET_CARD,
+  claimId: "WC-20003",
+  stage: "intake",
+  workerName: "Priya Raman",
+  injuryType: "Repetitive Strain",
+  priorityScore: 31.4,
+  priorityMarker: true,
+};
+
+/** Intake 1 · investigation 0 · treatment 2 · settled 0 — an empty stage
+ * and a populated one in the same payload. */
+export const CLAIM_QUEUE = {
+  status: 200,
+  body: {
+    groups: {
+      intake: stageGroup([INTAKE_CARD]),
+      investigation: stageGroup([]),
+      treatment: stageGroup([LOUD_CARD, QUIET_CARD]),
+      settled: stageGroup([]),
+    },
+    rulesVersion: 1,
+    unfilteredTotal: 3,
+  },
+};
+
+/**
+ * The same shape with nothing in it, and an **empty book behind it** —
+ * `unfilteredTotal: 0` is what makes this the scope-empty payload rather
+ * than the filter-empty one. The two are otherwise byte-identical, which is
+ * exactly why the server has to say which it is: see `CLAIM_QUEUE_NO_MATCH`.
+ */
+export const CLAIM_QUEUE_EMPTY = {
+  status: 200,
+  body: {
+    groups: {
+      intake: stageGroup([]),
+      investigation: stageGroup([]),
+      treatment: stageGroup([]),
+      settled: stageGroup([]),
+    },
+    rulesVersion: 1,
+    unfilteredTotal: 0,
+  },
+};
+
+/** No group matched, but the handler has 45 claims — a filter miss. */
+export const CLAIM_QUEUE_NO_MATCH = {
+  status: 200,
+  body: { ...CLAIM_QUEUE_EMPTY.body, unfilteredTotal: 45 },
+};
+
+/** A treatment group with more claims than its page — "Show more" appears. */
+export const CLAIM_QUEUE_PAGED = {
+  status: 200,
+  body: {
+    groups: {
+      intake: stageGroup([]),
+      investigation: stageGroup([]),
+      treatment: stageGroup([LOUD_CARD], 2, "cursor-page-2"),
+      settled: stageGroup([]),
+    },
+    rulesVersion: 1,
+    unfilteredTotal: 2,
+  },
+};
+
+/** What `?cursor=cursor-page-2` answers for that group. */
+export const CLAIM_QUEUE_PAGE_TWO = {
+  status: 200,
+  body: {
+    groups: {
+      intake: stageGroup([]),
+      investigation: stageGroup([]),
+      treatment: stageGroup([QUIET_CARD], 2),
+      settled: stageGroup([]),
+    },
+    rulesVersion: 1,
+    unfilteredTotal: 2,
+  },
+};
+
 export const SEEDED_PERSONAS = {
   status: 200,
   body: {
@@ -205,6 +353,10 @@ function answer(route: StubRoute): Promise<Response> {
   return route === "pending" ? pending() : Promise.resolve(respond(route.status, route.body));
 }
 
+function answerFor(route: StubRouteFor, url: string): Promise<Response> {
+  return answer(typeof route === "function" ? route(url) : route);
+}
+
 /** Install a fetch stub for `/api/*`; unmatched paths answer 404. */
 export function stubApi(routes: StubRoutes): void {
   vi.stubGlobal(
@@ -231,6 +383,11 @@ export function stubApi(routes: StubRoutes): void {
       }
       if (url.includes("/api/glossary")) {
         return answer(routes.glossary ?? GLOSSARY_TERMS);
+      }
+      if (url.includes("/api/claims/queue")) {
+        // The whole URL, query string included, so a stub can branch on the
+        // filter or the cursor — see `StubRouteFor`.
+        return answerFor(routes.claimsQueue ?? CLAIM_QUEUE, url);
       }
       if (url.includes("/api/auth/logout")) {
         return respond(204, null);

@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async
 
 from api.deps import enforce_authenticated
 from api.errors import register_error_handlers
-from api.routers import auth_router, glossary_router, stats_router
+from api.routers import auth_router, claims_router, glossary_router, stats_router
 from config import Env, Settings, get_settings
 from logging_config import configure_logging
 
@@ -91,6 +91,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth_router)
     app.include_router(stats_router)
     app.include_router(glossary_router)
+    app.include_router(claims_router)
 
     @app.get("/healthz")
     async def healthz(response: Response) -> dict[str, str]:

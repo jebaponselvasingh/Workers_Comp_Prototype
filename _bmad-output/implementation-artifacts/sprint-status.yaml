@@ -62,7 +62,7 @@ development_status:
 
   # Epic 2: Handler Caseload & Case File
   epic-2: in-progress
-  2-1-prioritized-filterable-claim-queue: ready-for-dev
+  2-1-prioritized-filterable-claim-queue: done
   2-2-case-header-stage-adaptive-overview: ready-for-dev
   2-3-audited-inline-field-editing: ready-for-dev
   2-4-interactive-injury-diagram: ready-for-dev

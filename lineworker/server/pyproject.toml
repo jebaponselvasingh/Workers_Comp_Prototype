@@ -12,6 +12,12 @@ dependencies = [
     "structlog>=24.4",
     "asyncpg>=0.30",
     "psycopg[binary]>=3.2",
+    # AD-8's rules engine, pinned exactly. A JDM document is data we commit,
+    # seed and assert against: the engine that evaluates it is part of the
+    # contract, not an interchangeable detail, so "any 0.53.x" is one patch
+    # release away from a queue that ranks differently with no diff to
+    # explain it. Moving it is a deliberate edit here plus a `uv lock`.
+    "zen-engine==0.53.0",
 ]
 
 [dependency-groups]
@@ -53,6 +59,16 @@ files = [
 
 [[tool.mypy.overrides]]
 module = ["asyncpg.*"]
+ignore_missing_imports = true
+
+# `zen` is a compiled pyo3 extension shipping no stubs and no py.typed, so
+# strict mode cannot see through it. The override is scoped to the import,
+# not to `rules/` — everything this project writes around the engine stays
+# fully typed, and `rules/engine.py` is the single module that touches the
+# untyped surface (which is why the boundary is validated in
+# `rules/parameters.py` rather than left as `Any` at each call site).
+[[tool.mypy.overrides]]
+module = ["zen.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

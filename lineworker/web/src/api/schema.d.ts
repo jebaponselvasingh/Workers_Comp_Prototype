@@ -45,6 +45,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/claims/queue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The session persona's claim queue, grouped by stage and ranked
+         * @description The caller's queue. Filter and page it; you cannot re-scope it.
+         */
+        get: operations["queue_claims_queue_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/glossary": {
         parameters: {
             query?: never;
@@ -174,6 +194,80 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * ClaimCardResponse
+         * @description One queue card — every field of it computed server-side (AD-1).
+         *
+         *     The four rows the prototype draws, in payload form: identity and age;
+         *     risk dot, worker and flag badges; injury type; stage pill and employer.
+         *     Nothing here is a hint the client finishes computing — `risk` is a band,
+         *     not a score, and `priorityMarker` is a decision, not a rank the SPA
+         *     thresholds itself.
+         *
+         *     `injuryType` carries the **full** string. The prototype clamps it to 30
+         *     characters, but the longest in the seeded portfolio is 29, so the clamp
+         *     never fires — and truncation is a property of the column it is drawn in,
+         *     not of the claim. The card truncates visually and keeps the whole text
+         *     available to a screen reader.
+         *
+         *     `priorityScore` is published deliberately, though the items already
+         *     arrive in order. It is what makes the ordering explainable — to a
+         *     handler asking why a claim is third, to a spec asserting the rule, and
+         *     to Epic 5 reusing the same figure on the dashboard. It is not an
+         *     invitation to re-sort: the score depends on a rules version the client
+         *     does not have.
+         */
+        ClaimCardResponse: {
+            /** Claimid */
+            claimId: string;
+            /** Daysopen */
+            daysOpen: number;
+            /** Employershortname */
+            employerShortName: string;
+            /** Fraudflag */
+            fraudFlag: boolean;
+            /** Injurytype */
+            injuryType: string;
+            /** Litigationflag */
+            litigationFlag: boolean;
+            /** Paymentdue */
+            paymentDue: boolean;
+            /** Prioritymarker */
+            priorityMarker: boolean;
+            /** Priorityscore */
+            priorityScore: number;
+            risk: components["schemas"]["RiskBand"];
+            /** Rtwblocked */
+            rtwBlocked: boolean;
+            /** Siureview */
+            siuReview: boolean;
+            stage: components["schemas"]["Stage"];
+            /** Workername */
+            workerName: string;
+        };
+        /**
+         * ClaimQueueResponse
+         * @description The queue, the rules version that ranked it, and the book behind it.
+         *
+         *     `rulesVersion` is reported for the same reason the cursor carries it:
+         *     the ordering is only meaningful relative to a version of the
+         *     `priority_weights` document, and any conversation about "why is this
+         *     claim first" starts by establishing which weights answered.
+         *
+         *     `unfilteredTotal` is how many claims the caller has in scope *before*
+         *     the filter — the number the four group totals sum to only when `filter`
+         *     is `all`. It exists so the pane can tell "no claims in your caseload"
+         *     from "no claims match this filter" (NFR-3) without holding an unfiltered
+         *     copy of the caseload to compare against, which is the client-side
+         *     superset AD-1 forbids.
+         */
+        ClaimQueueResponse: {
+            groups: components["schemas"]["StageGroupsResponse"];
+            /** Rulesversion */
+            rulesVersion: number;
+            /** Unfilteredtotal */
+            unfilteredTotal: number;
+        };
+        /**
          * GlossaryList
          * @description The `{items, nextCursor, total}` envelope (Lists convention).
          *
@@ -253,6 +347,25 @@ export interface components {
             total: number;
         };
         /**
+         * QueueFilter
+         * @description The eight operational filters (FR-Q-1), snake_case per the enum
+         *     convention — "High risk" and "Payment due" are the UI's labels, not the
+         *     wire's.
+         *
+         *     `active` rather than `treatment`: the prototype's option reads "Active /
+         *     In treatment", and the filter's meaning is "work in progress". It
+         *     happens to be the treatment stage today; naming it after the stage would
+         *     freeze that coincidence into the contract.
+         * @enum {string}
+         */
+        QueueFilter: "all" | "active" | "high_risk" | "fraud" | "litigation" | "payment_due" | "surgery" | "siu";
+        /**
+         * RiskBand
+         * @description Snake/lowercase values per the enum convention — the UI owns labels.
+         * @enum {string}
+         */
+        RiskBand: "high" | "med" | "low";
+        /**
          * SlaDirection
          * @description Which side of the target is good.
          *
@@ -303,6 +416,44 @@ export interface components {
             pick: components["schemas"]["SlaMetricResponse"];
             rtwRate: components["schemas"]["SlaMetricResponse"];
             settle: components["schemas"]["SlaMetricResponse"];
+        };
+        /**
+         * Stage
+         * @enum {string}
+         */
+        Stage: "intake" | "investigation" | "treatment" | "settled";
+        /**
+         * StageGroupResponse
+         * @description One stage's page, in the `{items, nextCursor, total}` envelope.
+         *
+         *     Unlike `/personas` and `/glossary`, whose cursors are structurally null,
+         *     this one is real: `total` is the size of the whole filtered group (the
+         *     number in the chip beside the stage header) and `nextCursor` is non-null
+         *     exactly while claims remain beyond `items`.
+         */
+        StageGroupResponse: {
+            /** Items */
+            items: components["schemas"]["ClaimCardResponse"][];
+            /** Nextcursor */
+            nextCursor?: string | null;
+            /** Total */
+            total: number;
+        };
+        /**
+         * StageGroupsResponse
+         * @description The four groups, always all four.
+         *
+         *     Named fields rather than a map keyed by stage: the four stages are the
+         *     contract (the SPA renders four sections in this order whatever the data
+         *     says), and a map would let a response omit one — which the client would
+         *     have to render as either "empty" or "unknown", two very different
+         *     things.
+         */
+        StageGroupsResponse: {
+            intake: components["schemas"]["StageGroupResponse"];
+            investigation: components["schemas"]["StageGroupResponse"];
+            settled: components["schemas"]["StageGroupResponse"];
+            treatment: components["schemas"]["StageGroupResponse"];
         };
         /**
          * TopBarStatsResponse
@@ -409,6 +560,80 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    queue_claims_queue_get: {
+        parameters: {
+            query?: {
+                /** @description One of the eight operational filters; unknown values are refused. */
+                filter?: components["schemas"]["QueueFilter"];
+                /** @description Which group `cursor` addresses. Never narrows the response. */
+                stage?: components["schemas"]["Stage"] | null;
+                /** @description An opaque `nextCursor` from a previous response. */
+                cursor?: string | null;
+                /** @description Page size per group; defaults to the rules document's. */
+                limit?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaimQueueResponse"];
+                };
+            };
+            /** @description The pagination cursor is unreadable, or belongs to a different filter, group or rules version (RFC 9457 problem document). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
             };
         };
     };

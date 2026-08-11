@@ -7,7 +7,7 @@ Every runtime knob — now and in every later story — is a field on
 from enum import StrEnum
 from functools import lru_cache
 
-from pydantic import Field, model_validator
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
@@ -65,23 +65,15 @@ class Settings(BaseSettings):
     # stack is plain http and a Secure cookie would silently never be sent).
     session_cookie_secure: bool | None = None
 
-    # --- Derived-value parameters (Story 1.4) ------------------------
-    # TODO(JDM): AD-8 gives ZEN JDM documents ownership of every threshold,
-    # band and weight, with Python keeping the formulas. ZEN is not
-    # installed until its first consuming story in Epic 2, so the `risk`
-    # bands live here in the meantime — as parameters, never as literals in
-    # code (the same rule the conventions state for SLA targets). Migrating
-    # means changing where `services/derivations/risk.py` reads these two
-    # numbers from; no consumer of the derivation changes.
-    risk_high_min: int = Field(default=65, ge=0, le=100)
-    risk_med_min: int = Field(default=35, ge=0, le=100)
-
     # --- SLA targets (Story 1.5) -------------------------------------
-    # TODO(JDM): AD-8 assigns SLA targets to the ZEN JDM tier — the same
-    # migration the risk bands above are waiting for. Until ZEN lands
-    # (Epic 2/3) they live here, and `services/worklist/sla.py` reads them
-    # by name; moving them to a JDM document changes `targets_for()` and
-    # nothing else. What is *not* negotiable either way: the aggregation
+    # TODO(JDM): AD-8 assigns SLA targets to the ZEN JDM tier. The engine
+    # landed with Story 2.1 and took the risk bands with it, so the move is
+    # now a known quantity rather than a plan: a `sla_targets` rule document
+    # beside the other two, and `services/worklist/sla.py` reading a typed
+    # block from `rules/parameters.py` instead of these four fields. It is
+    # deferred rather than blocked — no acceptance criterion in Epic 2
+    # touches them, and each move should carry its own migration and its own
+    # version. What is *not* negotiable either way: the aggregation
     # names no target of its own (BRD §7.1 — pick <1d, approve <5d,
     # settle <30d, RTW >80%).
     #
@@ -94,18 +86,6 @@ class Settings(BaseSettings):
     # A rate target of 100 is likewise unreachable (strictly above), and one
     # above 100 or below 0 is not a percentage at all.
     sla_rtw_target_pct: float = Field(default=80.0, ge=0, lt=100)
-
-    @model_validator(mode="after")
-    def _bands_must_not_overlap(self) -> "Settings":
-        # An inverted pair would put scores in two bands at once, and the
-        # derivation reads the bands in order — so it would silently answer
-        # "high" for everything above med_min. Refuse at startup instead.
-        if self.risk_med_min > self.risk_high_min:
-            raise ValueError(
-                f"risk_med_min ({self.risk_med_min}) must not exceed "
-                f"risk_high_min ({self.risk_high_min})"
-            )
-        return self
 
     @property
     def cookie_secure(self) -> bool:

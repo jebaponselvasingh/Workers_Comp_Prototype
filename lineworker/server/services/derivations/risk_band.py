@@ -36,10 +36,10 @@ class RiskBand(StrEnum):
 class RiskDerivation:
     """Bands `severity_score`: high >= `high_min`, med >= `med_min`, else low.
 
-    The thresholds arrive from `Settings` (AD-8: parameters are
-    configuration, formulas are Python). They are validated as
-    `med_min <= high_min` there, so this class does not re-check an
-    ordering it cannot fix.
+    The thresholds arrive from the versioned `derivation_thresholds` JDM
+    document (AD-8: parameters are data, formulas are Python). They are
+    validated as `med_min <= high_min` in `rules/parameters.py`, so this
+    class does not re-check an ordering it cannot fix.
     """
 
     high_min: int
@@ -77,9 +77,9 @@ risk = register(
     Derivation(
         name="risk",
         describes="severity band of claim.severity_score (high/med/low)",
-        build=lambda settings: RiskDerivation(
-            high_min=settings.risk_high_min,
-            med_min=settings.risk_med_min,
+        build=lambda thresholds: RiskDerivation(
+            high_min=thresholds.risk_high_min,
+            med_min=thresholds.risk_med_min,
         ),
     )
 )

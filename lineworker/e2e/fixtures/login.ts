@@ -33,6 +33,12 @@ export const PERSONAS = {
   // clears its target, so a spec can see a *passing* tile rather than
   // asserting warn styling four times and calling it coverage.
   passingRtwSupervisor: { name: "Ken Stoker", role: "supervisor" as Role, home: "/dashboard" },
+  // Added by Story 2.1: a second handler, scoped to 3M alone. Eight claims
+  // with **nothing in intake**, so the queue's per-stage empty state can be
+  // asserted against real seeded data rather than a contrived filter — and
+  // a caseload small enough that "she never sees a Caterpillar claim id" is
+  // a meaningful scope check beside Kaya's 45.
+  scopedHandler: { name: "Sarah Williams", role: "handler" as Role, home: "/workspace" },
 };
 
 export async function selectRole(page: Page, role: Role): Promise<void> {

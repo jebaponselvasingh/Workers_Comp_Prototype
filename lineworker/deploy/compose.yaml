@@ -33,9 +33,12 @@ services:
     # handful named below. Compose auto-loads .env for `${…}` interpolation
     # but does *not* pass it into containers, and the image has no .env of
     # its own — so before this line, an operator following .env.example and
-    # setting SESSION_TTL_HOURS, RISK_HIGH_MIN or SLA_SETTLE_TARGET_DAYS
-    # got silence: the file was read, the value interpolated nothing, and
-    # the app kept its default with nothing to indicate why.
+    # setting SESSION_TTL_HOURS, AUDIT_RETENTION_YEARS or
+    # SLA_SETTLE_TARGET_DAYS got silence: the file was read, the value
+    # interpolated nothing, and the app kept its default with nothing to
+    # indicate why. (Not LOG_LEVEL — it is named in `environment:` below,
+    # so it is one of the few that always worked, which makes it the one
+    # example this comment must not use.)
     # required: false — .env is git-ignored and absent on a clean checkout,
     # which must stay a working `docker compose up`.
     env_file:

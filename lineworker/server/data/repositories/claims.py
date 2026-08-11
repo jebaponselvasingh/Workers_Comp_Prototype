@@ -37,7 +37,7 @@ from sqlalchemy.orm import InstrumentedAttribute
 from sqlalchemy.sql.elements import ColumnElement
 
 from data.context import AllEmployers, CallerContext
-from data.models import Claim
+from data.models import Claim, Employee, Employer
 
 
 def employer_scope(ctx: CallerContext) -> ColumnElement[bool]:
@@ -85,6 +85,59 @@ async def select_claim_columns(
     """
     rows = await db.execute(
         sa.select(*columns).select_from(Claim).where(employer_scope(ctx)).order_by(Claim.claim_id)
+    )
+    return rows.all()
+
+
+async def select_queue_rows(
+    db: AsyncSession,
+    ctx: CallerContext,
+) -> Sequence[sa.Row[Any]]:
+    """The caller's claims, projected to the columns a queue card needs.
+
+    Two joins, because two of the card's four rows name things that are not
+    on `claim`: the injured worker (`employee.name`) and the employer's
+    short name. Both are inner joins — every claim has an employee and an
+    employer by foreign key, so an outer join would only add a `None` branch
+    that cannot happen and a reader would have to reason about.
+
+    **No `predicate` parameter, unlike `count_claims_matching`.** There is
+    nothing for one to do here. Seven of the queue's eight filters read
+    derived values (`risk`, `payment_due`, `siu_review`) or are only
+    meaningful next to one, and the priority ordering is Python arithmetic
+    over a JDM parameter block — so a SQL narrowing would put half the rule
+    here and half in `services/worklist`, which is the split AD-10 exists to
+    prevent. An unused seam is not free: the next reader has to work out
+    which of the two places a filter belongs in, and the answer is always
+    the service. This module decides *which rows* — scope, and nothing
+    else.
+
+    Ordered by `claim_id` like every other read here: the service re-sorts by
+    score, and a total, deterministic order underneath is what makes that
+    sort stable — two claims with equal scores must not swap between
+    requests, or a cursor into the group would repeat or skip one.
+    """
+    rows = await db.execute(
+        sa.select(
+            Claim.claim_id,
+            Claim.stage,
+            Claim.status,
+            Claim.severity_score,
+            Claim.froi_date,
+            Claim.injury_type,
+            Claim.surgery_required,
+            Claim.litigation_flag,
+            Claim.fraud_flag,
+            Claim.fraud_score,
+            Claim.return_status,
+            Employee.name.label("worker_name"),
+            Employer.short_name.label("employer_short_name"),
+        )
+        .select_from(Claim)
+        .join(Employee, Claim.employee_id == Employee.id)
+        .join(Employer, Claim.employer_id == Employer.id)
+        .where(employer_scope(ctx))
+        .order_by(Claim.claim_id)
     )
     return rows.all()
 
