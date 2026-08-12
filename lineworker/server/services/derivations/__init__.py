@@ -15,9 +15,12 @@ parameter source from `Settings` to the versioned JDM documents in `rules/`
 (AD-8), which is why the builder argument is now `DerivationThresholds`.
 Story 2.2 adds the two the case file needs, `treatment_phase` and
 `coordination_status`, and supersedes the thresholds document with a v2
-carrying the phase parameters. `total_paid`, `total_incurred` and
-`claim_path` join them as their stories land — each one function, here,
-called by every consumer.
+carrying the phase parameters. Story 2.5 adds `claim_path` and a v3 carrying
+its three — the entry that closes the prototype's always-Path-B gap, and the
+clearest illustration of what this registry is for: the forms card and Epic
+3's action worklist ask the same function rather than each deciding what a
+fatality claim looks like. `total_incurred` joins them as its story lands —
+each one function, here, called by every consumer.
 
 **Naming rule for the modules below** (code review, 2026-08-10): a module
 is named after the *rule* (`risk_band`, `open_duration`, `queue_flags`),
@@ -50,6 +53,7 @@ from services.derivations.open_duration import (
     days_to_settlement,
     utc_today,
 )
+from services.derivations.path_classification import ClaimPathDerivation, claim_path
 from services.derivations.queue_flags import (
     PaymentDueDerivation,
     RtwBlockedDerivation,
@@ -69,6 +73,7 @@ from services.derivations.treatment_progress import (
 )
 
 __all__ = [
+    "ClaimPathDerivation",
     "CoordinationDerivation",
     "CoordinationResult",
     "CoordinationStatus",
@@ -86,6 +91,7 @@ __all__ = [
     "TreatmentPhase",
     "TreatmentPhaseDerivation",
     "TreatmentPhaseResult",
+    "claim_path",
     "coordination_status",
     "cost_split",
     "days_open",

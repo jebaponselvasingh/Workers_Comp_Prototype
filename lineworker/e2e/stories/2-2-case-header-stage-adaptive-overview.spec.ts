@@ -201,15 +201,17 @@ test.describe("@story:2-2 @epic:2 case header and stage-adaptive overview", () =
 
     await expect(byRole(page, "tab")).toHaveCount(6);
 
-    // **Story 2.4 built the Injury Diagram tab, so its row is gone from this
-    // table and its panel is asserted below instead.** Re-pointed rather
-    // than deleted (1.5, 1.6 and 2.1's precedent): what the row was really
-    // guaranteeing is that a tab is either built or honest about not being,
-    // and both halves of that are still asserted here.
+    // **Story 2.4 built the Injury Diagram tab, 2.5 the Documents & ID tab and
+    // 2.6 the Photos tab, so their rows are gone from this table and their
+    // panels are asserted below instead.** Re-pointed rather than deleted
+    // (1.5, 1.6 and 2.1's precedent): what the rows were really guaranteeing is
+    // that a tab is either built or honest about not being, and both halves of
+    // that are still asserted here.
+    //
+    // Two rows left, and both name an *epic*. That is the state Epic 2 closes
+    // in — every seam still standing belongs to somebody else's epic.
     for (const [tab, mentions] of [
       ["bills", "financial engine"],
-      ["documents", "Story 2.5"],
-      ["photos", "Story 2.6"],
       ["insights", "copilot"],
     ] as const) {
       await byTestId(page, `tab-${tab}`).click();
@@ -219,10 +221,16 @@ test.describe("@story:2-2 @epic:2 case header and stage-adaptive overview", () =
       await expect(byTestId(page, "stage-stepper")).toHaveCount(0);
     }
 
-    // The one tab that is built shows its content rather than a seam.
-    await byTestId(page, "tab-injury").click();
-    await expect(byTestId(page, "injury-tab")).toBeVisible();
-    await expect(byTestId(page, "tab-empty-injury")).toHaveCount(0);
+    // The tabs that are built show their content rather than a seam.
+    for (const [tab, panel] of [
+      ["injury", "injury-tab"],
+      ["documents", "documents-tab"],
+      ["photos", "photos-tab"],
+    ] as const) {
+      await byTestId(page, `tab-${tab}`).click();
+      await expect(byTestId(page, panel)).toBeVisible();
+      await expect(byTestId(page, `tab-empty-${tab}`)).toHaveCount(0);
+    }
 
     // …and Overview comes back.
     await byTestId(page, "tab-overview").click();

@@ -25,6 +25,7 @@ from api.errors import PROBLEM_CONTENT_TYPE, ProblemDocument, ProblemException
 from api.routers.auth import UNAUTHENTICATED_RESPONSE
 from api.schemas import ApiModel
 from data.models.enums import (
+    ClaimPath,
     CommStatus,
     Disability,
     DocType,
@@ -33,6 +34,7 @@ from data.models.enums import (
     Stage,
 )
 from services.claims.detail import ClaimDetail, ClaimNotVisible, claim_detail
+from services.claims.documents import DocumentNotVisible, document_content
 from services.claims.edit import (
     EditNotPermitted,
     InvalidPatch,
@@ -587,6 +589,135 @@ class InjuryDiagramResponse(ApiModel):
     severity_max: int
 
 
+class RequiredFormResponse(ApiModel):
+    """One statutory form the claim's classified path requires (Story 2.5).
+
+    `downloadUrl` points at an **external blank**, not at `BlobStore` content —
+    the two are different kinds of thing and the client opens them differently
+    (a new tab versus the viewer). The seeded URLs are NY WCB / FNSB
+    placeholders pending the NFR-4 per-jurisdiction validation that is an
+    explicit Deferred decision; they are not labelled provisional in the UI,
+    because that would be a product claim this story has no basis for.
+    """
+
+    form_code: str
+    form_name: str
+    description: str
+    timing: str
+    download_url: str
+
+
+class EmployeeIdCardResponse(ApiModel):
+    """The branded ID card (FR-DET-4).
+
+    Published as a block of its own even though every field appears elsewhere
+    on the case file: `employeeBusinessId` and `plant` live on the *intake*
+    variant, and a client stitching this card out of the header plus a variant
+    would render a different card depending on the claim's stage.
+    """
+
+    employee_business_id: str
+    worker_name: str
+    worker_role: str
+    policy_num: str
+    doi: date
+    handler_name: str
+    plant: str
+    state: str
+    region: str
+
+
+class DocumentRowResponse(ApiModel):
+    """One row of the claim documents list.
+
+    `filedDate` is nullable for `TimelineEntryResponse`'s reason: 101 seeded
+    documents carry a timing note (`Post-surgery`, `Closed`) where a filing
+    date belongs. The list leaves the cell empty rather than inventing one.
+    """
+
+    id: int
+    name: str
+    doc_type: DocType
+    filed_date: date | None
+
+
+class DocumentsBlockResponse(ApiModel):
+    """The Documents & ID tab's whole payload (Story 2.5, AC 1 and AC 3).
+
+    Outside the stage-variant union, like `injury`: which filings a claim
+    requires is a function of its **path**, not of its stage.
+
+    `path` is the registered `claim_path` derivation's answer (AD-10) — the
+    thing the prototype never actually computes. `pathVersion` names the rule
+    document that classified, for `thresholdsVersion`'s reason: every document
+    that decided something in this response is named in it.
+
+    The path's label, icon and banner colour are **not** here. They are UI-owned
+    per the Enums convention, exactly as the risk band's colours are — the
+    prototype keeps them in a `PATH_META` object next to the form data, and
+    porting that would have put two hex values in a database column.
+    """
+
+    path: ClaimPath
+    required_forms: list[RequiredFormResponse]
+    id_card: EmployeeIdCardResponse
+    documents: list[DocumentRowResponse]
+    path_version: int
+
+
+class PhotoResponse(ApiModel):
+    """One card of the incident-photo grid (Story 2.6, AC 1).
+
+    **`id`, not an array index.** The prototype's `openPhoto(c, i)` addresses a
+    photo by its position in the array — a handle whose meaning changes the
+    moment anything is filed or removed. This is the row's own surrogate.
+
+    **`hasBlob` and `blobUrl` are two facts, not one.** The first says a file
+    exists; the second says this deployment can hand the browser a direct link
+    to it. Both are false/null for every seeded photo because the prototype has
+    no image files, and the tab renders its placeholder treatment — the designed
+    state, not a degradation. They stay separate because a volume-backed store
+    answers `url()` with `None` by design (see `services/blobstore`), and a
+    client that read a null URL as "no photo" would show the placeholder for a
+    whole grid of real photographs.
+
+    The 📷 glyph is **not** here. It is the browser's rendering of "no bytes",
+    UI-owned per the Enums convention, exactly as the risk band's colours and
+    `PATH_META`'s labels are.
+    """
+
+    id: int
+    caption: str
+    source: str
+    has_blob: bool
+    blob_url: str | None
+
+
+class PhotosBlockResponse(ApiModel):
+    """The Photos tab's whole payload (Story 2.6, AC 1 and AC 3).
+
+    Outside the stage-variant union, like `injury` and `documents`: a claim
+    does not stop having evidence when it settles.
+
+    **`count` is published rather than left to the client.** The prototype
+    writes ``Photos (${c.photos.length})`` into the tab bar and maps the same
+    array into the grid, which is consistent only because both read one global
+    object. Here the tab strip and the grid are different components, so a label
+    counting a list it does not hold would be a second answer to "how many
+    photos does this claim have" — and the tab label is the half a handler reads
+    first. It is `len(photos)` computed in exactly one place
+    (`services/claims/photos.py`), which is what makes the two incapable of
+    disagreeing rather than merely observed to agree.
+
+    An empty `photos` list with `count: 0` is a real and rendered state (AC 3,
+    NFR-3) — unreachable against the dev seed, where every claim carries two to
+    four photos, and covered by fixtures for that reason.
+    """
+
+    photos: list[PhotoResponse]
+    count: int
+
+
 class ClaimDetailResponse(ApiModel):
     """The case file: header, stepper, and exactly one stage variant.
 
@@ -616,6 +747,12 @@ class ClaimDetailResponse(ApiModel):
     # Story 2.4's injury diagram. Outside the discriminated union on purpose
     # — see `InjuryDiagramResponse`.
     injury: InjuryDiagramResponse
+    # Story 2.5's Documents & ID tab, outside it for the same reason — see
+    # `DocumentsBlockResponse`.
+    documents: DocumentsBlockResponse
+    # Story 2.6's Photos tab, outside it for the same reason — and the tab
+    # bar reads its `count` at every stage. See `PhotosBlockResponse`.
+    photos: PhotosBlockResponse
     # Story 2.3's editable vocabularies. On the case file rather than on the
     # investigation variant because the edit command is not stage-scoped —
     # 2.4 edits the body part from the diagram tab at any stage.
@@ -1174,3 +1311,104 @@ async def edit_severity(
         ),
         claim_business_id,
     )
+
+
+# --- Story 2.5: the read-only document viewer ---------------------------
+
+
+class SheetRowResponse(ApiModel):
+    """One labelled line of a document sheet.
+
+    **Exactly one of `text` and `cents` is set.** The split keeps the money
+    convention intact end to end — a FROI's average weekly wage crosses as
+    integer cents and is formatted by the UI, like every other amount in this
+    contract, rather than arriving pre-formatted as the one exception.
+
+    Dates ride in `text` as ISO strings, which is what the SPA's `formatDate`
+    already renders — including the em dash it renders for `null`, which is the
+    right answer for the 101 seeded documents that carry a timing note where a
+    filing date belongs.
+    """
+
+    label: str
+    text: str | None = None
+    cents: int | None = None
+
+
+class DocumentSheetResponse(ApiModel):
+    """A document viewer's whole content, assembled server-side (AC 4).
+
+    `sheetVariant` discriminates the two layouts the prototype's `openDoc`
+    branches between: a first report of injury renders the full injury detail,
+    everything else a short summary. The dispatch is the server's (AD-1) and so
+    are the rows, their order and their labels — what fields a statutory filing
+    shows is not a layout choice.
+
+    **Read-only, structurally.** There is no PATCH beside this route and no
+    `version` on this model: the viewer displays a filing, and editing a claim
+    goes through the four commands that already exist.
+
+    `hasBlob` is false and `blobUrl` null for every seeded document, because
+    none has bytes behind it (`blob_key` is null on all 563 rows — the
+    prototype has no files). Both are on the contract now so that attaching a
+    real PDF later changes the store and the ingest path, not this shape.
+    """
+
+    document_id: int
+    name: str
+    doc_type: DocType
+    sheet_variant: Literal["froi", "summary"]
+    rows: list[SheetRowResponse]
+    signatures: list[str]
+    has_blob: bool
+    blob_url: str | None
+
+
+@router.get(
+    "/claims/{claim_business_id}/documents/{document_id}/content",
+    response_model=DocumentSheetResponse,
+    summary="One document's read-only viewer sheet",
+    responses={**UNAUTHENTICATED_RESPONSE, **NOT_FOUND_RESPONSE},
+)
+async def document_sheet(
+    ctx: CallerContextDep,
+    db: DbDep,
+    response: Response,
+    claim_business_id: Annotated[
+        str,
+        Path(
+            pattern=CLAIM_ID_PATTERN,
+            description="The claim's business id, `WC-nnnn`.",
+            examples=["WC-20017"],
+        ),
+    ],
+    document_id: Annotated[
+        int,
+        Path(ge=1, description="The `id` of one of `documents.documents[]`.", examples=[42]),
+    ],
+) -> DocumentSheetResponse:
+    """The sheet for one document of one claim in the caller's book.
+
+    **404 covers three different situations on purpose**: no such document, a
+    document belonging to a different claim, and a claim outside the caller's
+    scope. Surrogate document ids are dense, so a route that distinguished them
+    would let a caller walk `1…10000` and learn how many documents the
+    portfolio holds and which ids are live — the enumeration AD-7 closes at the
+    claim level, reopened one path segment down. `claim_repo.select_document`
+    resolves all three to `None`, so there is one branch here.
+
+    The claim id in the path is load-bearing rather than decorative: it is in
+    the predicate, so a document id that *is* in the caller's scope does not
+    resolve through a different claim's URL.
+    """
+    # Specific to one persona's book, so never served to another from a cache
+    # upstream — the same reason every other route on this router says so.
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        sheet = await document_content(db, ctx, claim_business_id, document_id)
+    except DocumentNotVisible as exc:
+        # `_not_found`'s wording, deliberately: the sheet route's refusal must
+        # be indistinguishable from the case file's, or the difference is
+        # itself the answer to "does this claim exist?".
+        raise _not_found(claim_business_id) from exc
+    return DocumentSheetResponse.model_validate(sheet)

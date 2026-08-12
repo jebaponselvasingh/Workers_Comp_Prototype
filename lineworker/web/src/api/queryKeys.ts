@@ -95,6 +95,23 @@ export const queryKeys = {
      */
     detail: (claimId: string) => ["claims", "detail", claimId] as const,
     /**
+     * One document's viewer sheet (Story 2.5), keyed under its claim.
+     *
+     * Nested beneath the claim's own segment rather than keyed on the
+     * document id alone, because that is what makes it invalidatable *with*
+     * the claim: the sheet is assembled from claim columns (the injury type
+     * and ICD-10 on a FROI are 2.3's editable fields), so an edit that
+     * changes the case file changes every sheet cut from it. A flat
+     * `["document", id]` key would leave a previously-opened viewer showing
+     * the pre-edit values with nothing able to reach it.
+     *
+     * The **surrogate** document id, not a business one: documents have no
+     * business identifier, and the row is addressed by the same `id` the
+     * payload publishes.
+     */
+    documentSheet: (claimId: string, documentId: number) =>
+      ["claims", "detail", claimId, "document", documentId] as const,
+    /**
      * The **mutation** key every write against one claim carries (Story 2.4).
      *
      * Not a query key: nothing is cached under it. It exists so that

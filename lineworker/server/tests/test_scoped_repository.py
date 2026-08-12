@@ -8,10 +8,12 @@ because the shape is what stops Story 6.x from quietly adding an
 unscoped query.
 """
 
+import ast
 import inspect
 import re
 import typing
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
@@ -79,6 +81,57 @@ def test_every_repository_read_requires_a_caller_context() -> None:
         assert ctx.default is inspect.Parameter.empty, (
             f"{name}() gives its caller context a default — that makes an unscoped call a typo away"
         )
+
+
+def test_no_service_function_accepts_a_caller_context_it_never_reads() -> None:
+    """A `ctx` nobody uses is worse than no `ctx` at all (code review, 2026-08-12).
+
+    `data/repositories/statutory_forms.py` makes this argument for the module
+    it carves out of AD-7, and the same hazard reached `services/claims`: when
+    Story 2.5's code review hoisted `select_documents` up into `claim_detail`,
+    it took away `_overview`'s last scoped query and left the parameter behind.
+    Nothing failed. Nothing could — an unused argument is invisible to ruff's
+    default rules, to mypy, and to every test that calls the function
+    correctly.
+
+    What makes it worth a guard rather than a one-line fix is who pays: the
+    next author adding a stage variant sees `ctx: CallerContext` in the
+    signature and reasonably concludes the scoping is handled here. It is not.
+    The signature is documentation, and this is the test that stops it lying.
+
+    Source-level rather than reflective, because the question is "does the
+    body mention it", which no signature exposes. `del ctx` counts as a read
+    and should: it is a deliberate statement that the argument is unused.
+    """
+    services = Path(__file__).resolve().parents[1] / "services"
+    offenders: list[str] = []
+
+    for module in sorted(services.rglob("*.py")):
+        tree = ast.parse(module.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            args = node.args
+            takes_ctx = any(
+                arg.annotation is not None and ast.unparse(arg.annotation) == "CallerContext"
+                for arg in (*args.posonlyargs, *args.args, *args.kwonlyargs)
+            )
+            if not takes_ctx:
+                continue
+            # The parameter itself is in `node.args`, not in the body, so any
+            # `ctx` name found by walking the body is a genuine use.
+            used = any(
+                isinstance(inner, ast.Name) and inner.id == "ctx"
+                for statement in node.body
+                for inner in ast.walk(statement)
+            )
+            if not used:
+                offenders.append(f"{module.relative_to(services.parent)}::{node.name}")
+
+    assert offenders == [], (
+        "these functions accept a CallerContext and never read it, which reads to the "
+        f"next author as proof that scoping was applied: {offenders}"
+    )
 
 
 def test_the_scope_predicate_is_a_tautology_for_all_never_a_skipped_filter() -> None:
@@ -274,6 +327,63 @@ async def test_a_bucket_predicate_cannot_widen_the_scope(db: AsyncSession) -> No
 
     assert counts["n"] == len(seed_fixture.claims_for("Sarah Williams", "handler"))
     assert counts["n"] < len(seed_fixture.seed()["claims"])
+
+
+async def test_a_child_read_applies_the_filter_itself_rather_than_trusting_its_caller(
+    db: AsyncSession,
+) -> None:
+    """`select_document`, the first child read whose scope nothing else proves.
+
+    **This test exists because the endpoint-level one could not do the job**
+    (code review, 2026-08-12). `services/claims/documents.py` resolves the
+    document and *then* re-reads the claim through the already-scoped
+    `select_claim_detail`, so deleting `employer_scope` from `select_document`
+    leaves every API test green — the route is refused a step later. That makes
+    the endpoint safe today and the repository invariant untested, which is
+    precisely the state this module's docstring says must not exist: "every
+    query in this module applies the filter", enforced structurally rather than
+    by whichever caller happens to check afterwards.
+
+    Asserted at the repository, where the guarantee lives. Sarah's book and
+    Kaya's are disjoint, so a document that resolves for its owner and not for
+    the other handler can only have been filtered by scope.
+    """
+    owner = await context_for(db, "Sarah Williams", "handler")
+    stranger = await context_for(db, "Kaya Johnson", "handler")
+
+    claim_id = sorted(seed_fixture.expected_claim_ids("Sarah Williams", "handler"))[0]
+    documents = await claim_repo.select_documents(db, owner, claim_id)
+    assert documents, f"{claim_id} has no documents to ask for"
+    document_id = documents[0].id
+
+    assert await claim_repo.select_document(db, owner, claim_id, document_id) is not None
+    assert await claim_repo.select_document(db, stranger, claim_id, document_id) is None
+    # …and the same for the list read the tab is built from, which has the same
+    # shape and the same reason to be scoped on its own.
+    assert await claim_repo.select_documents(db, stranger, claim_id) == []
+
+
+async def test_the_photo_read_applies_the_filter_itself(db: AsyncSession) -> None:
+    """`select_photos` (Story 2.6), for `select_document`'s reason above.
+
+    Weaker to leave untested than the document read, not stronger: photos are
+    claim-derived PHI-class evidence (AD-11) reached from a payload whose other
+    blocks are all scoped by the claim read that precedes them. A `select_photos`
+    that trusted its caller would be one refactor away from serving another
+    handler's incident scene — and no API test would notice, because
+    `claim_detail` refuses the claim first.
+
+    Sarah's book and Kaya's are disjoint, so a claim whose photos resolve for
+    its owner and not for the other handler can only have been filtered by
+    scope.
+    """
+    owner = await context_for(db, "Sarah Williams", "handler")
+    stranger = await context_for(db, "Kaya Johnson", "handler")
+
+    claim_id = sorted(seed_fixture.expected_claim_ids("Sarah Williams", "handler"))[0]
+
+    assert await claim_repo.select_photos(db, owner, claim_id), f"{claim_id} has no photos"
+    assert await claim_repo.select_photos(db, stranger, claim_id) == []
 
 
 def test_repositories_package_exports_the_claim_repository() -> None:

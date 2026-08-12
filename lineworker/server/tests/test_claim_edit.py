@@ -688,6 +688,91 @@ async def test_the_role_refusal_comes_before_the_patch_is_examined(
     assert malformed.json()["detail"] == well_formed.json()["detail"]
 
 
+async def test_the_role_refusal_comes_first_on_all_four_write_routes(
+    seeded_db_url: str,
+) -> None:
+    """The ordering `_answer` promises, asserted on the three routes it was not.
+
+    Story 2.4's review pass fixed the ordering and said `_answer` "now hands
+    that ordering to four routes" — but only `PATCH /claims/{id}` had a test.
+    Story 2.6's review pass pointed that out, so the other three are pinned
+    here: a supervisor gets the same 403, with the same problem `type`, from
+    the severity patch, the injury insert and the injury delete.
+
+    Bodies are **schema-valid** on purpose — see
+    `test_a_schema_invalid_body_is_refused_before_any_role_check` below, which
+    states the one boundary this guarantee does not cross and why it should
+    not.
+    """
+    claim = a_claim_of(JENNIFER, "treatment")
+
+    async with make_client(seeded_db_url) as client:
+        await login_as(client, *JENNIFER)
+        refusals = [
+            await client.patch(
+                f"/claims/{claim}/severity", json={"expectedVersion": 1, "severityScore": 50}
+            ),
+            await client.post(
+                f"/claims/{claim}/injuries",
+                json={
+                    "expectedVersion": 1,
+                    "bodyKey": "hand_right",
+                    "injuryType": "Laceration",
+                    "severityScore": 40,
+                },
+            ),
+            await client.delete(f"/claims/{claim}/injuries/1", params={"expectedVersion": 1}),
+        ]
+
+    for refused in refusals:
+        assert refused.status_code == 403, refused.text
+        assert refused.json()["type"] == refusals[0].json()["type"]
+
+
+async def test_a_schema_invalid_body_is_refused_before_any_role_check(
+    seeded_db_url: str,
+) -> None:
+    """The boundary the "role first" rule stops at, stated rather than implied.
+
+    Story 2.6's review pass read the 2.4 note ("role first, before anything
+    else is examined") literally and found it overstated: `severityScore` is a
+    Pydantic `Field(ge=…, le=…)` on the *request model*, so FastAPI refuses an
+    out-of-range value before the endpoint function runs at all — before the
+    role gate. A supervisor sending `severityScore: 101` therefore gets a 422
+    where `severityScore: 50` gets a 403.
+
+    **The constraint is deliberately not being moved into the handler**, and
+    that is the finding's real resolution. The bound is part of the published
+    contract: it is in the OpenAPI document, it reaches the generated
+    TypeScript client, and Story 2.4 put it there for exactly that reason. What
+    it can leak is nothing — the range 0–100 is public in the schema every
+    caller downloads, and no claim data is involved.
+
+    So the guarantee is narrower than the note claimed, and this is where the
+    real one is written down: **once a request is a well-formed instance of the
+    published contract, the role is checked before anything about the claim or
+    the patch is examined.** Pinned so that a later story cannot quietly widen
+    the schema layer into one that does touch claim state.
+    """
+    claim = a_claim_of(JENNIFER, "treatment")
+
+    async with make_client(seeded_db_url) as client:
+        await login_as(client, *JENNIFER)
+        out_of_range = await client.patch(
+            f"/claims/{claim}/severity", json={"expectedVersion": 1, "severityScore": 101}
+        )
+        in_range = await client.patch(
+            f"/claims/{claim}/severity", json={"expectedVersion": 1, "severityScore": 50}
+        )
+
+    assert out_of_range.status_code == 422
+    assert in_range.status_code == 403
+    # The 422 says nothing about the claim — it names the field and the bound,
+    # both of which are in the OpenAPI document already.
+    body = out_of_range.text
+    assert claim not in body
+
+
 async def test_a_handler_still_gets_the_422_for_an_explicit_null(
     seeded_db_url: str,
 ) -> None:

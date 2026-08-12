@@ -34,9 +34,9 @@ from services.derivations.treatment_progress import EXPECTED_WEEKS, PHASE_NOTES
 
 SERVER_ROOT = Path(__file__).resolve().parents[1]
 
-# Version 2 of `derivation_thresholds`, restated. See the module docstring.
+# Version 3 of `derivation_thresholds`, restated. See the module docstring.
 SEEDED_THRESHOLDS = DerivationThresholds(
-    version=2,
+    version=3,
     risk_high_min=65,
     risk_med_min=35,
     siu_fraud_score_min=60,
@@ -46,6 +46,9 @@ SEEDED_THRESHOLDS = DerivationThresholds(
     treatment_active_max_ratio=0.7,
     recovery_year_expected_days=180,
     recovery_default_expected_days=42,
+    path_minor_severity_max=35,
+    path_minor_recovery_windows=frozenset({RecoveryWindow.weeks_0_2}),
+    path_fatality_severity_min=100,
 )
 
 

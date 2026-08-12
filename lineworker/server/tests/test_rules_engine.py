@@ -26,10 +26,11 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from data.models.enums import ClaimStatus, DocType
+from data.models.enums import ClaimStatus, DocType, RecoveryWindow
 from rules.engine import LoadedDocument, RuleDocumentMissing, evaluate, load
 from rules.parameters import (
     DERIVATION_THRESHOLDS_KEY,
+    INJURY_CAPTURE_KEY,
     INTAKE_REQUIRED_DOCUMENTS_KEY,
     PRIORITY_WEIGHTS_KEY,
     DerivationThresholds,
@@ -56,9 +57,13 @@ DOCUMENTS_DIR = Path(__file__).resolve().parents[1] / "rules" / "documents"
 # reads the unversioned name at migration time and editing it would rewrite
 # v1's content on a fresh database.
 EFFECTIVE_DOCUMENTS: tuple[tuple[str, int, str], ...] = (
-    (DERIVATION_THRESHOLDS_KEY, 2, "derivation_thresholds.v2.jdm.json"),
+    (DERIVATION_THRESHOLDS_KEY, 3, "derivation_thresholds.v3.jdm.json"),
     (PRIORITY_WEIGHTS_KEY, 1, "priority_weights.jdm.json"),
     (INTAKE_REQUIRED_DOCUMENTS_KEY, 1, "intake_required_documents.jdm.json"),
+    # Story 2.4's, missing from this tuple until Story 2.6's review pass found
+    # it — see `test_every_committed_rule_document_is_covered_by_this_file`,
+    # which is what stops the next one being missed.
+    (INJURY_CAPTURE_KEY, 1, "injury_capture.jdm.json"),
 )
 
 # **Every** seeded (key, version, file), not only the effective ones.
@@ -72,6 +77,7 @@ EFFECTIVE_DOCUMENTS: tuple[tuple[str, int, str], ...] = (
 # database, so it is still a file that can silently disagree with a row.
 SEEDED_DOCUMENTS: tuple[tuple[str, int, str], ...] = (
     (DERIVATION_THRESHOLDS_KEY, 1, "derivation_thresholds.jdm.json"),
+    (DERIVATION_THRESHOLDS_KEY, 2, "derivation_thresholds.v2.jdm.json"),
     *EFFECTIVE_DOCUMENTS,
 )
 
@@ -87,6 +93,10 @@ EXPECTED_THRESHOLDS: dict[str, Any] = {
     "treatmentActiveMaxRatio": 0.7,
     "recoveryYearExpectedDays": 180,
     "recoveryDefaultExpectedDays": 42,
+    # Story 2.5's three, added in version 3.
+    "pathMinorSeverityMax": 35,
+    "pathMinorRecoveryWindows": ["weeks_0_2"],
+    "pathFatalitySeverityMin": 100,
 }
 
 EXPECTED_INTAKE_REQUIREMENTS: dict[str, Any] = {
@@ -148,41 +158,62 @@ async def test_the_loader_picks_the_effective_version_of_each_key(
     assert document.content["nodes"], "the document arrived without its graph"
 
 
-async def test_version_one_of_a_superseded_document_is_still_exactly_what_it_was(
+async def test_every_superseded_version_is_still_exactly_what_it_was(
     db: AsyncSession,
 ) -> None:
     """Supersession is a new row, never an edit — asserted, not just documented.
 
     A queue cursor records the thresholds version that ranked it, and the
     story-2.1 ordering is only explainable while v1 still says what it said.
-    So v1 must keep its five parameters and *not* have grown v2's four.
+    So v1 must keep its five parameters and *not* have grown v2's four or
+    v3's three.
 
-    **Addressed by version, not by date** (code review, 2026-08-12). v2 now
-    shares v1's effective date, because a version that adds *required*
+    **Both superseded versions, not just v1** (Story 2.5). The single-version
+    form of this test was written when there was one superseded document, and
+    it would have gone on passing while a v3 quietly rewrote v2 — which is the
+    same failure one story later, against a version the treatment-phase banner
+    is still explained by. Parametrising over the stack is what keeps the
+    assertion about *the rule* rather than about the one row that happened to
+    exist when it was written.
+
+    **Addressed by version, not by date** (code review, 2026-08-12). Every
+    version shares v1's effective date, because a version that adds *required*
     parameters cannot be safely future-dated — between the migration and the
-    effective date the loader resolves v1, which the typed block then refuses
-    for the keys it does not have, 500ing the queue, `/stats/*` and the case
-    file alike. The consequence is that **no date selects v1 any more**, which
-    is the intended state and the reason this test reads the row directly.
+    effective date the loader resolves the older one, which the typed block
+    then refuses for the keys it does not have, 500ing the queue, `/stats/*`
+    and the case file alike. The consequence is that **no date selects a
+    superseded version any more**, which is the intended state and the reason
+    this test reads the rows directly.
     """
-    content = (
-        await db.execute(
-            sa.text("SELECT content FROM rule_document WHERE key = :key AND version = 1"),
-            {"key": DERIVATION_THRESHOLDS_KEY},
-        )
-    ).scalar_one()
-    v1 = LoadedDocument(key=DERIVATION_THRESHOLDS_KEY, version=1, content=content)
-
-    assert evaluate(v1) == {
-        "riskHighMin": 65,
-        "riskMedMin": 35,
-        "siuFraudScoreMin": 60,
-        "rtwBlockedHashModulus": 5,
-        "paymentDueHashModulus": 3,
+    superseded = {
+        1: {
+            "riskHighMin": 65,
+            "riskMedMin": 35,
+            "siuFraudScoreMin": 60,
+            "rtwBlockedHashModulus": 5,
+            "paymentDueHashModulus": 3,
+        },
+        # v2 is v1 plus the treatment-phase four, and *without* Story 2.5's
+        # three: a v3 that had been written as an edit would show up here.
+        2: {key: value for key, value in EXPECTED_THRESHOLDS.items() if not key.startswith("path")},
     }
-    # …and the loader really does prefer v2 on the shared date, which is what
-    # closes the window the fix was about.
-    assert (await load(db, DERIVATION_THRESHOLDS_KEY, date(2026, 8, 11))).version == 2
+
+    for version, expected in superseded.items():
+        content = (
+            await db.execute(
+                sa.text("SELECT content FROM rule_document WHERE key = :key AND version = :v"),
+                {"key": DERIVATION_THRESHOLDS_KEY, "v": version},
+            )
+        ).scalar_one()
+        document = LoadedDocument(key=DERIVATION_THRESHOLDS_KEY, version=version, content=content)
+        assert evaluate(document) == expected, f"v{version} was edited rather than superseded"
+
+    # …and the loader really does prefer the newest on the shared date, which
+    # is what closes the window the fix was about.
+    effective = max(
+        version for _key, version, _file in EFFECTIVE_DOCUMENTS if _key == DERIVATION_THRESHOLDS_KEY
+    )
+    assert (await load(db, DERIVATION_THRESHOLDS_KEY, date(2026, 8, 11))).version == effective
 
 
 async def test_a_missing_key_raises_rather_than_returning_an_empty_block(
@@ -256,7 +287,7 @@ async def test_the_typed_blocks_carry_the_evaluated_values(db: AsyncSession) -> 
     requirements = await intake_requirements_for(db)
 
     assert thresholds == DerivationThresholds(
-        version=2,
+        version=3,
         risk_high_min=EXPECTED_THRESHOLDS["riskHighMin"],
         risk_med_min=EXPECTED_THRESHOLDS["riskMedMin"],
         siu_fraud_score_min=EXPECTED_THRESHOLDS["siuFraudScoreMin"],
@@ -266,6 +297,11 @@ async def test_the_typed_blocks_carry_the_evaluated_values(db: AsyncSession) -> 
         treatment_active_max_ratio=EXPECTED_THRESHOLDS["treatmentActiveMaxRatio"],
         recovery_year_expected_days=EXPECTED_THRESHOLDS["recoveryYearExpectedDays"],
         recovery_default_expected_days=EXPECTED_THRESHOLDS["recoveryDefaultExpectedDays"],
+        path_minor_severity_max=EXPECTED_THRESHOLDS["pathMinorSeverityMax"],
+        path_minor_recovery_windows=frozenset(
+            RecoveryWindow(value) for value in EXPECTED_THRESHOLDS["pathMinorRecoveryWindows"]
+        ),
+        path_fatality_severity_min=EXPECTED_THRESHOLDS["pathFatalitySeverityMin"],
     )
     assert requirements == IntakeRequirements(
         version=1,
@@ -294,7 +330,80 @@ async def test_the_typed_blocks_carry_the_evaluated_values(db: AsyncSession) -> 
     )
 
 
+async def test_no_rule_document_is_seeded_with_a_future_effective_date(
+    db: AsyncSession,
+) -> None:
+    """Every seeded document is live the moment its migration has run.
+
+    Story 2.6's review pass found `injury_capture` v1 seeded with an effective
+    date one day *after* the three documents around it. Migration 0019 already
+    states the rule for a superseded version ("a version that adds required
+    parameters cannot be safely future-dated — between the migration and the
+    effective date the loader resolves the older one"); for a document with no
+    predecessor the consequence is worse, because there is nothing older to
+    resolve. `injury_capture_for` raises `RuleDocumentMissing`, and it is
+    called on the case-file path, so the whole case file 500s — the queue's
+    409 bodies included.
+
+    Asserted against the *seeded rows* rather than against the migration
+    constants, because the row is what the loader reads. A document dated in
+    the future is one nobody can evaluate until a clock catches up, which is
+    not a state any migration should be able to leave a fresh database in.
+    """
+    rows = (
+        await db.execute(
+            sa.text("SELECT key, version, effective_from FROM rule_document ORDER BY key, version")
+        )
+    ).all()
+    assert rows, "no rule documents are seeded — did the migration chain run?"
+
+    # `date.today()` rather than a frozen date: the assertion is about the
+    # database a developer or CI actually migrated, and a document dated after
+    # *now* is one that machine cannot evaluate however the calendar moves.
+    future = [
+        (key, version, effective) for key, version, effective in rows if effective > date.today()
+    ]
+
+    assert future == [], (
+        "these seeded rule documents are not effective yet, so a fresh database "
+        f"cannot evaluate them: {future}"
+    )
+
+
 # --- the file and the row are the same thing ----------------------------
+
+
+def test_every_committed_rule_document_is_covered_by_this_file() -> None:
+    """The tuples above are hand-maintained, so something has to count them.
+
+    Found by Story 2.6's review pass: `injury_capture.jdm.json` had been in
+    `rules/documents/` since Story 2.4 and in neither tuple, so the one test
+    that makes a committed file and its seeded row the same thing —
+    `test_the_seeded_row_is_byte_for_byte_the_committed_document` — did not
+    cover it. Retuning `newInjuryDefaultSeverity` on a database where 0016 had
+    already run would have left the file and the row disagreeing, the
+    add-injury form serving the old default, and the entire gate green.
+
+    A directory listing rather than another hand-written entry, because the
+    hand-written entry is what failed. Every `.jdm.json` under
+    `rules/documents` is authored by a story, seeded by a migration and
+    therefore drift-capable; a file that is deliberately *not* seeded does not
+    belong in that directory.
+
+    Filesystem-only, so it runs without a database — the tuple can be wrong
+    long before anybody with Postgres notices.
+    """
+    on_disk = {path.name for path in DOCUMENTS_DIR.glob("*.jdm.json")}
+    covered = {filename for _, _, filename in SEEDED_DOCUMENTS}
+
+    assert on_disk - covered == set(), (
+        "these rule documents are committed but compared against no seeded row, "
+        f"so an edit to one would drift silently: {sorted(on_disk - covered)}"
+    )
+    assert covered - on_disk == set(), (
+        "these documents are expected by the tests and are missing from disk: "
+        f"{sorted(covered - on_disk)}"
+    )
 
 
 @pytest.mark.parametrize(("key", "version", "filename"), SEEDED_DOCUMENTS)

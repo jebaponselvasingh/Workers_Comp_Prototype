@@ -18,13 +18,22 @@
  * then clicked another is looking at a different case file, and landing on
  * that file's Documents tab implies a continuity that is not there.
  *
- * **No count on the Photos label yet.** The prototype renders `Photos (n)`;
- * the `photo` table arrives with Story 2.6, and a hardcoded `(0)` would be a
- * claim about the data rather than a placeholder.
+ * **The Photos label carries a count, and it is the server's** (Story 2.6,
+ * UX-DR5). The prototype renders `Photos (${c.photos.length})` from the same
+ * global object its grid maps, which is consistent because there is only one
+ * of it. Here the label and the grid are different components, so the number
+ * comes from the payload's `photos.count` — computed in exactly one place, on
+ * the server — rather than from the length of a list this component would
+ * otherwise have to be handed for no other reason.
  *
- * **Story 2.4 deleted the first seam entry**, which is what the list shape
- * was for: filling a tab removes a row from `SEAMS` and adds a branch, and
- * both are one line. Four remain.
+ * It is also why the count is a **prop and not a read inside the panel**: the
+ * panels are mounted only while selected, so a label sourced from the Photos
+ * panel would render `Photos ()` until somebody clicked it.
+ *
+ * **Story 2.4 deleted the first seam entry, 2.5 the second and 2.6 the
+ * third**, which is what the list shape was for: filling a tab removes a row
+ * from `SEAMS` and adds a branch, and both are one line. Two remain — the two
+ * that belong to other epics.
  */
 import { useState } from "react";
 
@@ -46,18 +55,12 @@ export type TabKey = (typeof TABS)[number]["key"];
  * reviewer can read against the epic — and so the story that fills one
  * deletes an entry here rather than hunting for a paragraph.
  */
-const SEAMS: Record<Exclude<TabKey, "overview" | "injury">, { message: string; story: string }> = {
+type BuiltTab = "overview" | "injury" | "documents" | "photos";
+
+const SEAMS: Record<Exclude<TabKey, BuiltTab>, { message: string; story: string }> = {
   bills: {
     message: "Financial detail arrives with the financial engine.",
     story: "Epic 3",
-  },
-  documents: {
-    message: "Documents, employee ID and statutory forms arrive with Story 2.5.",
-    story: "2.5",
-  },
-  photos: {
-    message: "Incident photos arrive with Story 2.6.",
-    story: "2.6",
   },
   insights: {
     message: "AI insights arrive with the copilot.",
@@ -65,7 +68,7 @@ const SEAMS: Record<Exclude<TabKey, "overview" | "injury">, { message: string; s
   },
 };
 
-function SeamPanel({ tab }: { tab: Exclude<TabKey, "overview" | "injury"> }) {
+function SeamPanel({ tab }: { tab: Exclude<TabKey, BuiltTab> }) {
   const seam = SEAMS[tab];
   return (
     <div
@@ -127,6 +130,9 @@ export function DetailTabs({
   onTabChange,
   children,
   injury,
+  documents,
+  photos,
+  photoCount,
 }: {
   activeTab: TabKey;
   onTabChange: (tab: TabKey) => void;
@@ -141,6 +147,29 @@ export function DetailTabs({
    * keep that state alive across a tab the handler is not looking at.
    */
   injury: React.ReactNode;
+  /**
+   * The Documents & ID tab's content (Story 2.5).
+   *
+   * A prop and rendered only when selected, for `injury`'s reason: the panel
+   * owns which document the viewer has open, and mounting it behind an
+   * unselected tab would keep a modal's state alive across a tab the handler
+   * is not looking at.
+   */
+  documents: React.ReactNode;
+  /**
+   * The Photos tab's content (Story 2.6) — a prop for `documents`' reason: the
+   * panel owns which photo the viewer has open.
+   */
+  photos: React.ReactNode;
+  /**
+   * The number in the Photos label, from the case file's `photos.count`.
+   *
+   * A number rather than the list, so this component cannot be tempted to
+   * count: "how many photos does this claim have" is answered once, on the
+   * server, and the label is a place it is displayed rather than a second
+   * place it is decided.
+   */
+  photoCount: number;
 }) {
   const onKeyDown = useTabKeys(activeTab, onTabChange);
 
@@ -176,7 +205,7 @@ export function DetailTabs({
                 : "border-transparent text-muted-text hover:text-text"
             }`}
           >
-            {tab.label}
+            {tab.key === "photos" ? `${tab.label} (${photoCount})` : tab.label}
           </button>
         ))}
       </div>
@@ -186,6 +215,10 @@ export function DetailTabs({
           children
         ) : activeTab === "injury" ? (
           injury
+        ) : activeTab === "documents" ? (
+          documents
+        ) : activeTab === "photos" ? (
+          photos
         ) : (
           <SeamPanel tab={activeTab} />
         )}

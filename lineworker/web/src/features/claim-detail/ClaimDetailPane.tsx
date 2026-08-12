@@ -32,7 +32,9 @@ import { useSelectedClaimId } from "@/features/queue/useSelectedClaim";
 import { CaseHeader } from "./CaseHeader";
 import { DetailTabs, useDetailTab } from "./DetailTabs";
 import { StageStepper } from "./StageStepper";
+import { DocumentsTab } from "./documents/DocumentsTab";
 import { InjuryTab } from "./injury/InjuryTab";
+import { PhotosTab } from "./photos/PhotosTab";
 import { IntakeOverview } from "./overview/IntakeOverview";
 import { InvestigationOverview } from "./overview/InvestigationOverview";
 import { SettledOverview } from "./overview/SettledOverview";
@@ -100,6 +102,12 @@ function CaseFile({ claimId }: { claimId: string }) {
         activeTab={activeTab}
         onTabChange={setActiveTab}
         injury={<InjuryTab claim={detail.data} />}
+        documents={<DocumentsTab claim={detail.data} />}
+        photos={<PhotosTab claim={detail.data} />}
+        // The server's number, not the grid's length — see `DetailTabs`. It is
+        // read here because the label is rendered whether or not the panel is
+        // mounted, and the panel is mounted only while its tab is selected.
+        photoCount={detail.data.photos.count}
       >
         {/* AC 2: the stepper is always the first element of Overview. */}
         <StageStepper steps={stepper} />

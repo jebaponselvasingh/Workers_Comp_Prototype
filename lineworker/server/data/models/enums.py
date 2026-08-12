@@ -110,6 +110,34 @@ class BodyRegion(StrEnum):
     tibia_right = "tibia_right"
 
 
+class ClaimPath(StrEnum):
+    """The three statutory handling paths a claim can be classified onto (2.5).
+
+    The prototype has this vocabulary and never uses it: `pathDocsHTML` reads
+    `c.path || "B"` against a dataset in which **no claim carries a `path`
+    field at all**, so all 100 claims render the Path B form set. Story 2.5
+    closes that gap with a registered derivation (`services/derivations/
+    path_classification.py`), and this is the vocabulary it answers in.
+
+    Here rather than beside the derivation because `path_required_form.path`
+    is a native enum column, and a column's members must live in the data
+    layer (`data/` must not import from `services/`) — the same argument
+    `BodyRegion` makes. `RiskBand` stays in `services/derivations` precisely
+    because no column holds one.
+
+    Snake_case wire tokens (`a`/`b`/`c`), never the prototype's display keys:
+    the label ("Path A — Minor Injury"), the icon and the banner colour are
+    UI-owned per the Enums convention. Member order is the prototype's, which
+    is also increasing severity, and it is the order PostgreSQL will sort the
+    type in.
+    [Source: docs/Workers_Comp_Prototype.html lines 1542-1563]
+    """
+
+    a = "a"
+    b = "b"
+    c = "c"
+
+
 class Gender(StrEnum):
     female = "female"
     male = "male"

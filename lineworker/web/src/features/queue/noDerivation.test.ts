@@ -172,7 +172,20 @@ const DERIVED_FIELDS =
   // tempting thing on this list to recompute: the prototype's `injHTML`
   // does exactly that, inside the function that draws the marker, from a
   // cut-off pair that appears in no rule document. Here it arrives decided.
-  "band";
+  "band|" +
+  // Story 2.6's. `count` is the Photos tab label's number, and the prototype
+  // writes `c.photos.length` into that label from the same global object its
+  // grid maps. Here the label and the grid are different components, so a
+  // browser-side length is a second answer to "how many photos does this claim
+  // have" — and `hasBlob` is on the list beside it because inferring it from
+  // `blobUrl === null` is the same mistake in the other direction: a
+  // volume-backed store answers null for a photo that exists.
+  "count|hasBlob|" +
+  // Story 2.5's. `path` is the claim's statutory classification and is the
+  // single most consequential derived value in the console — it decides which
+  // death-benefit forms a handler is shown — so a comparison against it, or
+  // any arithmetic near it, is a browser deciding a regulatory question.
+  "path";
 
 const FLAGS = "siuReview|rtwBlocked|paymentDue|fraudFlag|litigationFlag|surgeryRequired";
 
@@ -264,6 +277,18 @@ test("the scan reaches the files it claims to", () => {
   // colours inside the drawing function — so a scan that missed it would
   // miss the one place this guard is most for.
   expect(scanned).toContain(path.join("features", "claim-detail", "injury", "BodyMap.tsx"));
+  // Story 2.5's tab, in a third nested folder. The pull towards a local rule
+  // here is the *path*: the prototype classifies with `c.path || "B"` in the
+  // browser, and a component that reached for `severityScore` to decide which
+  // banner to draw would be that bug with a different default.
+  expect(scanned).toContain(
+    path.join("features", "claim-detail", "documents", "RequiredFormsCard.tsx"),
+  );
+  // Story 2.6's grid, in a fourth nested folder. The pull here is the *count*
+  // — `photos.length` is right there, one line from the label — and the
+  // thumbnail state, which a component would get wrong by reading the URL
+  // instead of the flag.
+  expect(scanned).toContain(path.join("features", "claim-detail", "photos", "PhotoCard.tsx"));
   expect(scanned.some((name) => name.includes(".test."))).toBe(false);
 });
 

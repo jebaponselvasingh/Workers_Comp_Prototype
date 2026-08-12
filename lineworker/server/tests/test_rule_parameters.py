@@ -45,6 +45,10 @@ VALID_THRESHOLDS = {
     "treatmentActiveMaxRatio": 0.7,
     "recoveryYearExpectedDays": 180,
     "recoveryDefaultExpectedDays": 42,
+    # Story 2.5's three, which arrived with version 3.
+    "pathMinorSeverityMax": 35,
+    "pathMinorRecoveryWindows": ["weeks_0_2"],
+    "pathFatalitySeverityMin": 100,
 }
 
 VALID_INTAKE_REQUIREMENTS = {"requiredDocTypes": ["froi", "incident", "medauth", "wage"]}

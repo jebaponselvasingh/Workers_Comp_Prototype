@@ -40,6 +40,13 @@ export interface StubRoutes {
    * 404s" is written without two renders.
    */
   claimDetail?: StubRouteFor;
+  /**
+   * `GET /claims/{id}/documents/{id}/content` (Story 2.5). A function so a
+   * test can answer the FROI sheet for one document id and the summary sheet
+   * for another — which is how "the viewer renders what it was sent, not what
+   * it inferred from the row it was opened by" is written.
+   */
+  documentSheet?: StubRouteFor;
 }
 
 const problem = (status: number, detail: string) => ({
@@ -455,6 +462,261 @@ export const INJURY_UNKNOWN_KEY = {
   ],
 };
 
+/**
+ * The Documents & ID block (Story 2.5).
+ *
+ * `path` is `b` and the four forms are Path B's, because that is what the
+ * server would send for this claim — the fixture does not *derive* the path
+ * from the claim's severity beside it, so a component that classified in the
+ * browser would pass no test here. `DOCUMENTS_BLOCK_PATH_A` below is the
+ * second path, for the same reason `INJURY_DIAGRAM` carries two bands.
+ *
+ * Three documents, one of them a FROI, so a single render sees three different
+ * type chips and both viewer variants are reachable. The last has no
+ * `filedDate`: 101 seeded documents carry a timing note where a date belongs,
+ * and the em dash is the honest rendering.
+ */
+/**
+ * The `derivation_thresholds` version the case-file fixtures were cut from.
+ *
+ * **One constant because the server makes these two fields equal** (code
+ * review, 2026-08-12): `documents_block` sets `path_version =
+ * thresholds.version`, so `thresholdsVersion` and `pathVersion` agree in every
+ * real payload. The fixtures used to carry 2 and 3 — a response the server
+ * cannot produce, in a file whose own doctrine is that the fixture *is* the
+ * server's answer. Harmless while nothing compares them, and silently fatal to
+ * the first test that does.
+ *
+ * The queue fixtures above are deliberately not switched to this: they are a
+ * different endpoint with no `pathVersion` beside them, and their version is
+ * free to differ.
+ */
+const CASE_FILE_RULE_VERSION = 3;
+
+export const DOCUMENTS_BLOCK = {
+  path: "b",
+  pathVersion: CASE_FILE_RULE_VERSION,
+  requiredForms: [
+    {
+      formCode: "C-3",
+      formName: "FROI — Employee Claim for Compensation (C-3)",
+      description:
+        "Employee's formal WC claim. Filed when disability exceeds waiting period.",
+      timing: "As soon as practicable; carrier within 30 days",
+      downloadUrl: "https://www.wcb.ny.gov/content/main/forms/c3.pdf",
+    },
+    {
+      formCode: "RFA-1W",
+      formName: "RTW Request for Assistance (RFA-1W)",
+      description: "Initiates formal RTW coordination.",
+      timing: "When physician grants light duty clearance",
+      downloadUrl: "https://www.wcb.ny.gov/content/main/forms/rfa-1w.pdf",
+    },
+    {
+      formCode: "C-4.3",
+      formName: "Maximum Medical Improvement — MMI (C-4.3)",
+      description: "Treating physician certifies MMI reached.",
+      timing: "When physician determines MMI",
+      downloadUrl: "https://www.wcb.ny.gov/content/main/forms/c4_3.pdf",
+    },
+    {
+      formCode: "C-11",
+      formName: "Employee Change in Employment Status (C-11)",
+      description: "Documents RTW, termination, job change, or retirement.",
+      timing: "When employment status changes",
+      downloadUrl: "https://www.wcb.ny.gov/content/main/forms/c11.pdf",
+    },
+  ],
+  idCard: {
+    employeeBusinessId: "EMP-CAT-2043",
+    workerName: "Marcus Delgado",
+    workerRole: "Assembly Technician",
+    policyNum: "CL-POL-CAT-2024-118",
+    doi: "2026-03-22",
+    handlerName: "Kaya Johnson",
+    plant: "Caterpillar – Peoria, IL",
+    state: "IL",
+    region: "Midwest",
+  },
+  documents: [
+    { id: 11, name: "C-1 First Report of Injury", docType: "froi", filedDate: "2026-03-24" },
+    {
+      id: 12,
+      name: "Medical Authorization & Release (HIPAA)",
+      docType: "medauth",
+      filedDate: "2026-03-24",
+    },
+    { id: 13, name: "Surgical Consent & Operative Report", docType: "legal", filedDate: null },
+  ],
+};
+
+/** The minor path — a different banner, a different form set, two forms. */
+export const DOCUMENTS_BLOCK_PATH_A = {
+  ...DOCUMENTS_BLOCK,
+  path: "a",
+  requiredForms: [
+    {
+      formCode: "C-2F",
+      formName: "Minor Injury Report",
+      description: "Employer's first-aid-only / minor injury report.",
+      timing: "Within 10 days of incident",
+      downloadUrl: "https://www.wcb.ny.gov/content/main/forms/c2F.pdf",
+    },
+    {
+      formCode: "FAR-1",
+      formName: "Employee First Aid / Injury Report",
+      description: "Employee-completed onsite first aid and injury description.",
+      timing: "Same shift or within 24h",
+      downloadUrl: "https://www.fnsb.gov/DocumentCenter/View/18587/",
+    },
+  ],
+};
+
+/**
+ * A claim whose file holds nothing (AC 5).
+ *
+ * Unreachable against the dev seed — every seeded claim carries three to eight
+ * documents — which is the reason it needs a fixture rather than a claim id.
+ * The forms card is *not* empty here: which filings a path requires does not
+ * depend on what has been filed, and a state that blanked both would say
+ * something the data does not.
+ */
+export const DOCUMENTS_BLOCK_EMPTY = { ...DOCUMENTS_BLOCK, documents: [] };
+
+/**
+ * The Photos block (Story 2.6).
+ *
+ * Three cards, all of them the seeded shape: `hasBlob: false` and
+ * `blobUrl: null`, because the prototype has no image files behind its photo
+ * rows and all 293 seeded rows carry a null `blob_key`.
+ *
+ * **`count` is 3 and is written out rather than spread from the array**, on
+ * purpose: the fixture is the server's answer, and the server is the thing
+ * that computes it. A component that derived the tab label from
+ * `photos.length` would pass against a fixture whose count *was*
+ * `photos.length`, which is why `PHOTOS_BLOCK_MISCOUNTED` below exists.
+ */
+export const PHOTOS_BLOCK = {
+  count: 3,
+  photos: [
+    {
+      id: 31,
+      caption: "Platform / Scaffolding Fall area — post-incident overview",
+      source: "Plant safety, 03/22",
+      hasBlob: false,
+      blobUrl: null,
+    },
+    {
+      id: 32,
+      caption: "OSHA investigation — incident scene documentation",
+      source: "OSHA inspector, 03/24",
+      hasBlob: false,
+      blobUrl: null,
+    },
+    {
+      id: 33,
+      caption: "PPE worn at time of injury — Platform / Scaffolding Fall",
+      source: "EHS audit, 03/25",
+      hasBlob: false,
+      blobUrl: null,
+    },
+  ],
+};
+
+/**
+ * The empty state (Story 2.6, AC 3, NFR-3).
+ *
+ * Unreachable against the dev seed — every one of the 100 claims carries two
+ * to four photos — which is the reason it needs a fixture rather than a claim
+ * id, exactly as `DOCUMENTS_BLOCK_EMPTY` does.
+ */
+export const PHOTOS_BLOCK_EMPTY = { count: 0, photos: [] };
+
+/**
+ * A count that disagrees with the rows — a payload no real server sends.
+ *
+ * It exists so the tab label has something to be *wrong* against: with a
+ * faithful fixture, a component reading `photos.length` and one reading
+ * `count` are indistinguishable. This is the fixture that tells them apart.
+ */
+export const PHOTOS_BLOCK_MISCOUNTED = { ...PHOTOS_BLOCK, count: 9 };
+
+/**
+ * The two states a photo with bytes can be in, which is why the server sends
+ * two fields rather than one.
+ *
+ * - `hasBlob` with a `blobUrl` — a presigning store (MinIO): render the image.
+ * - `hasBlob` with a null `blobUrl` — a mounted volume, whose `BlobStore.url`
+ *   answers `None` *by design*. There is a file; this deployment cannot hand
+ *   the browser a direct link to it. A UI that read the null URL as "no photo"
+ *   would show the placeholder for a whole grid of real photographs.
+ */
+export const PHOTOS_BLOCK_WITH_IMAGE = {
+  count: 2,
+  photos: [
+    {
+      ...PHOTOS_BLOCK.photos[0],
+      hasBlob: true,
+      blobUrl: "https://blobs.example/photo-31.jpg",
+    },
+    { ...PHOTOS_BLOCK.photos[1], hasBlob: true, blobUrl: null },
+  ],
+};
+
+/** The two viewer sheets the content endpoint answers (Story 2.5, AC 4). */
+export const DOCUMENT_SHEET_FROI = {
+  status: 200,
+  body: {
+    documentId: 11,
+    name: "C-1 First Report of Injury",
+    docType: "froi",
+    sheetVariant: "froi",
+    rows: [
+      { label: "Claim ID", text: "WC-20017", cents: null },
+      { label: "Policy Number", text: "CL-POL-CAT-2024-118", cents: null },
+      { label: "Employee", text: "Marcus Delgado (EMP-CAT-2043)", cents: null },
+      { label: "Employer / Plant", text: "Caterpillar – Peoria, IL", cents: null },
+      { label: "Date of Injury", text: "2026-03-22", cents: null },
+      { label: "Filed", text: "2026-03-24", cents: null },
+      { label: "Injury Type", text: "Fall from Height", cents: null },
+      { label: "Body Part", text: "Lower Back", cents: null },
+      { label: "ICD-10", text: "S39.012A", cents: null },
+      { label: "Cause", text: "Fall from Elevated Platform", cents: null },
+      { label: "Severity", text: "78", cents: null },
+      // The one money row: cents on the wire, formatted by the dialog.
+      { label: "AWW", text: null, cents: 143_200 },
+      { label: "Handler", text: "Kaya Johnson", cents: null },
+      { label: "OSHA Recordable", text: "Yes — OSHA 300 Filed", cents: null },
+    ],
+    signatures: ["Supervisor / Date", "Adjuster / Date"],
+    hasBlob: false,
+    blobUrl: null,
+  },
+};
+
+export const DOCUMENT_SHEET_SUMMARY = {
+  status: 200,
+  body: {
+    documentId: 13,
+    name: "Surgical Consent & Operative Report",
+    docType: "legal",
+    sheetVariant: "summary",
+    rows: [
+      { label: "Claim ID", text: "WC-20017", cents: null },
+      { label: "Policy Number", text: "CL-POL-CAT-2024-118", cents: null },
+      { label: "Employee", text: "Marcus Delgado (EMP-CAT-2043)", cents: null },
+      { label: "Employer / Plant", text: "Caterpillar – Peoria, IL", cents: null },
+      // Undated, as 101 seeded documents are — the dialog renders an em dash.
+      { label: "Filed", text: null, cents: null },
+      { label: "Status", text: "On file", cents: null },
+      { label: "Handler", text: "Kaya Johnson", cents: null },
+    ],
+    signatures: ["Supervisor / Date", "Adjuster / Date"],
+    hasBlob: false,
+    blobUrl: null,
+  },
+};
+
 const HEADER = {
   claimId: "WC-20017",
   workerName: "Marcus Delgado",
@@ -485,9 +747,11 @@ export const CLAIM_DETAIL_TREATMENT = {
   body: {
     claimId: "WC-20017",
     version: 1,
-    thresholdsVersion: 2,
+    thresholdsVersion: CASE_FILE_RULE_VERSION,
     editOptions: EDIT_OPTIONS,
     injury: INJURY_DIAGRAM,
+    documents: DOCUMENTS_BLOCK,
+    photos: PHOTOS_BLOCK,
     requirementsVersion: null,
     header: HEADER,
     stepper: stepper("treatment"),
@@ -519,9 +783,11 @@ export const CLAIM_DETAIL_INTAKE = {
   body: {
     claimId: "WC-20003",
     version: 1,
-    thresholdsVersion: 2,
+    thresholdsVersion: CASE_FILE_RULE_VERSION,
     editOptions: EDIT_OPTIONS,
     injury: INJURY_DIAGRAM,
+    documents: DOCUMENTS_BLOCK,
+    photos: PHOTOS_BLOCK,
     requirementsVersion: 1,
     header: {
       ...HEADER,
@@ -571,9 +837,11 @@ export const CLAIM_DETAIL_INVESTIGATION = {
   body: {
     claimId: "WC-20051",
     version: 3,
-    thresholdsVersion: 2,
+    thresholdsVersion: CASE_FILE_RULE_VERSION,
     editOptions: EDIT_OPTIONS,
     injury: INJURY_DIAGRAM,
+    documents: DOCUMENTS_BLOCK,
+    photos: PHOTOS_BLOCK,
     requirementsVersion: null,
     header: { ...HEADER, claimId: "WC-20051", stage: "investigation", risk: "med" },
     stepper: stepper("investigation"),
@@ -622,9 +890,11 @@ export const CLAIM_DETAIL_SETTLED = {
   body: {
     claimId: "WC-20068",
     version: 5,
-    thresholdsVersion: 2,
+    thresholdsVersion: CASE_FILE_RULE_VERSION,
     editOptions: EDIT_OPTIONS,
     injury: INJURY_DIAGRAM,
+    documents: DOCUMENTS_BLOCK,
+    photos: PHOTOS_BLOCK,
     requirementsVersion: null,
     header: { ...HEADER, claimId: "WC-20068", stage: "settled", risk: "low" },
     stepper: stepper("settled"),
@@ -772,6 +1042,12 @@ export function stubApi(routes: StubRoutes): void {
         // The whole URL, query string included, so a stub can branch on the
         // filter or the cursor — see `StubRouteFor`.
         return answerFor(routes.claimsQueue ?? CLAIM_QUEUE, url);
+      }
+      // Before the case file, for the mirror of the reason the queue is: the
+      // document sheet's URL *contains* a claim path, so a stub matching the
+      // case file first would answer a viewer's request with a case file.
+      if (url.includes("/documents/") && url.includes("/content")) {
+        return answerFor(routes.documentSheet ?? DOCUMENT_SHEET_FROI, url);
       }
       // After the queue, deliberately: the two share a prefix, and the
       // server resolves the same ambiguity the same way (the queue route is

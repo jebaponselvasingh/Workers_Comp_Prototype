@@ -496,7 +496,9 @@ async def test_the_payload_names_the_rules_version_behind_it(seeded_db_url: str)
     answerable from the response."""
     payload = await detail_for(seeded_db_url, KAYA, _one_of(KAYA, "treatment")["claim_id"])
 
-    assert payload["thresholdsVersion"] == 2
+    # Three since Story 2.5 added the claim-path parameters. Pinned rather
+    # than read from the loader, for `seed_fixture`'s reason.
+    assert payload["thresholdsVersion"] == 3
     # Intake is the only variant that consults the requirements document, so
     # it is the only one that names a version for it.
     assert payload["requirementsVersion"] is None

@@ -61,13 +61,13 @@ development_status:
   epic-1-retrospective: optional
 
   # Epic 2: Handler Caseload & Case File
-  epic-2: in-progress
+  epic-2: done
   2-1-prioritized-filterable-claim-queue: done
   2-2-case-header-stage-adaptive-overview: done
   2-3-audited-inline-field-editing: done
-  2-4-interactive-injury-diagram: review
-  2-5-documents-employee-id-statutory-forms: ready-for-dev
-  2-6-incident-photos: ready-for-dev
+  2-4-interactive-injury-diagram: done
+  2-5-documents-employee-id-statutory-forms: done
+  2-6-incident-photos: done
   epic-2-retrospective: optional
 
   # Epic 3: Financial Engine & Action Worklist

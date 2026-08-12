@@ -28,6 +28,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from data.models.base import Base
 from data.models.enums import (
     BodyRegion,
+    ClaimPath,
     ClaimStatus,
     CommStatus,
     Disability,
@@ -332,6 +333,114 @@ class TreatmentPlanStep(Base):
     # in the migration, which `alembic check` reports as a constraint dropped
     # and re-added on every run.
     __table_args__ = (UniqueConstraint("claim_id", "step_no"),)
+
+
+class Photo(Base):
+    """One incident or site photograph on a claim file (Story 2.6, AC 1).
+
+    Write-owner is `services/claims` (AD-12, the case-file aggregate) — and
+    this epic its **only** writer is the seed migration. Nothing in Epics 1–8
+    uploads, captures, annotates or deletes a photo, so the read-only viewer is
+    not a discipline the components keep: it is the shape of the table's grant
+    (`SELECT` and nothing else, migration 0020).
+
+    Three columns that would look natural here and are deliberately absent:
+
+    - **No `version`.** AD-4's compare-and-swap column arbitrates concurrent
+      writers, and there are none. `Document` carries one because a filing date
+      can be corrected and a blob key attached once bytes land; a photo, in
+      this system, is only ever read. `TreatmentPlanStep` argues the same point.
+    - **No `sort_order`.** Display order is insertion order, carried by the
+      identity column exactly as `Document` and `TimelineEvent` carry theirs.
+      `PathRequiredForm` needed an explicit number only because three
+      independent reference lists share one table; a claim's photos are one
+      list, seeded in the prototype's array order and read back by `id`.
+    - **No `taken_on` date.** `source` is a provenance sentence — "Plant
+      safety, 03/22", "OSHA inspector, 03/24" — whose trailing fragment carries
+      no year and is not always the incident's day. Splitting it would produce
+      a `DATE` column that is wrong about a third of the time beside a source
+      column that had lost half its meaning.
+
+    **`blob_key` is nullable and every seeded row leaves it null**, for
+    `Document`'s reason: the prototype's thumbnails are the 📷 emoji and there
+    are no image files behind them. The column exists because the *boundary* is
+    what binds — bytes ride the one `BlobStore` protocol (`put/get/delete/url`)
+    and this is the handle they are addressed by — while the volume-versus-MinIO
+    decision stays Deferred. A null key is also the honest shape: a photograph
+    the carrier has a record of but not a copy of is a real state, and it is the
+    state all 293 seeded rows are in.
+
+    AD-11: incident photos are claim-derived PHI-class binaries. When real files
+    arrive they live on encrypted volumes behind `BlobStore`, and nothing about
+    them reaches a log beyond ids and event names.
+    """
+
+    __tablename__ = "photo"
+
+    id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+    # Indexed: every read of this table is "this claim's photos" — the tab is
+    # never rendered without a claim.
+    claim_id: Mapped[int] = mapped_column(ForeignKey("claim.id"), index=True)
+    caption: Mapped[str] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(Text)
+    blob_key: Mapped[str | None] = mapped_column(Text)
+
+
+class PathRequiredForm(Base):
+    """A statutory form one handling path requires (Story 2.5, FR-H-8).
+
+    Reference data, seeded from the prototype's `PATH_DOCS` — nine rows across
+    three paths. Read-only to the application in the same sense `GlossaryTerm`
+    is, and absent for the same three reasons:
+
+    - **No `version` column.** Compare-and-swap arbitrates concurrent writers
+      and this table has none: the migration is its only writer (AD-12, under
+      `services/claims`' "Clinical & regulatory fields — statutory forms by
+      path" capability row).
+    - **No audit wiring.** AD-4 audits commands; there are none here.
+    - **No employer column and no claim FK.** Which forms a path requires is a
+      statement about the *path*, not about anybody's claim, which is what
+      makes the AD-7 carve-out in `data/repositories/statutory_forms.py`
+      legitimate rather than convenient. The claim's path is derived
+      (`services/derivations/path_classification.py`) and joins to these rows at read
+      time; storing it on `claim` would be a derived column, which Story 1.2
+      banned.
+
+    **`download_url` holds a placeholder, deliberately and on the record.**
+    The nine URLs are the NY WCB and FNSB links the prototype chose; NFR-4 and
+    an explicit Deferred architecture decision put per-jurisdiction validation
+    of statutory form references before go-live and outside this story. They
+    are not surfaced as provisional in the UI (that would be a product claim
+    this story has no basis for) — the caveat lives here and in the migration.
+
+    **`sort_order` is unique *within a path*, not globally.** The card renders
+    one path's forms in the prototype's array order, and each path's list is
+    numbered from zero — so a global uniqueness constraint would force the
+    three lists into one sequence and make adding a Path A form renumber Path
+    C. The pair is what has to be total, and it is: `GlossaryTerm` argues the
+    same point for its single-list case.
+    """
+
+    __tablename__ = "path_required_form"
+    __table_args__ = (UniqueConstraint("path", "sort_order"),)
+
+    id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+    path: Mapped[ClaimPath] = mapped_column(_enum(ClaimPath, "claim_path"))
+    # Not unique, and that is the data rather than a missing constraint: a form
+    # code is unique *within* a path here, but nothing about the statutory
+    # scheme says two paths cannot require the same filing, and a constraint
+    # asserting otherwise would be this table deciding a regulatory question.
+    form_code: Mapped[str] = mapped_column(Text)
+    form_name: Mapped[str] = mapped_column(Text)
+    description: Mapped[str] = mapped_column(Text)
+    # Free text, not a duration: the prototype's timings are statutory
+    # sentences ("Within 10 days of incident", "When physician determines
+    # MMI"), and only some of them are expressible as a number of days. Parsing
+    # the ones that are would leave the rest rendering an em dash, which is a
+    # worse answer than the sentence the regulation actually uses.
+    timing: Mapped[str] = mapped_column(Text)
+    download_url: Mapped[str] = mapped_column(Text)
+    sort_order: Mapped[int] = mapped_column(Integer)
 
 
 class GlossaryTerm(Base):

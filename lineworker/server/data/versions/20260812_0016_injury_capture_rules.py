@@ -35,7 +35,28 @@ DOCUMENTS_DIR = Path(__file__).resolve().parents[2] / "rules" / "documents"
 # directory must not become a live rule without a migration saying so.
 ROWS = (("injury_capture", 1, "injury_capture.jdm.json"),)
 
-EFFECTIVE_FROM = date(2026, 8, 12)
+# The same date every other rule document carries (0009, 0012, 0019), and it
+# is deliberate rather than cosmetic (Story 2.6's review pass).
+#
+# This migration shipped with `2026-08-12` — the day it was written — while
+# 0009, 0012 and 0019 all use `2026-08-11`. Migration 0019 spells out why that
+# is dangerous: "a version that adds *required* parameters cannot be safely
+# future-dated — between the migration and the effective date the loader
+# resolves the older one". `injury_capture` v1 has no older one to resolve, so
+# the failure is worse rather than milder: `injury_capture_for` raises
+# `RuleDocumentMissing` and `_injury` is on the case-file path, so **the whole
+# case file 500s** — including the 409 body every Story 2.4 write embeds.
+#
+# The window it was reachable in has passed, which is precisely why it was
+# invisible. It is still reachable through `claim_detail(as_of=…)` with an
+# earlier date, and it would have been live for any deployment migrated on
+# 08-11. Corrected here so a *fresh* database matches the other three; a
+# database already migrated keeps the row it was seeded with, which is
+# harmless now that the date is in the past.
+#
+# `test_no_rule_document_is_seeded_with_a_future_effective_date` is what stops
+# the next migration reintroducing it.
+EFFECTIVE_FROM = date(2026, 8, 11)
 
 
 def upgrade() -> None:

@@ -256,6 +256,31 @@ test("choosing a body part does not guess the label that goes with it", () => {
   expect(optimistic.header.bodyPart).toBe(DETAIL.header.bodyPart);
 });
 
+test("the primary marker moves with the body part, and nothing else on it does", () => {
+  // `claim.body_key` reaches the payload twice — `header.bodyKey` and
+  // `injury.markers[0].bodyKey` — and only the header was echoed (Story 2.6's
+  // review pass, on the 2.4 surface). Both are on screen together on the
+  // Injury Diagram tab, so the select moved instantly while the pulsing marker
+  // sat on the old hotspot until the response landed, then jumped: the same
+  // defect 2.4's own review fixed for the treatment recovery select.
+  const optimistic = applyOptimisticEdit(DETAIL, "bodyKey", "hand_right");
+  const [primary, ...secondaries] = optimistic.injury.markers;
+
+  expect(primary.primary).toBe(true);
+  expect(primary.bodyKey).toBe("hand_right");
+
+  // The derived values on the same marker still wait for the server — AD-9 is
+  // explicit that a band is not the browser's to guess, and `bodyPart` is the
+  // label this file's test above already refuses to invent.
+  expect(primary.band).toBe(DETAIL.injury.markers[0].band);
+  expect(primary.severityScore).toBe(DETAIL.injury.markers[0].severityScore);
+  expect(primary.bodyPart).toBe(DETAIL.injury.markers[0].bodyPart);
+
+  // A secondary injury is its own `additional_injury` row and this command
+  // does not touch it.
+  expect(secondaries).toEqual(DETAIL.injury.markers.slice(1));
+});
+
 test("a successful edit renders the server's entity, not the typed value", async () => {
   const user = userEvent.setup();
   // **The response value differs from both the typed text and the cached

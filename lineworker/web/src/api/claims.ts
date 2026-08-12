@@ -196,6 +196,29 @@ const OPTIMISTIC_INVESTIGATION_FIELDS = [
 const OPTIMISTIC_TREATMENT_FIELDS = ["recovery"] as const;
 
 /**
+ * The injury block's primary marker carries `bodyKey` too (Story 2.6's review
+ * pass, on the 2.4 surface).
+ *
+ * `claim.body_key` reaches the payload in **two** places — `header.bodyKey` and
+ * `injury.markers[0].bodyKey` — and only the first was echoed. On the Injury
+ * Diagram tab both are on screen at once, so changing the body part moved the
+ * header instantly while the pulsing marker stayed on the old hotspot for the
+ * round trip and then jumped: two controls displaying one column, visibly
+ * disagreeing. That is the same defect Story 2.4's own review pass fixed for
+ * the treatment card's recovery select, one tab over.
+ *
+ * **The primary marker only.** A secondary injury's `bodyKey` is its own
+ * `additional_injury` row and this command does not touch it. And nothing else
+ * on the marker moves: `band` and `severityScore` are the server's answers, and
+ * AD-9 is explicit that a derivation must not be guessed in the browser.
+ */
+function withPrimaryMarkerBodyKey(injury: ClaimDetail["injury"], value: string) {
+  const [primary, ...rest] = injury.markers;
+  if (!primary?.primary) return injury;
+  return { ...injury, markers: [{ ...primary, bodyKey: value }, ...rest] };
+}
+
+/**
  * Write the edited scalar into a cached case file — and nothing else.
  *
  * This is the whole of what AD-9 permits optimistically: the value the
@@ -229,7 +252,9 @@ export function applyOptimisticEdit(
   const overview = (echoed as readonly string[]).includes(field)
     ? { ...detail.overview, [field]: value }
     : detail.overview;
-  return { ...detail, header, overview };
+  const injury =
+    field === "bodyKey" ? withPrimaryMarkerBodyKey(detail.injury, value) : detail.injury;
+  return { ...detail, header, overview, injury };
 }
 
 /**
@@ -505,6 +530,69 @@ export function useRemoveInjury(claimId: string) {
     onSettled: () => {
       void client.invalidateQueries({ queryKey: key, refetchType: "none" });
     },
+  });
+}
+
+/** The Documents & ID tab (Story 2.5). */
+export type DocumentsBlock = components["schemas"]["DocumentsBlockResponse"];
+export type RequiredForm = components["schemas"]["RequiredFormResponse"];
+export type EmployeeIdCardData = components["schemas"]["EmployeeIdCardResponse"];
+export type DocumentRow = components["schemas"]["DocumentRowResponse"];
+export type DocumentSheet = components["schemas"]["DocumentSheetResponse"];
+export type SheetRow = components["schemas"]["SheetRowResponse"];
+export type ClaimPath = components["schemas"]["ClaimPath"];
+
+/**
+ * The Photos tab (Story 2.6).
+ *
+ * **No hook of its own, deliberately.** The block rides the case file's
+ * `claimDetail` query (AD-9) — one server-state idiom, no bespoke fetch for one
+ * tab — and the viewer renders three fields the grid already holds, so there is
+ * nothing left to ask for when a card is clicked. That is the opposite call
+ * from `useDocumentSheet` above, and the difference is the payload: a document
+ * sheet is a dozen rows of the claim's data assembled per document, while a
+ * photo card *is* its own viewer's content.
+ */
+export type PhotosBlock = components["schemas"]["PhotosBlockResponse"];
+export type PhotoCardData = components["schemas"]["PhotoResponse"];
+
+/**
+ * One document's read-only viewer sheet (AC 4).
+ *
+ * A **query of its own** rather than a block on the case file, and that is the
+ * one place this story departs from Story 2.2's "everything the tab shows
+ * arrives with the tab". A claim carries three to eight documents and each
+ * sheet is a dozen rows of the same claim's data, so folding them all into the
+ * case file would multiply the payload of the console's most-fetched endpoint
+ * to serve a modal most handlers never open.
+ *
+ * `enabled` is the dialog's open state, so nothing is requested until a row is
+ * clicked. TanStack keeps the answer cached afterwards, which is what makes
+ * re-opening the same document instant — and the sheet is derived from stored
+ * columns, so a stale one is only stale in the way the case file behind it is.
+ */
+export function useDocumentSheet(
+  claimId: string,
+  documentId: number | null,
+) {
+  return useQuery({
+    queryKey: queryKeys.claims.documentSheet(claimId, documentId ?? 0),
+    queryFn: async (): Promise<DocumentSheet> => {
+      const { data } = await api.GET(
+        "/claims/{claim_business_id}/documents/{document_id}/content",
+        {
+          params: {
+            path: { claim_business_id: claimId, document_id: documentId! },
+          },
+        },
+      );
+      return data!;
+    },
+    enabled: documentId !== null,
+    // The same 15s the case file uses: the sheet is assembled from the very
+    // columns the case file publishes, so two different staleness clocks would
+    // let the viewer and the pane behind it disagree about one claim.
+    staleTime: 15_000,
   });
 }
 

@@ -27,6 +27,7 @@ are omitted rather than rendered empty — recorded in the story's Dev Agent
 Record so the omission is a decision rather than an oversight.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
@@ -35,7 +36,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from data.context import CallerContext
-from data.models.core import Claim
+from data.models.core import Claim, Document
 from data.models.enums import (
     CommStatus,
     Disability,
@@ -53,6 +54,8 @@ from rules.parameters import (
     thresholds_for,
 )
 from services import derivations
+from services.claims.documents import DocumentsBlock, documents_block
+from services.claims.photos import PhotosBlock, photos_block
 from services.claims.reference import (
     BODY_PART_OPTIONS,
     RECOVERY_WINDOWS,
@@ -399,6 +402,14 @@ class ClaimDetail:
     # Story 2.4's tab. Not on a stage variant: the diagram is readable at
     # every stage, and a claim does not stop having injuries when it settles.
     injury: InjuryDiagram
+    # Story 2.5's tab, outside the union for the same reason — the statutory
+    # forms a claim requires are a function of its *path*, not of its stage,
+    # and an intake claim's ID card is as readable as a settled one's.
+    documents: DocumentsBlock
+    # Story 2.6's tab, outside the union for `injury`'s and `documents`'
+    # reason: a claim does not stop having evidence when it settles, and the
+    # tab bar reads this block's `count` at every stage.
+    photos: PhotosBlock
     edit_options: EditOptions
     thresholds_version: int
     # `None` for every stage but intake, because no other variant reads the
@@ -520,7 +531,19 @@ async def claim_detail(
         osha_recordable=claim.osha_recordable,
     )
 
-    overview, requirements_version = await _overview(db, ctx, row, risk, thresholds, events, today)
+    # **Read once, used twice** (code review, 2026-08-12). Story 2.5's block
+    # needs every document; the *intake* variant's checklist needs the set of
+    # types on file. Left to fetch their own, an intake claim ran the identical
+    # scoped query twice on every case-file read — and the case file is
+    # re-read after each of the four commands and embedded in every 409 body,
+    # so it is the most-fetched payload in the console. Hoisted here rather
+    # than cached inside either consumer, because a read that two blocks share
+    # belongs to the function that assembles both.
+    documents = await claim_repo.select_documents(db, ctx, claim.claim_id)
+
+    overview, requirements_version = await _overview(
+        db, row, risk, thresholds, events, documents, today
+    )
 
     return ClaimDetail(
         claim_id=claim.claim_id,
@@ -529,6 +552,13 @@ async def claim_detail(
         stepper=_stepper(claim.stage),
         overview=overview,
         injury=await _injury(db, ctx, claim, risk, thresholds, today),
+        documents=await documents_block(db, row, thresholds, documents),
+        # No store is passed, and that is the deployment's state rather than an
+        # omission: the binary backend is a Deferred decision, so nothing is
+        # configured and every seeded row's `blob_key` is null anyway. The
+        # parameter exists on `photos_block` so that wiring one in later is a
+        # change to this line and to nothing else.
+        photos=photos_block(await claim_repo.select_photos(db, ctx, claim.claim_id)),
         edit_options=EDIT_OPTIONS,
         thresholds_version=thresholds.version,
         requirements_version=requirements_version,
@@ -621,21 +651,35 @@ async def _injury(
 
 async def _overview(
     db: AsyncSession,
-    ctx: CallerContext,
     row: sa.Row[Any],
     risk: RiskBand,
     thresholds: DerivationThresholds,
     events: list[TimelineEntry],
+    documents: Sequence[Document],
     today: date,
 ) -> tuple[StageOverview, int | None]:
-    """`ovHTML`'s dispatch, server-side, with the rules version it consulted."""
+    """`ovHTML`'s dispatch, server-side, with the rules version it consulted.
+
+    `documents` is handed in rather than read here: `claim_detail` needs the
+    same rows for Story 2.5's block, and only the intake variant reads them at
+    all — so fetching them in this function meant one scoped query per intake
+    claim that the caller had already run.
+
+    **No `CallerContext`, and its absence is the point** (code review,
+    2026-08-12). Hoisting that read took away this function's last scoped
+    query, leaving a `ctx` parameter that was accepted and never used — which
+    is exactly what `data/repositories/statutory_forms.py` argues against in
+    the story that created it: a context nobody reads is decoration, and the
+    next author to add a branch here would see it in the signature and take
+    the scoping as already done. Everything this function still reads is
+    either handed to it or unscoped rule data.
+    """
     claim = row.Claim
     paid = derivations.total_paid.for_thresholds(thresholds).of(claim)
     split = derivations.cost_split.for_thresholds(thresholds).of(claim)
 
     if claim.stage is Stage.intake:
         requirements = await intake_requirements_for(db, today)
-        documents = await claim_repo.select_documents(db, ctx, claim.claim_id)
         on_file = frozenset(document.doc_type for document in documents)
         return IntakeOverview(
             stage_variant=Stage.intake.value,

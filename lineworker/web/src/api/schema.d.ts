@@ -112,6 +112,38 @@ export interface paths {
         patch: operations["edit_fields_claims__claim_business_id__patch"];
         trace?: never;
     };
+    "/claims/{claim_business_id}/documents/{document_id}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One document's read-only viewer sheet
+         * @description The sheet for one document of one claim in the caller's book.
+         *
+         *     **404 covers three different situations on purpose**: no such document, a
+         *     document belonging to a different claim, and a claim outside the caller's
+         *     scope. Surrogate document ids are dense, so a route that distinguished them
+         *     would let a caller walk `1…10000` and learn how many documents the
+         *     portfolio holds and which ids are live — the enumeration AD-7 closes at the
+         *     claim level, reopened one path segment down. `claim_repo.select_document`
+         *     resolves all three to `None`, so there is one branch here.
+         *
+         *     The claim id in the path is load-bearing rather than decorative: it is in
+         *     the predicate, so a document id that *is* in the caller's scope does not
+         *     resolve through a different claim's URL.
+         */
+        get: operations["document_sheet_claims__claim_business_id__documents__document_id__content_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/claims/{claim_business_id}/injuries": {
         parameters: {
             query?: never;
@@ -463,11 +495,13 @@ export interface components {
         ClaimDetailResponse: {
             /** Claimid */
             claimId: string;
+            documents: components["schemas"]["DocumentsBlockResponse"];
             editOptions: components["schemas"]["EditOptionsResponse"];
             header: components["schemas"]["CaseHeaderResponse"];
             injury: components["schemas"]["InjuryDiagramResponse"];
             /** Overview */
             overview: components["schemas"]["IntakeOverviewResponse"] | components["schemas"]["InvestigationOverviewResponse"] | components["schemas"]["TreatmentOverviewResponse"] | components["schemas"]["SettledOverviewResponse"];
+            photos: components["schemas"]["PhotosBlockResponse"];
             /** Requirementsversion */
             requirementsVersion: number | null;
             /** Stepper */
@@ -520,6 +554,31 @@ export interface components {
             injuryType?: string | null;
             recovery?: components["schemas"]["RecoveryWindow"] | null;
         };
+        /**
+         * ClaimPath
+         * @description The three statutory handling paths a claim can be classified onto (2.5).
+         *
+         *     The prototype has this vocabulary and never uses it: `pathDocsHTML` reads
+         *     `c.path || "B"` against a dataset in which **no claim carries a `path`
+         *     field at all**, so all 100 claims render the Path B form set. Story 2.5
+         *     closes that gap with a registered derivation (`services/derivations/
+         *     path_classification.py`), and this is the vocabulary it answers in.
+         *
+         *     Here rather than beside the derivation because `path_required_form.path`
+         *     is a native enum column, and a column's members must live in the data
+         *     layer (`data/` must not import from `services/`) — the same argument
+         *     `BodyRegion` makes. `RiskBand` stays in `services/derivations` precisely
+         *     because no column holds one.
+         *
+         *     Snake_case wire tokens (`a`/`b`/`c`), never the prototype's display keys:
+         *     the label ("Path A — Minor Injury"), the icon and the banner colour are
+         *     UI-owned per the Enums convention. Member order is the prototype's, which
+         *     is also increasing severity, and it is the order PostgreSQL will sort the
+         *     type in.
+         *     [Source: docs/Workers_Comp_Prototype.html lines 1542-1563]
+         * @enum {string}
+         */
+        ClaimPath: "a" | "b" | "c";
         /**
          * ClaimQueueResponse
          * @description The queue, the rules that ranked it, and the two totals behind it.
@@ -595,6 +654,89 @@ export interface components {
          */
         DocType: "froi" | "incident" | "medauth" | "wage" | "rtw" | "legal";
         /**
+         * DocumentRowResponse
+         * @description One row of the claim documents list.
+         *
+         *     `filedDate` is nullable for `TimelineEntryResponse`'s reason: 101 seeded
+         *     documents carry a timing note (`Post-surgery`, `Closed`) where a filing
+         *     date belongs. The list leaves the cell empty rather than inventing one.
+         */
+        DocumentRowResponse: {
+            docType: components["schemas"]["DocType"];
+            /** Fileddate */
+            filedDate: string | null;
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
+        };
+        /**
+         * DocumentSheetResponse
+         * @description A document viewer's whole content, assembled server-side (AC 4).
+         *
+         *     `sheetVariant` discriminates the two layouts the prototype's `openDoc`
+         *     branches between: a first report of injury renders the full injury detail,
+         *     everything else a short summary. The dispatch is the server's (AD-1) and so
+         *     are the rows, their order and their labels — what fields a statutory filing
+         *     shows is not a layout choice.
+         *
+         *     **Read-only, structurally.** There is no PATCH beside this route and no
+         *     `version` on this model: the viewer displays a filing, and editing a claim
+         *     goes through the four commands that already exist.
+         *
+         *     `hasBlob` is false and `blobUrl` null for every seeded document, because
+         *     none has bytes behind it (`blob_key` is null on all 563 rows — the
+         *     prototype has no files). Both are on the contract now so that attaching a
+         *     real PDF later changes the store and the ingest path, not this shape.
+         */
+        DocumentSheetResponse: {
+            /** Bloburl */
+            blobUrl: string | null;
+            docType: components["schemas"]["DocType"];
+            /** Documentid */
+            documentId: number;
+            /** Hasblob */
+            hasBlob: boolean;
+            /** Name */
+            name: string;
+            /** Rows */
+            rows: components["schemas"]["SheetRowResponse"][];
+            /**
+             * Sheetvariant
+             * @enum {string}
+             */
+            sheetVariant: "froi" | "summary";
+            /** Signatures */
+            signatures: string[];
+        };
+        /**
+         * DocumentsBlockResponse
+         * @description The Documents & ID tab's whole payload (Story 2.5, AC 1 and AC 3).
+         *
+         *     Outside the stage-variant union, like `injury`: which filings a claim
+         *     requires is a function of its **path**, not of its stage.
+         *
+         *     `path` is the registered `claim_path` derivation's answer (AD-10) — the
+         *     thing the prototype never actually computes. `pathVersion` names the rule
+         *     document that classified, for `thresholdsVersion`'s reason: every document
+         *     that decided something in this response is named in it.
+         *
+         *     The path's label, icon and banner colour are **not** here. They are UI-owned
+         *     per the Enums convention, exactly as the risk band's colours are — the
+         *     prototype keeps them in a `PATH_META` object next to the form data, and
+         *     porting that would have put two hex values in a database column.
+         */
+        DocumentsBlockResponse: {
+            /** Documents */
+            documents: components["schemas"]["DocumentRowResponse"][];
+            idCard: components["schemas"]["EmployeeIdCardResponse"];
+            path: components["schemas"]["ClaimPath"];
+            /** Pathversion */
+            pathVersion: number;
+            /** Requiredforms */
+            requiredForms: components["schemas"]["RequiredFormResponse"][];
+        };
+        /**
          * EditOptionsResponse
          * @description What the editable selects may offer (Story 2.3).
          *
@@ -610,6 +752,38 @@ export interface components {
             disabilities: components["schemas"]["Disability"][];
             /** Recoverywindows */
             recoveryWindows: components["schemas"]["RecoveryWindow"][];
+        };
+        /**
+         * EmployeeIdCardResponse
+         * @description The branded ID card (FR-DET-4).
+         *
+         *     Published as a block of its own even though every field appears elsewhere
+         *     on the case file: `employeeBusinessId` and `plant` live on the *intake*
+         *     variant, and a client stitching this card out of the header plus a variant
+         *     would render a different card depending on the claim's stage.
+         */
+        EmployeeIdCardResponse: {
+            /**
+             * Doi
+             * Format: date
+             */
+            doi: string;
+            /** Employeebusinessid */
+            employeeBusinessId: string;
+            /** Handlername */
+            handlerName: string;
+            /** Plant */
+            plant: string;
+            /** Policynum */
+            policyNum: string;
+            /** Region */
+            region: string;
+            /** State */
+            state: string;
+            /** Workername */
+            workerName: string;
+            /** Workerrole */
+            workerRole: string;
         };
         /**
          * GlossaryList
@@ -895,6 +1069,66 @@ export interface components {
             total: number;
         };
         /**
+         * PhotoResponse
+         * @description One card of the incident-photo grid (Story 2.6, AC 1).
+         *
+         *     **`id`, not an array index.** The prototype's `openPhoto(c, i)` addresses a
+         *     photo by its position in the array — a handle whose meaning changes the
+         *     moment anything is filed or removed. This is the row's own surrogate.
+         *
+         *     **`hasBlob` and `blobUrl` are two facts, not one.** The first says a file
+         *     exists; the second says this deployment can hand the browser a direct link
+         *     to it. Both are false/null for every seeded photo because the prototype has
+         *     no image files, and the tab renders its placeholder treatment — the designed
+         *     state, not a degradation. They stay separate because a volume-backed store
+         *     answers `url()` with `None` by design (see `services/blobstore`), and a
+         *     client that read a null URL as "no photo" would show the placeholder for a
+         *     whole grid of real photographs.
+         *
+         *     The 📷 glyph is **not** here. It is the browser's rendering of "no bytes",
+         *     UI-owned per the Enums convention, exactly as the risk band's colours and
+         *     `PATH_META`'s labels are.
+         */
+        PhotoResponse: {
+            /** Bloburl */
+            blobUrl: string | null;
+            /** Caption */
+            caption: string;
+            /** Hasblob */
+            hasBlob: boolean;
+            /** Id */
+            id: number;
+            /** Source */
+            source: string;
+        };
+        /**
+         * PhotosBlockResponse
+         * @description The Photos tab's whole payload (Story 2.6, AC 1 and AC 3).
+         *
+         *     Outside the stage-variant union, like `injury` and `documents`: a claim
+         *     does not stop having evidence when it settles.
+         *
+         *     **`count` is published rather than left to the client.** The prototype
+         *     writes ``Photos (${c.photos.length})`` into the tab bar and maps the same
+         *     array into the grid, which is consistent only because both read one global
+         *     object. Here the tab strip and the grid are different components, so a label
+         *     counting a list it does not hold would be a second answer to "how many
+         *     photos does this claim have" — and the tab label is the half a handler reads
+         *     first. It is `len(photos)` computed in exactly one place
+         *     (`services/claims/photos.py`), which is what makes the two incapable of
+         *     disagreeing rather than merely observed to agree.
+         *
+         *     An empty `photos` list with `count: 0` is a real and rendered state (AC 3,
+         *     NFR-3) — unreachable against the dev seed, where every claim carries two to
+         *     four photos, and covered by fixtures for that reason.
+         */
+        PhotosBlockResponse: {
+            /** Count */
+            count: number;
+            /** Photos */
+            photos: components["schemas"]["PhotoResponse"][];
+        };
+        /**
          * PrognosisResponse
          * @description MMI estimate, RTW outlook, impairment and litigation risk.
          *
@@ -950,6 +1184,29 @@ export interface components {
          * @enum {string}
          */
         RecoveryWindow: "weeks_0_2" | "weeks_2_4" | "weeks_4_6" | "weeks_6_8" | "over_1_year";
+        /**
+         * RequiredFormResponse
+         * @description One statutory form the claim's classified path requires (Story 2.5).
+         *
+         *     `downloadUrl` points at an **external blank**, not at `BlobStore` content —
+         *     the two are different kinds of thing and the client opens them differently
+         *     (a new tab versus the viewer). The seeded URLs are NY WCB / FNSB
+         *     placeholders pending the NFR-4 per-jurisdiction validation that is an
+         *     explicit Deferred decision; they are not labelled provisional in the UI,
+         *     because that would be a product claim this story has no basis for.
+         */
+        RequiredFormResponse: {
+            /** Description */
+            description: string;
+            /** Downloadurl */
+            downloadUrl: string;
+            /** Formcode */
+            formCode: string;
+            /** Formname */
+            formName: string;
+            /** Timing */
+            timing: string;
+        };
         /**
          * ReturnStatus
          * @enum {string}
@@ -1027,6 +1284,28 @@ export interface components {
              * @description 0-100. Refused, never clamped — the prototype silently turns a typo of 780 into a maximum-severity claim.
              */
             severityScore: number;
+        };
+        /**
+         * SheetRowResponse
+         * @description One labelled line of a document sheet.
+         *
+         *     **Exactly one of `text` and `cents` is set.** The split keeps the money
+         *     convention intact end to end — a FROI's average weekly wage crosses as
+         *     integer cents and is formatted by the UI, like every other amount in this
+         *     contract, rather than arriving pre-formatted as the one exception.
+         *
+         *     Dates ride in `text` as ISO strings, which is what the SPA's `formatDate`
+         *     already renders — including the em dash it renders for `null`, which is the
+         *     right answer for the 101 seeded documents that carry a timing note where a
+         *     filing date belongs.
+         */
+        SheetRowResponse: {
+            /** Cents */
+            cents?: number | null;
+            /** Label */
+            label: string;
+            /** Text */
+            text?: string | null;
         };
         /**
          * SlaDirection
@@ -1550,6 +1829,76 @@ export interface operations {
                 content: {
                     "application/problem+json": {
                         claim: components["schemas"]["ClaimDetailResponse"];
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    document_sheet_claims__claim_business_id__documents__document_id__content_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The claim's business id, `WC-nnnn`. */
+                claim_business_id: string;
+                /** @description The `id` of one of `documents.documents[]`. */
+                document_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentSheetResponse"];
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description No such claim in the caller's scope. Deliberately the same answer for a claim that does not exist and one that belongs to another employer — see the route docstring (RFC 9457 problem document). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
                         /** Detail */
                         detail: string;
                         /** Status */

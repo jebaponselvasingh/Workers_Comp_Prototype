@@ -1,0 +1,83 @@
+[
+ {
+  "path": "a",
+  "form_code": "C-2F",
+  "form_name": "Minor Injury Report",
+  "description": "Employer's first-aid-only / minor injury report. No lost time — OSHA log only.",
+  "timing": "Within 10 days of incident",
+  "download_url": "https://www.wcb.ny.gov/content/main/forms/c2F.pdf",
+  "sort_order": 0
+ },
+ {
+  "path": "a",
+  "form_code": "FAR-1",
+  "form_name": "Employee First Aid / Injury Report",
+  "description": "Employee-completed onsite first aid and injury description for facility records.",
+  "timing": "Same shift or within 24h",
+  "download_url": "https://www.fnsb.gov/DocumentCenter/View/18587/Employee-First-Aid-Injury-Report-PDF?bidId=",
+  "sort_order": 1
+ },
+ {
+  "path": "b",
+  "form_code": "C-3",
+  "form_name": "FROI — Employee Claim for Compensation (C-3)",
+  "description": "Employee's formal WC claim. Filed when disability exceeds waiting period. Triggers carrier acceptance/denial decision.",
+  "timing": "As soon as practicable; carrier within 30 days",
+  "download_url": "https://www.wcb.ny.gov/content/main/forms/c3.pdf",
+  "sort_order": 0
+ },
+ {
+  "path": "b",
+  "form_code": "RFA-1W",
+  "form_name": "RTW Request for Assistance (RFA-1W)",
+  "description": "Initiates formal RTW coordination — carrier, employer, and employee. Required when modified duty is available.",
+  "timing": "When physician grants light duty clearance",
+  "download_url": "https://www.wcb.ny.gov/content/main/forms/rfa-1w.pdf",
+  "sort_order": 1
+ },
+ {
+  "path": "b",
+  "form_code": "C-4.3",
+  "form_name": "Maximum Medical Improvement — MMI (C-4.3)",
+  "description": "Treating physician certifies MMI reached. Triggers PPD rating and benefit modification or settlement.",
+  "timing": "When physician determines MMI",
+  "download_url": "https://www.wcb.ny.gov/content/main/forms/c4_3.pdf",
+  "sort_order": 2
+ },
+ {
+  "path": "b",
+  "form_code": "C-11",
+  "form_name": "Employee Change in Employment Status (C-11)",
+  "description": "Documents RTW, termination, job change, or retirement resulting from the injury.",
+  "timing": "When employment status changes",
+  "download_url": "https://www.wcb.ny.gov/content/main/forms/c11.pdf",
+  "sort_order": 3
+ },
+ {
+  "path": "c",
+  "form_code": "AFF-1",
+  "form_name": "Affirmation for WC Death Benefits (AFF-1)",
+  "description": "Filed by dependents or estate to claim WC death benefits. Establishes relationship and financial dependency.",
+  "timing": "As soon as practicable after fatality",
+  "download_url": "https://www.wcb.ny.gov/content/main/forms/AFF-1.pdf",
+  "sort_order": 0
+ },
+ {
+  "path": "c",
+  "form_code": "C-64",
+  "form_name": "Proof of Death — Last Treating Physician (C-64)",
+  "description": "Physician certification of death and its relationship to the workplace injury. Establishes compensability.",
+  "timing": "Submitted with AFF-1 or immediately after",
+  "download_url": "https://www.wcb.ny.gov/content/main/forms/c64.pdf",
+  "sort_order": 1
+ },
+ {
+  "path": "c",
+  "form_code": "C-65",
+  "form_name": "Proof of Burial / Funeral Expenses (C-65)",
+  "description": "Undertaker submits documented burial expenses for reimbursement under WC statute burial benefit.",
+  "timing": "Upon completion of funeral services",
+  "download_url": "https://www.wcb.ny.gov/content/main/forms/c65.pdf",
+  "sort_order": 2
+ }
+]

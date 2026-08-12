@@ -40,7 +40,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from data.models.enums import ClaimStatus, DocType
+from data.models.enums import ClaimStatus, DocType, RecoveryWindow
 
 # Submodule names rather than `from rules import engine`: the package
 # `__init__` re-exports both modules, so binding through it would make this
@@ -130,6 +130,44 @@ def _status_set(
     return frozenset(statuses)
 
 
+def _recovery_window_set(
+    document: LoadedDocument, result: dict[str, Any], key: str
+) -> frozenset[RecoveryWindow]:
+    """A document-authored list of `RecoveryWindow` values, member by member.
+
+    `_status_set`'s argument, over a different vocabulary — resolve rather
+    than compare, so a typo is one refusal before a claim is classified
+    instead of a condition that quietly stops matching and leaves every claim
+    on Path B (which is precisely the prototype's bug this story exists to
+    close).
+
+    A **set**, not `_doc_type_list`'s ordered tuple, because nothing renders
+    these: they are a membership test inside `claim_path`. So order says
+    nothing and a duplicate says nothing new, which is exactly when a set is
+    the honest type. An empty list is accepted for `_status_set`'s reason —
+    "no recovery window is short enough to count as no lost time" switches
+    Path A off from the document, which is a legitimate thing to want and the
+    reason the condition is data at all.
+    """
+    value = result.get(key)
+    if not isinstance(value, list):
+        raise RuleParameterError(
+            f"{document.key} v{document.version} has no list {key!r} "
+            f"(got {value!r}) — the document and its parameter block disagree"
+        )
+    windows: set[RecoveryWindow] = set()
+    for member in value:
+        try:
+            windows.add(RecoveryWindow(member))
+        except ValueError as exc:
+            raise RuleParameterError(
+                f"{document.key} v{document.version} lists {member!r} in {key!r}, "
+                f"which is not a recovery window; the windows are "
+                f"{sorted(window.value for window in RecoveryWindow)}"
+            ) from exc
+    return frozenset(windows)
+
+
 @dataclass(frozen=True)
 class DerivationThresholds:
     """Every parameter the AD-10 derivation registry reads.
@@ -161,6 +199,13 @@ class DerivationThresholds:
     treatment_active_max_ratio: float
     recovery_year_expected_days: int
     recovery_default_expected_days: int
+    # Story 2.5's three (document v3). `claim_path` is a registered derivation,
+    # so its parameters belong in this block rather than in a document of their
+    # own — see `derivation_thresholds.v3.jdm.json` and 0019 for why that cuts
+    # the other way from `injury_capture` and `intake_required_documents`.
+    path_minor_severity_max: int
+    path_minor_recovery_windows: frozenset[RecoveryWindow]
+    path_fatality_severity_min: int
 
     def __post_init__(self) -> None:
         # Story 1.4's `Field(ge=0, le=100)`, in its new home. `severity_score`
@@ -229,6 +274,29 @@ class DerivationThresholds:
         ):
             if days < 1:
                 raise RuleParameterError(f"{name} must be at least 1 day, got {days}")
+        # Both path cut-offs read `severity_score`, a 0-100 column, so the same
+        # argument the risk bands make applies: a bound outside that range
+        # silently classifies the whole portfolio one way and says nothing
+        # about it. `pathMinorSeverityMax: 1000` files every claim as
+        # first-aid-only and shows a fatality claim the two Path A forms.
+        for name, bound in (
+            ("pathMinorSeverityMax", self.path_minor_severity_max),
+            ("pathFatalitySeverityMin", self.path_fatality_severity_min),
+        ):
+            if not 0 <= bound <= 100:
+                raise RuleParameterError(
+                    f"{name} must be between 0 and 100 (severity_score's range), got {bound}"
+                )
+        # An inverted pair is not a tuning choice: it describes a claim that is
+        # simultaneously minor enough for first-aid-only handling and severe
+        # enough to be fatal. `claim_path` tests the fatality branch first, so
+        # the overlap would resolve silently in favour of death benefits — a
+        # minor-injury claim rendering the death-benefit filing set.
+        if self.path_minor_severity_max > self.path_fatality_severity_min:
+            raise RuleParameterError(
+                f"pathMinorSeverityMax ({self.path_minor_severity_max}) must not exceed "
+                f"pathFatalitySeverityMin ({self.path_fatality_severity_min})"
+            )
 
     @classmethod
     def of(cls, document: LoadedDocument, result: dict[str, Any]) -> "DerivationThresholds":
@@ -245,6 +313,11 @@ class DerivationThresholds:
             recovery_default_expected_days=_integer(
                 document, result, "recoveryDefaultExpectedDays"
             ),
+            path_minor_severity_max=_integer(document, result, "pathMinorSeverityMax"),
+            path_minor_recovery_windows=_recovery_window_set(
+                document, result, "pathMinorRecoveryWindows"
+            ),
+            path_fatality_severity_min=_integer(document, result, "pathFatalitySeverityMin"),
         )
 
 

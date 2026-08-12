@@ -227,8 +227,22 @@ def normalise(patch: Mapping[str, Any]) -> dict[str, str]:
     # *building* the call — so it fired before the command's role check and a
     # supervisor sending `{"cause": null}` learned their patch was malformed
     # instead of being told their role cannot edit. The module docstring
-    # makes "role first, before anything else is examined" an ordering rule,
-    # and a rule enforced everywhere except one path is not one.
+    # makes "role first" an ordering rule, and a rule enforced everywhere
+    # except one path is not one.
+    #
+    # **The rule's exact scope, since the original wording overstated it**
+    # (Story 2.6's review pass). It is not "role first, before anything else is
+    # examined": FastAPI validates the *request model* before the endpoint
+    # function runs at all, so `severityScore: 101` is a 422 whatever the
+    # caller's role. That layer is deliberate and stays — the bound is in the
+    # published OpenAPI contract and reaches the generated client — and it can
+    # leak nothing, because it only ever restates limits every caller has
+    # already downloaded. The guarantee is therefore: **once a request is a
+    # well-formed instance of the published contract, the role is checked
+    # before anything about the claim or the patch is examined.** Pinned by
+    # `test_a_schema_invalid_body_is_refused_before_any_role_check` and, on all
+    # four write routes, by
+    # `test_the_role_refusal_comes_first_on_all_four_write_routes`.
     #
     # Naming the keys is safe *here* and would not have been three lines
     # earlier: the whitelist check above has already run, so every key left

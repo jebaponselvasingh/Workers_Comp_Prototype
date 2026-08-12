@@ -510,6 +510,25 @@ export function firstClaimInStage(name: string, role: string, stage: SeedStage):
   return claims[0];
 }
 
+/**
+ * The **last** claim of a persona's book in a stage, by business id.
+ *
+ * `firstClaimInStage`'s counterpart, and it exists for a specific hazard: a
+ * spec file shares one database, so a test that *mutates* a claim has to pick
+ * one no other test in the file reads. Reaching for "the first settled claim"
+ * is the obvious move and is usually the same row `firstClaimOnPath(…, "b")`
+ * returns — which turns a destructive test into a failure two tests later,
+ * pointing at the wrong code (Story 2.5, found in the first e2e run).
+ */
+export function lastClaimInStage(name: string, role: string, stage: SeedStage): string {
+  const claims = claimsFor(name, role)
+    .filter((claim) => claim.stage === stage)
+    .map((claim) => claim.claim_id)
+    .sort();
+  if (claims.length === 0) throw new Error(`no seeded ${stage} claim for ${name}/${role}`);
+  return claims[claims.length - 1];
+}
+
 /** The risk band the gauge must be coloured by — the queue oracle's, reused. */
 export function expectedRiskFor(claimId: string): "high" | "med" | "low" {
   const claim = seed.claims.find((c) => c.claim_id === claimId);
@@ -656,6 +675,138 @@ export function expectedPrimaryMarker(claimId: string): {
   };
 }
 
+// --- Story 2.5: statutory forms and documents, restated independently ----
+//
+// The classification rule is written out here from the story text rather than
+// imported from the server or read off the response, exactly as the queue's
+// five derivations are. It matters more than usual: the thing under test is a
+// rule the prototype never actually applies, so an oracle that read the path
+// off the payload would confirm nothing at all.
+
+const PATH_FORMS_PATH = fileURLToPath(
+  new URL("../../server/data/seed/path_required_forms.json", import.meta.url),
+);
+
+interface SeedRequiredForm {
+  path: string;
+  form_code: string;
+  form_name: string;
+  description: string;
+  timing: string;
+  download_url: string;
+  sort_order: number;
+}
+
+const requiredForms = JSON.parse(
+  readFileSync(PATH_FORMS_PATH, "utf8"),
+) as SeedRequiredForm[];
+
+/**
+ * The deployed `derivation_thresholds` v3 path parameters, restated.
+ *
+ * A stack migrated with different ones would legitimately fail these specs,
+ * which is the point of writing them down here rather than reading them off
+ * the response.
+ */
+const PATH_MINOR_SEVERITY_MAX = 35;
+const PATH_MINOR_RECOVERY_WINDOWS = ["weeks_0_2"];
+const PATH_FATALITY_SEVERITY_MIN = 100;
+
+export type SeedPath = "a" | "b" | "c";
+
+/**
+ * `services/derivations/path_classification.py`, restated.
+ *
+ * Most severe first, as the implementation tests it — and B is the fallback,
+ * which is also the prototype's default and the reason its bug was invisible.
+ */
+export function claimPath(claimId: string): SeedPath {
+  const claim = seed.claims.find((c) => c.claim_id === claimId) as unknown as
+    | {
+        severity_score: number;
+        disability: string;
+        recovery: string;
+        surgery_required: boolean;
+        return_status: string;
+      }
+    | undefined;
+  if (!claim) throw new Error(`no seeded claim ${claimId}`);
+
+  if (
+    claim.severity_score >= PATH_FATALITY_SEVERITY_MIN &&
+    claim.disability === "permanent" &&
+    claim.return_status === UNDER_TREATMENT
+  ) {
+    return "c";
+  }
+  if (
+    claim.severity_score < PATH_MINOR_SEVERITY_MAX &&
+    !claim.surgery_required &&
+    claim.disability === "temporary" &&
+    PATH_MINOR_RECOVERY_WINDOWS.includes(recoveryToken(claim.recovery))
+  ) {
+    return "a";
+  }
+  return "b";
+}
+
+/** The form codes one path requires, in the order the card renders them. */
+export function expectedFormCodes(path: SeedPath): string[] {
+  return requiredForms
+    .filter((form) => form.path === path)
+    .sort((a, b) => a.sort_order - b.sort_order)
+    .map((form) => form.form_code);
+}
+
+/** One form's full row, for asserting the description and timing render. */
+export function expectedForm(path: SeedPath, formCode: string): SeedRequiredForm {
+  const form = requiredForms.find((f) => f.path === path && f.form_code === formCode);
+  if (!form) throw new Error(`no seeded ${formCode} on path ${path}`);
+  return form;
+}
+
+/**
+ * The first claim of a persona's book on a given path, by business id.
+ *
+ * Throws rather than returning undefined: a spec that silently skipped its
+ * Path-A case because the seed had none would be a green tick over an
+ * untested banner.
+ */
+export function firstClaimOnPath(name: string, role: string, path: SeedPath): string {
+  const claims = claimsFor(name, role)
+    .map((claim) => claim.claim_id)
+    .filter((id) => claimPath(id) === path)
+    .sort();
+  if (claims.length === 0) throw new Error(`no seeded path-${path} claim for ${name}/${role}`);
+  return claims[0];
+}
+
+/** A claim's documents, in the order the migration filed them. */
+export function expectedDocumentsFor(claimId: string): SeedDocument[] {
+  return caseFile.documents.filter((doc) => doc.claim_id === claimId);
+}
+
+/** The ID card's fields, read from the claim and employee rows. */
+export function expectedIdCardFor(claimId: string): {
+  policyNum: string;
+  doi: string;
+  plant: string;
+  state: string;
+  region: string;
+} {
+  const claim = seed.claims.find((c) => c.claim_id === claimId) as unknown as
+    | { policy_num: string; doi: string; plant: string; state: string; region: string }
+    | undefined;
+  if (!claim) throw new Error(`no seeded claim ${claimId}`);
+  return {
+    policyNum: claim.policy_num,
+    doi: claim.doi,
+    plant: claim.plant,
+    state: claim.state,
+    region: claim.region,
+  };
+}
+
 /** A score that lands in a band the claim is not currently in. */
 export function scoreInAnotherBand(claimId: string): { score: number; band: string } {
   const current = expectedPrimaryMarker(claimId).band;
@@ -664,4 +815,46 @@ export function scoreInAnotherBand(claimId: string): { score: number; band: stri
   // exercises the command rather than its refusal.
   const candidate = current === "high" ? 0 : 100;
   return { score: candidate, band: riskBand(candidate) };
+}
+
+/* --- Story 2.6: incident photos ---------------------------------------- */
+
+const PHOTOS_PATH = fileURLToPath(
+  new URL("../../server/data/seed/photos.json", import.meta.url),
+);
+
+interface SeedPhoto {
+  claim_id: string;
+  caption: string;
+  source: string;
+}
+
+const photos = JSON.parse(readFileSync(PHOTOS_PATH, "utf8")) as SeedPhoto[];
+
+/**
+ * A claim's photos, in the order the migration filed them.
+ *
+ * Order is the assertion, not a convenience: `photo` carries no `sort_order`
+ * because the grid renders the prototype's array order, which the seed
+ * preserved by inserting in it. A spec comparing sets would pass against a
+ * shuffled grid.
+ */
+export function expectedPhotosFor(claimId: string): SeedPhoto[] {
+  return photos.filter((photo) => photo.claim_id === claimId);
+}
+
+/**
+ * A claim of the persona's book with the **most** photos.
+ *
+ * Used by the viewer test so that "click the second card" is never "click the
+ * only card": every seeded claim has two to four, and a test that happened to
+ * pick a two-photo claim would still pass while asserting less.
+ */
+export function claimWithMostPhotos(name: string, role: string): string {
+  const mine = claimsFor(name, role).map((claim) => claim.claim_id);
+  const best = mine
+    .map((claimId) => ({ claimId, n: expectedPhotosFor(claimId).length }))
+    .sort((a, b) => b.n - a.n || a.claimId.localeCompare(b.claimId))[0];
+  if (!best || best.n === 0) throw new Error(`no photographed claim for ${name}/${role}`);
+  return best.claimId;
 }

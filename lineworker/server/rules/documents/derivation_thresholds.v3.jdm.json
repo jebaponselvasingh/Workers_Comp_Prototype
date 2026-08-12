@@ -1,0 +1,103 @@
+{
+  "contentType": "application/vnd.gorules.decision",
+  "name": "derivation_thresholds",
+  "description": "Version 3 (Story 2.5): version 2's nine parameters unchanged, plus the three the claim-path classification reads. Superseding is a new document, never an edit — v1 and v2 stay exactly what Stories 2.1 and 2.2 shipped, so an ordering or a banner produced under either is still explainable. The path parameters live in THIS document rather than one of their own because claim_path is a registered derivation (AD-10) and DerivationThresholds is the single argument every registered derivation is built from; injury_capture and intake_required_documents are separate for the opposite reason — they parameterise services/claims commands, not derivations. pathMinorSeverityMax is the ceiling below which a claim can be classified minor: it is a path question, not a risk question, so it is its own parameter and not a second reader of riskMedMin — the two answer 'is this claim first-aid-only?' and 'how does this claim's dot get coloured?', and one must be retunable without moving the other. pathMinorRecoveryWindows is the qualifying condition beside it: the recovery windows short enough to count as no lost time. An empty list switches Path A off from the document, which is a legitimate thing to want and the reason the set is data. pathFatalitySeverityMin is set at the top of severity_score's domain because the schema Story 1.2 seeded carries NO fatality indicator of any kind, and the strongest statement it can make about a fatal outcome is a maximum-severity, permanently disabling injury the worker never returned from — see services/derivations/path_classification.py, which argues at length why a lower cut-off here would misclassify the seven seeded amputation claims (several of whom returned to work fully recovered) as death-benefit files. Replacing this proxy with a real column is recorded as deferred work.",
+  "nodes": [
+    {
+      "id": "request",
+      "type": "inputNode",
+      "name": "request",
+      "position": { "x": 0, "y": 0 }
+    },
+    {
+      "id": "thresholds",
+      "type": "expressionNode",
+      "name": "thresholds",
+      "position": { "x": 240, "y": 0 },
+      "content": {
+        "expressions": [
+          {
+            "id": "riskHighMin",
+            "key": "riskHighMin",
+            "value": "65"
+          },
+          {
+            "id": "riskMedMin",
+            "key": "riskMedMin",
+            "value": "35"
+          },
+          {
+            "id": "siuFraudScoreMin",
+            "key": "siuFraudScoreMin",
+            "value": "60"
+          },
+          {
+            "id": "rtwBlockedHashModulus",
+            "key": "rtwBlockedHashModulus",
+            "value": "5"
+          },
+          {
+            "id": "paymentDueHashModulus",
+            "key": "paymentDueHashModulus",
+            "value": "3"
+          },
+          {
+            "id": "treatmentEarlyMaxRatio",
+            "key": "treatmentEarlyMaxRatio",
+            "value": "0.3"
+          },
+          {
+            "id": "treatmentActiveMaxRatio",
+            "key": "treatmentActiveMaxRatio",
+            "value": "0.7"
+          },
+          {
+            "id": "recoveryYearExpectedDays",
+            "key": "recoveryYearExpectedDays",
+            "value": "180"
+          },
+          {
+            "id": "recoveryDefaultExpectedDays",
+            "key": "recoveryDefaultExpectedDays",
+            "value": "42"
+          },
+          {
+            "id": "pathMinorSeverityMax",
+            "key": "pathMinorSeverityMax",
+            "value": "35"
+          },
+          {
+            "id": "pathMinorRecoveryWindows",
+            "key": "pathMinorRecoveryWindows",
+            "value": "['weeks_0_2']"
+          },
+          {
+            "id": "pathFatalitySeverityMin",
+            "key": "pathFatalitySeverityMin",
+            "value": "100"
+          }
+        ]
+      }
+    },
+    {
+      "id": "response",
+      "type": "outputNode",
+      "name": "response",
+      "position": { "x": 480, "y": 0 }
+    }
+  ],
+  "edges": [
+    {
+      "id": "request-thresholds",
+      "type": "edge",
+      "sourceId": "request",
+      "targetId": "thresholds"
+    },
+    {
+      "id": "thresholds-response",
+      "type": "edge",
+      "sourceId": "thresholds",
+      "targetId": "response"
+    }
+  ]
+}

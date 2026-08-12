@@ -181,28 +181,37 @@ test("all six tabs render, with Overview selected", async () => {
     "Injury Diagram",
     "Bills & Payments",
     "Documents & ID",
-    "Photos",
+    // Story 2.6 gave this label the count the prototype's has. It is the
+    // fixture's `photos.count`, not the length of its grid — the two are the
+    // same here, and `PhotosTab.test.tsx` is where they are made to disagree.
+    "Photos (3)",
     "AI Insights",
   ]);
   expect(screen.getByTestId("tab-overview")).toHaveAttribute("aria-selected", "true");
 });
 
-test("the Photos tab carries no count until Story 2.6 has a table to count", async () => {
+test("the Photos tab's label counts what the payload says it counts", async () => {
+  // Story 2.2 asserted the *absence* of a count here, because there was no
+  // `photo` table to count. 2.6 created it, so the assertion becomes the
+  // stronger one it was standing in for — re-pointed rather than deleted, on
+  // 1.5/1.6/2.1/2.3/2.4/2.5's precedent.
   renderPane(CLAIM_DETAIL_TREATMENT);
 
-  expect(await screen.findByTestId("tab-photos")).toHaveTextContent(/^Photos$/);
+  expect(await screen.findByTestId("tab-photos")).toHaveTextContent(/^Photos \(3\)$/);
 });
 
-// Story 2.4 removed the `injury` row: the tab it named is built, so an
-// assertion that it still says "arrives with Story 2.4" would be asserting
-// the seam rather than the shipped surface. What the row was really
-// guaranteeing — every unbuilt tab is honest about being unbuilt — is
-// asserted by the four that remain, and the injury tab's own content is
-// asserted in `InjuryTab.test.tsx`.
+// Story 2.4 removed the `injury` row, 2.5 the `documents` one and 2.6 the
+// `photos` one: the tabs they named are built, so an assertion that any of
+// them still says "arrives with Story 2.x" would be asserting the seam rather
+// than the shipped surface. What the rows were really guaranteeing — every
+// unbuilt tab is honest about being unbuilt — is asserted by the two that
+// remain, and each built tab's content is asserted in its own suite
+// (`InjuryTab.test.tsx`, `DocumentsTab.test.tsx`, `PhotosTab.test.tsx`).
+//
+// Two rows left, and both name an *epic* rather than a story. That is the
+// state Epic 2 closes in: every seam still standing belongs to somebody else.
 test.each([
   ["bills", "financial engine"],
-  ["documents", "Story 2.5"],
-  ["photos", "Story 2.6"],
   ["insights", "copilot"],
 ])("the %s tab shows an explicit empty state naming its story", async (tab, mentions) => {
   renderPane(CLAIM_DETAIL_TREATMENT);
@@ -212,6 +221,19 @@ test.each([
 
   expect(screen.getByTestId(`tab-empty-${tab}`)).toHaveTextContent(mentions);
   expect(screen.queryByTestId("stage-stepper")).not.toBeInTheDocument();
+});
+
+test("the Photos tab is built, and renders its grid rather than a seam", async () => {
+  // The stronger half of the row that was just removed: a seam assertion goes
+  // on passing while a tab renders nothing at all, so what replaces it has to
+  // check that the *panel* is there (Story 2.5's rule for the Documents seam).
+  renderPane(CLAIM_DETAIL_TREATMENT);
+  await screen.findByTestId("case-header");
+
+  await userEvent.click(screen.getByTestId("tab-photos"));
+
+  expect(screen.getByTestId("photos-tab")).toBeVisible();
+  expect(screen.queryByTestId("tab-empty-photos")).not.toBeInTheDocument();
 });
 
 test("the Bills jump-link lands on the Bills tab's empty state", async () => {
@@ -445,7 +467,10 @@ test("an untruncated one is not — the heading follows the server's flag", asyn
 test("switching claims resets the tab, because it is a different case file", async () => {
   const { unmount } = renderPane(CLAIM_DETAIL_TREATMENT);
   await userEvent.click(await screen.findByTestId("tab-documents"));
-  expect(screen.getByTestId("tab-empty-documents")).toBeInTheDocument();
+  // Re-pointed at the built tab (Story 2.5), and stronger for it: asserting a
+  // seam panel would have gone on passing while the tab it stands in for
+  // rendered nothing at all.
+  expect(screen.getByTestId("documents-tab")).toBeInTheDocument();
   unmount();
 
   vi.unstubAllGlobals();

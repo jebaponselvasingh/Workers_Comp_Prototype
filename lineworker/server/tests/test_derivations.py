@@ -28,7 +28,7 @@ from hypothesis import strategies as st
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from data.models import Claim
-from data.models.enums import ReturnStatus, Stage
+from data.models.enums import RecoveryWindow, ReturnStatus, Stage
 from rules.parameters import DerivationThresholds, RuleParameterError
 from services import derivations
 from services.derivations import RiskBand
@@ -44,7 +44,7 @@ SERVER_ROOT = Path(__file__).resolve().parents[1]
 # with that code however wrong both were. `tests/test_rules_engine.py` is
 # what ties these values back to the committed document.
 SEEDED_THRESHOLDS = DerivationThresholds(
-    version=2,
+    version=3,
     risk_high_min=65,
     risk_med_min=35,
     siu_fraud_score_min=60,
@@ -55,6 +55,10 @@ SEEDED_THRESHOLDS = DerivationThresholds(
     treatment_active_max_ratio=0.7,
     recovery_year_expected_days=180,
     recovery_default_expected_days=42,
+    # Story 2.5's three, which arrived with version 3.
+    path_minor_severity_max=35,
+    path_minor_recovery_windows=frozenset({RecoveryWindow.weeks_0_2}),
+    path_fatality_severity_min=100,
 )
 
 

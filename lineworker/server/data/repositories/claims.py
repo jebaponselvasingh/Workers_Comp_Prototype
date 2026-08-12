@@ -45,6 +45,7 @@ from data.models import (
     Document,
     Employee,
     Employer,
+    Photo,
     TimelineEvent,
     TreatmentPlanStep,
 )
@@ -241,6 +242,63 @@ async def select_documents(
         .order_by(Document.id)
     )
     return rows.all()
+
+
+async def select_photos(
+    db: AsyncSession,
+    ctx: CallerContext,
+    claim_business_id: str,
+) -> Sequence[Photo]:
+    """A claim's incident photos, in filing order (`id`) — scoped like everything else.
+
+    `ORDER BY id` is the display order rather than a tiebreak: `photo` carries
+    no `sort_order` because the grid renders the prototype's array order, which
+    migration 0021 preserved by inserting in it. Nothing else in the row is a
+    total order — captions repeat across the book and two photos of one claim
+    routinely share a source line.
+    """
+    rows = await db.scalars(
+        sa.select(Photo)
+        .select_from(Photo)
+        .join(Claim, Photo.claim_id == Claim.id)
+        .where(employer_scope(ctx))
+        .where(Claim.claim_id == claim_business_id)
+        .order_by(Photo.id)
+    )
+    return rows.all()
+
+
+async def select_document(
+    db: AsyncSession,
+    ctx: CallerContext,
+    claim_business_id: str,
+    document_id: int,
+) -> Document | None:
+    """One document of one claim, or `None` — scoped (Story 2.5).
+
+    **`None` for "no such document", "not this claim's document" and "not your
+    claim", deliberately the same answer** — `select_claim_detail`'s rule,
+    applied one level down. The viewer addresses a document by surrogate id,
+    and surrogate ids are dense: a caller walking 1…10000 against a route that
+    distinguished "not yours" from "does not exist" would learn how many
+    documents the portfolio holds and which ids are live, which is the
+    enumeration AD-7 closes at the claim level and would be pointless to leave
+    open here.
+
+    The claim is named in the predicate as well as the document, so a document
+    id that *is* in the caller's scope but belongs to a different claim does
+    not resolve through this claim's URL. Without that, the path segment would
+    be decoration and two claims' viewers would be interchangeable.
+    """
+    rows = await db.scalars(
+        sa.select(Document)
+        .select_from(Document)
+        .join(Claim, Document.claim_id == Claim.id)
+        .where(employer_scope(ctx))
+        .where(Claim.claim_id == claim_business_id)
+        .where(Document.id == document_id)
+    )
+    return rows.one_or_none()
 
 
 async def select_additional_injuries(
