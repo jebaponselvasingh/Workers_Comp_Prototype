@@ -31,7 +31,7 @@ lineworker/
   server/
     api/                   # FastAPI app factory, auth deps, routers
     services/              #   claims/ financials/ worklist/ derivations/ rag/ audit/ blobstore
-    rules/                 #   ZEN engine + JDM documents (arrives Epic 2/3)
+    rules/                 #   ZEN engine + JDM documents (Story 2.1+)
     agents/                #   LangGraph copilot (arrives Epic 6)
     data/                  #   SQLAlchemy models, repositories, Alembic
   e2e/                     # Playwright story-gate suite (AD-15)

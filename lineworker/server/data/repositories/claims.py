@@ -29,15 +29,25 @@ with the scope filter and can only ever narrow the result.
 """
 
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, cast
 
 import sqlalchemy as sa
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 from sqlalchemy.sql.elements import ColumnElement
 
 from data.context import AllEmployers, CallerContext
-from data.models import Claim, Employee, Employer
+from data.models import (
+    AdditionalInjury,
+    AppUser,
+    Claim,
+    Document,
+    Employee,
+    Employer,
+    TimelineEvent,
+    TreatmentPlanStep,
+)
 
 
 def employer_scope(ctx: CallerContext) -> ColumnElement[bool]:
@@ -140,6 +150,321 @@ async def select_queue_rows(
         .order_by(Claim.claim_id)
     )
     return rows.all()
+
+
+async def select_claim_detail(
+    db: AsyncSession,
+    ctx: CallerContext,
+    claim_business_id: str,
+) -> sa.Row[Any] | None:
+    """One claim by its `WC-nnnn` business id, or `None` — scoped (Story 2.2).
+
+    **`None` for out of scope and `None` for absent, deliberately the same
+    answer.** AD-7 is not only "a caller cannot read another employer's
+    claim"; it is that they cannot *learn one exists*. Two different answers — a
+    404 for a claim id nobody has and a 403 for one that belongs to somebody
+    else — turns this endpoint into an oracle a curious caller can walk
+    `WC-20000`…`WC-20999` through to enumerate the portfolio. The scope
+    predicate is on the WHERE clause, so a claim outside the caller's book
+    simply is not in the result set, and the route has one branch.
+
+    Three joins for the header: the injured worker, the employer, and the
+    handler (an `app_user`, aliased because a later join to the same table
+    would otherwise collide). All inner — every claim has all three by
+    foreign key, so an outer join would add `None` branches that cannot
+    happen.
+    """
+    handler = sa.orm.aliased(AppUser)
+    rows = await db.execute(
+        sa.select(
+            Claim,
+            Employee.employee_id.label("employee_business_id"),
+            Employee.name.label("worker_name"),
+            Employee.role.label("worker_role"),
+            Employer.name.label("employer_name"),
+            Employer.short_name.label("employer_short_name"),
+            handler.name.label("handler_name"),
+        )
+        .select_from(Claim)
+        .join(Employee, Claim.employee_id == Employee.id)
+        .join(Employer, Claim.employer_id == Employer.id)
+        .join(handler, Claim.handler_id == handler.id)
+        .where(employer_scope(ctx))
+        .where(Claim.claim_id == claim_business_id)
+    )
+    return rows.one_or_none()
+
+
+async def select_timeline_events(
+    db: AsyncSession,
+    ctx: CallerContext,
+    claim_business_id: str,
+) -> Sequence[TimelineEvent]:
+    """A claim's timeline, oldest first — the order it was appended in.
+
+    **Ordered by `id`, which is the append order.** The log has no total
+    order in its own columns: `event_date` repeats within a claim and is null
+    on every settlement event. See `TimelineEvent`'s docstring; the treatment
+    overview shows the last six, so this order is load-bearing.
+
+    **Scoped, even though the caller already resolved the claim.** The join
+    back to `claim` and the `employer_scope` predicate are not redundancy
+    theatre: this module's contract is that *every* read here applies the
+    filter, and the structural test in `tests/test_scoped_repository.py`
+    enforces it by walking the module. A child read that trusted its caller
+    would be the one function in the file where scope was somebody else's
+    problem.
+    """
+    rows = await db.scalars(
+        sa.select(TimelineEvent)
+        .select_from(TimelineEvent)
+        .join(Claim, TimelineEvent.claim_id == Claim.id)
+        .where(employer_scope(ctx))
+        .where(Claim.claim_id == claim_business_id)
+        .order_by(TimelineEvent.id)
+    )
+    return rows.all()
+
+
+async def select_documents(
+    db: AsyncSession,
+    ctx: CallerContext,
+    claim_business_id: str,
+) -> Sequence[Document]:
+    """A claim's documents, in filing order (`id`) — scoped like everything else."""
+    rows = await db.scalars(
+        sa.select(Document)
+        .select_from(Document)
+        .join(Claim, Document.claim_id == Claim.id)
+        .where(employer_scope(ctx))
+        .where(Claim.claim_id == claim_business_id)
+        .order_by(Document.id)
+    )
+    return rows.all()
+
+
+async def select_additional_injuries(
+    db: AsyncSession,
+    ctx: CallerContext,
+    claim_business_id: str,
+) -> Sequence[AdditionalInjury]:
+    """A claim's secondary injuries, oldest first — scoped (Story 2.4).
+
+    Ordered by `id`, which is capture order. Unlike `timeline_event` this
+    table *could* be ordered by something else (severity, region), but the
+    diagram's summary list reads as a log of what a handler recorded, and a
+    list that re-ordered itself when a score was edited would move the ✕ a
+    handler was reaching for.
+    """
+    rows = await db.scalars(
+        sa.select(AdditionalInjury)
+        .select_from(AdditionalInjury)
+        .join(Claim, AdditionalInjury.claim_id == Claim.id)
+        .where(employer_scope(ctx))
+        .where(Claim.claim_id == claim_business_id)
+        .order_by(AdditionalInjury.id)
+    )
+    return rows.all()
+
+
+async def select_additional_injury(
+    db: AsyncSession,
+    ctx: CallerContext,
+    claim_business_id: str,
+    injury_id: int,
+) -> AdditionalInjury | None:
+    """One secondary injury of one claim, or `None` — scoped (Story 2.4).
+
+    Exists so the remove command can tell a *stale* version from a row that
+    is not there: the compare-and-swapped DELETE below reports only "one row
+    or none", and 409 and 404 are different answers to the caller. Reading it
+    back is the only way to distinguish them, and it is done *after* the
+    delete has already failed, so the happy path pays nothing.
+    """
+    # `scalars().one_or_none()` rather than `scalar()`: the latter is typed
+    # `Any`, which would let a wrong element type through silently.
+    rows = await db.scalars(
+        sa.select(AdditionalInjury)
+        .select_from(AdditionalInjury)
+        .join(Claim, AdditionalInjury.claim_id == Claim.id)
+        .where(employer_scope(ctx))
+        .where(Claim.claim_id == claim_business_id)
+        .where(AdditionalInjury.id == injury_id)
+    )
+    return rows.one_or_none()
+
+
+async def select_treatment_plan_steps(
+    db: AsyncSession,
+    ctx: CallerContext,
+    claim_business_id: str,
+) -> Sequence[TreatmentPlanStep]:
+    """A claim's treatment plan, in step order — scoped like everything else.
+
+    By `step_no`, not by `id`: the step number is a real column here (unlike
+    `timeline_event`, whose only order is the order it was appended in), and
+    it is what the card numbers its rows from. Ordering by anything else
+    would let the list render 1, 3, 2.
+    """
+    rows = await db.scalars(
+        sa.select(TreatmentPlanStep)
+        .select_from(TreatmentPlanStep)
+        .join(Claim, TreatmentPlanStep.claim_id == Claim.id)
+        .where(employer_scope(ctx))
+        .where(Claim.claim_id == claim_business_id)
+        .order_by(TreatmentPlanStep.step_no)
+    )
+    return rows.all()
+
+
+async def insert_additional_injury_cas(
+    db: AsyncSession,
+    ctx: CallerContext,
+    claim_business_id: str,
+    expected_version: int,
+    values: Mapping[str, Any],
+) -> int | None:
+    """Add one secondary injury, guarded on the claim's version — scoped (2.4).
+
+    Returns the new row's id, or `None` when the claim is out of scope,
+    absent, or has moved on from `expected_version`. Which of those it was is
+    the service's question, and it answers it by re-reading — the same
+    division of labour `update_claim_fields_cas` uses.
+
+    **`INSERT … SELECT`, not `INSERT … VALUES`, and that is the whole point
+    of the shape.** An INSERT has no WHERE clause, so the two things this
+    write has to be guarded by — the caller's employer scope and the version
+    they were looking at — would otherwise be a `SELECT` in Python followed
+    by an unguarded insert: a read-modify-write with a window in it (AD-4).
+    Selecting the claim row *as the source of the insert* puts both
+    predicates inside the statement, so the guard and the write are one
+    operation and a claim edited in the gap inserts nothing.
+
+    **The literals are typed.** `body_key` is a native enum column, and an
+    untyped parameter in an `INSERT … SELECT` reaches asyncpg with no type to
+    encode it as. Taking each literal's type from the column it lands in also
+    means a column that changes type does not need a second edit here.
+    """
+    columns = AdditionalInjury.__table__.c
+    fields = ("body_key", "body_part", "injury_type", "severity_score")
+    source = (
+        sa.select(
+            Claim.id,
+            *[sa.literal(values[field], columns[field].type).label(field) for field in fields],
+        )
+        .select_from(Claim)
+        .where(employer_scope(ctx))
+        .where(Claim.claim_id == claim_business_id)
+        .where(Claim.version == expected_version)
+    )
+    inserted = await db.execute(
+        sa.insert(AdditionalInjury)
+        .from_select(["claim_id", *fields], source)
+        .returning(AdditionalInjury.id)
+    )
+    return inserted.scalar_one_or_none()
+
+
+async def delete_additional_injury_cas(
+    db: AsyncSession,
+    ctx: CallerContext,
+    claim_business_id: str,
+    injury_id: int,
+    expected_version: int,
+) -> sa.Row[Any] | None:
+    """Remove one secondary injury under compare-and-swap — scoped (2.4).
+
+    Returns the deleted row's columns, or `None` if nothing matched. The
+    columns come back through `RETURNING` rather than from a prior read for a
+    reason that is specific to a delete: the audit event has to record what
+    was removed as its `before` diff (AD-4), and a value read *before* the
+    statement is a value another writer could have changed in between — so
+    the log would describe a row that never existed in that state. `RETURNING`
+    reports what the statement actually deleted.
+
+    The scope predicate is a subquery on `claim` rather than a join, because
+    `DELETE … USING` is dialect-specific and this reads as what it is: delete
+    this claim's injury, where "this claim" is resolved under the caller's
+    scope exactly as every read in this module resolves it.
+    """
+    owner = (
+        sa.select(Claim.id)
+        .select_from(Claim)
+        .where(employer_scope(ctx))
+        .where(Claim.claim_id == claim_business_id)
+        .scalar_subquery()
+    )
+    deleted = await db.execute(
+        sa.delete(AdditionalInjury)
+        .where(AdditionalInjury.claim_id == owner)
+        .where(AdditionalInjury.id == injury_id)
+        .where(AdditionalInjury.version == expected_version)
+        .returning(
+            AdditionalInjury.body_key,
+            AdditionalInjury.body_part,
+            AdditionalInjury.injury_type,
+            AdditionalInjury.severity_score,
+        )
+        # The ORM cannot evaluate this predicate in Python (it contains a
+        # subquery), and there is nothing in the identity map worth
+        # synchronising: the command re-reads the case file afterwards.
+        .execution_options(synchronize_session=False)
+    )
+    return deleted.one_or_none()
+
+
+async def update_claim_fields_cas(
+    db: AsyncSession,
+    ctx: CallerContext,
+    claim_business_id: str,
+    expected_version: int,
+    values: Mapping[str, Any],
+) -> int:
+    """The first **write** in this module — compare-and-swap, scoped (2.3).
+
+    Returns the number of rows the statement changed: `1` on success, `0`
+    when the claim is out of scope, absent, or has moved on from
+    `expected_version`. Which of those it was is the *service's* question and
+    it answers it by re-reading; this function's contract is only "the row
+    was updated, or it was not".
+
+    Three things are load-bearing in the one statement below.
+
+    **The scope predicate is here, exactly as on every read.** A caller that
+    resolved the claim through `select_claim_detail` already knows it is in
+    scope, and the filter still goes on the WHERE clause — because "every
+    query in this module applies the filter" is the invariant, and the moment
+    one write trusts its caller, the structural test in
+    `tests/test_scoped_repository.py` is asserting something weaker than it
+    reads. It also closes a real race: scope is re-resolved per request, but
+    a read and a write are two statements, and this is the one that decides.
+
+    **`version = version + 1` is computed by the database**, not read into
+    Python and written back. `Claim.version + 1` compiles to a SQL
+    expression, so the increment happens inside the same row lock as the
+    predicate — which is what makes the compare-and-swap atomic rather than
+    merely optimistic-looking (AD-4: "no command performs an unguarded
+    read-modify-write").
+
+    **The caller decides the columns, and cannot invent them.** `values` is
+    the *effective patch* — already whitelisted, validated and normalised by
+    `services/claims/edit.py`. Passing a mapping rather than a typed
+    parameter per field is what lets a PATCH write only what changed;
+    SQLAlchemy refuses an unknown key at statement-compile time, so the
+    whitelist has a second, structural enforcement here even though the
+    service is where the 422 comes from.
+    """
+    result = await db.execute(
+        sa.update(Claim)
+        .where(employer_scope(ctx))
+        .where(Claim.claim_id == claim_business_id)
+        .where(Claim.version == expected_version)
+        .values(**values, version=Claim.version + 1)
+    )
+    # `AsyncSession.execute` is typed as returning `Result`, which has no
+    # `rowcount`; a DML statement always produces a `CursorResult`, which
+    # does. The cast is the narrowing SQLAlchemy's own typing cannot express.
+    return int(cast(CursorResult[Any], result).rowcount)
 
 
 async def count_claims_matching(

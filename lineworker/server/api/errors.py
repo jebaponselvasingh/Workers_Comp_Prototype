@@ -42,8 +42,27 @@ class ProblemDocument(BaseModel):
     detail: str
 
 
+#: Member names `problem_response` binds itself. An extension using one of
+#: these would arrive as a duplicate keyword argument and raise `TypeError`
+#: **inside** the `ProblemException` handler — which is not covered by the
+#: registered `Exception` handler, so it would surface from Starlette as a
+#: bare 500 with no RFC 9457 body, breaking the one invariant this module
+#: exists to hold. Rejected at construction instead, where the traceback
+#: names the offending extension (code review, Story 2.3).
+RESERVED_PROBLEM_MEMBERS = frozenset({"status_code", "title", "detail", "type_", "headers"})
+
+
 class ProblemException(Exception):
-    """Raise to answer with a problem+json document."""
+    """Raise to answer with a problem+json document.
+
+    `extensions` are RFC 9457 §3.2 members merged into the body beside the
+    four fixed ones. Story 2.3 is the first caller and sets the project-wide
+    precedent the Write-concurrency convention asks for: a 409 carries the
+    **fresh entity** under `claim`, so a stale writer can render current
+    state without a second round trip. Generic here rather than special-cased
+    in the claims router, because every AD-4 command from Epic 3 onwards
+    answers 409 the same way and should not each invent a shape.
+    """
 
     def __init__(
         self,
@@ -53,6 +72,7 @@ class ProblemException(Exception):
         detail: str,
         type_: str = "about:blank",
         headers: dict[str, str] | None = None,
+        extensions: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(detail)
         self.status_code = status_code
@@ -60,6 +80,12 @@ class ProblemException(Exception):
         self.detail = detail
         self.type = type_
         self.headers = headers
+        self.extensions = extensions or {}
+        clashing = sorted(RESERVED_PROBLEM_MEMBERS & set(self.extensions))
+        if clashing:
+            raise ValueError(
+                f"problem extensions may not be named {clashing} — see RESERVED_PROBLEM_MEMBERS"
+            )
 
     def to_response(self) -> JSONResponse:
         return problem_response(
@@ -68,6 +94,7 @@ class ProblemException(Exception):
             detail=self.detail,
             type_=self.type,
             headers=self.headers,
+            **self.extensions,
         )
 
 

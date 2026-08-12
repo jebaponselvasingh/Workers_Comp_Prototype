@@ -1,5 +1,6 @@
 /**
- * Story 2.1 AC 2, structurally — **no derivation exists in TypeScript.**
+ * Story 2.1 AC 2 and Story 2.2 AC 5, structurally — **no derivation exists
+ * in TypeScript.**
  *
  * The acceptance criterion does not say "the cards happen to be correct";
  * it says the scoring, banding, counting and flag logic is *absent* from the
@@ -46,7 +47,7 @@ const SRC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..",
  * to 500, and a guard that had to grow an allowlist for unrelated code is a
  * guard the next person turns off.
  */
-const ROOTS = ["features/queue", "features/shell"];
+const ROOTS = ["features/queue", "features/shell", "features/claim-detail"];
 
 /**
  * Source with comments and literal text removed, so the patterns below see
@@ -160,7 +161,18 @@ export function code(source: string): string {
 const DERIVED_FIELDS =
   "priorityScore|priorityMarker|severityScore|fraudScore|daysOpen|risk|" +
   "siuReview|rtwBlocked|paymentDue|fraudFlag|litigationFlag|surgeryRequired|" +
-  "total|unfilteredTotal|filteredTotal|nextCursor";
+  "total|unfilteredTotal|filteredTotal|nextCursor|" +
+  // Story 2.2's derived payload values. The percentages and the expected
+  // window are the ones a component is most tempted to "just" recompute —
+  // `expectedDays` from the recovery text, a share from two cent amounts —
+  // and both are registered derivations with rule-document parameters.
+  "phase|coordinationStatus|expectedDays|indemnityPct|medicalPct|expensePct|" +
+  "totalPaidCents|timelineTruncated|" +
+  // Story 2.4's. `band` is the marker's severity band and the single most
+  // tempting thing on this list to recompute: the prototype's `injHTML`
+  // does exactly that, inside the function that draws the marker, from a
+  // cut-off pair that appears in no rule document. Here it arrives decided.
+  "band";
 
 const FLAGS = "siuReview|rtwBlocked|paymentDue|fraudFlag|litigationFlag|surgeryRequired";
 
@@ -177,8 +189,18 @@ const FORBIDDEN: readonly Forbidden[] = [
   },
   {
     why: "does arithmetic on or compares a derived payload value — every one of them was already decided by services/derivations or services/worklist (AD-1, AD-10)",
+    // `(?![/>])` after the comparison operators is not a loosening — it is
+    // the one thing the stripper cannot do. JSX *text* is not a string
+    // literal, so `code()` leaves it in place, and `>Claim risk</span>`
+    // therefore reads as the field `risk` followed by a `<`. That is a
+    // false positive on a heading, and the previous fix for it would have
+    // been to reword the heading, which is the guard training the code
+    // rather than the other way round. A real comparison never has `/` or
+    // `>` as its right-hand side, so excluding those two characters costs
+    // the check nothing — `phase > 2` and `daysOpen >= 30` still match, as
+    // the smell test below asserts.
     pattern: new RegExp(
-      `\\b(?:${DERIVED_FIELDS})\\s*(?:[-+*/%]|[<>]=?)|(?:[-+*/%]|[<>]=?)\\s*\\w*\\.(?:${DERIVED_FIELDS})\\b`,
+      `\\b(?:${DERIVED_FIELDS})\\s*(?:[-+*/%]|[<>]=?(?![/>]))|(?:[-+*/%]|[<>]=?)\\s*\\w*\\.(?:${DERIVED_FIELDS})\\b`,
     ),
   },
   {
@@ -229,6 +251,19 @@ test("the scan reaches the files it claims to", () => {
 
   expect(scanned).toContain(path.join("features", "queue", "StageGroup.tsx"));
   expect(scanned).toContain(path.join("features", "shell", "WorkspaceShell.tsx"));
+  // Story 2.2's surface, including the nested `overview/` folder — the four
+  // stage variants are where a percentage or a phase boundary would most
+  // plausibly be recomputed, so a scan that stopped at the folder's top
+  // level would miss exactly the files this guard is now for.
+  expect(scanned).toContain(path.join("features", "claim-detail", "CaseHeader.tsx"));
+  expect(scanned).toContain(
+    path.join("features", "claim-detail", "overview", "TreatmentOverview.tsx"),
+  );
+  // Story 2.4's diagram, in a second nested folder. It is the file with the
+  // strongest pull towards a local rule — the prototype bands its marker
+  // colours inside the drawing function — so a scan that missed it would
+  // miss the one place this guard is most for.
+  expect(scanned).toContain(path.join("features", "claim-detail", "injury", "BodyMap.tsx"));
   expect(scanned.some((name) => name.includes(".test."))).toBe(false);
 });
 
@@ -258,6 +293,14 @@ test("the guard would notice a derivation if one were added", () => {
     // And the one the old stripper hid: a `//` inside a string ate the rest
     // of its line, so anything after a URL on the same line went unscanned.
     'const doc = "https://example.com/rules"; const band = card.severityScore >= 65;',
+    // The comparisons the `(?![/>])` exclusion must still catch — it would
+    // be a quiet hole otherwise, and a hole in exactly the operator a phase
+    // boundary would be written with.
+    'if (overview.expectedDays > 42) return "late";',
+    "const late = overview.daysOpen >= 30;",
+    // Story 2.4's: the prototype's marker colouring, transliterated.
+    'const col = marker.severityScore >= 70 ? ER : WN;',
+    "const SEVERITY_MAX = 100;",
   ];
 
   for (const smell of smells) {
@@ -281,6 +324,11 @@ test("the guard does not fire on rendering the server's answers", () => {
     // A comment *inside a template literal expression* still gets stripped,
     // and the literal text around it still does not reach the patterns.
     "const cls = `px-2 ${selected ? BRAND : NONE} py-1`;",
+    // JSX text is not a string literal, so the stripper leaves it — and a
+    // heading is allowed to contain the words the payload uses.
+    "<span>Claim risk</span>",
+    "<h3>Current treatment phase</h3>",
+    "<p>{overview.daysOpen} days open</p>",
   ];
 
   for (const line of innocent) {

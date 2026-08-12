@@ -9,6 +9,7 @@ unscoped query.
 """
 
 import inspect
+import re
 import typing
 from collections.abc import AsyncIterator
 
@@ -94,6 +95,27 @@ def test_the_scope_predicate_is_a_tautology_for_all_never_a_skipped_filter() -> 
     assert str(unscoped.compile(compile_kwargs={"literal_binds": True})).lower() == "true"
 
 
+# A read of the *caller's* role, in the three names a caller context is
+# bound to in this codebase, plus any mention of the enum itself.
+#
+# Narrowed from a bare `".role" not in source` in Story 2.2. That version
+# matched `Employee.role`, which is the injured worker's **job title** — a
+# different column, a different meaning, and one the case-file header has to
+# select. Left as it was, the next person would have reached for an
+# allowlist or renamed a database column to satisfy a test, which is the
+# guard training the code rather than the other way round. It still catches
+# every form the failure it exists for would actually take: a repository
+# reading `ctx.role` to widen its filter.
+# Any `.role` read, minus the two forms that are demonstrably the injured
+# worker's job title. Blunt again by default — the previous version bound
+# the check to three identifier names (`ctx`/`context`/`caller`), which a
+# single `scope = ctx` rename walked straight past (code review,
+# 2026-08-12). Excluding the innocent forms keeps the coverage the original
+# `".role" not in body` had while still letting the case header select the
+# column it needs.
+CALLER_ROLE_READ = re.compile(r"(?<!Employee)(?<!employee)\.\s*role\b|\bUserRole\b")
+
+
 def test_no_repository_branches_on_role() -> None:
     """Scope gates visibility; role gates capability — never the reverse (AD-7).
 
@@ -102,8 +124,48 @@ def test_no_repository_branches_on_role() -> None:
     """
     source = inspect.getsource(claim_repo)
     body = "\n".join(line for line in source.splitlines() if not line.lstrip().startswith("#"))
-    assert ".role" not in body, "repository reads ctx.role — scope must not branch on role"
-    assert "UserRole" not in body
+
+    assert not CALLER_ROLE_READ.search(body), (
+        "repository reads the caller's role — scope must not branch on role"
+    )
+
+
+@pytest.mark.parametrize(
+    "smell",
+    [
+        "if ctx.role is UserRole.supervisor:",
+        "if context.role == 'supervisor': return sa.true()",
+        "widened = caller.role in ADMIN_ROLES",
+        "from data.models.enums import UserRole",
+        # The rename that walked past the name-bound version of this guard.
+        "scope = ctx\nif scope.role == 'supervisor': return sa.true()",
+        "if self._ctx.role is not None: ...",
+        "principal.role == 'analyst'",
+    ],
+)
+def test_the_role_guard_would_notice_a_role_branch(smell: str) -> None:
+    """A guard that only ever reads a clean file cannot tell "nothing is
+    wrong" from "nothing is checked"."""
+    assert CALLER_ROLE_READ.search(smell)
+
+
+@pytest.mark.parametrize(
+    "innocent",
+    [
+        'Employee.role.label("worker_role")',  # the injured worker's job title
+        "employee.role",
+        "handler.name.label('handler_name')",
+        "rows = await db.scalars(sa.select(Claim))",
+    ],
+)
+def test_the_role_guard_leaves_ordinary_columns_alone(innocent: str) -> None:
+    """The other half: `employee.role` is a job title, not a capability.
+
+    The case-file header selects it, and a guard that could not tell the two
+    apart would have made "do not branch on the caller's role" mean "do not
+    say the word role".
+    """
+    assert not CALLER_ROLE_READ.search(innocent)
 
 
 # --- scoped reads -------------------------------------------------------

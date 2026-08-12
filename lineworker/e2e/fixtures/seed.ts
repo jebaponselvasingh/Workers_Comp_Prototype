@@ -409,3 +409,259 @@ export function claimIdsOutsideScopeOf(name: string, role: string): string[] {
   const mine = new Set(claimsFor(name, role).map((claim) => claim.claim_id));
   return seed.claims.map((claim) => claim.claim_id).filter((id) => !mine.has(id));
 }
+
+// --- Story 2.2: the case file, restated independently --------------------
+//
+// Same discipline as the queue oracle above: every rule the case file
+// applies is written out here from the story text and the prototype rather
+// than read from the API or imported from the server. The two
+// implementations agree in a spec or one of them is wrong.
+
+const CASE_FILE_PATH = fileURLToPath(
+  new URL("../../server/data/seed/case_file_seed.json", import.meta.url),
+);
+
+interface SeedTimelineEvent {
+  claim_id: string;
+  event_date: string | null;
+  description: string;
+  tag: string;
+}
+
+interface SeedDocument {
+  claim_id: string;
+  name: string;
+  doc_type: string;
+  filed_date: string | null;
+}
+
+interface CaseFileSeed {
+  timeline_events: SeedTimelineEvent[];
+  documents: SeedDocument[];
+}
+
+const caseFile = JSON.parse(readFileSync(CASE_FILE_PATH, "utf8")) as CaseFileSeed;
+
+/** The prototype's `.slice(-6)` on the treatment overview. */
+export const RECENT_TIMELINE_COUNT = 6;
+
+/** The story's intake requirement list — restated, not read from the JDM document. */
+export const REQUIRED_INTAKE_DOC_TYPES = ["froi", "incident", "medauth", "wage"] as const;
+
+export interface ExpectedTimelineEntry {
+  eventDate: string | null;
+  description: string;
+  tag: string;
+}
+
+/** A claim's timeline in the order the migration appended it. */
+export function expectedTimelineFor(claimId: string): ExpectedTimelineEntry[] {
+  return caseFile.timeline_events
+    .filter((event) => event.claim_id === claimId)
+    .map((event) => ({
+      eventDate: event.event_date,
+      description: event.description,
+      tag: event.tag,
+    }));
+}
+
+/** What the treatment variant shows: the last six, or all of them. */
+export function expectedRecentTimelineFor(claimId: string): ExpectedTimelineEntry[] {
+  return expectedTimelineFor(claimId).slice(-RECENT_TIMELINE_COUNT);
+}
+
+export interface ExpectedChecklistRow {
+  docType: string;
+  received: boolean;
+}
+
+/** Received/Missing per required type, in the requirement list's order. */
+export function expectedChecklistFor(claimId: string): ExpectedChecklistRow[] {
+  const onFile = new Set(
+    caseFile.documents.filter((doc) => doc.claim_id === claimId).map((doc) => doc.doc_type),
+  );
+  return REQUIRED_INTAKE_DOC_TYPES.map((docType) => ({
+    docType,
+    received: onFile.has(docType),
+  }));
+}
+
+/**
+ * The stepper's marks for a stage — `done` before it, `current` on it.
+ *
+ * Restated here rather than derived from the payload so the spec can
+ * disagree with the server about which steps a claim has left behind.
+ */
+export function expectedStepperFor(stage: SeedStage): { stage: string; state: string }[] {
+  const position = STAGES.indexOf(stage);
+  return STAGES.map((step, index) => ({
+    stage: step,
+    state: index < position ? "done" : index === position ? "current" : "upcoming",
+  }));
+}
+
+/** The first claim of a persona's book in a given stage, by business id. */
+export function firstClaimInStage(name: string, role: string, stage: SeedStage): string {
+  const claims = claimsFor(name, role)
+    .filter((claim) => claim.stage === stage)
+    .map((claim) => claim.claim_id)
+    .sort();
+  if (claims.length === 0) throw new Error(`no seeded ${stage} claim for ${name}/${role}`);
+  return claims[0];
+}
+
+/** The risk band the gauge must be coloured by — the queue oracle's, reused. */
+export function expectedRiskFor(claimId: string): "high" | "med" | "low" {
+  const claim = seed.claims.find((c) => c.claim_id === claimId);
+  if (!claim) throw new Error(`no seeded claim ${claimId}`);
+  return riskBand(claim.severity_score);
+}
+
+/**
+ * The editable vocabularies (Story 2.3), restated from the prototype.
+ *
+ * Written out here rather than read from the payload the spec is asserting
+ * against — the whole point is that a spec can disagree with the server
+ * about what the eleven regions and five windows are. The server asserts the
+ * same lists against the prototype's HTML in
+ * `test_claim_edit_validation.py`; these are the browser's independent copy.
+ */
+export const BODY_PART_OPTIONS = [
+  { key: "head", label: "Head" },
+  { key: "ears", label: "Ears" },
+  { key: "shoulder_right", label: "Right Shoulder" },
+  { key: "shoulder_left", label: "Left Shoulder" },
+  { key: "forearm_right", label: "Right Forearm" },
+  { key: "hand_right", label: "Right Hand" },
+  { key: "hand_left", label: "Left Hand" },
+  { key: "torso", label: "Torso" },
+  { key: "lumbar", label: "Lower Back (Lumbar)" },
+  { key: "tibia_left", label: "Left Lower Leg" },
+  { key: "tibia_right", label: "Right Lower Leg" },
+] as const;
+
+/**
+ * The five windows as `{token, label}` — the column holds tokens since the
+ * Story 2.3 code review, and the label is the browser's.
+ *
+ * Restated here rather than read from the payload, like every other oracle in
+ * this file: the spec has to be able to disagree with the server about both
+ * halves of the mapping.
+ */
+export const RECOVERY_WINDOWS = [
+  { token: "weeks_0_2", label: "0-2 Weeks" },
+  { token: "weeks_2_4", label: "2-4 Weeks" },
+  { token: "weeks_4_6", label: "4-6 Weeks" },
+  { token: "weeks_6_8", label: "6-8 Weeks" },
+  { token: "over_1_year", label: "Greater than 1 Year" },
+] as const;
+
+/** The token migration 0013 converts a seeded display string into. */
+export function recoveryToken(display: string): string {
+  const match = RECOVERY_WINDOWS.find((window) => window.label === display);
+  if (!match) throw new Error(`no recovery window token for ${display}`);
+  return match.token;
+}
+
+/** A window the claim is *not* already in, so an edit is a real change. */
+export function otherRecoveryWindow(claimId: string): { token: string; label: string } {
+  const current = recoveryToken(seededField(claimId, "recovery"));
+  const option = RECOVERY_WINDOWS.find((window) => window.token !== current);
+  if (!option) throw new Error("the recovery vocabulary has fewer than two members");
+  return option;
+}
+
+/** A seeded claim's stored value for one of the editable columns. */
+export function seededField(
+  claimId: string,
+  field: "injury_type" | "cause" | "body_key" | "body_part" | "icd" | "recovery" | "disability",
+): string {
+  const claim = seed.claims.find((c) => c.claim_id === claimId);
+  if (!claim) throw new Error(`no seeded claim ${claimId}`);
+  return String((claim as unknown as Record<string, unknown>)[field]);
+}
+
+/** A body key the claim is *not* already assigned to, so an edit is a change. */
+export function otherBodyKey(claimId: string): { key: string; label: string } {
+  const current = seededField(claimId, "body_key");
+  const option = BODY_PART_OPTIONS.find((o) => o.key !== current);
+  if (!option) throw new Error("the body-part vocabulary has fewer than two members");
+  return { key: option.key, label: option.label };
+}
+
+// --- Story 2.4: the injury diagram, restated independently ---------------
+//
+// The treatment plan and the prognosis come from `seed_data.json`'s
+// `deferred` block — the part of the prototype's dataset Story 1.2 extracted
+// but had no columns for until migration 0015. Read here and transformed
+// independently, like every other oracle in this file.
+
+interface SeedDeferred {
+  claim_id: string;
+  treatment_plan: string[];
+  prognosis: { mmi: string; rtw: string; impairment: string; litigation: string };
+}
+
+const deferred = new Map(
+  ((seed as unknown as { deferred: SeedDeferred[] }).deferred ?? []).map((row) => [
+    row.claim_id,
+    row,
+  ]),
+);
+
+function deferredFor(claimId: string): SeedDeferred {
+  const row = deferred.get(claimId);
+  if (!row) throw new Error(`no seeded deferred block for ${claimId}`);
+  return row;
+}
+
+/** A claim's treatment-plan steps, in the array's order (= `step_no` order). */
+export function expectedTreatmentPlan(claimId: string): string[] {
+  return deferredFor(claimId).treatment_plan.slice();
+}
+
+/** A claim's four prognosis strings. */
+export function expectedPrognosis(claimId: string): SeedDeferred["prognosis"] {
+  return { ...deferredFor(claimId).prognosis };
+}
+
+/** A claim's restrictions text — the `contraindications` column. */
+export function expectedContraindications(claimId: string): string {
+  const claim = seed.claims.find((c) => c.claim_id === claimId) as unknown as
+    | { contraindications?: string }
+    | undefined;
+  if (!claim?.contraindications) throw new Error(`no seeded contraindications for ${claimId}`);
+  return claim.contraindications;
+}
+
+/**
+ * The seeded severity score, and the band it must be drawn in.
+ *
+ * The band is `riskBand`'s — the same restatement the queue oracle uses, so
+ * the diagram's marker colour is checked against the *console's* rule rather
+ * than against the prototype's second pair of cut-offs (which this build
+ * deliberately does not port).
+ */
+export function expectedPrimaryMarker(claimId: string): {
+  bodyKey: string;
+  severityScore: number;
+  band: "high" | "med" | "low";
+} {
+  const claim = seed.claims.find((c) => c.claim_id === claimId);
+  if (!claim) throw new Error(`no seeded claim ${claimId}`);
+  return {
+    bodyKey: (claim as unknown as { body_key: string }).body_key,
+    severityScore: claim.severity_score,
+    band: riskBand(claim.severity_score),
+  };
+}
+
+/** A score that lands in a band the claim is not currently in. */
+export function scoreInAnotherBand(claimId: string): { score: number; band: string } {
+  const current = expectedPrimaryMarker(claimId).band;
+  // 0 and 100 are the ends of the domain, so one of them is always in a
+  // different band from any claim — and both are legal values, so the test
+  // exercises the command rather than its refusal.
+  const candidate = current === "high" ? 0 : 100;
+  return { score: candidate, band: riskBand(candidate) };
+}

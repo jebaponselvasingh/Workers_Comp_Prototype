@@ -13,8 +13,11 @@ Story 1.4 registered `risk`. Story 2.1 adds the four the queue needs —
 `days_open`, `siu_review`, `rtw_blocked`, `payment_due` — and moves the
 parameter source from `Settings` to the versioned JDM documents in `rules/`
 (AD-8), which is why the builder argument is now `DerivationThresholds`.
-`total_paid`, `total_incurred` and the treatment-phase derivations join them
-as their stories land — each one function, here, called by every consumer.
+Story 2.2 adds the two the case file needs, `treatment_phase` and
+`coordination_status`, and supersedes the thresholds document with a v2
+carrying the phase parameters. `total_paid`, `total_incurred` and
+`claim_path` join them as their stories land — each one function, here,
+called by every consumer.
 
 **Naming rule for the modules below** (code review, 2026-08-10): a module
 is named after the *rule* (`risk_band`, `open_duration`, `queue_flags`),
@@ -27,7 +30,26 @@ later derivation copies, so the trap is worth avoiding by convention rather
 than documenting per entry.
 """
 
-from services.derivations.open_duration import OpenDurationDerivation, days_open, utc_today
+from services.derivations.care_coordination import (
+    CoordinationDerivation,
+    CoordinationResult,
+    CoordinationStatus,
+    coordination_status,
+)
+from services.derivations.claim_money import (
+    CostSplit,
+    CostSplitDerivation,
+    TotalPaidDerivation,
+    cost_split,
+    total_paid,
+)
+from services.derivations.open_duration import (
+    OpenDurationDerivation,
+    SettlementDurationDerivation,
+    days_open,
+    days_to_settlement,
+    utc_today,
+)
 from services.derivations.queue_flags import (
     PaymentDueDerivation,
     RtwBlockedDerivation,
@@ -39,16 +61,35 @@ from services.derivations.queue_flags import (
 )
 from services.derivations.registry import Derivation, get, register, registered_names
 from services.derivations.risk_band import RiskBand, RiskDerivation, risk
+from services.derivations.treatment_progress import (
+    TreatmentPhase,
+    TreatmentPhaseDerivation,
+    TreatmentPhaseResult,
+    treatment_phase,
+)
 
 __all__ = [
+    "CoordinationDerivation",
+    "CoordinationResult",
+    "CoordinationStatus",
+    "CostSplit",
+    "CostSplitDerivation",
     "Derivation",
     "OpenDurationDerivation",
     "PaymentDueDerivation",
     "RiskBand",
     "RiskDerivation",
     "RtwBlockedDerivation",
+    "SettlementDurationDerivation",
     "SiuReviewDerivation",
+    "TotalPaidDerivation",
+    "TreatmentPhase",
+    "TreatmentPhaseDerivation",
+    "TreatmentPhaseResult",
+    "coordination_status",
+    "cost_split",
     "days_open",
+    "days_to_settlement",
     "get",
     "hash_bucket",
     "payment_due",
@@ -57,5 +98,7 @@ __all__ = [
     "risk",
     "rtw_blocked",
     "siu_review",
+    "total_paid",
+    "treatment_phase",
     "utc_today",
 ]

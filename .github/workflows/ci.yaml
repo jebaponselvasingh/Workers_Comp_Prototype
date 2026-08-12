@@ -97,22 +97,22 @@ jobs:
         working-directory: lineworker/server
         env:
           DATABASE_URL: postgresql://lineworker:ci@localhost:5432/lineworker
-      # DB-backed verification (Story 1.2+): seed counts, scope rows,
-      # AD-4 grants, downgrade→upgrade round trip, session lifecycle and
-      # the AD-7 context builder (Story 1.3), the scoped claim repository,
-      # the derivations registry's SQL/Python agreement and the per-persona
-      # top-bar aggregates (Story 1.4), the per-persona SLA strip
-      # (Story 1.5 — its pure aggregation tests run in the server job), and
-      # the seeded glossary, its SELECT-only grant and its endpoint
-      # (Story 1.6), and the ZEN rule documents plus the scoped, filtered,
-      # cursor-paginated claim queue built on them (Story 2.1 — its pure
-      # scorer, parameter-validation and queue-assembly tests run in the
-      # server job).
-      - run: |
-          uv run pytest tests/test_schema_seed.py tests/test_no_derived_columns.py \
-            tests/test_auth.py tests/test_scoped_repository.py tests/test_derivations.py \
-            tests/test_topbar_stats.py tests/test_sla_endpoint.py tests/test_glossary.py \
-            tests/test_rules_engine.py tests/test_claims_queue.py
+      # The whole suite, against a real database.
+      #
+      # **This used to be a hand-enumerated list of the DB-backed files**, and
+      # the trap it set was recorded by Story 2.1, tripped by Story 2.2 and
+      # about to be tripped again by 2.3: every `pytestmark = requires_db`
+      # module skips silently in the server job above, so a new one that
+      # nobody remembered to add here simply never ran, and nothing failed to
+      # say so. A green tick that covers less than it looks like is worse
+      # than a red one.
+      #
+      # The fix is to stop maintaining the list. `MIGRATION_TEST_DATABASE_URL`
+      # is what turns the skips into runs, so with it set, `pytest` *is* the
+      # list — and it stays correct for every story after this one. The cost
+      # is that the pure tests run twice across the two jobs (~30 seconds);
+      # the alternative cost was coverage nobody could see was missing.
+      - run: uv run pytest
         working-directory: lineworker/server
         env:
           MIGRATION_TEST_DATABASE_URL: postgresql://lineworker:ci@localhost:5432/lineworker

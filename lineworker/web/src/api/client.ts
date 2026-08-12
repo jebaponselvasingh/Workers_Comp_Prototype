@@ -45,7 +45,10 @@ const throwProblems: Middleware = {
       status: response.status,
       detail: body.detail ?? `The server answered ${response.status}.`,
     };
-    throw new ApiError(problem);
+    // The raw body rides along beside the narrowed four fields: RFC 9457
+    // extension members are how a 409 carries the fresh entity (Story 2.3),
+    // and filling in defaults above would otherwise have discarded it.
+    throw new ApiError(problem, body);
   },
 };
 

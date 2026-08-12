@@ -47,6 +47,18 @@ export const queryKeys = {
      */
     queue: (filter: string) => ["claims", "queue", filter] as const,
     /**
+     * Every queue entry, whatever its filter or page — the prefix a
+     * mutation invalidates (Story 2.3).
+     *
+     * Declared rather than spelled inline at the mutation, because it is
+     * exactly the kind of key that goes wrong silently: invalidating
+     * `queue(filter)` would refresh the filter the handler happens to be
+     * looking at and leave every other cached filter — and every "Show
+     * more" page under it — showing the injury type they just corrected.
+     * TanStack matches keys by prefix, so this one covers both.
+     */
+    queues: ["claims", "queue"] as const,
+    /**
      * The pages a stage group has been expanded through ("Show more").
      *
      * Keyed by filter, stage, and **the cursor the accumulation starts
@@ -67,5 +79,39 @@ export const queryKeys = {
      */
     queuePages: (filter: string, stage: string, firstCursor: string | null) =>
       ["claims", "queue", filter, "pages", stage, firstCursor] as const,
+    /**
+     * One claim's case file (Story 2.2), keyed by its business id.
+     *
+     * Entity + business id, which is the rule this module opens with: Story
+     * 2.3's inline edits invalidate exactly this key plus the queue's, so
+     * the header, the gauge and the card that names the same claim move
+     * together. Keying on an array index or on the selected-claim state
+     * would leave a mutation with nothing precise to invalidate.
+     *
+     * **Not keyed by filter**, unlike the queue. A case file is the same
+     * case file whichever filter the handler happened to arrive through —
+     * putting the filter in the key would fetch the identical payload again
+     * every time they flipped the queue's dropdown.
+     */
+    detail: (claimId: string) => ["claims", "detail", claimId] as const,
+    /**
+     * The **mutation** key every write against one claim carries (Story 2.4).
+     *
+     * Not a query key: nothing is cached under it. It exists so that
+     * `useIsMutating` can answer "is any command against this claim in
+     * flight?" across the four hooks that write one — the field patch, the
+     * severity score, and the add and remove of a secondary injury.
+     *
+     * That question has to be answerable in one place because of how
+     * `expectedVersion` works: every one of those hooks reads it from the
+     * same cached case file and none of them advances it optimistically, so
+     * a second commit launched before the first settles carries a version
+     * the first has already consumed. The server answers 409 and the handler
+     * is told somebody else changed the claim — about their own edit.
+     * Story 2.3 fixed that *within* one hook by disabling its inputs while it
+     * was busy; Story 2.4 put three more hooks on the same surface, and four
+     * independent `isPending` flags is the same bug with more moving parts.
+     */
+    writes: (claimId: string) => ["claims", "write", claimId] as const,
   },
 } as const;

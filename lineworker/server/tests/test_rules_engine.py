@@ -26,13 +26,16 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from data.models.enums import ClaimStatus
-from rules.engine import RuleDocumentMissing, evaluate, load
+from data.models.enums import ClaimStatus, DocType
+from rules.engine import LoadedDocument, RuleDocumentMissing, evaluate, load
 from rules.parameters import (
     DERIVATION_THRESHOLDS_KEY,
+    INTAKE_REQUIRED_DOCUMENTS_KEY,
     PRIORITY_WEIGHTS_KEY,
     DerivationThresholds,
+    IntakeRequirements,
     PriorityWeights,
+    intake_requirements_for,
     thresholds_for,
     weights_for,
 )
@@ -42,6 +45,36 @@ pytestmark = requires_db
 
 DOCUMENTS_DIR = Path(__file__).resolve().parents[1] / "rules" / "documents"
 
+# Every key, the version currently effective, and the file that authored it.
+#
+# The version column is the part worth stating: Story 2.2 supersedes the
+# thresholds with a v2 carrying the treatment-phase parameters, so "the
+# seeded documents are all version 1" stopped being true the moment a rule
+# was retuned — which is the whole mechanism AD-8 exists for. The filename
+# column records the convention that came with it: `<key>.jdm.json` is
+# version 1 and every later version is `<key>.v<N>.jdm.json`, because 0009
+# reads the unversioned name at migration time and editing it would rewrite
+# v1's content on a fresh database.
+EFFECTIVE_DOCUMENTS: tuple[tuple[str, int, str], ...] = (
+    (DERIVATION_THRESHOLDS_KEY, 2, "derivation_thresholds.v2.jdm.json"),
+    (PRIORITY_WEIGHTS_KEY, 1, "priority_weights.jdm.json"),
+    (INTAKE_REQUIRED_DOCUMENTS_KEY, 1, "intake_required_documents.jdm.json"),
+)
+
+# **Every** seeded (key, version, file), not only the effective ones.
+#
+# Parametrising the file-equals-row test over `EFFECTIVE_DOCUMENTS` alone
+# left `derivation_thresholds.jdm.json` — the v1 document migration 0009
+# still reads at migration time — compared against nothing, in the very
+# change that introduced the versioned-filename convention to prevent
+# exactly that drift (code review, 2026-08-12). A superseded version is
+# still authored by a committed file and still seeded on every fresh
+# database, so it is still a file that can silently disagree with a row.
+SEEDED_DOCUMENTS: tuple[tuple[str, int, str], ...] = (
+    (DERIVATION_THRESHOLDS_KEY, 1, "derivation_thresholds.jdm.json"),
+    *EFFECTIVE_DOCUMENTS,
+)
+
 # The story's seeded values, restated. See the module docstring.
 EXPECTED_THRESHOLDS: dict[str, Any] = {
     "riskHighMin": 65,
@@ -49,6 +82,15 @@ EXPECTED_THRESHOLDS: dict[str, Any] = {
     "siuFraudScoreMin": 60,
     "rtwBlockedHashModulus": 5,
     "paymentDueHashModulus": 3,
+    # Story 2.2's four, added in version 2.
+    "treatmentEarlyMaxRatio": 0.3,
+    "treatmentActiveMaxRatio": 0.7,
+    "recoveryYearExpectedDays": 180,
+    "recoveryDefaultExpectedDays": 42,
+}
+
+EXPECTED_INTAKE_REQUIREMENTS: dict[str, Any] = {
+    "requiredDocTypes": ["froi", "incident", "medauth", "wage"],
 }
 
 EXPECTED_WEIGHTS: dict[str, Any] = {
@@ -85,13 +127,62 @@ async def db(seeded_db_url: str) -> AsyncIterator[AsyncSession]:
 # --- loading ------------------------------------------------------------
 
 
-@pytest.mark.parametrize("key", [DERIVATION_THRESHOLDS_KEY, PRIORITY_WEIGHTS_KEY])
-async def test_the_seeded_documents_load_as_version_one(db: AsyncSession, key: str) -> None:
+@pytest.mark.parametrize(
+    ("key", "version"), [(key, version) for key, version, _file in EFFECTIVE_DOCUMENTS]
+)
+async def test_the_loader_picks_the_effective_version_of_each_key(
+    db: AsyncSession, key: str, version: int
+) -> None:
+    """ "Highest version whose date has arrived", against the real seed.
+
+    This was "all documents load as version 1" until Story 2.2 superseded
+    the thresholds. Pinning the expected version per key is what makes the
+    supersession visible here rather than only in the migration: a v3 that
+    lands without this table being updated fails loudly instead of quietly
+    re-ranking every queue.
+    """
     document = await load(db, key)
 
     assert document.key == key
-    assert document.version == 1
+    assert document.version == version
     assert document.content["nodes"], "the document arrived without its graph"
+
+
+async def test_version_one_of_a_superseded_document_is_still_exactly_what_it_was(
+    db: AsyncSession,
+) -> None:
+    """Supersession is a new row, never an edit — asserted, not just documented.
+
+    A queue cursor records the thresholds version that ranked it, and the
+    story-2.1 ordering is only explainable while v1 still says what it said.
+    So v1 must keep its five parameters and *not* have grown v2's four.
+
+    **Addressed by version, not by date** (code review, 2026-08-12). v2 now
+    shares v1's effective date, because a version that adds *required*
+    parameters cannot be safely future-dated — between the migration and the
+    effective date the loader resolves v1, which the typed block then refuses
+    for the keys it does not have, 500ing the queue, `/stats/*` and the case
+    file alike. The consequence is that **no date selects v1 any more**, which
+    is the intended state and the reason this test reads the row directly.
+    """
+    content = (
+        await db.execute(
+            sa.text("SELECT content FROM rule_document WHERE key = :key AND version = 1"),
+            {"key": DERIVATION_THRESHOLDS_KEY},
+        )
+    ).scalar_one()
+    v1 = LoadedDocument(key=DERIVATION_THRESHOLDS_KEY, version=1, content=content)
+
+    assert evaluate(v1) == {
+        "riskHighMin": 65,
+        "riskMedMin": 35,
+        "siuFraudScoreMin": 60,
+        "rtwBlockedHashModulus": 5,
+        "paymentDueHashModulus": 3,
+    }
+    # …and the loader really does prefer v2 on the shared date, which is what
+    # closes the window the fix was about.
+    assert (await load(db, DERIVATION_THRESHOLDS_KEY, date(2026, 8, 11))).version == 2
 
 
 async def test_a_missing_key_raises_rather_than_returning_an_empty_block(
@@ -147,6 +238,12 @@ async def test_the_weights_document_evaluates_to_the_story_values(db: AsyncSessi
     assert evaluate(await load(db, PRIORITY_WEIGHTS_KEY)) == EXPECTED_WEIGHTS
 
 
+async def test_the_intake_requirements_document_evaluates_to_the_story_values(
+    db: AsyncSession,
+) -> None:
+    assert evaluate(await load(db, INTAKE_REQUIRED_DOCUMENTS_KEY)) == EXPECTED_INTAKE_REQUIREMENTS
+
+
 async def test_the_typed_blocks_carry_the_evaluated_values(db: AsyncSession) -> None:
     """The JSON→Python boundary, in the direction consumers use it.
 
@@ -156,14 +253,25 @@ async def test_the_typed_blocks_carry_the_evaluated_values(db: AsyncSession) -> 
     """
     thresholds = await thresholds_for(db)
     weights = await weights_for(db)
+    requirements = await intake_requirements_for(db)
 
     assert thresholds == DerivationThresholds(
-        version=1,
+        version=2,
         risk_high_min=EXPECTED_THRESHOLDS["riskHighMin"],
         risk_med_min=EXPECTED_THRESHOLDS["riskMedMin"],
         siu_fraud_score_min=EXPECTED_THRESHOLDS["siuFraudScoreMin"],
         rtw_blocked_hash_modulus=EXPECTED_THRESHOLDS["rtwBlockedHashModulus"],
         payment_due_hash_modulus=EXPECTED_THRESHOLDS["paymentDueHashModulus"],
+        treatment_early_max_ratio=EXPECTED_THRESHOLDS["treatmentEarlyMaxRatio"],
+        treatment_active_max_ratio=EXPECTED_THRESHOLDS["treatmentActiveMaxRatio"],
+        recovery_year_expected_days=EXPECTED_THRESHOLDS["recoveryYearExpectedDays"],
+        recovery_default_expected_days=EXPECTED_THRESHOLDS["recoveryDefaultExpectedDays"],
+    )
+    assert requirements == IntakeRequirements(
+        version=1,
+        required_doc_types=tuple(
+            DocType(value) for value in EXPECTED_INTAKE_REQUIREMENTS["requiredDocTypes"]
+        ),
     )
     assert weights == PriorityWeights(
         version=1,
@@ -189,9 +297,9 @@ async def test_the_typed_blocks_carry_the_evaluated_values(db: AsyncSession) -> 
 # --- the file and the row are the same thing ----------------------------
 
 
-@pytest.mark.parametrize("key", [DERIVATION_THRESHOLDS_KEY, PRIORITY_WEIGHTS_KEY])
+@pytest.mark.parametrize(("key", "version", "filename"), SEEDED_DOCUMENTS)
 async def test_the_seeded_row_is_byte_for_byte_the_committed_document(
-    db: AsyncSession, key: str
+    db: AsyncSession, key: str, version: int, filename: str
 ) -> None:
     """What makes reviewing the diff equivalent to reviewing the rule.
 
@@ -199,9 +307,24 @@ async def test_the_seeded_row_is_byte_for_byte_the_committed_document(
     someone edits a document *after* the migration has run against a live
     database, which is the exact drift a committed-file-plus-seeded-row
     arrangement invites.
+
+    The filename is a parameter now rather than `f"{key}.jdm.json"`: with
+    versions in play, a key no longer names one file, and guessing the name
+    would have quietly compared v2's row against v1's file.
+
+    Parametrised over every *seeded* version rather than only the effective
+    one — a superseded document is still committed, still seeded, and still
+    capable of drifting from its row.
     """
-    on_disk: dict[str, Any] = json.loads((DOCUMENTS_DIR / f"{key}.jdm.json").read_text())
-    assert (await load(db, key)).content == on_disk
+    on_disk: dict[str, Any] = json.loads((DOCUMENTS_DIR / filename).read_text())
+    row = (
+        await db.execute(
+            sa.text("SELECT content FROM rule_document WHERE key = :key AND version = :version"),
+            {"key": key, "version": version},
+        )
+    ).scalar_one()
+
+    assert row == on_disk
 
 
 # --- AD-4 grants --------------------------------------------------------

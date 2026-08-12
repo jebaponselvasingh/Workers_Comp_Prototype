@@ -641,7 +641,12 @@ async def test_both_rule_document_versions_that_ranked_the_queue_are_reported(
     payload = await queue_for(seeded_db_url, *KAYA)
 
     assert payload["rulesVersion"] == 1
-    assert payload["thresholdsVersion"] == 1
+    # Two, not one, since Story 2.2 superseded the thresholds document with a
+    # v2 carrying the treatment-phase parameters. Pinned rather than read
+    # from the loader for `seed_fixture`'s reason — and the number moving is
+    # the mechanism working: a retuned threshold re-ranks the queue, so the
+    # payload has to say which version answered.
+    assert payload["thresholdsVersion"] == 2
 
 
 async def test_both_totals_are_published_so_the_client_adds_nothing_up(
@@ -723,7 +728,7 @@ async def test_a_second_priority_weights_version_reranks_the_queue(seeded_db_url
         after = await queue_for(seeded_db_url, *KAYA)
 
     assert after["rulesVersion"] == 2
-    assert after["thresholdsVersion"] == 1, "only one document was superseded"
+    assert after["thresholdsVersion"] == 2, "only one document was superseded"
     assert ids(after["groups"]["treatment"]) == expected
     # The marker rule is data too: with the categorical weights gone, no
     # claim clears a threshold of 30 and no card carries a 🔺.

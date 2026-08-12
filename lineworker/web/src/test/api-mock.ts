@@ -34,6 +34,12 @@ export interface StubRoutes {
   sla?: StubRoute;
   glossary?: StubRoute;
   claimsQueue?: StubRouteFor;
+  /**
+   * `GET /claims/{id}` (Story 2.2). A function so a test can answer
+   * differently per claim id — which is how "one claim opens and another
+   * 404s" is written without two renders.
+   */
+  claimDetail?: StubRouteFor;
 }
 
 const problem = (status: number, detail: string) => ({
@@ -317,6 +323,370 @@ export const CLAIM_QUEUE_PAGE_TWO = {
   },
 };
 
+/**
+ * Case-file fixtures (Story 2.2).
+ *
+ * Shaped like the real payload and carrying plausible seed-shaped values,
+ * for the queue fixtures' reason: component tests verify that whatever the
+ * server sends is what the pane renders, and a fixture with invented
+ * *structure* would let a test pass against a component that derived
+ * something. Every derived value here — `risk`, `phase`, `coordinationStatus`,
+ * `costSplit`, the stepper marks, the checklist — is a value the server
+ * decided, so the fixtures spell them out rather than computing them.
+ */
+function stepper(current: string) {
+  const order = ["intake", "investigation", "treatment", "settled"];
+  const position = order.indexOf(current);
+  return order.map((stage, index) => ({
+    stage,
+    done: index < position,
+    current: index === position,
+  }));
+}
+
+const TIMELINE = [
+  { eventDate: "2026-03-22", description: "FNOL received — Fall from Height", tag: "intake" },
+  { eventDate: "2026-03-24", description: "C-1 First Report of Injury filed", tag: "froi" },
+  { eventDate: "2026-03-25", description: "Handler assigned — Kaya Johnson", tag: "assignment" },
+];
+
+/**
+ * The editable vocabularies the server sends with every case file (Story
+ * 2.3) — the eleven diagram keys, the five recovery windows, the two
+ * disability tokens.
+ *
+ * The real lists, not a subset, because a select is only trustworthy if it
+ * offers exactly what the command accepts; a fixture with three body parts
+ * would let a test pass against a component that silently dropped the rest.
+ * Their *content* is asserted server-side against the prototype
+ * (`test_claim_edit_validation.py`); here they only have to be real.
+ */
+export const EDIT_OPTIONS = {
+  bodyParts: [
+    { key: "head", label: "Head" },
+    { key: "ears", label: "Ears" },
+    { key: "shoulder_right", label: "Right Shoulder" },
+    { key: "shoulder_left", label: "Left Shoulder" },
+    { key: "forearm_right", label: "Right Forearm" },
+    { key: "hand_right", label: "Right Hand" },
+    { key: "hand_left", label: "Left Hand" },
+    { key: "torso", label: "Torso" },
+    { key: "lumbar", label: "Lower Back (Lumbar)" },
+    { key: "tibia_left", label: "Left Lower Leg" },
+    { key: "tibia_right", label: "Right Lower Leg" },
+  ],
+  recoveryWindows: ["weeks_0_2", "weeks_2_4", "weeks_4_6", "weeks_6_8", "over_1_year"],
+  disabilities: ["temporary", "permanent"],
+};
+
+/**
+ * The injury-diagram block (Story 2.4).
+ *
+ * Every marker arrives with its `band` already decided, because that is what
+ * the server sends: the fixture spells out `high`/`med` rather than deriving
+ * them from the scores beside them, so a `BodyMap` that banded its own
+ * colours would pass no test here.
+ *
+ * Two markers, one primary and one secondary, so a single render can see the
+ * pulse (primary only), the ✕ (secondary only) and two different band
+ * colours. `INJURY_UNKNOWN_KEY` below covers the hotspot fallback.
+ */
+export const INJURY_DIAGRAM = {
+  markers: [
+    {
+      id: null,
+      version: null,
+      bodyKey: "lumbar",
+      bodyPart: "Lower Back",
+      injuryType: "Fall from Height",
+      severityScore: 78,
+      band: "high",
+      primary: true,
+    },
+    {
+      id: 41,
+      // Deliberately *not* the claim's version (1). A removal compare-and-
+      // swaps on the injury row, and a fixture where the two numbers were
+      // equal would let a component that sent the wrong one pass.
+      version: 3,
+      bodyKey: "hand_left",
+      bodyPart: "Left Hand",
+      injuryType: "Laceration",
+      severityScore: 44,
+      band: "med",
+      primary: false,
+    },
+  ],
+  icd: "S39.012A",
+  icdDesc: "Strain of muscle, fascia and tendon of lower back",
+  prognosis: {
+    mmi: "6-10 mo",
+    rtw: "Modified duty 4-6 mo",
+    impairment: "PPD possible 5-15%",
+    litigation: "Low",
+  },
+  treatmentPlan: [
+    { stepNo: 1, description: "Head/spine CT protocol if fall >4 feet" },
+    { stepNo: 2, description: "Orthopedic evaluation for fracture" },
+    { stepNo: 3, description: "PT for musculoskeletal recovery" },
+  ],
+  contraindications:
+    "No elevated work platform access until medically cleared. Fall protection protocol review.",
+  defaultSeverityScore: 40,
+  captureVersion: 1,
+  severityMin: 0,
+  severityMax: 100,
+};
+
+/**
+ * A marker whose region this build does not know — deploy skew, or a key
+ * added to the server's vocabulary ahead of the SVG.
+ *
+ * Its own fixture because the `torso` fallback is otherwise rendered by
+ * nothing and asserted by nothing: the select cannot offer such a key and
+ * the command refuses one, so only a test can produce it. Story 2.2's code
+ * review found the same shape of hole in the settled banner's date clause.
+ */
+export const INJURY_UNKNOWN_KEY = {
+  ...INJURY_DIAGRAM,
+  markers: [
+    { ...INJURY_DIAGRAM.markers[0], bodyKey: "cervical_spine" },
+    INJURY_DIAGRAM.markers[1],
+  ],
+};
+
+const HEADER = {
+  claimId: "WC-20017",
+  workerName: "Marcus Delgado",
+  workerRole: "Assembly Technician",
+  employerName: "Caterpillar Inc.",
+  state: "IL",
+  injuryType: "Fall from Height",
+  // The stored label and the diagram key are different vocabularies — the
+  // fixture keeps them different so a component that confused the two would
+  // fail here rather than in a browser.
+  bodyPart: "Lower Back",
+  bodyKey: "lumbar",
+  cause: "Fall from Elevated Platform",
+  icd: "S39.012A",
+  severityScore: 78,
+  risk: "high",
+  stage: "treatment",
+  fraudFlag: true,
+  fraudScore: 62,
+  litigationFlag: true,
+  surgeryRequired: true,
+  oshaRecordable: true,
+};
+
+/** Treatment: both derived states, and every header badge switched on. */
+export const CLAIM_DETAIL_TREATMENT = {
+  status: 200,
+  body: {
+    claimId: "WC-20017",
+    version: 1,
+    thresholdsVersion: 2,
+    editOptions: EDIT_OPTIONS,
+    injury: INJURY_DIAGRAM,
+    requirementsVersion: null,
+    header: HEADER,
+    stepper: stepper("treatment"),
+    overview: {
+      stageVariant: "treatment",
+      phase: "approaching_mmi",
+      phaseNote: "Nearing maximum medical improvement — RTW and closure planning underway.",
+      expectedDays: 42,
+      daysOpen: 140,
+      recovery: "weeks_4_6",
+      paidMedicalCents: 1_240_000,
+      paidIndemnityCents: 860_000,
+      reserveCents: 4_500_000,
+      coordinationStatus: "coordination_gap",
+      coordinationNote:
+        "RTW follow-up is overdue — recommended return date has passed with no confirmed update from employer or claimant.",
+      returnStatus: "under_treatment",
+      commStatus: "documents_received_and_approved",
+      handlerName: "Kaya Johnson",
+      timeline: TIMELINE,
+      timelineTruncated: true,
+    },
+  },
+};
+
+/** Intake: a checklist with one row of each state, and no badges at all. */
+export const CLAIM_DETAIL_INTAKE = {
+  status: 200,
+  body: {
+    claimId: "WC-20003",
+    version: 1,
+    thresholdsVersion: 2,
+    editOptions: EDIT_OPTIONS,
+    injury: INJURY_DIAGRAM,
+    requirementsVersion: 1,
+    header: {
+      ...HEADER,
+      claimId: "WC-20003",
+      workerName: "Priya Raman",
+      stage: "intake",
+      risk: "low",
+      severityScore: 22,
+      fraudFlag: false,
+      litigationFlag: false,
+      surgeryRequired: false,
+      oshaRecordable: false,
+    },
+    stepper: stepper("intake"),
+    overview: {
+      stageVariant: "intake",
+      employeeBusinessId: "EMP-1042",
+      workerName: "Priya Raman",
+      workerRole: "Machine Operator",
+      plant: "Peoria Assembly",
+      doi: "2026-03-22",
+      froiDate: "2026-03-24",
+      assignDate: "2026-03-25",
+      handlerName: "Kaya Johnson",
+      commStatus: "need_for_additional_information",
+      injuryType: "Repetitive Strain",
+      cause: "Repetitive Motion",
+      bodyPart: "Right Wrist",
+      severityScore: 22,
+      risk: "low",
+      awwCents: 118_000,
+      reserveCents: 850_000,
+      checklist: [
+        { docType: "froi", received: true },
+        { docType: "incident", received: false },
+        { docType: "medauth", received: true },
+        { docType: "wage", received: false },
+      ],
+      timeline: TIMELINE,
+    },
+  },
+};
+
+/** Investigation: payments made, so the cost bar is drawn. */
+export const CLAIM_DETAIL_INVESTIGATION = {
+  status: 200,
+  body: {
+    claimId: "WC-20051",
+    version: 3,
+    thresholdsVersion: 2,
+    editOptions: EDIT_OPTIONS,
+    injury: INJURY_DIAGRAM,
+    requirementsVersion: null,
+    header: { ...HEADER, claimId: "WC-20051", stage: "investigation", risk: "med" },
+    stepper: stepper("investigation"),
+    overview: {
+      stageVariant: "investigation",
+      injuryType: "Laceration",
+      cause: "Contact with Machine Guard",
+      bodyPart: "Left Hand",
+      icd: "S61.412A",
+      icdDesc: "Laceration without foreign body of left wrist",
+      disability: "temporary",
+      recovery: "weeks_2_4",
+      awwCents: 104_000,
+      totalPaidCents: 1_000_000,
+      reserveCents: 2_200_000,
+      policyNum: "WC-POL-88213",
+      fraudScore: 18,
+      severityScore: 44,
+      risk: "med",
+      paidIndemnityCents: 400_000,
+      paidMedicalCents: 550_000,
+      costSplit: { indemnityPct: 40, medicalPct: 55, expensePct: 5 },
+      timeline: TIMELINE,
+    },
+  },
+};
+
+/** Investigation with nothing paid — the "Active — payments pending" branch. */
+export const CLAIM_DETAIL_INVESTIGATION_UNPAID = {
+  status: 200,
+  body: {
+    ...CLAIM_DETAIL_INVESTIGATION.body,
+    overview: {
+      ...CLAIM_DETAIL_INVESTIGATION.body.overview,
+      totalPaidCents: 0,
+      paidIndemnityCents: 0,
+      paidMedicalCents: 0,
+      costSplit: null,
+    },
+  },
+};
+
+/** Settled, with the null settlement date every seeded claim actually has. */
+export const CLAIM_DETAIL_SETTLED = {
+  status: 200,
+  body: {
+    claimId: "WC-20068",
+    version: 5,
+    thresholdsVersion: 2,
+    editOptions: EDIT_OPTIONS,
+    injury: INJURY_DIAGRAM,
+    requirementsVersion: null,
+    header: { ...HEADER, claimId: "WC-20068", stage: "settled", risk: "low" },
+    stepper: stepper("settled"),
+    overview: {
+      stageVariant: "settled",
+      settlementDate: null,
+      totalPaidCents: 3_100_000,
+      paidIndemnityCents: 1_500_000,
+      paidMedicalCents: 1_400_000,
+      paidExpenseCents: 200_000,
+      reserveCents: 0,
+      costSplit: { indemnityPct: 48, medicalPct: 45, expensePct: 7 },
+      disability: "permanent",
+      returnStatus: "returned_and_fully_recovered",
+      daysToSettlement: 212,
+      litigationFlag: false,
+      handlerName: "Kaya Johnson",
+      timeline: TIMELINE,
+    },
+  },
+};
+
+/**
+ * A settled claim whose settlement event *does* carry a date.
+ *
+ * No seeded claim does — the prototype writes `Closed` where the date
+ * belongs — so without this fixture the banner's date clause was rendered by
+ * nothing and asserted by nothing, while its own comment claimed it "gains
+ * the date without a change" (code review, 2026-08-12).
+ */
+export const CLAIM_DETAIL_SETTLED_DATED = {
+  status: 200,
+  body: {
+    ...CLAIM_DETAIL_SETTLED.body,
+    overview: { ...CLAIM_DETAIL_SETTLED.body.overview, settlementDate: "2026-07-29" },
+  },
+};
+
+/** A claim with no history at all — the timeline card's empty state. */
+export const CLAIM_DETAIL_NO_TIMELINE = {
+  status: 200,
+  body: {
+    ...CLAIM_DETAIL_SETTLED.body,
+    overview: { ...CLAIM_DETAIL_SETTLED.body.overview, timeline: [] },
+  },
+};
+
+/**
+ * The 404 the server answers for a claim outside the caller's scope — and,
+ * identically, for one that does not exist. The SPA must not try to tell
+ * them apart; the sameness is the point (AD-7).
+ */
+export const CLAIM_DETAIL_NOT_FOUND = {
+  status: 404,
+  body: {
+    type: "/problems/claim-not-found",
+    title: "Not Found",
+    status: 404,
+    detail: "No claim WC-9999 in your caseload.",
+  },
+};
+
 export const SEEDED_PERSONAS = {
   status: 200,
   body: {
@@ -402,6 +772,13 @@ export function stubApi(routes: StubRoutes): void {
         // The whole URL, query string included, so a stub can branch on the
         // filter or the cursor — see `StubRouteFor`.
         return answerFor(routes.claimsQueue ?? CLAIM_QUEUE, url);
+      }
+      // After the queue, deliberately: the two share a prefix, and the
+      // server resolves the same ambiguity the same way (the queue route is
+      // declared first). A stub that matched detail first would answer the
+      // queue's request with a case file and no test would say why.
+      if (url.includes("/api/claims/")) {
+        return answerFor(routes.claimDetail ?? CLAIM_DETAIL_TREATMENT, url);
       }
       if (url.includes("/api/auth/logout")) {
         return respond(204, null);

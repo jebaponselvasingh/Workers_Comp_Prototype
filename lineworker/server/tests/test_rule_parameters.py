@@ -21,12 +21,18 @@ are pure, so each case is one dict.
 
 import pytest
 
-from data.models.enums import ClaimStatus
+from data.models.enums import ClaimStatus, DocType
 from rules.engine import LoadedDocument
-from rules.parameters import DerivationThresholds, PriorityWeights, RuleParameterError
+from rules.parameters import (
+    DerivationThresholds,
+    IntakeRequirements,
+    PriorityWeights,
+    RuleParameterError,
+)
 
 THRESHOLDS_DOC = LoadedDocument(key="derivation_thresholds", version=4, content={})
 WEIGHTS_DOC = LoadedDocument(key="priority_weights", version=7, content={})
+REQUIREMENTS_DOC = LoadedDocument(key="intake_required_documents", version=3, content={})
 
 VALID_THRESHOLDS = {
     "riskHighMin": 65,
@@ -34,7 +40,14 @@ VALID_THRESHOLDS = {
     "siuFraudScoreMin": 60,
     "rtwBlockedHashModulus": 5,
     "paymentDueHashModulus": 3,
+    # Story 2.2's four, which arrived with version 2 of the document.
+    "treatmentEarlyMaxRatio": 0.3,
+    "treatmentActiveMaxRatio": 0.7,
+    "recoveryYearExpectedDays": 180,
+    "recoveryDefaultExpectedDays": 42,
 }
+
+VALID_INTAKE_REQUIREMENTS = {"requiredDocTypes": ["froi", "incident", "medauth", "wage"]}
 
 VALID_WEIGHTS = {
     "litigation": 40,
@@ -62,11 +75,16 @@ def weights(**changes: object) -> PriorityWeights:
     return PriorityWeights.of(WEIGHTS_DOC, {**VALID_WEIGHTS, **changes})
 
 
+def requirements(**changes: object) -> IntakeRequirements:
+    return IntakeRequirements.of(REQUIREMENTS_DOC, {**VALID_INTAKE_REQUIREMENTS, **changes})
+
+
 def test_the_valid_blocks_are_valid() -> None:
     """Every negative case below changes exactly one key of these, so the
     delta *is* the thing under test."""
     assert thresholds().version == 4
     assert weights().version == 7
+    assert requirements().version == 3
 
 
 # --- types --------------------------------------------------------------
@@ -219,3 +237,96 @@ def test_every_parameter_is_required() -> None:
         block = {k: v for k, v in VALID_THRESHOLDS.items() if k != key}
         with pytest.raises(RuleParameterError, match=key):
             DerivationThresholds.of(THRESHOLDS_DOC, block)
+
+    for key in VALID_INTAKE_REQUIREMENTS:
+        block = {k: v for k, v in VALID_INTAKE_REQUIREMENTS.items() if k != key}
+        with pytest.raises(RuleParameterError, match=key):
+            IntakeRequirements.of(REQUIREMENTS_DOC, block)
+
+
+# --- Story 2.2: the treatment-phase parameters --------------------------
+
+
+@pytest.mark.parametrize("ratio", [-0.1, 1.5, 42])
+def test_a_phase_boundary_outside_zero_to_one_is_refused(ratio: float) -> None:
+    """A ratio boundary outside 0–1 is a phase that can never be reached.
+
+    `treatmentEarlyMaxRatio: 2` leaves every claim "Early" for twice its own
+    recovery window; a negative one skips the phase entirely. Both render a
+    perfectly ordinary banner while saying something false about the claim.
+    """
+    with pytest.raises(RuleParameterError, match="treatmentEarlyMaxRatio"):
+        thresholds(treatmentEarlyMaxRatio=ratio)
+
+
+def test_inverted_phase_boundaries_are_refused() -> None:
+    """`riskMedMin > riskHighMin`'s failure, one derivation over: the
+    derivation reads the boundaries in order, so an inverted pair collapses
+    the middle phase without an error anywhere."""
+    with pytest.raises(RuleParameterError, match="treatmentEarlyMaxRatio"):
+        thresholds(treatmentEarlyMaxRatio=0.8, treatmentActiveMaxRatio=0.5)
+
+
+def test_equal_phase_boundaries_are_allowed() -> None:
+    """ "No active phase" is a legitimate rule, unlike an inverted pair.
+
+    The same reading `riskMedMin == riskHighMin` gets: the document is
+    saying a claim goes straight from early to approaching-MMI, which is an
+    opinion an operator is allowed to hold.
+    """
+    block = thresholds(treatmentEarlyMaxRatio=0.5, treatmentActiveMaxRatio=0.5)
+    assert block.treatment_early_max_ratio == block.treatment_active_max_ratio
+
+
+@pytest.mark.parametrize("days", [0, -30])
+def test_an_expected_recovery_window_below_one_day_is_refused(days: int) -> None:
+    """Both constants are divisors: zero raises inside a request, and a
+    negative window reverses the phase order while still returning a phase."""
+    with pytest.raises(RuleParameterError, match="recoveryYearExpectedDays"):
+        thresholds(recoveryYearExpectedDays=days)
+    with pytest.raises(RuleParameterError, match="recoveryDefaultExpectedDays"):
+        thresholds(recoveryDefaultExpectedDays=days)
+
+
+# --- Story 2.2: the intake required-document list ------------------------
+
+
+def test_the_required_documents_keep_the_documents_order() -> None:
+    """A tuple, not a set: the checklist renders one row per required type,
+    in the order the document lists them rather than a hash's."""
+    assert requirements(requiredDocTypes=["wage", "froi"]).required_doc_types == (
+        DocType.wage,
+        DocType.froi,
+    )
+
+
+@pytest.mark.parametrize("value", [None, "froi", 4, {"type": "froi"}])
+def test_a_required_document_list_that_is_not_a_list_is_refused(value: object) -> None:
+    with pytest.raises(RuleParameterError, match="requiredDocTypes"):
+        requirements(requiredDocTypes=value)
+
+
+def test_a_document_type_the_enum_does_not_know_is_refused_naming_it() -> None:
+    """`pendingApprovalStatuses`' argument: a scorer comparing raw strings
+    treats a typo as "this never matches" — a checklist row that is silently
+    never required, on a screen whose whole job is to say what is missing."""
+    with pytest.raises(RuleParameterError, match="'osha'"):
+        requirements(requiredDocTypes=["froi", "osha"])
+
+
+def test_a_repeated_document_type_is_refused_unlike_a_repeated_status() -> None:
+    """The one place this reader deliberately disagrees with `_status_set`.
+
+    A repeated member of a *set* said nothing new. A repeated member of a
+    checklist is a row rendered twice, which is a document bug rather than a
+    stronger requirement.
+    """
+    with pytest.raises(RuleParameterError, match="twice"):
+        requirements(requiredDocTypes=["froi", "froi"])
+
+
+def test_an_empty_required_list_is_a_checklist_with_no_rows() -> None:
+    """Legitimate, for `pendingApprovalStatuses`' reason: "nothing is
+    required at intake" is a position an operator may take from the
+    document, and the UI's empty state is what renders it."""
+    assert requirements(requiredDocTypes=[]).required_doc_types == ()

@@ -13,16 +13,36 @@ like any other unknown query string (`tests/test_claims_queue.py` proves the
 answer is byte-identical), because a 422 would tell them which names exist.
 """
 
-from typing import Annotated
+from collections.abc import Awaitable, Callable
+from datetime import date
+from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Query, Response, status
+from fastapi import APIRouter, Path, Query, Response, status
+from pydantic import ConfigDict, Field
 
 from api.deps import CallerContextDep, DbDep
 from api.errors import PROBLEM_CONTENT_TYPE, ProblemDocument, ProblemException
 from api.routers.auth import UNAUTHENTICATED_RESPONSE
 from api.schemas import ApiModel
-from data.models.enums import Stage
-from services.derivations import RiskBand
+from data.models.enums import (
+    CommStatus,
+    Disability,
+    DocType,
+    RecoveryWindow,
+    ReturnStatus,
+    Stage,
+)
+from services.claims.detail import ClaimDetail, ClaimNotVisible, claim_detail
+from services.claims.edit import (
+    EditNotPermitted,
+    InvalidPatch,
+    StaleClaim,
+    update_claim_fields,
+    update_claim_severity,
+)
+from services.claims.injuries import add_additional_injury, remove_additional_injury
+from services.claims.reference import SEVERITY_MAX, SEVERITY_MIN
+from services.derivations import CoordinationStatus, RiskBand, TreatmentPhase
 from services.worklist.priority import QueueFilter
 from services.worklist.queue import (
     MAX_PAGE_LIMIT,
@@ -254,3 +274,903 @@ async def queue(
             headers={"Cache-Control": "no-store"},
         ) from exc
     return _queue(result)
+
+
+# --- Story 2.2: the case file -------------------------------------------
+
+
+CLAIM_ID_PATTERN = r"^WC-\d{4,6}$"
+
+NOT_FOUND_RESPONSE: dict[int | str, dict[str, object]] = {
+    404: {
+        "description": (
+            "No such claim in the caller's scope. Deliberately the same answer "
+            "for a claim that does not exist and one that belongs to another "
+            "employer — see the route docstring (RFC 9457 problem document)."
+        ),
+        "content": {PROBLEM_CONTENT_TYPE: {"schema": ProblemDocument.model_json_schema()}},
+    }
+}
+
+
+class TimelineEntryResponse(ApiModel):
+    """One line of the case timeline.
+
+    `eventDate` is nullable because 62 seeded settlement events have none:
+    the prototype writes the literal string `Closed` where a date belongs,
+    and a non-date is not something a `DATE` column should be asked to hold.
+    The UI leaves the date cell empty rather than inventing one.
+    """
+
+    event_date: date | None
+    description: str
+    tag: str
+
+
+class ChecklistRowResponse(ApiModel):
+    """One required intake document, and whether it is on file."""
+
+    doc_type: DocType
+    received: bool
+
+
+class StepperStepResponse(ApiModel):
+    """One of the four lifecycle steps, already marked.
+
+    `done`/`current` are the server's, not the browser's: which steps are
+    behind a claim is a statement about its lifecycle position, and deciding
+    it client-side would be a second place that knows what follows
+    investigation (AD-1).
+    """
+
+    stage: Stage
+    done: bool
+    current: bool
+
+
+class CostSplitResponse(ApiModel):
+    """The cost bar's three shares, as whole percentages summing to 100."""
+
+    indemnity_pct: int
+    medical_pct: int
+    expense_pct: int
+
+
+class CaseHeaderResponse(ApiModel):
+    """Everything above the tab bar (UX-DR4).
+
+    `risk` is the band the gauge is coloured by, and it is the *same* `risk`
+    derivation the queue card's dot reads (AD-10) — which is what makes "the
+    queue and the detail can never disagree about a claim" a property of the
+    system rather than a promise. `severityScore` rides along because the
+    header shows both ("High severity", 78/100), and the band is not
+    recoverable from the score in the browser without re-implementing the
+    thresholds.
+    """
+
+    claim_id: str
+    worker_name: str
+    worker_role: str
+    employer_name: str
+    state: str
+    injury_type: str
+    body_part: str
+    # The diagram/select key behind the label. Not derivable from
+    # `bodyPart` — the dataset's wording ("Wrist(s) & Hand(s)") and the
+    # diagram's labels ("Right Hand") are different vocabularies.
+    body_key: str
+    cause: str
+    icd: str
+    severity_score: int
+    risk: RiskBand
+    stage: Stage
+    fraud_flag: bool
+    fraud_score: int
+    litigation_flag: bool
+    surgery_required: bool
+    osha_recordable: bool
+
+
+class BodyPartOptionResponse(ApiModel):
+    """One region of the body diagram: the key stored, the label shown."""
+
+    key: str
+    label: str
+
+
+class EditOptionsResponse(ApiModel):
+    """What the editable selects may offer (Story 2.3).
+
+    Served rather than hardcoded in the SPA so the vocabulary has one source
+    (AD-1) — the same eleven keys the edit command validates against and the
+    same set Story 2.4's diagram addresses. A select built from this cannot
+    offer a value the server would refuse with a 422.
+    """
+
+    body_parts: list[BodyPartOptionResponse]
+    recovery_windows: list[RecoveryWindow]
+    disabilities: list[Disability]
+
+
+class IntakeOverviewResponse(ApiModel):
+    """The intake variant: summary, reported injury, checklist, full timeline."""
+
+    stage_variant: Literal["intake"]
+    employee_business_id: str
+    worker_name: str
+    worker_role: str
+    plant: str
+    doi: date
+    froi_date: date
+    assign_date: date
+    handler_name: str
+    comm_status: CommStatus
+    injury_type: str
+    cause: str
+    body_part: str
+    severity_score: int
+    risk: RiskBand
+    aww_cents: int
+    reserve_cents: int
+    checklist: list[ChecklistRowResponse]
+    timeline: list[TimelineEntryResponse]
+
+
+class InvestigationOverviewResponse(ApiModel):
+    """The investigation variant: injury card and financials/reserve card.
+
+    The injury card's six fields became **editable in Story 2.3**, behind
+    `PATCH /claims/{claimBusinessId}`. They are sent exactly as stored — the
+    client edits what it was shown and sends the enclosing `version` back as
+    `expectedVersion`. The financials card stays read-only: reserves and the
+    severity score belong to Epic 3 and Story 2.4.
+    """
+
+    stage_variant: Literal["investigation"]
+    injury_type: str
+    cause: str
+    body_part: str
+    icd: str
+    # Editable, and editable *only* with `icd`: the code and its description
+    # are one fact, so the command refuses one without the other.
+    icd_desc: str
+    disability: Disability
+    recovery: RecoveryWindow
+    aww_cents: int
+    total_paid_cents: int
+    reserve_cents: int
+    policy_num: str
+    fraud_score: int
+    severity_score: int
+    risk: RiskBand
+    paid_indemnity_cents: int
+    paid_medical_cents: int
+    cost_split: CostSplitResponse | None
+    timeline: list[TimelineEntryResponse]
+
+
+class TreatmentOverviewResponse(ApiModel):
+    """The treatment variant: phase banner, paid-vs-reserve, coordination.
+
+    `phase` and `coordinationStatus` are registered derivations (AC 5) and
+    both notes are server-provided (AD-1). The short display labels are the
+    UI's, like every other snake_case enum in this contract.
+
+    The figures come from the claim's own paid/reserve columns. Story 3.3's
+    bill and payment-schedule tables will be a better source for the same
+    numbers, and 3.2 fills the reserve-check verdict this variant leaves to
+    an explicit placeholder — they agree by construction because both read
+    the same columns through the same derivations.
+    """
+
+    stage_variant: Literal["treatment"]
+    phase: TreatmentPhase
+    phase_note: str
+    expected_days: int
+    days_open: int
+    recovery: RecoveryWindow
+    paid_medical_cents: int
+    paid_indemnity_cents: int
+    reserve_cents: int
+    coordination_status: CoordinationStatus
+    coordination_note: str
+    return_status: ReturnStatus
+    comm_status: CommStatus
+    handler_name: str
+    timeline: list[TimelineEntryResponse]
+    timeline_truncated: bool
+
+
+class SettledOverviewResponse(ApiModel):
+    """The settled variant: banner, payout breakdown, outcome, action summary.
+
+    `settlementDate` is null for every seeded claim — the prototype's
+    settlement events carry `Closed` where a date belongs — so the banner
+    omits the clause rather than printing "settled on Closed".
+    """
+
+    stage_variant: Literal["settled"]
+    settlement_date: date | None
+    total_paid_cents: int
+    paid_indemnity_cents: int
+    paid_medical_cents: int
+    paid_expense_cents: int
+    reserve_cents: int
+    cost_split: CostSplitResponse | None
+    disability: Disability
+    return_status: ReturnStatus
+    days_to_settlement: int
+    litigation_flag: bool
+    handler_name: str
+    timeline: list[TimelineEntryResponse]
+
+
+StageOverviewResponse = Annotated[
+    IntakeOverviewResponse
+    | InvestigationOverviewResponse
+    | TreatmentOverviewResponse
+    | SettledOverviewResponse,
+    Field(discriminator="stage_variant"),
+]
+
+
+class InjuryMarkerResponse(ApiModel):
+    """One marker on the body diagram (Story 2.4, UX-DR6).
+
+    `band` is the marker's severity band, computed by the same registered
+    `risk` derivation the gauge and the queue dot read (AD-10). The SVG
+    therefore picks a token from a key and decides nothing — the prototype's
+    `injHTML` re-bands each marker at 70/40 inside the drawing function,
+    which is a second banding rule and the thing AD-10 exists to prevent.
+
+    `id` and `version` are null on the primary marker: it *is* the claim's
+    own `bodyKey`/`severityScore`, so there is no `additional_injury` row to
+    address, nothing to remove, and the claim's version governs it.
+    """
+
+    id: int | None
+    version: int | None
+    body_key: str
+    body_part: str
+    injury_type: str
+    severity_score: int
+    band: RiskBand
+    primary: bool
+
+
+class PrognosisResponse(ApiModel):
+    """MMI estimate, RTW outlook, impairment and litigation risk.
+
+    Persisted by migration 0015. Story 2.2 omitted the MMI row from the
+    treatment card because nothing stored it and "a row that always reads
+    '—' is furniture, not honesty"; it stores it now.
+    """
+
+    mmi: str
+    rtw: str
+    impairment: str
+    litigation: str
+
+
+class TreatmentPlanStepResponse(ApiModel):
+    """One numbered step of the treatment plan."""
+
+    step_no: int
+    description: str
+
+
+class InjuryDiagramResponse(ApiModel):
+    """The Injury Diagram tab's whole payload (Story 2.4, AC 1).
+
+    On the case file rather than on a stage variant: the tab is readable at
+    every stage, and a claim does not stop having injuries when it settles.
+
+    `defaultSeverityScore` is the score the add form starts at and comes from
+    the `injury_capture` rule document (AD-8) — served rather than hardcoded
+    in the SPA so that retuning it is a rule change and not a deploy.
+    `captureVersion` names the document that answered, for
+    `thresholdsVersion`'s reason.
+    """
+
+    markers: list[InjuryMarkerResponse]
+    icd: str
+    icd_desc: str
+    prognosis: PrognosisResponse
+    treatment_plan: list[TreatmentPlanStepResponse]
+    contraindications: str
+    default_severity_score: int
+    capture_version: int
+    # `severityScore`'s domain. Served for `editOptions`' reason: an input
+    # bounded by what the server accepts cannot offer a value the command
+    # refuses, and the browser keeps no copy of a numeric rule.
+    severity_min: int
+    severity_max: int
+
+
+class ClaimDetailResponse(ApiModel):
+    """The case file: header, stepper, and exactly one stage variant.
+
+    **A discriminated union, not four optional blocks.** The alternative
+    shape — `intake?`, `investigation?`, `treatment?`, `settled?` — can
+    describe a claim as simultaneously in intake and settled, and leaves the
+    client with four truthiness checks where the prototype's `ovHTML` has one
+    dispatch. Here the payload carries the block for the claim's stage and
+    `stageVariant` says which it is, so a `switch` is exhaustive by type.
+
+    **Money is integer cents and the field names say so.** The `Cents` suffix
+    is not decoration: the convention is cents end to end formatted only in
+    the UI, and a bare `reserve` reads like dollars at every call site that
+    touches it.
+
+    `thresholdsVersion` rides along for the queue payload's reason — the risk
+    band in the header and the treatment phase both come from a versioned
+    rule document, and "which rules produced this?" should be answerable from
+    the response rather than reconstructed.
+    """
+
+    claim_id: str
+    version: int
+    header: CaseHeaderResponse
+    stepper: list[StepperStepResponse]
+    overview: StageOverviewResponse
+    # Story 2.4's injury diagram. Outside the discriminated union on purpose
+    # — see `InjuryDiagramResponse`.
+    injury: InjuryDiagramResponse
+    # Story 2.3's editable vocabularies. On the case file rather than on the
+    # investigation variant because the edit command is not stage-scoped —
+    # 2.4 edits the body part from the diagram tab at any stage.
+    edit_options: EditOptionsResponse
+    thresholds_version: int
+    # Null for every stage but intake, which is the only variant that reads
+    # the `intake_required_documents` document. Sent for `thresholdsVersion`'s
+    # reason: the checklist's rows are a rule document's answer, and the
+    # queue payload sets the precedent of naming *every* document that
+    # decided something in the response.
+    requirements_version: int | None
+
+
+@router.get(
+    "/claims/{claim_business_id}",
+    response_model=ClaimDetailResponse,
+    summary="One claim's case file — header, stepper and stage-adaptive overview",
+    responses={**UNAUTHENTICATED_RESPONSE, **NOT_FOUND_RESPONSE},
+)
+async def detail(
+    ctx: CallerContextDep,
+    db: DbDep,
+    response: Response,
+    claim_business_id: Annotated[
+        str,
+        Path(
+            pattern=CLAIM_ID_PATTERN,
+            description="The claim's business id, `WC-nnnn`.",
+            examples=["WC-20017"],
+        ),
+    ],
+) -> ClaimDetailResponse:
+    """The case file for one claim in the caller's book.
+
+    **404 for out of scope, and that is the security answer rather than a
+    convenience.** A 403 would confirm that the claim exists, which turns
+    this route into an oracle a caller can walk `WC-20000`…`WC-20999`
+    through to enumerate a portfolio they cannot read (AD-7). The repository
+    returns nothing for both cases, so there is one branch here and no way to
+    write the leak back in.
+
+    The path is the only parameter, and it names a claim rather than a scope:
+    "whose claims?" is answered by the session cookie, as it is on
+    `/claims/queue` and `/stats/*`.
+    """
+    # Specific to one persona's book, so never served to another from a cache
+    # upstream — the same reason `/me`, `/stats/*` and the queue say so.
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        result = await claim_detail(db, ctx, claim_business_id)
+    except ClaimNotVisible as exc:
+        raise _not_found(claim_business_id) from exc
+    return ClaimDetailResponse.model_validate(result)
+
+
+def _not_found(claim_business_id: str) -> ProblemException:
+    """The 404 both claim routes answer — one wording, one `type`.
+
+    Written once because the sameness *is* the security property: a caller
+    comparing the GET's refusal with the PATCH's must not be able to learn
+    from the difference that a claim exists but is not theirs to edit.
+    """
+    return ProblemException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        title="Not Found",
+        detail=f"No claim {claim_business_id} in your caseload.",
+        type_="/problems/claim-not-found",
+        # Restated because raising abandons the injected `response`: the
+        # handler builds a fresh `JSONResponse`. A 404 that depends on who is
+        # asking must not be cached by an intermediary and replayed to
+        # somebody whose book *does* contain the claim.
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+# --- Story 2.3: the audited inline edit ---------------------------------
+
+
+class ClaimFieldPatch(ApiModel):
+    """The PATCH body: a version to compare against, and the edited fields.
+
+    **PATCH-shaped, so every field is optional and omission means "leave
+    it"** (AD-4). `model_fields_set` is what separates "not sent" from "sent
+    as null" — the second is a 422 rather than a way to blank a column,
+    because none of these six fields has a meaningful empty value and a
+    handler who clears an input meant to cancel, not to erase the ICD-10
+    code.
+
+    **`extra="forbid"` is the whitelist's outer wall.** A key that is not one
+    of the seven fails validation here and never reaches the command, which
+    is what turns "anything else in the patch → 422" into a property of the
+    contract (and of the generated OpenAPI document) rather than a check
+    somebody has to remember to write. The command re-checks anyway — it is
+    also reachable from an agent tool, which does not come through Pydantic.
+
+    Value-level rules (the ICD-10 shape, the eleven body keys, the five
+    recovery windows, the length caps) deliberately stay in
+    `services/claims/edit.py`. Declaring them twice would be two places to
+    change when the vocabulary moves, and the server-side one is the one that
+    is always enforced.
+    """
+
+    model_config = ApiModel.model_config | ConfigDict(extra="forbid")
+
+    expected_version: int = Field(
+        ge=1,
+        description=(
+            "The `version` the client read. The write is compare-and-swapped "
+            "on it and answers 409 with the fresh entity on a mismatch."
+        ),
+    )
+    injury_type: str | None = None
+    cause: str | None = None
+    body_key: str | None = None
+    icd: str | None = None
+    icd_desc: str | None = None
+    disability: Disability | None = None
+    recovery: RecoveryWindow | None = None
+
+    def edited_fields(self) -> dict[str, object]:
+        """The fields the caller actually sent, `null`s included.
+
+        A `None` that arrived explicitly is in `model_fields_set`, so it is
+        distinguishable from a field left out — and it is passed **through**
+        to the command rather than dropped, because "PATCH ignored one of the
+        fields you sent" is the kind of quiet the audit log exists to
+        prevent.
+
+        **The refusal itself moved into the command** (code review,
+        2026-08-12). It used to happen here, which meant it happened while
+        the router was still *building* the call — before the command's role
+        check, so a supervisor sending `{"cause": null}` was told their patch
+        was malformed rather than that their role cannot edit. That inverts
+        the refusal ladder `services/claims/edit.py` documents, and it would
+        have been inherited by every Epic 3 command reaching `_answer`.
+        Refusing in `normalise` also covers the AD-13 agent tools, which
+        never pass through this model at all.
+        """
+        sent = self.model_fields_set - {"expected_version"}
+        return {name: getattr(self, name) for name in sent}
+
+
+class ConflictProblemDocument(ProblemDocument):
+    """The 409 body — a problem document **carrying the fresh entity**.
+
+    The Write-concurrency convention's shape, declared as a model so it
+    reaches the OpenAPI document and every Epic 3+ command inherits a
+    contract rather than a habit. `claim` is the same `ClaimDetailResponse`
+    the GET answers, so a client rendering a conflict runs the code it
+    already has for rendering the case file (AD-9: roll back the optimistic
+    value, show the returned state inline, no client-side merge).
+    """
+
+    claim: ClaimDetailResponse
+
+
+def _conflict_schema() -> dict[str, Any]:
+    """`ConflictProblemDocument`'s schema, pointed at the shared components.
+
+    Pydantic's default `model_json_schema()` inlines every nested model under
+    a local `$defs` and refers to them as `#/$defs/…`. That is correct JSON
+    Schema and wrong here: the document this lands in is an OpenAPI one, the
+    fragment is nested three levels inside a path item, and `#/$defs/…`
+    resolves against the *document root* — where there is no `$defs`. The
+    generated client's build broke on twenty-five dangling references before
+    this function existed.
+
+    So the refs are re-templated at the components section, which already
+    holds every one of these models (they are the GET's response), and the
+    now-redundant `$defs` block is dropped. `tests/test_problem_json.py`
+    asserts the whole document has no unresolvable reference, so the next
+    story that attaches an entity to an error cannot reintroduce this
+    quietly.
+    """
+    schema = ConflictProblemDocument.model_json_schema(ref_template="#/components/schemas/{model}")
+    schema.pop("$defs", None)
+    return schema
+
+
+CONFLICT_RESPONSE: dict[int | str, dict[str, object]] = {
+    409: {
+        "description": (
+            "The claim has changed since the caller read it. The body is an "
+            "RFC 9457 problem document carrying the fresh entity under "
+            "`claim` — re-read and redo; nothing is merged server-side."
+        ),
+        "content": {PROBLEM_CONTENT_TYPE: {"schema": _conflict_schema()}},
+    }
+}
+
+FORBIDDEN_RESPONSE: dict[int | str, dict[str, object]] = {
+    403: {
+        "description": (
+            "The caller's role does not carry the edit capability. Answered "
+            "before the claim is looked up, so it says nothing about whether "
+            "the claim exists (RFC 9457 problem document)."
+        ),
+        "content": {PROBLEM_CONTENT_TYPE: {"schema": ProblemDocument.model_json_schema()}},
+    }
+}
+
+
+@router.patch(
+    "/claims/{claim_business_id}",
+    response_model=ClaimDetailResponse,
+    summary="Edit a claim's clinical and classification fields (audited, versioned)",
+    responses={
+        **UNAUTHENTICATED_RESPONSE,
+        **FORBIDDEN_RESPONSE,
+        **NOT_FOUND_RESPONSE,
+        **CONFLICT_RESPONSE,
+    },
+)
+async def edit_fields(
+    ctx: CallerContextDep,
+    db: DbDep,
+    response: Response,
+    patch: ClaimFieldPatch,
+    claim_business_id: Annotated[
+        str,
+        Path(
+            pattern=CLAIM_ID_PATTERN,
+            description="The claim's business id, `WC-nnnn`.",
+            examples=["WC-20017"],
+        ),
+    ],
+) -> ClaimDetailResponse:
+    """Apply a whitelisted patch to one claim, and answer with the case file.
+
+    Thin in the way AD-1 and AD-4 both require: this function validates a
+    body, calls one service command, and maps four exceptions onto four
+    status codes. **It never touches a session for writing** — the command is
+    the only write path, which is what makes "every mutation is audited" a
+    structural fact rather than a convention (asserted in
+    `tests/test_claim_edit_validation.py`).
+
+    The success body is the whole entity, not an acknowledgement: it carries
+    the new `version` the next edit will compare against, the timeline with
+    this edit's event already in it, and every derived value recomputed
+    through the registry (AD-10).
+    """
+    response.headers["Cache-Control"] = "no-store"
+    return await _answer(
+        lambda: update_claim_fields(
+            db,
+            ctx,
+            claim_business_id,
+            expected_version=patch.expected_version,
+            patch=patch.edited_fields(),
+        ),
+        claim_business_id,
+    )
+
+
+async def _answer(
+    call: Callable[[], Awaitable[ClaimDetail]],
+    claim_business_id: str,
+) -> ClaimDetailResponse:
+    """Run one AD-4 command and map its four refusals onto four statuses.
+
+    **Written once because the sameness is the contract.** Four routes now
+    reach commands that raise the same four exceptions (Story 2.3's edit,
+    2.4's severity, add and remove), and a caller comparing one route's
+    refusal with another's must not be able to learn from the difference —
+    which is only guaranteed if there is one function producing them. It
+    also means Epic 3's commands inherit the mapping rather than copying it.
+
+    The argument is a **callable**, not an awaited coroutine, so that nothing
+    is evaluated before the `try` — a body-shaping helper that raised while
+    the call was being built would escape this mapping entirely and surface
+    as a 500. Nothing does today: the explicit-null refusal that used to live
+    in `ClaimFieldPatch.edited_fields()` moved into the command during the
+    2026-08-12 code review, precisely so the role check runs before it.
+    """
+    try:
+        result = await call()
+    except EditNotPermitted as exc:
+        # Raised before the claim is read, so this answer is identical for a
+        # claim in the caller's book, one in somebody else's, and one that
+        # does not exist. A supervisor learns nothing from it.
+        raise ProblemException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            title="Forbidden",
+            detail=str(exc),
+            type_="/problems/edit-not-permitted",
+            headers={"Cache-Control": "no-store"},
+        ) from exc
+    except ClaimNotVisible as exc:
+        # **Also the answer for an injury id that is not on the claim**, and
+        # the sameness is deliberate. A distinct "no such injury" would tell
+        # a caller that the *claim* exists, which is exactly the enumeration
+        # oracle `select_claim_detail`'s single-answer rule closes.
+        raise _not_found(claim_business_id) from exc
+    except InvalidPatch as exc:
+        # Not a bare `ValueError`: catching that would turn an unrelated bug
+        # deep in the service into a cheerful 422 that blames the caller.
+        raise ProblemException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            title="Unprocessable Content",
+            detail=str(exc),
+            type_="/problems/invalid-patch",
+            headers={"Cache-Control": "no-store"},
+        ) from exc
+    except StaleClaim as exc:
+        raise ProblemException(
+            status_code=status.HTTP_409_CONFLICT,
+            title="Conflict",
+            detail=(
+                "This claim was changed by someone else while you were "
+                "editing. The current values are attached."
+            ),
+            type_="/problems/stale-write",
+            headers={"Cache-Control": "no-store"},
+            extensions={
+                # `mode="json"` because the extension is merged into a plain
+                # dict and handed to `JSONResponse`, which encodes with
+                # `json.dumps` and has never heard of `datetime.date` — the
+                # response model's own serialiser is what the 200 path gets,
+                # and this path has to ask for it explicitly.
+                "claim": ClaimDetailResponse.model_validate(exc.fresh).model_dump(
+                    by_alias=True, mode="json"
+                )
+            },
+        ) from exc
+    return ClaimDetailResponse.model_validate(result)
+
+
+# --- Story 2.4: the injury diagram's three writes -----------------------
+
+
+class SeverityPatch(ApiModel):
+    """The severity-score PATCH body.
+
+    A route of its own rather than an eighth key on `ClaimFieldPatch`, for
+    the reason `services/claims/edit.py` gives at `update_claim_severity`:
+    that whitelist and everything built on it are machinery for *text*.
+
+    **The bounds are declared here as well as enforced in the command**, and
+    that is a departure from 2.3's "value rules stay in the service". The
+    reason is that these two are not a vocabulary that might move: `0..100`
+    is `severity_score`'s domain, fixed by the column and by the CHECK
+    constraint on `additional_injury`. Declaring it puts the bound in the
+    OpenAPI document, so the generated client refuses `101` before it
+    becomes a round trip — and the command still refuses it for the agent
+    tools that never pass through Pydantic (AD-13).
+    """
+
+    model_config = ApiModel.model_config | ConfigDict(extra="forbid")
+
+    expected_version: int = Field(
+        ge=1,
+        description=(
+            "The `version` the client read. The write is compare-and-swapped "
+            "on it and answers 409 with the fresh entity on a mismatch."
+        ),
+    )
+    severity_score: int = Field(
+        ge=SEVERITY_MIN,
+        le=SEVERITY_MAX,
+        description=(
+            "0-100. Refused, never clamped — the prototype silently turns a "
+            "typo of 780 into a maximum-severity claim."
+        ),
+    )
+
+
+class NewInjury(ApiModel):
+    """The add-injury body: a region, a type, and a score.
+
+    `bodyKey` is a plain string here rather than an enum for the reason 2.3's
+    `ClaimFieldPatch.bodyKey` is: the vocabulary is served on the case file
+    (`editOptions.bodyParts`) and validated in the command, so a client builds
+    its select from the response and cannot offer a value the server refuses.
+
+    There is no `bodyPart` field. The label is the server's answer for the
+    key (`BODY_PART_LABELS`), exactly as it is when a handler changes the
+    claim's body part — a caller that could supply its own could file "Left
+    Hand" against `head`.
+    """
+
+    model_config = ApiModel.model_config | ConfigDict(extra="forbid")
+
+    expected_version: int = Field(
+        ge=1,
+        description=(
+            "The **claim's** `version`. The insert is guarded on it, so an "
+            "injury cannot be recorded against a case file that has moved on."
+        ),
+    )
+    body_key: str = Field(description="One of `editOptions.bodyParts[].key`.")
+    injury_type: str = Field(description="Free text, e.g. `Laceration`.")
+    severity_score: int = Field(
+        ge=SEVERITY_MIN,
+        le=SEVERITY_MAX,
+        description="0-100. The add form starts at `injury.defaultSeverityScore`.",
+    )
+
+
+@router.post(
+    "/claims/{claim_business_id}/injuries",
+    response_model=ClaimDetailResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Record a secondary injury on a claim (audited, versioned)",
+    responses={
+        **UNAUTHENTICATED_RESPONSE,
+        **FORBIDDEN_RESPONSE,
+        **NOT_FOUND_RESPONSE,
+        **CONFLICT_RESPONSE,
+    },
+)
+async def add_injury(
+    ctx: CallerContextDep,
+    db: DbDep,
+    response: Response,
+    injury: NewInjury,
+    claim_business_id: Annotated[
+        str,
+        Path(
+            pattern=CLAIM_ID_PATTERN,
+            description="The claim's business id, `WC-nnnn`.",
+            examples=["WC-20017"],
+        ),
+    ],
+) -> ClaimDetailResponse:
+    """Add one marker to the body diagram, and answer with the case file.
+
+    **201 with no `Location` header.** A row is created, so 201 is the honest
+    status; there is deliberately no `GET /claims/{id}/injuries/{id}` to
+    point at, because the injuries are part of the case file and a second way
+    to read one would be a second place for the diagram's data to come from.
+    The body is the whole case file for `PATCH`'s reason: it carries the new
+    marker, the new summary row with its own `id` and `version`, and every
+    derived value recomputed through the registry.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    return await _answer(
+        lambda: add_additional_injury(
+            db,
+            ctx,
+            claim_business_id,
+            expected_version=injury.expected_version,
+            body_key=injury.body_key,
+            injury_type=injury.injury_type,
+            severity_score=injury.severity_score,
+        ),
+        claim_business_id,
+    )
+
+
+@router.delete(
+    "/claims/{claim_business_id}/injuries/{injury_id}",
+    response_model=ClaimDetailResponse,
+    summary="Remove a secondary injury from a claim (audited, versioned)",
+    responses={
+        **UNAUTHENTICATED_RESPONSE,
+        **FORBIDDEN_RESPONSE,
+        **NOT_FOUND_RESPONSE,
+        **CONFLICT_RESPONSE,
+    },
+)
+async def remove_injury(
+    ctx: CallerContextDep,
+    db: DbDep,
+    response: Response,
+    claim_business_id: Annotated[
+        str,
+        Path(
+            pattern=CLAIM_ID_PATTERN,
+            description="The claim's business id, `WC-nnnn`.",
+            examples=["WC-20017"],
+        ),
+    ],
+    injury_id: Annotated[
+        int,
+        Path(ge=1, description="The `id` of one of `injury.markers[]`.", examples=[42]),
+    ],
+    expected_version: Annotated[
+        int,
+        Query(
+            # Aliased, because the camelCase boundary is the whole contract's
+            # and a query parameter is no less on the wire than a body field.
+            # The queue's four parameters are single words, so this is the
+            # first place the question comes up.
+            alias="expectedVersion",
+            ge=1,
+            description=(
+                "The **injury row's** `version`, not the claim's — the delete "
+                "compare-and-swaps on the row it destroys."
+            ),
+        ),
+    ],
+) -> ClaimDetailResponse:
+    """Remove one secondary injury, and answer with the case file.
+
+    **The version travels in the query string** because a DELETE body is
+    permitted but widely dropped by proxies and generated clients, and a
+    compare-and-swap whose guard can be silently discarded is not a guard.
+
+    A 200 with the case file rather than a 204: the caller needs the diagram
+    without the marker, and every other command on this router answers with
+    the entity it changed.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    return await _answer(
+        lambda: remove_additional_injury(
+            db,
+            ctx,
+            claim_business_id,
+            injury_id,
+            expected_version=expected_version,
+        ),
+        claim_business_id,
+    )
+
+
+@router.patch(
+    "/claims/{claim_business_id}/severity",
+    response_model=ClaimDetailResponse,
+    summary="Set a claim's severity score (audited, versioned)",
+    responses={
+        **UNAUTHENTICATED_RESPONSE,
+        **FORBIDDEN_RESPONSE,
+        **NOT_FOUND_RESPONSE,
+        **CONFLICT_RESPONSE,
+    },
+)
+async def edit_severity(
+    ctx: CallerContextDep,
+    db: DbDep,
+    response: Response,
+    patch: SeverityPatch,
+    claim_business_id: Annotated[
+        str,
+        Path(
+            pattern=CLAIM_ID_PATTERN,
+            description="The claim's business id, `WC-nnnn`.",
+            examples=["WC-20017"],
+        ),
+    ],
+) -> ClaimDetailResponse:
+    """Set the severity score, and answer with the recomputed case file.
+
+    The score is the input to the `risk` band (AD-10), so the response's
+    header gauge, the marker colours in `injury`, the queue cards and the top
+    bar's High Risk tile all move with it — none of them because this route
+    told them to, all of them because they read the same derivation.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    return await _answer(
+        lambda: update_claim_severity(
+            db,
+            ctx,
+            claim_business_id,
+            expected_version=patch.expected_version,
+            severity_score=patch.severity_score,
+        ),
+        claim_business_id,
+    )

@@ -16,8 +16,10 @@ predicted.
 
 import importlib
 import re
+from dataclasses import fields, replace
 from datetime import date, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 import sqlalchemy as sa
@@ -42,31 +44,31 @@ SERVER_ROOT = Path(__file__).resolve().parents[1]
 # with that code however wrong both were. `tests/test_rules_engine.py` is
 # what ties these values back to the committed document.
 SEEDED_THRESHOLDS = DerivationThresholds(
-    version=1,
+    version=2,
     risk_high_min=65,
     risk_med_min=35,
     siu_fraud_score_min=60,
     rtw_blocked_hash_modulus=5,
     payment_due_hash_modulus=3,
+    # Story 2.2's four, which arrived with version 2 of the document.
+    treatment_early_max_ratio=0.3,
+    treatment_active_max_ratio=0.7,
+    recovery_year_expected_days=180,
+    recovery_default_expected_days=42,
 )
 
 
-def thresholds(**overrides: int) -> DerivationThresholds:
-    """The seeded block, with named parameters replaced."""
-    return DerivationThresholds(
-        version=overrides.get("version", SEEDED_THRESHOLDS.version),
-        risk_high_min=overrides.get("risk_high_min", SEEDED_THRESHOLDS.risk_high_min),
-        risk_med_min=overrides.get("risk_med_min", SEEDED_THRESHOLDS.risk_med_min),
-        siu_fraud_score_min=overrides.get(
-            "siu_fraud_score_min", SEEDED_THRESHOLDS.siu_fraud_score_min
-        ),
-        rtw_blocked_hash_modulus=overrides.get(
-            "rtw_blocked_hash_modulus", SEEDED_THRESHOLDS.rtw_blocked_hash_modulus
-        ),
-        payment_due_hash_modulus=overrides.get(
-            "payment_due_hash_modulus", SEEDED_THRESHOLDS.payment_due_hash_modulus
-        ),
-    )
+def thresholds(**overrides: Any) -> DerivationThresholds:
+    """The seeded block, with named parameters replaced.
+
+    `replace` rather than a hand-written argument per field: the per-field
+    form had to be extended every time the block grew, and a field somebody
+    forgot to thread through would silently ignore an override the test was
+    written to exercise.
+    """
+    unknown = set(overrides) - {field.name for field in fields(DerivationThresholds)}
+    assert not unknown, f"no such threshold: {sorted(unknown)}"
+    return replace(SEEDED_THRESHOLDS, **overrides)
 
 
 def risk_for(**overrides: int) -> derivations.RiskDerivation:

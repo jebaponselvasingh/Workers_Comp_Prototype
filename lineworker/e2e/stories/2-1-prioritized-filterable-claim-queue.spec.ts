@@ -68,7 +68,10 @@ test.describe("@story:2-1 @epic:2 prioritized, filterable claim queue", () => {
     // --- the first claim is selected (AC 2) ----------------------------
     const first = expected.intake[0].claimId;
     await expect(page).toHaveURL(new RegExp(`claim=${first}`));
-    await expect(byTestId(page, "detail-selected")).toHaveText(first);
+    // Story 2.2 filled this seam: the centre pane named the selected claim
+    // in a placeholder, and now names it in the real case header. The
+    // assertion follows the seam rather than being deleted with it.
+    await expect(byTestId(page, "case-header-claim-id")).toHaveText(first);
 
     // --- a filter re-filters, server-side (AC 3) -----------------------
     await byTestId(page, "queue-filter").click();
@@ -102,7 +105,7 @@ test.describe("@story:2-1 @epic:2 prioritized, filterable claim queue", () => {
 
     await expect(page).toHaveURL(new RegExp(`claim=${target}`));
     await expect(card).toHaveAttribute("aria-current", "true");
-    await expect(byTestId(page, "detail-selected")).toHaveText(target);
+    await expect(byTestId(page, "case-header-claim-id")).toHaveText(target);
   });
 
   test("a stage the handler has nothing in says so (AC 1, NFR-3)", async ({ page }) => {
@@ -208,6 +211,9 @@ test.describe("@story:2-1 @epic:2 prioritized, filterable claim queue", () => {
     await loginAs(page, PERSONAS.handler);
     await page.goto("/workspace?claim=WC-9999");
 
+    // Same message, a better source: Story 2.1 inferred this from the queue
+    // payload it happened to hold; Story 2.2's detail endpoint answers 404
+    // and the pane reports what the server said.
     await expect(byTestId(page, "detail-unknown")).toContainText("not in this caseload");
     // No card is highlighted, and the URL is left exactly as typed — a
     // redirect to the first claim would hide the broken link it came from.

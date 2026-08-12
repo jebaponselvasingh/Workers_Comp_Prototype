@@ -12,6 +12,7 @@ its expected value with the code under test would pass no matter what that
 code did.
 """
 
+import importlib.util
 import json
 from datetime import UTC, date, datetime
 from decimal import ROUND_HALF_UP, Decimal
@@ -319,3 +320,138 @@ def expected_queue(
             )
         groups[stage] = cards
     return groups
+
+
+# --- Story 2.2: the case file, restated independently --------------------
+
+CASE_FILE_PATH = SEED_PATH.parent / "case_file_seed.json"
+
+
+@lru_cache
+def _case_file_cached() -> dict[str, Any]:
+    with CASE_FILE_PATH.open() as handle:
+        data: dict[str, Any] = json.load(handle)
+    return data
+
+
+def timeline_events_for(claim_business_id: str) -> list[dict[str, Any]]:
+    """A claim's seeded timeline, in the order the migration inserts it.
+
+    Copies, for `glossary_terms`' reason: the order is what most of these
+    assertions are about, and an in-place sort in one test must not rewrite
+    the expectation for the next.
+    """
+    return [
+        dict(event)
+        for event in _case_file_cached()["timeline_events"]
+        if event["claim_id"] == claim_business_id
+    ]
+
+
+def documents_for(claim_business_id: str) -> list[dict[str, Any]]:
+    return [
+        dict(document)
+        for document in _case_file_cached()["documents"]
+        if document["claim_id"] == claim_business_id
+    ]
+
+
+def all_timeline_events() -> list[dict[str, Any]]:
+    return [dict(event) for event in _case_file_cached()["timeline_events"]]
+
+
+def all_documents() -> list[dict[str, Any]]:
+    return [dict(document) for document in _case_file_cached()["documents"]]
+
+
+# The intake checklist's required set, restated from the story text ("the
+# prototype's doc-type set FROI/INCIDENT/MEDAUTH/WAGE") rather than read out
+# of the JDM document the service loads — an oracle that shared the document
+# would agree with a mis-parsed parameter block.
+REQUIRED_INTAKE_DOC_TYPES = ("froi", "incident", "medauth", "wage")
+
+
+def expected_intake_checklist(claim_business_id: str) -> list[dict[str, Any]]:
+    """Received/Missing per required document type, in the required order."""
+    present = {document["doc_type"] for document in documents_for(claim_business_id)}
+    return [
+        {"docType": doc_type, "received": doc_type in present}
+        for doc_type in REQUIRED_INTAKE_DOC_TYPES
+    ]
+
+
+# The treatment overview shows the last six events (the prototype's
+# `.slice(-6)`), restated here as a number rather than imported.
+RECENT_TIMELINE_COUNT = 6
+
+
+def expected_recent_timeline(claim_business_id: str) -> list[dict[str, Any]]:
+    return timeline_events_for(claim_business_id)[-RECENT_TIMELINE_COUNT:]
+
+
+# Migration 0013's display-string -> token map, loaded by path because
+# `data/versions/` is an Alembic script directory rather than a package.
+_RECOVERY_MIGRATION = (
+    Path(__file__).resolve().parents[1]
+    / "data"
+    / "versions"
+    / "20260812_0013_recovery_window_enum.py"
+)
+_recovery_spec = importlib.util.spec_from_file_location("_m0013", _RECOVERY_MIGRATION)
+assert _recovery_spec and _recovery_spec.loader
+_recovery_module = importlib.util.module_from_spec(_recovery_spec)
+_recovery_spec.loader.exec_module(_recovery_module)
+
+
+def recovery_token(display: str) -> str:
+    """The `RecoveryWindow` token a seeded display string converts to.
+
+    Story 1.2 seeded `claim.recovery` as the prototype's own text and Story
+    2.3's code review turned the column into an enum, so an oracle reading
+    the seed file has to apply the same conversion the migration did. Reading
+    it *from* the migration rather than restating it keeps the two from
+    drifting — and a value the migration cannot map is a `KeyError` here,
+    which is the same refusal `upgrade()` makes.
+    """
+    token: str = _recovery_module.TEXT_TO_TOKEN[display]
+    return token
+
+
+# --- Story 2.4: the injury diagram, restated independently ---------------
+#
+# `treatment_plan_step` and the four prognosis columns come from
+# `seed_data.json`'s `deferred` block — the part of the prototype's dataset
+# Story 1.2 extracted but had no columns for. These helpers read the same
+# file the migration reads and re-do the transformation independently, which
+# is the discipline every other oracle in this module follows.
+
+
+@lru_cache
+def _deferred_by_claim() -> dict[str, dict[str, Any]]:
+    return {row["claim_id"]: row for row in seed()["deferred"]}
+
+
+def treatment_plan_for(claim_business_id: str) -> list[str]:
+    """A claim's treatment-plan steps, in the array's order.
+
+    The array index *is* the step number (1-based, as the card renders it);
+    the migration writes it out as a column so the ordering does not depend
+    on insertion order the way `timeline_event`'s does.
+    """
+    row = _deferred_by_claim().get(claim_business_id)
+    assert row is not None, f"no seeded deferred block for {claim_business_id!r}"
+    steps: list[str] = row["treatment_plan"]
+    return steps
+
+
+def prognosis_for(claim_business_id: str) -> dict[str, str]:
+    """A claim's four prognosis strings, keyed as the wire keys them.
+
+    The seed file's keys (`mmi`, `rtw`, `impairment`, `litigation`) happen to
+    be the response's too, so no renaming is needed — asserted by use rather
+    than restated, since a change on either side fails the comparison.
+    """
+    row = _deferred_by_claim().get(claim_business_id)
+    assert row is not None, f"no seeded deferred block for {claim_business_id!r}"
+    prognosis: dict[str, str] = dict(row["prognosis"])
+    return prognosis

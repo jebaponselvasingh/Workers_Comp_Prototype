@@ -207,3 +207,47 @@ def test_cookie_secure_flag_follows_environment(secure_env: str, expected: bool)
 def test_cookie_secure_flag_is_overridable() -> None:
     settings = Settings(database_url=UNREACHABLE_DB, env="dev", session_cookie_secure=True)  # type: ignore[arg-type]
     assert settings.cookie_secure is True
+
+
+def test_every_ref_in_the_openapi_document_resolves() -> None:
+    """A `$ref` nobody can follow breaks the generated client, not the API.
+
+    Story 2.3 attaches an entity to a 409 body — the Write-concurrency
+    convention's shape — and the obvious way to describe it,
+    `Model.model_json_schema()`, emits `#/$defs/…` references that resolve
+    against the *document root*, three levels above where the fragment
+    lands. The server answered correctly and `npm run generate:api` failed
+    with twenty-five unresolvable references.
+
+    Walked generically rather than asserted about that one response, because
+    every later command inherits the same 409 shape and the failure is
+    invisible until somebody regenerates the client.
+    """
+    document = create_app(Settings(database_url=UNREACHABLE_DB)).openapi()
+
+    def walk(node: object, path: str) -> list[str]:
+        if isinstance(node, dict):
+            found = []
+            for key, value in node.items():
+                if key == "$ref" and isinstance(value, str):
+                    found.append(f"{path}: {value}")
+                else:
+                    found.extend(walk(value, f"{path}/{key}"))
+            return found
+        if isinstance(node, list):
+            return [ref for i, item in enumerate(node) for ref in walk(item, f"{path}/{i}")]
+        return []
+
+    def resolves(ref: str) -> bool:
+        if not ref.startswith("#/"):
+            return False
+        node: object = document
+        for part in ref[2:].split("/"):
+            if not isinstance(node, dict) or part not in node:
+                return False
+            node = node[part]
+        return True
+
+    refs = walk(document, "")
+    assert refs, "no $ref found at all — the walk is not reaching the document"
+    assert [entry for entry in refs if not resolves(entry.split(": ", 1)[1])] == []

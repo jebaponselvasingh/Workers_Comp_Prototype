@@ -11,9 +11,16 @@
  * TanStack refetches. It does not narrow a cached list. AD-1 again — the
  * client does not hold the persona's whole caseload and must not pretend to.
  */
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useIsMutating,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 
 import { api } from "./client";
+import { problemExtension } from "./errors";
 import { queryKeys } from "./queryKeys";
 import type { components } from "./schema";
 
@@ -61,8 +68,8 @@ export function useClaimQueue(filter: QueueFilter) {
  * `enabled` is the caller's expansion state. Without it every mounted group
  * with a `nextCursor` would fetch its second page on load, which is exactly
  * the eagerness pagination exists to avoid. A **disabled** call still
- * subscribes to the entry and reads whatever is in it — which is how
- * `useLoadedClaimIds` below looks at the pages the queue pane fetched
+ * subscribes to the entry and reads whatever is in it, which is what lets a
+ * second reader of the same group see the pages the queue pane fetched
  * without fetching anything itself.
  */
 export function useStageGroupPages(
@@ -89,68 +96,435 @@ export function useStageGroupPages(
   });
 }
 
+/** The case file for one claim (Story 2.2). */
+export type ClaimDetail = components["schemas"]["ClaimDetailResponse"];
+export type CaseHeaderData = components["schemas"]["CaseHeaderResponse"];
+export type StepperStep = components["schemas"]["StepperStepResponse"];
+export type StageOverview = ClaimDetail["overview"];
+export type IntakeOverviewData = components["schemas"]["IntakeOverviewResponse"];
+export type InvestigationOverviewData =
+  components["schemas"]["InvestigationOverviewResponse"];
+export type TreatmentOverviewData = components["schemas"]["TreatmentOverviewResponse"];
+export type SettledOverviewData = components["schemas"]["SettledOverviewResponse"];
+export type TimelineEntry = components["schemas"]["TimelineEntryResponse"];
+export type ChecklistRow = components["schemas"]["ChecklistRowResponse"];
+export type CostSplit = components["schemas"]["CostSplitResponse"];
+export type TreatmentPhase = components["schemas"]["TreatmentPhase"];
+export type CoordinationStatus = components["schemas"]["CoordinationStatus"];
+export type DocType = components["schemas"]["DocType"];
+export type CommStatus = components["schemas"]["CommStatus"];
+export type ReturnStatus = components["schemas"]["ReturnStatus"];
+export type Disability = components["schemas"]["Disability"];
+export type RecoveryWindow = components["schemas"]["RecoveryWindow"];
+
 /**
- * What the workspace is currently holding, for one filter — the claim ids on
- * screen, and whether that is the whole book.
+ * One claim's case file.
  *
- * The queue pane and the detail pane have to agree about this or they tell a
- * handler two different things about one claim (AD-9's "three states of one
- * claim"): the card is highlighted in the list on the left while the pane on
- * the right says the claim is not shown. Reading the base payload alone got
- * that wrong the moment anyone clicked "Show more" — the revealed claim was
- * rendered by the queue and unknown to the detail.
+ * `enabled` and the `?? ""` key are defensive, not load-bearing: today the
+ * only caller is `ClaimDetailPane`'s `CaseFile`, which is typed
+ * `claimId: string` and is mounted only after the pane has branched on
+ * `selectedClaimId === null`, so neither guard is reachable. They stay
+ * because the hook is exported and a second caller should not have to
+ * rediscover that `/claims/null` is a request this must never make — but the
+ * previous version of this comment claimed the workspace already called it
+ * that way, which it does not (code review, 2026-08-12).
  *
- * So this reads the *same cache entries the pages queries write*, keyed the
- * same way, with `enabled: false` throughout — no request is made here, only
- * a subscription, so the answer moves when a page lands. The four calls are
- * spelled out rather than mapped over `STAGE_ORDER` because they are hooks
- * and their order has to be a property of the source, not of an array.
- *
- * `complete` is the other half of the answer and the reason this returns a
- * pair. "Not in the ids" is only evidence of absence when every group has
- * been read to its end; a group with a page nobody has asked for yet leaves
- * the claim unaccounted for, not missing.
+ * `retry: false` for a 404. The shared client already refuses to retry
+ * 4xx (`queryClient.ts`), so this is inherited rather than restated — noted
+ * because "claim not in your caseload" is the one error this pane must
+ * render immediately rather than after two backoffs.
  */
-export interface LoadedClaims {
-  ids: ReadonlySet<string>;
-  complete: boolean;
+export function useClaimDetail(claimId: string | null) {
+  return useQuery({
+    queryKey: queryKeys.claims.detail(claimId ?? ""),
+    queryFn: async (): Promise<ClaimDetail> => {
+      const { data } = await api.GET("/claims/{claim_business_id}", {
+        params: { path: { claim_business_id: claimId! } },
+      });
+      return data!;
+    },
+    enabled: claimId !== null,
+    // The same 15s the queue uses. The two are read side by side and Epic
+    // 2's edits invalidate both, so a case file that went stale on a
+    // different clock from the card naming it would be a visible
+    // disagreement.
+    staleTime: 15_000,
+  });
 }
 
-export function useLoadedClaimIds(
-  queue: ClaimQueue | undefined,
-  filter: QueueFilter,
-  expandedStages: ReadonlySet<Stage>,
-): LoadedClaims {
-  const cursorOf = (stage: Stage) => queue?.groups[stage].nextCursor ?? null;
-  const pages = {
-    intake: useStageGroupPages(filter, "intake", cursorOf("intake"), false),
-    investigation: useStageGroupPages(filter, "investigation", cursorOf("investigation"), false),
-    treatment: useStageGroupPages(filter, "treatment", cursorOf("treatment"), false),
-    settled: useStageGroupPages(filter, "settled", cursorOf("settled"), false),
-  };
+/** The audited inline edit (Story 2.3). */
+export type ClaimFieldPatch = components["schemas"]["ClaimFieldPatch"];
+export type EditOptions = components["schemas"]["EditOptionsResponse"];
+export type BodyPartOption = components["schemas"]["BodyPartOptionResponse"];
 
-  const ids = new Set<string>();
-  let complete = queue !== undefined;
-  for (const stage of STAGE_ORDER) {
-    if (!queue) break;
-    for (const card of queue.groups[stage].items) ids.add(card.claimId);
+/**
+ * The six fields the injury card edits, by their wire names.
+ *
+ * Derived from the generated patch type rather than written out, so a field
+ * the server stops accepting is a TypeScript error here instead of a 422 a
+ * handler discovers.
+ */
+export type EditableField = Exclude<keyof ClaimFieldPatch, "expectedVersion">;
 
-    // Only a group the handler actually expanded contributes its pages —
-    // the same condition `StageGroup` renders under. A cache entry left
-    // behind by an expansion that has since expired is not on screen, and
-    // counting it here would re-open the disagreement from the other side.
-    const expanded = expandedStages.has(stage);
-    const group = pages[stage];
-    if (expanded) {
-      for (const page of group.data?.pages ?? []) {
-        for (const card of page.items) ids.add(card.claimId);
+/**
+ * Where each edited scalar is echoed back, and nowhere else.
+ *
+ * Two explicit lists rather than a spread over whatever key was edited: the
+ * header and the investigation card carry *overlapping but different*
+ * subsets, and `{...header, [field]: value}` on a field the header does not
+ * have would invent a property that the next server response then deletes —
+ * a cache that briefly holds a shape the API never sends.
+ */
+const OPTIMISTIC_HEADER_FIELDS = ["injuryType", "cause", "bodyKey", "icd"] as const;
+const OPTIMISTIC_INVESTIGATION_FIELDS = [
+  "injuryType",
+  "cause",
+  "icd",
+  "disability",
+  "recovery",
+] as const;
+/**
+ * The treatment variant's one editable field (code review, 2026-08-12).
+ *
+ * It was missing, and the omission was visible: a `<select>` bound to
+ * `overview.recovery` with nothing echoed back re-renders the *old* option
+ * the instant the handler picks a new one, so the choice appears to be
+ * rejected and then jumps when the response lands. The phase banner beside
+ * it still waits for the server — `expectedDays` and the phase are
+ * derivations, and those are exactly what AD-9 says must not be guessed.
+ */
+const OPTIMISTIC_TREATMENT_FIELDS = ["recovery"] as const;
+
+/**
+ * Write the edited scalar into a cached case file — and nothing else.
+ *
+ * This is the whole of what AD-9 permits optimistically: the value the
+ * handler typed, in the places the server echoes it back. `bodyKey` is a
+ * user-entered scalar and moves; `bodyPart`, its label, does **not** — the
+ * mapping from key to label is the server's (`services/claims/reference.py`)
+ * and guessing it here would be a second copy of a vocabulary. Nor does
+ * `version`, `risk`, `severityScore` or the timeline: every one of those is
+ * the server's answer and waits for it.
+ *
+ * `icdDesc` is editable through the command but appears on no surface, so it
+ * changes nothing here — the mutation still round-trips and the response
+ * still replaces the cache.
+ *
+ * Exported so a test can assert exactly that, without rendering anything.
+ */
+export function applyOptimisticEdit(
+  detail: ClaimDetail,
+  field: EditableField,
+  value: string,
+): ClaimDetail {
+  const header = (OPTIMISTIC_HEADER_FIELDS as readonly string[]).includes(field)
+    ? { ...detail.header, [field]: value }
+    : detail.header;
+  const echoed =
+    detail.overview.stageVariant === "investigation"
+      ? OPTIMISTIC_INVESTIGATION_FIELDS
+      : detail.overview.stageVariant === "treatment"
+        ? OPTIMISTIC_TREATMENT_FIELDS
+        : [];
+  const overview = (echoed as readonly string[]).includes(field)
+    ? { ...detail.overview, [field]: value }
+    : detail.overview;
+  return { ...detail, header, overview };
+}
+
+/**
+ * Edit one field of a claim, optimistically, under the server's version.
+ *
+ * The three outcomes are the story's three acceptance criteria, and each is
+ * handled here rather than in the component:
+ *
+ * - **Success.** The response *is* the fresh case file, so it is written
+ *   straight into the cache — no flash of the pre-edit value while a refetch
+ *   is in flight. The detail and queue keys are then invalidated, because
+ *   the queue card shows the same claim's injury type and must not be left
+ *   holding the old one (AC 3).
+ * - **Conflict (409).** Roll back to the snapshot, then render the fresh
+ *   entity the problem document carries. No retry, no merge (AD-9): the
+ *   edit was written against values somebody has since changed, and
+ *   re-sending it would overwrite their work silently.
+ * - **Anything else.** Roll back and let the caller show the message at the
+ *   field (NFR-3: inline, never a blocking dialog).
+ */
+/**
+ * The edited fields of one commit — one field, or the ICD pair.
+ *
+ * Derived from the generated patch rather than `Record<EditableField, string>`
+ * so the enum-valued fields keep their member unions: `disability: "yes"`
+ * fails to compile here rather than 422ing at a handler.
+ */
+export type FieldEdits = Omit<ClaimFieldPatch, "expectedVersion">;
+
+/**
+ * A 409's `claim` member, if it really is a case file.
+ *
+ * The value crossed a network and `problemExtension` is an unchecked cast,
+ * so a truncated or non-conforming body would otherwise be written straight
+ * into the detail cache — after which `detail.data.header` reads `undefined`,
+ * `CaseHeader` throws, and (there being no error boundary) the pane blanks.
+ * Three structural checks are enough to tell a case file from a fragment;
+ * anything less is trusted no further than "the server said something".
+ */
+function freshClaimFrom(error: unknown): ClaimDetail | undefined {
+  const claim = problemExtension<ClaimDetail>(error, "claim");
+  return claim && claim.claimId && claim.header && claim.overview ? claim : undefined;
+}
+
+export function useEditClaimFields(claimId: string) {
+  const client = useQueryClient();
+  const key = queryKeys.claims.detail(claimId);
+
+  return useMutation({
+    mutationKey: queryKeys.claims.writes(claimId),
+    mutationFn: async (variables: {
+      edits: FieldEdits;
+      expectedVersion: number;
+    }): Promise<ClaimDetail> => {
+      const { data } = await api.PATCH("/claims/{claim_business_id}", {
+        params: { path: { claim_business_id: claimId } },
+        body: { expectedVersion: variables.expectedVersion, ...variables.edits },
+      });
+      return data!;
+    },
+    onMutate: async (variables) => {
+      // A refetch landing mid-edit would overwrite the optimistic value with
+      // the pre-edit one and look like the input rejecting what was typed.
+      await client.cancelQueries({ queryKey: key });
+      const snapshot = client.getQueryData<ClaimDetail>(key);
+      if (snapshot) {
+        client.setQueryData(
+          key,
+          Object.entries(variables.edits).reduce(
+            // `null` is not a value this UI sends — the command refuses it —
+            // but the generated patch type admits it, so it is skipped rather
+            // than cast away.
+            (detail, [field, value]) =>
+              typeof value === "string"
+                ? applyOptimisticEdit(detail, field as EditableField, value)
+                : detail,
+            snapshot,
+          ),
+        );
       }
-    }
+      return { snapshot };
+    },
+    onError: (error, _variables, context) => {
+      // **Rolled back only if nothing else has landed since.** The snapshot
+      // was taken before this mutation; if a concurrent one succeeded in the
+      // meantime, restoring it would throw away a *committed* edit and leave
+      // the cache behind the database, after which every later edit 409s
+      // (code review). Comparing versions is enough: the server increments
+      // on every write, so an unchanged version means nothing else won.
+      const current = client.getQueryData<ClaimDetail>(key);
+      if (context?.snapshot && current?.version === context.snapshot.version) {
+        client.setQueryData(key, context.snapshot);
+      }
+      const fresh = freshClaimFrom(error);
+      if (fresh) client.setQueryData(key, fresh);
+    },
+    onSuccess: (fresh) => {
+      // The response *is* the fresh case file, so it is installed directly.
+      // The detail key is then marked stale **without** an immediate refetch:
+      // invalidating it outright fired a second GET per edit (measured), and
+      // re-opened the read-after-write window this design closed — the
+      // command commits and re-reads in a new transaction, so a follow-up GET
+      // resolving against older data would show the saved value reverting.
+      client.setQueryData(key, fresh);
+      void client.invalidateQueries({ queryKey: key, refetchType: "none" });
+      // The queue is a different resource and genuinely must re-fetch: its
+      // cards show this claim's injury type, and it has no fresh copy.
+      void client.invalidateQueries({ queryKey: queryKeys.claims.queues });
+    },
+    onSettled: () => {
+      // Whatever happened, the cache is re-synchronised on the next read.
+      // The `onError` rollback above is conservative by design, so this is
+      // what guarantees a failed edit cannot leave a stale entity behind
+      // indefinitely (code review).
+      void client.invalidateQueries({ queryKey: key, refetchType: "none" });
+    },
+  });
+}
 
-    const exhausted =
-      cursorOf(stage) === null || (expanded && group.isSuccess && !group.hasNextPage);
-    if (!exhausted) complete = false;
-  }
+/** The injury diagram (Story 2.4). */
+export type InjuryDiagram = components["schemas"]["InjuryDiagramResponse"];
+export type InjuryMarker = components["schemas"]["InjuryMarkerResponse"];
+export type Prognosis = components["schemas"]["PrognosisResponse"];
+export type TreatmentPlanStep = components["schemas"]["TreatmentPlanStepResponse"];
+export type NewInjury = components["schemas"]["NewInjury"];
 
-  return { ids, complete };
+/**
+ * What every Story 2.4 mutation does once the server has answered.
+ *
+ * Three things are invalidated and the third is the one worth writing down.
+ *
+ * - **The case file** is installed directly from the response and then
+ *   marked stale without a refetch, exactly as `useEditClaimFields` does:
+ *   the body *is* the fresh entity, and a follow-up GET would re-open the
+ *   read-after-write window that returning it closes.
+ * - **The queue** genuinely must re-fetch. Editing the severity score moves
+ *   the claim's risk band, which is the card's dot *and* an input to its
+ *   priority score — so the card can change position, not just colour.
+ * - **The top-bar stat tiles**, which no earlier mutation touched. `highRisk`
+ *   counts the claims in the high band across the caller's whole book, so a
+ *   score crossing the boundary changes a number two panes away (AC 3's
+ *   "stat tiles" clause). Nothing in the SPA could compute that; it has to
+ *   be re-asked.
+ *
+ * The SLA key is deliberately **not** invalidated: those four figures are
+ * averages of recorded durations, and nothing here writes one.
+ */
+function afterInjuryWrite(
+  client: ReturnType<typeof useQueryClient>,
+  key: readonly unknown[],
+  fresh: ClaimDetail,
+): void {
+  client.setQueryData(key, fresh);
+  void client.invalidateQueries({ queryKey: key, refetchType: "none" });
+  void client.invalidateQueries({ queryKey: queryKeys.claims.queues });
+  void client.invalidateQueries({ queryKey: queryKeys.stats.topbar });
+}
+
+/**
+ * Set the claim's severity score (AC 3).
+ *
+ * **No optimistic update at all**, unlike the inline text edits. AD-9 permits
+ * one for "the user-entered scalar", and the score *is* one — but every
+ * visible consequence of changing it is derived: the band that colours the
+ * number, the gauge, the primary marker, the bar's own colour. Writing the
+ * digits in optimistically while their colour waited for the server would
+ * render a state that exists nowhere — a 78 in green — which is worse than
+ * the ~100ms of the input holding its previous value. The severity input is
+ * disabled while the commit is in flight, so there is no ambiguity about
+ * what is being sent.
+ */
+export function useEditSeverity(claimId: string) {
+  const client = useQueryClient();
+  const key = queryKeys.claims.detail(claimId);
+
+  return useMutation({
+    mutationKey: queryKeys.claims.writes(claimId),
+    mutationFn: async (variables: {
+      severityScore: number;
+      expectedVersion: number;
+    }): Promise<ClaimDetail> => {
+      const { data } = await api.PATCH("/claims/{claim_business_id}/severity", {
+        params: { path: { claim_business_id: claimId } },
+        body: {
+          expectedVersion: variables.expectedVersion,
+          severityScore: variables.severityScore,
+        },
+      });
+      return data!;
+    },
+    onError: (error) => {
+      // No snapshot to roll back to, so a 409's fresh entity is the whole of
+      // the recovery: install it and let the card render the value that won.
+      const fresh = freshClaimFrom(error);
+      if (fresh) client.setQueryData(key, fresh);
+    },
+    onSuccess: (fresh) => afterInjuryWrite(client, key, fresh),
+    onSettled: () => {
+      void client.invalidateQueries({ queryKey: key, refetchType: "none" });
+    },
+  });
+}
+
+/**
+ * Record a secondary injury (AC 2).
+ *
+ * Nothing optimistic here either, and for a stronger reason than above: the
+ * new marker needs an `id`, a `version` and a severity band, none of which
+ * the browser can invent. The prototype fabricates an id from `Date.now()`;
+ * a row's identity is the database's.
+ */
+export function useAddInjury(claimId: string) {
+  const client = useQueryClient();
+  const key = queryKeys.claims.detail(claimId);
+
+  return useMutation({
+    mutationKey: queryKeys.claims.writes(claimId),
+    mutationFn: async (variables: {
+      injury: Omit<NewInjury, "expectedVersion">;
+      expectedVersion: number;
+    }): Promise<ClaimDetail> => {
+      const { data } = await api.POST("/claims/{claim_business_id}/injuries", {
+        params: { path: { claim_business_id: claimId } },
+        body: { expectedVersion: variables.expectedVersion, ...variables.injury },
+      });
+      return data!;
+    },
+    onError: (error) => {
+      const fresh = freshClaimFrom(error);
+      if (fresh) client.setQueryData(key, fresh);
+    },
+    onSuccess: (fresh) => afterInjuryWrite(client, key, fresh),
+    onSettled: () => {
+      void client.invalidateQueries({ queryKey: key, refetchType: "none" });
+    },
+  });
+}
+
+/**
+ * Remove a secondary injury (AC 2).
+ *
+ * `expectedVersion` is the **injury row's**, not the claim's — the delete
+ * compare-and-swaps on the row it destroys, so a ✕ is not refused because
+ * somebody corrected an unrelated field on the same claim. The marker list
+ * carries each row's version for exactly this.
+ */
+export function useRemoveInjury(claimId: string) {
+  const client = useQueryClient();
+  const key = queryKeys.claims.detail(claimId);
+
+  return useMutation({
+    mutationKey: queryKeys.claims.writes(claimId),
+    mutationFn: async (variables: {
+      injuryId: number;
+      expectedVersion: number;
+    }): Promise<ClaimDetail> => {
+      const { data } = await api.DELETE(
+        "/claims/{claim_business_id}/injuries/{injury_id}",
+        {
+          params: {
+            path: { claim_business_id: claimId, injury_id: variables.injuryId },
+            query: { expectedVersion: variables.expectedVersion },
+          },
+        },
+      );
+      return data!;
+    },
+    onError: (error) => {
+      const fresh = freshClaimFrom(error);
+      if (fresh) client.setQueryData(key, fresh);
+    },
+    onSuccess: (fresh) => afterInjuryWrite(client, key, fresh),
+    onSettled: () => {
+      void client.invalidateQueries({ queryKey: key, refetchType: "none" });
+    },
+  });
+}
+
+/**
+ * True while **any** command against this claim is in flight.
+ *
+ * The one flag every editable control on the case file disables itself with.
+ * `expectedVersion` comes from the cached case file and no mutation here
+ * advances it optimistically, so two commits that overlap send the same
+ * version: the second is refused with a 409 that says somebody else changed
+ * the claim, about the handler's own edit, whose keystrokes are then
+ * unrecoverable. TanStack also detaches the first call's callbacks when a
+ * second `mutate()` runs on the same hook, so that rollback is silent.
+ *
+ * Story 2.3 made this true within one hook and its `EditableRow` said so.
+ * Story 2.4 added the severity score and the add/remove pair, each with its
+ * own `isPending` — three more ways for two writes to overlap on one screen
+ * (code review, 2026-08-12). Counting mutations by key is what makes the
+ * guarantee hold across all four rather than within each.
+ */
+export function useClaimWriteInFlight(claimId: string): boolean {
+  return useIsMutating({ mutationKey: queryKeys.claims.writes(claimId) }) > 0;
 }

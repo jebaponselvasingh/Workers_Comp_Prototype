@@ -65,6 +65,134 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/claims/{claim_business_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One claim's case file — header, stepper and stage-adaptive overview
+         * @description The case file for one claim in the caller's book.
+         *
+         *     **404 for out of scope, and that is the security answer rather than a
+         *     convenience.** A 403 would confirm that the claim exists, which turns
+         *     this route into an oracle a caller can walk `WC-20000`…`WC-20999`
+         *     through to enumerate a portfolio they cannot read (AD-7). The repository
+         *     returns nothing for both cases, so there is one branch here and no way to
+         *     write the leak back in.
+         *
+         *     The path is the only parameter, and it names a claim rather than a scope:
+         *     "whose claims?" is answered by the session cookie, as it is on
+         *     `/claims/queue` and `/stats/*`.
+         */
+        get: operations["detail_claims__claim_business_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Edit a claim's clinical and classification fields (audited, versioned)
+         * @description Apply a whitelisted patch to one claim, and answer with the case file.
+         *
+         *     Thin in the way AD-1 and AD-4 both require: this function validates a
+         *     body, calls one service command, and maps four exceptions onto four
+         *     status codes. **It never touches a session for writing** — the command is
+         *     the only write path, which is what makes "every mutation is audited" a
+         *     structural fact rather than a convention (asserted in
+         *     `tests/test_claim_edit_validation.py`).
+         *
+         *     The success body is the whole entity, not an acknowledgement: it carries
+         *     the new `version` the next edit will compare against, the timeline with
+         *     this edit's event already in it, and every derived value recomputed
+         *     through the registry (AD-10).
+         */
+        patch: operations["edit_fields_claims__claim_business_id__patch"];
+        trace?: never;
+    };
+    "/claims/{claim_business_id}/injuries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record a secondary injury on a claim (audited, versioned)
+         * @description Add one marker to the body diagram, and answer with the case file.
+         *
+         *     **201 with no `Location` header.** A row is created, so 201 is the honest
+         *     status; there is deliberately no `GET /claims/{id}/injuries/{id}` to
+         *     point at, because the injuries are part of the case file and a second way
+         *     to read one would be a second place for the diagram's data to come from.
+         *     The body is the whole case file for `PATCH`'s reason: it carries the new
+         *     marker, the new summary row with its own `id` and `version`, and every
+         *     derived value recomputed through the registry.
+         */
+        post: operations["add_injury_claims__claim_business_id__injuries_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/claims/{claim_business_id}/injuries/{injury_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove a secondary injury from a claim (audited, versioned)
+         * @description Remove one secondary injury, and answer with the case file.
+         *
+         *     **The version travels in the query string** because a DELETE body is
+         *     permitted but widely dropped by proxies and generated clients, and a
+         *     compare-and-swap whose guard can be silently discarded is not a guard.
+         *
+         *     A 200 with the case file rather than a 204: the caller needs the diagram
+         *     without the marker, and every other command on this router answers with
+         *     the entity it changed.
+         */
+        delete: operations["remove_injury_claims__claim_business_id__injuries__injury_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/claims/{claim_business_id}/severity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Set a claim's severity score (audited, versioned)
+         * @description Set the severity score, and answer with the recomputed case file.
+         *
+         *     The score is the input to the `risk` band (AD-10), so the response's
+         *     header gauge, the marker colours in `injury`, the queue cards and the top
+         *     bar's High Risk tile all move with it — none of them because this route
+         *     told them to, all of them because they read the same derivation.
+         */
+        patch: operations["edit_severity_claims__claim_business_id__severity_patch"];
+        trace?: never;
+    };
     "/glossary": {
         parameters: {
             query?: never;
@@ -194,6 +322,73 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * BodyPartOptionResponse
+         * @description One region of the body diagram: the key stored, the label shown.
+         */
+        BodyPartOptionResponse: {
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+        };
+        /**
+         * CaseHeaderResponse
+         * @description Everything above the tab bar (UX-DR4).
+         *
+         *     `risk` is the band the gauge is coloured by, and it is the *same* `risk`
+         *     derivation the queue card's dot reads (AD-10) — which is what makes "the
+         *     queue and the detail can never disagree about a claim" a property of the
+         *     system rather than a promise. `severityScore` rides along because the
+         *     header shows both ("High severity", 78/100), and the band is not
+         *     recoverable from the score in the browser without re-implementing the
+         *     thresholds.
+         */
+        CaseHeaderResponse: {
+            /** Bodykey */
+            bodyKey: string;
+            /** Bodypart */
+            bodyPart: string;
+            /** Cause */
+            cause: string;
+            /** Claimid */
+            claimId: string;
+            /** Employername */
+            employerName: string;
+            /** Fraudflag */
+            fraudFlag: boolean;
+            /** Fraudscore */
+            fraudScore: number;
+            /** Icd */
+            icd: string;
+            /** Injurytype */
+            injuryType: string;
+            /** Litigationflag */
+            litigationFlag: boolean;
+            /** Osharecordable */
+            oshaRecordable: boolean;
+            risk: components["schemas"]["RiskBand"];
+            /** Severityscore */
+            severityScore: number;
+            stage: components["schemas"]["Stage"];
+            /** State */
+            state: string;
+            /** Surgeryrequired */
+            surgeryRequired: boolean;
+            /** Workername */
+            workerName: string;
+            /** Workerrole */
+            workerRole: string;
+        };
+        /**
+         * ChecklistRowResponse
+         * @description One required intake document, and whether it is on file.
+         */
+        ChecklistRowResponse: {
+            docType: components["schemas"]["DocType"];
+            /** Received */
+            received: boolean;
+        };
+        /**
          * ClaimCardResponse
          * @description One queue card — every field of it computed server-side (AD-1).
          *
@@ -245,6 +440,87 @@ export interface components {
             workerName: string;
         };
         /**
+         * ClaimDetailResponse
+         * @description The case file: header, stepper, and exactly one stage variant.
+         *
+         *     **A discriminated union, not four optional blocks.** The alternative
+         *     shape — `intake?`, `investigation?`, `treatment?`, `settled?` — can
+         *     describe a claim as simultaneously in intake and settled, and leaves the
+         *     client with four truthiness checks where the prototype's `ovHTML` has one
+         *     dispatch. Here the payload carries the block for the claim's stage and
+         *     `stageVariant` says which it is, so a `switch` is exhaustive by type.
+         *
+         *     **Money is integer cents and the field names say so.** The `Cents` suffix
+         *     is not decoration: the convention is cents end to end formatted only in
+         *     the UI, and a bare `reserve` reads like dollars at every call site that
+         *     touches it.
+         *
+         *     `thresholdsVersion` rides along for the queue payload's reason — the risk
+         *     band in the header and the treatment phase both come from a versioned
+         *     rule document, and "which rules produced this?" should be answerable from
+         *     the response rather than reconstructed.
+         */
+        ClaimDetailResponse: {
+            /** Claimid */
+            claimId: string;
+            editOptions: components["schemas"]["EditOptionsResponse"];
+            header: components["schemas"]["CaseHeaderResponse"];
+            injury: components["schemas"]["InjuryDiagramResponse"];
+            /** Overview */
+            overview: components["schemas"]["IntakeOverviewResponse"] | components["schemas"]["InvestigationOverviewResponse"] | components["schemas"]["TreatmentOverviewResponse"] | components["schemas"]["SettledOverviewResponse"];
+            /** Requirementsversion */
+            requirementsVersion: number | null;
+            /** Stepper */
+            stepper: components["schemas"]["StepperStepResponse"][];
+            /** Thresholdsversion */
+            thresholdsVersion: number;
+            /** Version */
+            version: number;
+        };
+        /**
+         * ClaimFieldPatch
+         * @description The PATCH body: a version to compare against, and the edited fields.
+         *
+         *     **PATCH-shaped, so every field is optional and omission means "leave
+         *     it"** (AD-4). `model_fields_set` is what separates "not sent" from "sent
+         *     as null" — the second is a 422 rather than a way to blank a column,
+         *     because none of these six fields has a meaningful empty value and a
+         *     handler who clears an input meant to cancel, not to erase the ICD-10
+         *     code.
+         *
+         *     **`extra="forbid"` is the whitelist's outer wall.** A key that is not one
+         *     of the seven fails validation here and never reaches the command, which
+         *     is what turns "anything else in the patch → 422" into a property of the
+         *     contract (and of the generated OpenAPI document) rather than a check
+         *     somebody has to remember to write. The command re-checks anyway — it is
+         *     also reachable from an agent tool, which does not come through Pydantic.
+         *
+         *     Value-level rules (the ICD-10 shape, the eleven body keys, the five
+         *     recovery windows, the length caps) deliberately stay in
+         *     `services/claims/edit.py`. Declaring them twice would be two places to
+         *     change when the vocabulary moves, and the server-side one is the one that
+         *     is always enforced.
+         */
+        ClaimFieldPatch: {
+            /** Bodykey */
+            bodyKey?: string | null;
+            /** Cause */
+            cause?: string | null;
+            disability?: components["schemas"]["Disability"] | null;
+            /**
+             * Expectedversion
+             * @description The `version` the client read. The write is compare-and-swapped on it and answers 409 with the fresh entity on a mismatch.
+             */
+            expectedVersion: number;
+            /** Icd */
+            icd?: string | null;
+            /** Icddesc */
+            icdDesc?: string | null;
+            /** Injurytype */
+            injuryType?: string | null;
+            recovery?: components["schemas"]["RecoveryWindow"] | null;
+        };
+        /**
          * ClaimQueueResponse
          * @description The queue, the rules that ranked it, and the two totals behind it.
          *
@@ -276,6 +552,64 @@ export interface components {
             thresholdsVersion: number;
             /** Unfilteredtotal */
             unfilteredTotal: number;
+        };
+        /**
+         * CommStatus
+         * @enum {string}
+         */
+        CommStatus: "fnol_received" | "incomplete_information" | "need_for_additional_information" | "documents_received_and_approved" | "initial_approval_provided_treatment_underway";
+        /**
+         * CoordinationStatus
+         * @description Snake_case values per the enum convention — the UI owns labels.
+         * @enum {string}
+         */
+        CoordinationStatus: "coordination_gap" | "awaiting_information" | "legal_coordination" | "on_track";
+        /**
+         * CostSplitResponse
+         * @description The cost bar's three shares, as whole percentages summing to 100.
+         */
+        CostSplitResponse: {
+            /** Expensepct */
+            expensePct: number;
+            /** Indemnitypct */
+            indemnityPct: number;
+            /** Medicalpct */
+            medicalPct: number;
+        };
+        /**
+         * Disability
+         * @enum {string}
+         */
+        Disability: "temporary" | "permanent";
+        /**
+         * DocType
+         * @description The prototype's document classes (Story 2.2).
+         *
+         *     A native database enum, unlike `TimelineTag` below: the set is closed by
+         *     what a claim file *is* — a first report, an incident investigation, a
+         *     medical authorization, a wage statement, a return-to-work letter, a legal
+         *     filing — and Story 2.5 maps every member to a UI chip and a viewer
+         *     layout, so a seventh member is a change to that story's surface and not
+         *     something a later migration should be able to introduce quietly.
+         * @enum {string}
+         */
+        DocType: "froi" | "incident" | "medauth" | "wage" | "rtw" | "legal";
+        /**
+         * EditOptionsResponse
+         * @description What the editable selects may offer (Story 2.3).
+         *
+         *     Served rather than hardcoded in the SPA so the vocabulary has one source
+         *     (AD-1) — the same eleven keys the edit command validates against and the
+         *     same set Story 2.4's diagram addresses. A select built from this cannot
+         *     offer a value the server would refuse with a 422.
+         */
+        EditOptionsResponse: {
+            /** Bodyparts */
+            bodyParts: components["schemas"]["BodyPartOptionResponse"][];
+            /** Disabilities */
+            disabilities: components["schemas"]["Disability"][];
+            /** Recoverywindows */
+            recoveryWindows: components["schemas"]["RecoveryWindow"][];
         };
         /**
          * GlossaryList
@@ -315,6 +649,174 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /**
+         * InjuryDiagramResponse
+         * @description The Injury Diagram tab's whole payload (Story 2.4, AC 1).
+         *
+         *     On the case file rather than on a stage variant: the tab is readable at
+         *     every stage, and a claim does not stop having injuries when it settles.
+         *
+         *     `defaultSeverityScore` is the score the add form starts at and comes from
+         *     the `injury_capture` rule document (AD-8) — served rather than hardcoded
+         *     in the SPA so that retuning it is a rule change and not a deploy.
+         *     `captureVersion` names the document that answered, for
+         *     `thresholdsVersion`'s reason.
+         */
+        InjuryDiagramResponse: {
+            /** Captureversion */
+            captureVersion: number;
+            /** Contraindications */
+            contraindications: string;
+            /** Defaultseverityscore */
+            defaultSeverityScore: number;
+            /** Icd */
+            icd: string;
+            /** Icddesc */
+            icdDesc: string;
+            /** Markers */
+            markers: components["schemas"]["InjuryMarkerResponse"][];
+            prognosis: components["schemas"]["PrognosisResponse"];
+            /** Severitymax */
+            severityMax: number;
+            /** Severitymin */
+            severityMin: number;
+            /** Treatmentplan */
+            treatmentPlan: components["schemas"]["TreatmentPlanStepResponse"][];
+        };
+        /**
+         * InjuryMarkerResponse
+         * @description One marker on the body diagram (Story 2.4, UX-DR6).
+         *
+         *     `band` is the marker's severity band, computed by the same registered
+         *     `risk` derivation the gauge and the queue dot read (AD-10). The SVG
+         *     therefore picks a token from a key and decides nothing — the prototype's
+         *     `injHTML` re-bands each marker at 70/40 inside the drawing function,
+         *     which is a second banding rule and the thing AD-10 exists to prevent.
+         *
+         *     `id` and `version` are null on the primary marker: it *is* the claim's
+         *     own `bodyKey`/`severityScore`, so there is no `additional_injury` row to
+         *     address, nothing to remove, and the claim's version governs it.
+         */
+        InjuryMarkerResponse: {
+            band: components["schemas"]["RiskBand"];
+            /** Bodykey */
+            bodyKey: string;
+            /** Bodypart */
+            bodyPart: string;
+            /** Id */
+            id: number | null;
+            /** Injurytype */
+            injuryType: string;
+            /** Primary */
+            primary: boolean;
+            /** Severityscore */
+            severityScore: number;
+            /** Version */
+            version: number | null;
+        };
+        /**
+         * IntakeOverviewResponse
+         * @description The intake variant: summary, reported injury, checklist, full timeline.
+         */
+        IntakeOverviewResponse: {
+            /**
+             * Assigndate
+             * Format: date
+             */
+            assignDate: string;
+            /** Awwcents */
+            awwCents: number;
+            /** Bodypart */
+            bodyPart: string;
+            /** Cause */
+            cause: string;
+            /** Checklist */
+            checklist: components["schemas"]["ChecklistRowResponse"][];
+            commStatus: components["schemas"]["CommStatus"];
+            /**
+             * Doi
+             * Format: date
+             */
+            doi: string;
+            /** Employeebusinessid */
+            employeeBusinessId: string;
+            /**
+             * Froidate
+             * Format: date
+             */
+            froiDate: string;
+            /** Handlername */
+            handlerName: string;
+            /** Injurytype */
+            injuryType: string;
+            /** Plant */
+            plant: string;
+            /** Reservecents */
+            reserveCents: number;
+            risk: components["schemas"]["RiskBand"];
+            /** Severityscore */
+            severityScore: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            stageVariant: "intake";
+            /** Timeline */
+            timeline: components["schemas"]["TimelineEntryResponse"][];
+            /** Workername */
+            workerName: string;
+            /** Workerrole */
+            workerRole: string;
+        };
+        /**
+         * InvestigationOverviewResponse
+         * @description The investigation variant: injury card and financials/reserve card.
+         *
+         *     The injury card's six fields became **editable in Story 2.3**, behind
+         *     `PATCH /claims/{claimBusinessId}`. They are sent exactly as stored — the
+         *     client edits what it was shown and sends the enclosing `version` back as
+         *     `expectedVersion`. The financials card stays read-only: reserves and the
+         *     severity score belong to Epic 3 and Story 2.4.
+         */
+        InvestigationOverviewResponse: {
+            /** Awwcents */
+            awwCents: number;
+            /** Bodypart */
+            bodyPart: string;
+            /** Cause */
+            cause: string;
+            costSplit: components["schemas"]["CostSplitResponse"] | null;
+            disability: components["schemas"]["Disability"];
+            /** Fraudscore */
+            fraudScore: number;
+            /** Icd */
+            icd: string;
+            /** Icddesc */
+            icdDesc: string;
+            /** Injurytype */
+            injuryType: string;
+            /** Paidindemnitycents */
+            paidIndemnityCents: number;
+            /** Paidmedicalcents */
+            paidMedicalCents: number;
+            /** Policynum */
+            policyNum: string;
+            recovery: components["schemas"]["RecoveryWindow"];
+            /** Reservecents */
+            reserveCents: number;
+            risk: components["schemas"]["RiskBand"];
+            /** Severityscore */
+            severityScore: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            stageVariant: "investigation";
+            /** Timeline */
+            timeline: components["schemas"]["TimelineEntryResponse"][];
+            /** Totalpaidcents */
+            totalPaidCents: number;
+        };
         /** LoginRequest */
         LoginRequest: {
             /** Personaid */
@@ -329,6 +831,42 @@ export interface components {
             /** Name */
             name: string;
             role: components["schemas"]["UserRole"];
+        };
+        /**
+         * NewInjury
+         * @description The add-injury body: a region, a type, and a score.
+         *
+         *     `bodyKey` is a plain string here rather than an enum for the reason 2.3's
+         *     `ClaimFieldPatch.bodyKey` is: the vocabulary is served on the case file
+         *     (`editOptions.bodyParts`) and validated in the command, so a client builds
+         *     its select from the response and cannot offer a value the server refuses.
+         *
+         *     There is no `bodyPart` field. The label is the server's answer for the
+         *     key (`BODY_PART_LABELS`), exactly as it is when a handler changes the
+         *     claim's body part — a caller that could supply its own could file "Left
+         *     Hand" against `head`.
+         */
+        NewInjury: {
+            /**
+             * Bodykey
+             * @description One of `editOptions.bodyParts[].key`.
+             */
+            bodyKey: string;
+            /**
+             * Expectedversion
+             * @description The **claim's** `version`. The insert is guarded on it, so an injury cannot be recorded against a case file that has moved on.
+             */
+            expectedVersion: number;
+            /**
+             * Injurytype
+             * @description Free text, e.g. `Laceration`.
+             */
+            injuryType: string;
+            /**
+             * Severityscore
+             * @description 0-100. The add form starts at `injury.defaultSeverityScore`.
+             */
+            severityScore: number;
         };
         /** Persona */
         Persona: {
@@ -357,6 +895,24 @@ export interface components {
             total: number;
         };
         /**
+         * PrognosisResponse
+         * @description MMI estimate, RTW outlook, impairment and litigation risk.
+         *
+         *     Persisted by migration 0015. Story 2.2 omitted the MMI row from the
+         *     treatment card because nothing stored it and "a row that always reads
+         *     '—' is furniture, not honesty"; it stores it now.
+         */
+        PrognosisResponse: {
+            /** Impairment */
+            impairment: string;
+            /** Litigation */
+            litigation: string;
+            /** Mmi */
+            mmi: string;
+            /** Rtw */
+            rtw: string;
+        };
+        /**
          * QueueFilter
          * @description The eight operational filters (FR-Q-1), snake_case per the enum
          *     convention — "High risk" and "Payment due" are the UI's labels, not the
@@ -370,11 +926,108 @@ export interface components {
          */
         QueueFilter: "all" | "active" | "high_risk" | "fraud" | "litigation" | "payment_due" | "surgery" | "siu";
         /**
+         * RecoveryWindow
+         * @description How long the claim is expected to take — the prototype's five options.
+         *
+         *     **Snake_case tokens, not the display strings** (Story 2.3, code review).
+         *     Story 1.2 seeded this column as the dataset's own free text (`"4-6 Weeks"`,
+         *     `"Greater than 1 Year"`) because at that point it *was* free text: nothing
+         *     constrained it and nothing but a regex read it. Story 2.3 is what closed
+         *     it — the inline-edit command refuses anything outside these five — so this
+         *     is the point at which the Enums convention attaches ("enum values
+         *     snake_case lowercase in DB/API; UI owns display labels").
+         *
+         *     The change is not cosmetic. While the stored value *was* the display
+         *     string, `services/derivations/treatment_progress.py` had to recover the
+         *     expected duration by running a regex over prose — which meant a reworded
+         *     label silently changed a derived value, and a lowercase `w` fell through
+         *     to a default window. With tokens, the duration is a lookup keyed by a
+         *     member, the label is the browser's to reword, and neither can move the
+         *     other.
+         *
+         *     Member names encode the bound rather than the wording, so `weeks_6_8` and
+         *     a future re-labelling of it to "6 to 8 weeks" are the same value.
+         * @enum {string}
+         */
+        RecoveryWindow: "weeks_0_2" | "weeks_2_4" | "weeks_4_6" | "weeks_6_8" | "over_1_year";
+        /**
+         * ReturnStatus
+         * @enum {string}
+         */
+        ReturnStatus: "under_treatment" | "returned_and_under_therapy" | "returned_and_fully_recovered";
+        /**
          * RiskBand
          * @description Snake/lowercase values per the enum convention — the UI owns labels.
          * @enum {string}
          */
         RiskBand: "high" | "med" | "low";
+        /**
+         * SettledOverviewResponse
+         * @description The settled variant: banner, payout breakdown, outcome, action summary.
+         *
+         *     `settlementDate` is null for every seeded claim — the prototype's
+         *     settlement events carry `Closed` where a date belongs — so the banner
+         *     omits the clause rather than printing "settled on Closed".
+         */
+        SettledOverviewResponse: {
+            costSplit: components["schemas"]["CostSplitResponse"] | null;
+            /** Daystosettlement */
+            daysToSettlement: number;
+            disability: components["schemas"]["Disability"];
+            /** Handlername */
+            handlerName: string;
+            /** Litigationflag */
+            litigationFlag: boolean;
+            /** Paidexpensecents */
+            paidExpenseCents: number;
+            /** Paidindemnitycents */
+            paidIndemnityCents: number;
+            /** Paidmedicalcents */
+            paidMedicalCents: number;
+            /** Reservecents */
+            reserveCents: number;
+            returnStatus: components["schemas"]["ReturnStatus"];
+            /** Settlementdate */
+            settlementDate: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            stageVariant: "settled";
+            /** Timeline */
+            timeline: components["schemas"]["TimelineEntryResponse"][];
+            /** Totalpaidcents */
+            totalPaidCents: number;
+        };
+        /**
+         * SeverityPatch
+         * @description The severity-score PATCH body.
+         *
+         *     A route of its own rather than an eighth key on `ClaimFieldPatch`, for
+         *     the reason `services/claims/edit.py` gives at `update_claim_severity`:
+         *     that whitelist and everything built on it are machinery for *text*.
+         *
+         *     **The bounds are declared here as well as enforced in the command**, and
+         *     that is a departure from 2.3's "value rules stay in the service". The
+         *     reason is that these two are not a vocabulary that might move: `0..100`
+         *     is `severity_score`'s domain, fixed by the column and by the CHECK
+         *     constraint on `additional_injury`. Declaring it puts the bound in the
+         *     OpenAPI document, so the generated client refuses `101` before it
+         *     becomes a round trip — and the command still refuses it for the agent
+         *     tools that never pass through Pydantic (AD-13).
+         */
+        SeverityPatch: {
+            /**
+             * Expectedversion
+             * @description The `version` the client read. The write is compare-and-swapped on it and answers 409 with the fresh entity on a mismatch.
+             */
+            expectedVersion: number;
+            /**
+             * Severityscore
+             * @description 0-100. Refused, never clamped — the prototype silently turns a typo of 780 into a maximum-severity claim.
+             */
+            severityScore: number;
+        };
         /**
          * SlaDirection
          * @description Which side of the target is good.
@@ -466,6 +1119,39 @@ export interface components {
             treatment: components["schemas"]["StageGroupResponse"];
         };
         /**
+         * StepperStepResponse
+         * @description One of the four lifecycle steps, already marked.
+         *
+         *     `done`/`current` are the server's, not the browser's: which steps are
+         *     behind a claim is a statement about its lifecycle position, and deciding
+         *     it client-side would be a second place that knows what follows
+         *     investigation (AD-1).
+         */
+        StepperStepResponse: {
+            /** Current */
+            current: boolean;
+            /** Done */
+            done: boolean;
+            stage: components["schemas"]["Stage"];
+        };
+        /**
+         * TimelineEntryResponse
+         * @description One line of the case timeline.
+         *
+         *     `eventDate` is nullable because 62 seeded settlement events have none:
+         *     the prototype writes the literal string `Closed` where a date belongs,
+         *     and a non-date is not something a `DATE` column should be asked to hold.
+         *     The UI leaves the date cell empty rather than inventing one.
+         */
+        TimelineEntryResponse: {
+            /** Description */
+            description: string;
+            /** Eventdate */
+            eventDate: string | null;
+            /** Tag */
+            tag: string;
+        };
+        /**
          * TopBarStatsResponse
          * @description `{caseload, activeTx, highRisk}` — camelCase via `ApiModel`.
          */
@@ -476,6 +1162,68 @@ export interface components {
             caseload: number;
             /** Highrisk */
             highRisk: number;
+        };
+        /**
+         * TreatmentOverviewResponse
+         * @description The treatment variant: phase banner, paid-vs-reserve, coordination.
+         *
+         *     `phase` and `coordinationStatus` are registered derivations (AC 5) and
+         *     both notes are server-provided (AD-1). The short display labels are the
+         *     UI's, like every other snake_case enum in this contract.
+         *
+         *     The figures come from the claim's own paid/reserve columns. Story 3.3's
+         *     bill and payment-schedule tables will be a better source for the same
+         *     numbers, and 3.2 fills the reserve-check verdict this variant leaves to
+         *     an explicit placeholder — they agree by construction because both read
+         *     the same columns through the same derivations.
+         */
+        TreatmentOverviewResponse: {
+            commStatus: components["schemas"]["CommStatus"];
+            /** Coordinationnote */
+            coordinationNote: string;
+            coordinationStatus: components["schemas"]["CoordinationStatus"];
+            /** Daysopen */
+            daysOpen: number;
+            /** Expecteddays */
+            expectedDays: number;
+            /** Handlername */
+            handlerName: string;
+            /** Paidindemnitycents */
+            paidIndemnityCents: number;
+            /** Paidmedicalcents */
+            paidMedicalCents: number;
+            phase: components["schemas"]["TreatmentPhase"];
+            /** Phasenote */
+            phaseNote: string;
+            recovery: components["schemas"]["RecoveryWindow"];
+            /** Reservecents */
+            reserveCents: number;
+            returnStatus: components["schemas"]["ReturnStatus"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            stageVariant: "treatment";
+            /** Timeline */
+            timeline: components["schemas"]["TimelineEntryResponse"][];
+            /** Timelinetruncated */
+            timelineTruncated: boolean;
+        };
+        /**
+         * TreatmentPhase
+         * @description Snake_case values per the enum convention — the UI owns labels.
+         * @enum {string}
+         */
+        TreatmentPhase: "early" | "active" | "approaching_mmi";
+        /**
+         * TreatmentPlanStepResponse
+         * @description One numbered step of the treatment plan.
+         */
+        TreatmentPlanStepResponse: {
+            /** Description */
+            description: string;
+            /** Stepno */
+            stepNo: number;
         };
         /**
          * UserRole
@@ -625,6 +1373,511 @@ export interface operations {
                 };
                 content: {
                     "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    detail_claims__claim_business_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The claim's business id, `WC-nnnn`. */
+                claim_business_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaimDetailResponse"];
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description No such claim in the caller's scope. Deliberately the same answer for a claim that does not exist and one that belongs to another employer — see the route docstring (RFC 9457 problem document). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    edit_fields_claims__claim_business_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The claim's business id, `WC-nnnn`. */
+                claim_business_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClaimFieldPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaimDetailResponse"];
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The caller's role does not carry the edit capability. Answered before the claim is looked up, so it says nothing about whether the claim exists (RFC 9457 problem document). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description No such claim in the caller's scope. Deliberately the same answer for a claim that does not exist and one that belongs to another employer — see the route docstring (RFC 9457 problem document). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The claim has changed since the caller read it. The body is an RFC 9457 problem document carrying the fresh entity under `claim` — re-read and redo; nothing is merged server-side. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        claim: components["schemas"]["ClaimDetailResponse"];
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_injury_claims__claim_business_id__injuries_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The claim's business id, `WC-nnnn`. */
+                claim_business_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewInjury"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaimDetailResponse"];
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The caller's role does not carry the edit capability. Answered before the claim is looked up, so it says nothing about whether the claim exists (RFC 9457 problem document). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description No such claim in the caller's scope. Deliberately the same answer for a claim that does not exist and one that belongs to another employer — see the route docstring (RFC 9457 problem document). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The claim has changed since the caller read it. The body is an RFC 9457 problem document carrying the fresh entity under `claim` — re-read and redo; nothing is merged server-side. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        claim: components["schemas"]["ClaimDetailResponse"];
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_injury_claims__claim_business_id__injuries__injury_id__delete: {
+        parameters: {
+            query: {
+                /** @description The **injury row's** `version`, not the claim's — the delete compare-and-swaps on the row it destroys. */
+                expectedVersion: number;
+            };
+            header?: never;
+            path: {
+                /** @description The claim's business id, `WC-nnnn`. */
+                claim_business_id: string;
+                /** @description The `id` of one of `injury.markers[]`. */
+                injury_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaimDetailResponse"];
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The caller's role does not carry the edit capability. Answered before the claim is looked up, so it says nothing about whether the claim exists (RFC 9457 problem document). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description No such claim in the caller's scope. Deliberately the same answer for a claim that does not exist and one that belongs to another employer — see the route docstring (RFC 9457 problem document). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The claim has changed since the caller read it. The body is an RFC 9457 problem document carrying the fresh entity under `claim` — re-read and redo; nothing is merged server-side. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        claim: components["schemas"]["ClaimDetailResponse"];
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    edit_severity_claims__claim_business_id__severity_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The claim's business id, `WC-nnnn`. */
+                claim_business_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SeverityPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaimDetailResponse"];
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The caller's role does not carry the edit capability. Answered before the claim is looked up, so it says nothing about whether the claim exists (RFC 9457 problem document). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description No such claim in the caller's scope. Deliberately the same answer for a claim that does not exist and one that belongs to another employer — see the route docstring (RFC 9457 problem document). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The claim has changed since the caller read it. The body is an RFC 9457 problem document carrying the fresh entity under `claim` — re-read and redo; nothing is merged server-side. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        claim: components["schemas"]["ClaimDetailResponse"];
                         /** Detail */
                         detail: string;
                         /** Status */

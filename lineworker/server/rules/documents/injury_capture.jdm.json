@@ -1,0 +1,48 @@
+{
+  "contentType": "application/vnd.gorules.decision",
+  "name": "injury_capture",
+  "description": "Parameters for capturing a secondary injury on the body diagram (Story 2.4). A document of its own for intake_required_documents' reason: services/claims owns the add-injury command, while derivation_thresholds is the single argument every registered derivation is built from. newInjuryDefaultSeverity is the score the add form starts at when a handler has not typed one — the prototype's value=\"40\" on its severity input, which sits exactly on the moderate band boundary and is therefore a tuning decision rather than a layout one. It is served on the case file rather than hardcoded in the SPA so that retuning it is a rule change, not a deploy.",
+  "nodes": [
+    {
+      "id": "request",
+      "type": "inputNode",
+      "name": "request",
+      "position": { "x": 0, "y": 0 }
+    },
+    {
+      "id": "capture",
+      "type": "expressionNode",
+      "name": "capture",
+      "position": { "x": 240, "y": 0 },
+      "content": {
+        "expressions": [
+          {
+            "id": "newInjuryDefaultSeverity",
+            "key": "newInjuryDefaultSeverity",
+            "value": "40"
+          }
+        ]
+      }
+    },
+    {
+      "id": "response",
+      "type": "outputNode",
+      "name": "response",
+      "position": { "x": 480, "y": 0 }
+    }
+  ],
+  "edges": [
+    {
+      "id": "request-capture",
+      "type": "edge",
+      "sourceId": "request",
+      "targetId": "capture"
+    },
+    {
+      "id": "capture-response",
+      "type": "edge",
+      "sourceId": "capture",
+      "targetId": "response"
+    }
+  ]
+}

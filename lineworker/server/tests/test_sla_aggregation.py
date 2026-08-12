@@ -398,10 +398,24 @@ def test_nothing_outside_the_worklist_aggregation_reads_the_sla_source_columns()
     `services.worklist.sla`, not average `sla_pick_days` again next to it.
     Grep is blunt on purpose: a second reader of these columns either calls
     the aggregation or argues for an allowlist entry in review.
+
+    **What the rule actually forbids, sharpened by Story 2.2.** It is a
+    second *aggregation*, not any mention of the column. The settled overview
+    shows one claim's "days to settlement", which the prototype computes as
+    `settlement_days || days_open` — a fallback rule over a single row,
+    nothing an average could disagree with. The entry below is what that
+    argument looks like when it is made once, in a registered derivation,
+    rather than repeated at whichever card needs the number: `days_to_settlement`
+    has exactly one computer for the same reason every other derived value
+    does (AD-10), and the alternative was this guard collecting a service
+    module per consuming screen.
     """
     allowed = {
         SERVER_ROOT / "services" / "worklist" / "sla.py",
         SERVER_ROOT / "data" / "models" / "core.py",  # the columns are declared here
+        # Story 2.2: the registered `days_to_settlement` derivation — a
+        # per-claim fallback, not an aggregate. See the docstring above.
+        SERVER_ROOT / "services" / "derivations" / "open_duration.py",
         *(SERVER_ROOT / "tests").rglob("*.py"),
         *(SERVER_ROOT / "data" / "seed").rglob("*.py"),
         *(SERVER_ROOT / "data" / "versions").rglob("*.py"),  # frozen migrations

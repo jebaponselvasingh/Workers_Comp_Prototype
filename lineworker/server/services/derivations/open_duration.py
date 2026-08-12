@@ -27,6 +27,7 @@ nobody could defend. Zero says "no age yet", which is the truth.
 
 from dataclasses import dataclass
 from datetime import date
+from typing import Protocol
 
 # `utc_today` is re-exported from `rules.engine` rather than redefined here:
 # the queue resolves its rule documents and its claim ages against the same
@@ -52,10 +53,73 @@ class OpenDurationDerivation:
         return max((as_of - froi_date).days, 0)
 
 
+class SettlementColumns(Protocol):
+    """The two columns the settlement duration reads.
+
+    Structural rather than `Claim` so this module does not import the ORM to
+    read two attributes, and so a projection or a test stand-in works.
+    """
+
+    @property
+    def settlement_days(self) -> int | None: ...
+
+    @property
+    def froi_date(self) -> date: ...
+
+
+@dataclass(frozen=True)
+class SettlementDurationDerivation:
+    """How long a settled claim took: its recorded duration, or its age.
+
+    The prototype's `c.settlementDays || c.daysOpen` (line 1400), which is a
+    *fallback rule* rather than a column read — a settled claim with no
+    recorded duration still has an age, and an em dash would be a worse
+    answer than the number of days it has been open.
+
+    **Why this lives here rather than in the settled overview.**
+    `claim.settlement_days` is one of the three columns AD-2 reserves to the
+    SLA aggregation (`services/worklist/sla.py`), and
+    `tests/test_sla_aggregation.py` greps for direct reads of it. That guard
+    is about a *second aggregation* — a dashboard averaging the column beside
+    the strip that already does — and a per-claim display value is not one.
+    But "not one" is an argument, and the way to make an argument checkable
+    is to give the value a registered computer instead of scattering the
+    column read across whichever card happens to need it. Epic 5's dashboard
+    wants the same figure per claim; it now has one place to get it.
+    """
+
+    def of(self, claim: SettlementColumns, as_of: date) -> int:
+        # The claim rather than the two values, deliberately: passing
+        # `claim.settlement_days` in would leave the column named at the call
+        # site, and the guard in `tests/test_sla_aggregation.py` would then
+        # have to allowlist every consuming service instead of this one
+        # module. `total_paid` takes its columns the same way and for the
+        # same reason.
+        #
+        # `is not None`, not a truthiness test: the prototype's `||` sends a
+        # recorded **zero** — a same-day settlement — down the fallback and
+        # reports the claim's age instead of the 0 the data holds.
+        if claim.settlement_days is not None:
+            # Floored for the reason the fallback below is: a negative
+            # duration is not a number to render, and the two halves of one
+            # derivation disagreeing about that was an inconsistency inside
+            # a single method (code review, 2026-08-12).
+            return max(claim.settlement_days, 0)
+        return OpenDurationDerivation().of(claim.froi_date, as_of)
+
+
 days_open = register(
     Derivation(
         name="days_open",
         describes="whole days from claim.froi_date to a given date, floored at 0",
         build=lambda _thresholds: OpenDurationDerivation(),
+    )
+)
+
+days_to_settlement = register(
+    Derivation(
+        name="days_to_settlement",
+        describes="claim.settlement_days when recorded, otherwise the claim's age in days",
+        build=lambda _thresholds: SettlementDurationDerivation(),
     )
 )

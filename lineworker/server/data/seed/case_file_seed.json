@@ -1,0 +1,6720 @@
+{
+ "timeline_events": [
+  {
+   "claim_id": "WC-20017",
+   "event_date": "2026-03-22",
+   "description": "FNOL received — Fall from Height reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20017",
+   "event_date": "2026-03-24",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20017",
+   "event_date": "2026-03-25",
+   "description": "Handler assigned — Dante Reyes",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20017",
+   "event_date": "2026-04-01",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20017",
+   "event_date": "2026-05-11",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-20034",
+   "event_date": "2026-06-01",
+   "description": "FNOL received — Fall from Height reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20034",
+   "event_date": "2026-06-01",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20034",
+   "event_date": "2026-06-02",
+   "description": "Handler assigned — Dante Reyes",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20034",
+   "event_date": "2026-06-07",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20034",
+   "event_date": "2026-07-21",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-20051",
+   "event_date": "2026-06-09",
+   "description": "FNOL received — Vibration White Finger (HAVS) reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20051",
+   "event_date": "2026-06-11",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20051",
+   "event_date": "2026-06-14",
+   "description": "Handler assigned — Dante Reyes",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20051",
+   "event_date": "2026-06-22",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20051",
+   "event_date": "2026-07-29",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-20051",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-20068",
+   "event_date": "2026-04-07",
+   "description": "FNOL received — Laceration reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20068",
+   "event_date": "2026-04-09",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20068",
+   "event_date": "2026-04-12",
+   "description": "Handler assigned — Dante Reyes",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20068",
+   "event_date": "2026-04-22",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20068",
+   "event_date": "2026-04-30",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-20068",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-20085",
+   "event_date": "2026-09-22",
+   "description": "FNOL received — Amputation reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20085",
+   "event_date": "2026-09-23",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20085",
+   "event_date": "2026-09-26",
+   "description": "Handler assigned — Dante Reyes",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20085",
+   "event_date": "2026-10-01",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20085",
+   "event_date": "2026-11-11",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-20102",
+   "event_date": "2026-04-01",
+   "description": "FNOL received — Strain or Tear — Shoulder reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20102",
+   "event_date": "2026-04-03",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20102",
+   "event_date": "2026-04-05",
+   "description": "Handler assigned — Dante Reyes",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20102",
+   "event_date": "2026-04-11",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20119",
+   "event_date": "2026-01-12",
+   "description": "FNOL received — Eye Injury reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20119",
+   "event_date": "2026-01-14",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20119",
+   "event_date": "2026-01-17",
+   "description": "Handler assigned — Dante Reyes",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20119",
+   "event_date": "2026-01-22",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20119",
+   "event_date": "2026-02-05",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-20119",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-20136",
+   "event_date": "2026-05-13",
+   "description": "FNOL received — Crushing reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20136",
+   "event_date": "2026-05-15",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20136",
+   "event_date": "2026-05-16",
+   "description": "Handler assigned — Dante Reyes",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20136",
+   "event_date": "2026-05-26",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20136",
+   "event_date": "2026-06-14",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-20136",
+   "event_date": "2026-06-15",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-20136",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-20153",
+   "event_date": "2026-03-12",
+   "description": "FNOL received — Loss of Hearing reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20153",
+   "event_date": "2026-03-12",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20153",
+   "event_date": "2026-03-13",
+   "description": "Handler assigned — Dante Reyes",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20153",
+   "event_date": "2026-03-16",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20153",
+   "event_date": "2026-04-16",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-20153",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-20170",
+   "event_date": "2026-05-14",
+   "description": "FNOL received — Fracture reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20170",
+   "event_date": "2026-05-15",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20170",
+   "event_date": "2026-05-17",
+   "description": "Handler assigned — Dante Reyes",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20170",
+   "event_date": "2026-05-21",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20170",
+   "event_date": "2026-06-16",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-20170",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-20187",
+   "event_date": "2026-05-17",
+   "description": "FNOL received — Vibration White Finger (HAVS) reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20187",
+   "event_date": "2026-05-17",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20187",
+   "event_date": "2026-05-19",
+   "description": "Handler assigned — Dante Reyes",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20187",
+   "event_date": "2026-05-23",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20187",
+   "event_date": "2026-07-06",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-20187",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-20204",
+   "event_date": "2026-09-16",
+   "description": "FNOL received — Carpal Tunnel Syndrome reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20204",
+   "event_date": "2026-09-16",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20204",
+   "event_date": "2026-09-17",
+   "description": "Handler assigned — Dante Reyes",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20204",
+   "event_date": "2026-09-20",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20204",
+   "event_date": "2026-10-18",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-20204",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-20221",
+   "event_date": "2026-01-31",
+   "description": "FNOL received — Amputation reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20221",
+   "event_date": "2026-02-02",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20221",
+   "event_date": "2026-02-03",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20221",
+   "event_date": "2026-02-11",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20221",
+   "event_date": "2026-03-21",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-20221",
+   "event_date": "2026-03-30",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-20221",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-20238",
+   "event_date": "2026-02-15",
+   "description": "FNOL received — Fracture reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20238",
+   "event_date": "2026-02-15",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20238",
+   "event_date": "2026-02-17",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20238",
+   "event_date": "2026-02-27",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20238",
+   "event_date": "2026-03-21",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-20238",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-20255",
+   "event_date": "2026-07-04",
+   "description": "FNOL received — Chemical Inhalation reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20255",
+   "event_date": "2026-07-04",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20255",
+   "event_date": "2026-07-07",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20255",
+   "event_date": "2026-07-12",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20272",
+   "event_date": "2026-08-16",
+   "description": "FNOL received — Fall from Height reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20272",
+   "event_date": "2026-08-18",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20272",
+   "event_date": "2026-08-19",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20272",
+   "event_date": "2026-08-24",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20272",
+   "event_date": "2026-10-05",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-20272",
+   "event_date": "2026-10-06",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-20272",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-20289",
+   "event_date": "2026-03-30",
+   "description": "FNOL received — Amputation reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20289",
+   "event_date": "2026-03-30",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20289",
+   "event_date": "2026-03-31",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20289",
+   "event_date": "2026-05-04",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-20306",
+   "event_date": "2026-04-22",
+   "description": "FNOL received — Laceration reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20306",
+   "event_date": "2026-04-23",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20306",
+   "event_date": "2026-04-25",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20306",
+   "event_date": "2026-05-01",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20306",
+   "event_date": "2026-05-14",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-20306",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-20323",
+   "event_date": "2026-03-06",
+   "description": "FNOL received — Amputation reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20323",
+   "event_date": "2026-03-08",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20323",
+   "event_date": "2026-03-10",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20323",
+   "event_date": "2026-03-18",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20323",
+   "event_date": "2026-04-10",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-20323",
+   "event_date": "2026-04-16",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-20323",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-20340",
+   "event_date": "2026-06-12",
+   "description": "FNOL received — Loss of Hearing reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20340",
+   "event_date": "2026-06-14",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20340",
+   "event_date": "2026-06-16",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20340",
+   "event_date": "2026-06-21",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20357",
+   "event_date": "2026-06-23",
+   "description": "FNOL received — Fracture reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20357",
+   "event_date": "2026-06-24",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20357",
+   "event_date": "2026-06-26",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20357",
+   "event_date": "2026-07-02",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20357",
+   "event_date": "2026-07-29",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-20357",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-20374",
+   "event_date": "2026-02-17",
+   "description": "FNOL received — Amputation reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20374",
+   "event_date": "2026-02-18",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20374",
+   "event_date": "2026-02-20",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20374",
+   "event_date": "2026-02-26",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20374",
+   "event_date": "2026-03-23",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-20374",
+   "event_date": "2026-04-03",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-20374",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-20391",
+   "event_date": "2026-06-21",
+   "description": "FNOL received — Fracture reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20391",
+   "event_date": "2026-06-22",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20391",
+   "event_date": "2026-06-25",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20391",
+   "event_date": "2026-07-04",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20391",
+   "event_date": "2026-08-07",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-20391",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-20408",
+   "event_date": "2026-06-30",
+   "description": "FNOL received — Vibration White Finger (HAVS) reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20408",
+   "event_date": "2026-07-01",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20408",
+   "event_date": "2026-07-04",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20408",
+   "event_date": "2026-07-09",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20408",
+   "event_date": "2026-08-26",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-20408",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-20425",
+   "event_date": "2026-07-28",
+   "description": "FNOL received — Carpal Tunnel Syndrome reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20425",
+   "event_date": "2026-07-29",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20425",
+   "event_date": "2026-08-01",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20425",
+   "event_date": "2026-08-07",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20425",
+   "event_date": "2026-09-12",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-20425",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-20442",
+   "event_date": "2026-04-13",
+   "description": "FNOL received — Fracture reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20442",
+   "event_date": "2026-04-13",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20442",
+   "event_date": "2026-04-15",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20442",
+   "event_date": "2026-04-21",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20442",
+   "event_date": "2026-06-08",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-20442",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-20459",
+   "event_date": "2026-03-29",
+   "description": "FNOL received — Amputation reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20459",
+   "event_date": "2026-03-29",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20459",
+   "event_date": "2026-03-30",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20459",
+   "event_date": "2026-04-02",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20459",
+   "event_date": "2026-05-18",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-20476",
+   "event_date": "2026-08-01",
+   "description": "FNOL received — Fracture reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20476",
+   "event_date": "2026-08-03",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20476",
+   "event_date": "2026-08-04",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20476",
+   "event_date": "2026-08-10",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20476",
+   "event_date": "2026-09-26",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-20476",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-20493",
+   "event_date": "2026-08-19",
+   "description": "FNOL received — Fall from Height reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20493",
+   "event_date": "2026-08-20",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20493",
+   "event_date": "2026-08-23",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20493",
+   "event_date": "2026-09-02",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20493",
+   "event_date": "2026-10-13",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-20493",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-20510",
+   "event_date": "2026-07-23",
+   "description": "FNOL received — Burn — Chemical reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20510",
+   "event_date": "2026-07-24",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20510",
+   "event_date": "2026-07-25",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20510",
+   "event_date": "2026-07-30",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20527",
+   "event_date": "2026-05-13",
+   "description": "FNOL received — Laceration reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20527",
+   "event_date": "2026-05-15",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20527",
+   "event_date": "2026-05-17",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20527",
+   "event_date": "2026-05-23",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20544",
+   "event_date": "2026-08-30",
+   "description": "FNOL received — Strain or Tear — Shoulder reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20544",
+   "event_date": "2026-08-31",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20544",
+   "event_date": "2026-09-02",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20544",
+   "event_date": "2026-09-06",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20544",
+   "event_date": "2026-10-05",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-20544",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-20561",
+   "event_date": "2026-03-15",
+   "description": "FNOL received — Burn — Arc Flash reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20561",
+   "event_date": "2026-03-16",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20561",
+   "event_date": "2026-03-17",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20561",
+   "event_date": "2026-04-16",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-20578",
+   "event_date": "2026-05-19",
+   "description": "FNOL received — Strain or Tear — Back reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20578",
+   "event_date": "2026-05-20",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20578",
+   "event_date": "2026-05-21",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20578",
+   "event_date": "2026-05-30",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20578",
+   "event_date": "2026-06-20",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-20578",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-20595",
+   "event_date": "2026-06-15",
+   "description": "FNOL received — Carpal Tunnel Syndrome reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20595",
+   "event_date": "2026-06-17",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20595",
+   "event_date": "2026-06-20",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20595",
+   "event_date": "2026-06-24",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20595",
+   "event_date": "2026-07-17",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-20595",
+   "event_date": "2026-07-21",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-20595",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-20612",
+   "event_date": "2026-05-09",
+   "description": "FNOL received — Burn — Arc Flash reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20612",
+   "event_date": "2026-05-10",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20612",
+   "event_date": "2026-05-13",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20612",
+   "event_date": "2026-05-17",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20629",
+   "event_date": "2026-03-14",
+   "description": "FNOL received — Conveyor Entanglement reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20629",
+   "event_date": "2026-03-15",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20629",
+   "event_date": "2026-03-18",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20629",
+   "event_date": "2026-03-27",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20629",
+   "event_date": "2026-05-16",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-20629",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-20646",
+   "event_date": "2026-04-09",
+   "description": "FNOL received — Myocardial Infarction reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20646",
+   "event_date": "2026-04-10",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20646",
+   "event_date": "2026-04-13",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20646",
+   "event_date": "2026-04-18",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20646",
+   "event_date": "2026-04-13",
+   "description": "Attorney representation letter received — litigation protocol initiated",
+   "tag": "litigation"
+  },
+  {
+   "claim_id": "WC-20663",
+   "event_date": "2026-01-29",
+   "description": "FNOL received — Heat Stroke / Heat Stress reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20663",
+   "event_date": "2026-01-30",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20663",
+   "event_date": "2026-01-31",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20663",
+   "event_date": "2026-02-08",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20663",
+   "event_date": "2026-02-23",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-20663",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-20680",
+   "event_date": "2026-09-15",
+   "description": "FNOL received — Laceration reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20680",
+   "event_date": "2026-09-15",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20680",
+   "event_date": "2026-09-16",
+   "description": "Handler assigned — Dante Reyes",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20680",
+   "event_date": "2026-10-03",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-20697",
+   "event_date": "2026-09-22",
+   "description": "FNOL received — Myocardial Infarction reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20697",
+   "event_date": "2026-09-24",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20697",
+   "event_date": "2026-09-26",
+   "description": "Handler assigned — Dante Reyes",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20697",
+   "event_date": "2026-10-01",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20697",
+   "event_date": "2026-10-24",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-20714",
+   "event_date": "2026-06-03",
+   "description": "FNOL received — Burn — Chemical reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20714",
+   "event_date": "2026-06-05",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20714",
+   "event_date": "2026-06-07",
+   "description": "Handler assigned — Dante Reyes",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20714",
+   "event_date": "2026-06-17",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20714",
+   "event_date": "2026-07-04",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-20714",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-20731",
+   "event_date": "2026-07-24",
+   "description": "FNOL received — Robotic Cell Injury reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20731",
+   "event_date": "2026-07-25",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20731",
+   "event_date": "2026-07-28",
+   "description": "Handler assigned — Dante Reyes",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20731",
+   "event_date": "2026-08-02",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20731",
+   "event_date": "2026-08-25",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-20731",
+   "event_date": "2026-09-09",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-20731",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-20748",
+   "event_date": "2026-06-27",
+   "description": "FNOL received — Strain or Tear — Back reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20748",
+   "event_date": "2026-06-29",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20748",
+   "event_date": "2026-07-02",
+   "description": "Handler assigned — Dante Reyes",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20748",
+   "event_date": "2026-07-10",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20748",
+   "event_date": "2026-07-15",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-20748",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-20765",
+   "event_date": "2026-08-18",
+   "description": "FNOL received — Crushing reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20765",
+   "event_date": "2026-08-18",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20765",
+   "event_date": "2026-08-19",
+   "description": "Handler assigned — Dante Reyes",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20765",
+   "event_date": "2026-08-26",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20765",
+   "event_date": "2026-10-07",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-20782",
+   "event_date": "2026-01-15",
+   "description": "FNOL received — Vibration White Finger (HAVS) reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20782",
+   "event_date": "2026-01-16",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20782",
+   "event_date": "2026-01-18",
+   "description": "Handler assigned — Dante Reyes",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20782",
+   "event_date": "2026-01-22",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20799",
+   "event_date": "2026-07-12",
+   "description": "FNOL received — Carpal Tunnel Syndrome reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20799",
+   "event_date": "2026-07-14",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20799",
+   "event_date": "2026-07-16",
+   "description": "Handler assigned — Dante Reyes",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20799",
+   "event_date": "2026-08-13",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-20816",
+   "event_date": "2026-04-17",
+   "description": "FNOL received — Myocardial Infarction reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20816",
+   "event_date": "2026-04-19",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20816",
+   "event_date": "2026-04-21",
+   "description": "Handler assigned — Dante Reyes",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20816",
+   "event_date": "2026-04-29",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20816",
+   "event_date": "2026-05-19",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-20833",
+   "event_date": "2026-08-10",
+   "description": "FNOL received — Eye Injury reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20833",
+   "event_date": "2026-08-10",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20833",
+   "event_date": "2026-08-11",
+   "description": "Handler assigned — Dante Reyes",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20833",
+   "event_date": "2026-08-19",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20833",
+   "event_date": "2026-08-17",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-20833",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-20850",
+   "event_date": "2026-02-26",
+   "description": "FNOL received — Loss of Hearing reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20850",
+   "event_date": "2026-02-27",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20850",
+   "event_date": "2026-02-28",
+   "description": "Handler assigned — Dante Reyes",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20850",
+   "event_date": "2026-03-03",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20850",
+   "event_date": "2026-04-03",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-20850",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-20867",
+   "event_date": "2026-03-10",
+   "description": "FNOL received — Amputation reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20867",
+   "event_date": "2026-03-10",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20867",
+   "event_date": "2026-03-11",
+   "description": "Handler assigned — Dante Reyes",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20867",
+   "event_date": "2026-04-29",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-20884",
+   "event_date": "2026-08-06",
+   "description": "FNOL received — Fracture reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20884",
+   "event_date": "2026-08-07",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20884",
+   "event_date": "2026-08-08",
+   "description": "Handler assigned — Marcus Chen",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20884",
+   "event_date": "2026-08-12",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20884",
+   "event_date": "2026-09-25",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-20901",
+   "event_date": "2026-01-21",
+   "description": "FNOL received — Laceration reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20901",
+   "event_date": "2026-01-21",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20901",
+   "event_date": "2026-01-23",
+   "description": "Handler assigned — Marcus Chen",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20901",
+   "event_date": "2026-01-28",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20901",
+   "event_date": "2026-02-11",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-20901",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-20918",
+   "event_date": "2026-03-18",
+   "description": "FNOL received — Fracture reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20918",
+   "event_date": "2026-03-18",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20918",
+   "event_date": "2026-03-20",
+   "description": "Handler assigned — Marcus Chen",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20918",
+   "event_date": "2026-03-26",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20918",
+   "event_date": "2026-05-02",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-20918",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-20935",
+   "event_date": "2026-06-13",
+   "description": "FNOL received — Strain or Tear — Shoulder reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20935",
+   "event_date": "2026-06-14",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20935",
+   "event_date": "2026-06-17",
+   "description": "Handler assigned — Marcus Chen",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20952",
+   "event_date": "2026-06-25",
+   "description": "FNOL received — Eye Injury reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20952",
+   "event_date": "2026-06-26",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20952",
+   "event_date": "2026-06-29",
+   "description": "Handler assigned — Marcus Chen",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20952",
+   "event_date": "2026-07-05",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20969",
+   "event_date": "2026-02-28",
+   "description": "FNOL received — Burn — Thermal reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20969",
+   "event_date": "2026-03-01",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20969",
+   "event_date": "2026-03-02",
+   "description": "Handler assigned — Marcus Chen",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20969",
+   "event_date": "2026-03-09",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20969",
+   "event_date": "2026-03-13",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-20969",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-20986",
+   "event_date": "2026-06-06",
+   "description": "FNOL received — Amputation reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-20986",
+   "event_date": "2026-06-08",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-20986",
+   "event_date": "2026-06-10",
+   "description": "Handler assigned — Marcus Chen",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-20986",
+   "event_date": "2026-06-16",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-20986",
+   "event_date": "2026-07-11",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-20986",
+   "event_date": "2026-07-25",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-20986",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-21003",
+   "event_date": "2026-06-17",
+   "description": "FNOL received — Loss of Hearing reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21003",
+   "event_date": "2026-06-18",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21003",
+   "event_date": "2026-06-20",
+   "description": "Handler assigned — Marcus Chen",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21003",
+   "event_date": "2026-06-25",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21003",
+   "event_date": "2026-07-23",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-21003",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-21020",
+   "event_date": "2026-02-05",
+   "description": "FNOL received — Struck By — Forklift reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21020",
+   "event_date": "2026-02-07",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21020",
+   "event_date": "2026-02-08",
+   "description": "Handler assigned — Marcus Chen",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21020",
+   "event_date": "2026-02-17",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21020",
+   "event_date": "2026-04-06",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-21020",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-21037",
+   "event_date": "2026-06-13",
+   "description": "FNOL received — Burn — Thermal reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21037",
+   "event_date": "2026-06-13",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21037",
+   "event_date": "2026-06-14",
+   "description": "Handler assigned — Marcus Chen",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21037",
+   "event_date": "2026-06-21",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21037",
+   "event_date": "2026-07-08",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-21037",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-21054",
+   "event_date": "2026-08-05",
+   "description": "FNOL received — Crushing reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21054",
+   "event_date": "2026-08-07",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21054",
+   "event_date": "2026-08-10",
+   "description": "Handler assigned — Marcus Chen",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21054",
+   "event_date": "2026-08-14",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21054",
+   "event_date": "2026-09-06",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-21054",
+   "event_date": "2026-09-17",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-21054",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-21071",
+   "event_date": "2026-02-19",
+   "description": "FNOL received — Burn — Arc Flash reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21071",
+   "event_date": "2026-02-21",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21071",
+   "event_date": "2026-02-24",
+   "description": "Handler assigned — Marcus Chen",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21071",
+   "event_date": "2026-03-01",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21071",
+   "event_date": "2026-03-22",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-21071",
+   "event_date": "2026-03-22",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-21071",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-21088",
+   "event_date": "2026-06-24",
+   "description": "FNOL received — Robotic Cell Injury reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21088",
+   "event_date": "2026-06-26",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21088",
+   "event_date": "2026-06-28",
+   "description": "Handler assigned — Marcus Chen",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21088",
+   "event_date": "2026-07-02",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21088",
+   "event_date": "2026-08-01",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-21088",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-21105",
+   "event_date": "2026-02-01",
+   "description": "FNOL received — Fall from Height reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21105",
+   "event_date": "2026-02-02",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21105",
+   "event_date": "2026-02-05",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21105",
+   "event_date": "2026-02-10",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21122",
+   "event_date": "2026-04-01",
+   "description": "FNOL received — Burn — Thermal reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21122",
+   "event_date": "2026-04-02",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21122",
+   "event_date": "2026-04-04",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21139",
+   "event_date": "2026-03-27",
+   "description": "FNOL received — Amputation reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21139",
+   "event_date": "2026-03-28",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21139",
+   "event_date": "2026-03-29",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21139",
+   "event_date": "2026-04-02",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21139",
+   "event_date": "2026-05-01",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-21139",
+   "event_date": "2026-03-29",
+   "description": "Attorney representation letter received — litigation protocol initiated",
+   "tag": "litigation"
+  },
+  {
+   "claim_id": "WC-21156",
+   "event_date": "2026-06-17",
+   "description": "FNOL received — Loss of Hearing reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21156",
+   "event_date": "2026-06-17",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21156",
+   "event_date": "2026-06-18",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21156",
+   "event_date": "2026-06-28",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21156",
+   "event_date": "2026-07-24",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-21156",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-21173",
+   "event_date": "2026-04-04",
+   "description": "FNOL received — Carpal Tunnel Syndrome reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21173",
+   "event_date": "2026-04-06",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21173",
+   "event_date": "2026-04-08",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21173",
+   "event_date": "2026-04-16",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21173",
+   "event_date": "2026-05-06",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-21173",
+   "event_date": "2026-05-12",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-21173",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-21190",
+   "event_date": "2026-04-02",
+   "description": "FNOL received — Robotic Cell Injury reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21190",
+   "event_date": "2026-04-02",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21190",
+   "event_date": "2026-04-05",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21190",
+   "event_date": "2026-04-12",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21190",
+   "event_date": "2026-05-13",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-21190",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-21207",
+   "event_date": "2026-02-07",
+   "description": "FNOL received — Amputation reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21207",
+   "event_date": "2026-02-08",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21207",
+   "event_date": "2026-02-11",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21207",
+   "event_date": "2026-02-20",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21207",
+   "event_date": "2026-03-28",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-21207",
+   "event_date": "2026-04-07",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-21207",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-21224",
+   "event_date": "2026-05-21",
+   "description": "FNOL received — Strain or Tear — Back reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21224",
+   "event_date": "2026-05-21",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21224",
+   "event_date": "2026-05-22",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21224",
+   "event_date": "2026-05-30",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21241",
+   "event_date": "2026-01-19",
+   "description": "FNOL received — Conveyor Entanglement reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21241",
+   "event_date": "2026-01-21",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21241",
+   "event_date": "2026-01-24",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21241",
+   "event_date": "2026-02-01",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21258",
+   "event_date": "2026-07-28",
+   "description": "FNOL received — Strain or Tear — Shoulder reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21258",
+   "event_date": "2026-07-29",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21258",
+   "event_date": "2026-07-30",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21258",
+   "event_date": "2026-08-04",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21275",
+   "event_date": "2026-09-04",
+   "description": "FNOL received — Crushing reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21275",
+   "event_date": "2026-09-06",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21275",
+   "event_date": "2026-09-08",
+   "description": "Handler assigned — Kaya Johnson",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21275",
+   "event_date": "2026-09-12",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21275",
+   "event_date": "2026-10-24",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-21275",
+   "event_date": "2026-09-08",
+   "description": "Attorney representation letter received — litigation protocol initiated",
+   "tag": "litigation"
+  },
+  {
+   "claim_id": "WC-21292",
+   "event_date": "2026-02-04",
+   "description": "FNOL received — Crushing reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21292",
+   "event_date": "2026-02-06",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21292",
+   "event_date": "2026-02-08",
+   "description": "Handler assigned — Sarah Williams",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21292",
+   "event_date": "2026-02-16",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21292",
+   "event_date": "2026-03-25",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-21292",
+   "event_date": "2026-03-22",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-21292",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-21309",
+   "event_date": "2026-03-03",
+   "description": "FNOL received — Carpal Tunnel Syndrome reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21309",
+   "event_date": "2026-03-03",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21309",
+   "event_date": "2026-03-05",
+   "description": "Handler assigned — Sarah Williams",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21309",
+   "event_date": "2026-03-10",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21326",
+   "event_date": "2026-04-01",
+   "description": "FNOL received — Fall from Height reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21326",
+   "event_date": "2026-04-01",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21326",
+   "event_date": "2026-04-02",
+   "description": "Handler assigned — Sarah Williams",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21326",
+   "event_date": "2026-04-12",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21326",
+   "event_date": "2026-05-27",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-21326",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-21343",
+   "event_date": "2026-06-01",
+   "description": "FNOL received — Fracture reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21343",
+   "event_date": "2026-06-01",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21343",
+   "event_date": "2026-06-02",
+   "description": "Handler assigned — Sarah Williams",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21343",
+   "event_date": "2026-06-07",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21343",
+   "event_date": "2026-07-21",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-21343",
+   "event_date": "2026-07-19",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-21343",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-21360",
+   "event_date": "2026-06-22",
+   "description": "FNOL received — Vibration White Finger (HAVS) reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21360",
+   "event_date": "2026-06-24",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21360",
+   "event_date": "2026-06-26",
+   "description": "Handler assigned — Sarah Williams",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21360",
+   "event_date": "2026-07-03",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21360",
+   "event_date": "2026-08-21",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-21360",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-21377",
+   "event_date": "2026-02-24",
+   "description": "FNOL received — Fracture reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21377",
+   "event_date": "2026-02-24",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21377",
+   "event_date": "2026-02-26",
+   "description": "Handler assigned — Sarah Williams",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21377",
+   "event_date": "2026-03-07",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21377",
+   "event_date": "2026-03-26",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-21377",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-21394",
+   "event_date": "2026-06-14",
+   "description": "FNOL received — Carpal Tunnel Syndrome reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21394",
+   "event_date": "2026-06-14",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21394",
+   "event_date": "2026-06-15",
+   "description": "Handler assigned — Sarah Williams",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21394",
+   "event_date": "2026-06-21",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21394",
+   "event_date": "2026-07-16",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-21394",
+   "event_date": "2026-07-27",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-21394",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-21411",
+   "event_date": "2026-01-25",
+   "description": "FNOL received — Fracture reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21411",
+   "event_date": "2026-01-25",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21411",
+   "event_date": "2026-01-26",
+   "description": "Handler assigned — Sarah Williams",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21411",
+   "event_date": "2026-03-15",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-21428",
+   "event_date": "2026-06-11",
+   "description": "FNOL received — Fall from Height reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21428",
+   "event_date": "2026-06-12",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21428",
+   "event_date": "2026-06-13",
+   "description": "Handler assigned — Liam O'Sullivan",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21428",
+   "event_date": "2026-06-17",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21428",
+   "event_date": "2026-07-31",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-21445",
+   "event_date": "2026-05-13",
+   "description": "FNOL received — Robotic Cell Injury reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21445",
+   "event_date": "2026-05-14",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21445",
+   "event_date": "2026-05-15",
+   "description": "Handler assigned — Liam O'Sullivan",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21445",
+   "event_date": "2026-05-21",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21445",
+   "event_date": "2026-06-14",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-21445",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-21462",
+   "event_date": "2026-07-30",
+   "description": "FNOL received — Vibration White Finger (HAVS) reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21462",
+   "event_date": "2026-08-01",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21462",
+   "event_date": "2026-08-03",
+   "description": "Handler assigned — Liam O'Sullivan",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21462",
+   "event_date": "2026-09-18",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-21479",
+   "event_date": "2026-08-04",
+   "description": "FNOL received — Amputation reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21479",
+   "event_date": "2026-08-05",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21479",
+   "event_date": "2026-08-06",
+   "description": "Handler assigned — Liam O'Sullivan",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21479",
+   "event_date": "2026-08-12",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21479",
+   "event_date": "2026-09-08",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-21479",
+   "event_date": "2026-09-07",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-21479",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-21496",
+   "event_date": "2026-04-21",
+   "description": "FNOL received — Eye Injury reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21496",
+   "event_date": "2026-04-23",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21496",
+   "event_date": "2026-04-26",
+   "description": "Handler assigned — Liam O'Sullivan",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21496",
+   "event_date": "2026-04-29",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21496",
+   "event_date": "2026-05-06",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-21496",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-21513",
+   "event_date": "2026-09-27",
+   "description": "FNOL received — Struck By — Forklift reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21513",
+   "event_date": "2026-09-29",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21513",
+   "event_date": "2026-10-01",
+   "description": "Handler assigned — Liam O'Sullivan",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21513",
+   "event_date": "2026-10-08",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21513",
+   "event_date": "2026-11-26",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-21513",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-21530",
+   "event_date": "2026-09-12",
+   "description": "FNOL received — Conveyor Entanglement reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21530",
+   "event_date": "2026-09-12",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21530",
+   "event_date": "2026-09-15",
+   "description": "Handler assigned — Liam O'Sullivan",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21530",
+   "event_date": "2026-09-22",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21530",
+   "event_date": "2026-11-01",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-21547",
+   "event_date": "2026-09-08",
+   "description": "FNOL received — Carpal Tunnel Syndrome reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21547",
+   "event_date": "2026-09-10",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21547",
+   "event_date": "2026-09-13",
+   "description": "Handler assigned — Marcus Chen",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21547",
+   "event_date": "2026-09-18",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21547",
+   "event_date": "2026-10-10",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-21547",
+   "event_date": "2026-10-22",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-21547",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-21564",
+   "event_date": "2026-04-18",
+   "description": "FNOL received — Robotic Cell Injury reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21564",
+   "event_date": "2026-04-18",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21564",
+   "event_date": "2026-04-20",
+   "description": "Handler assigned — Marcus Chen",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21564",
+   "event_date": "2026-04-24",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21581",
+   "event_date": "2026-07-05",
+   "description": "FNOL received — Amputation reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21581",
+   "event_date": "2026-07-05",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21581",
+   "event_date": "2026-07-07",
+   "description": "Handler assigned — Marcus Chen",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21581",
+   "event_date": "2026-07-11",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21581",
+   "event_date": "2026-08-09",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-21581",
+   "event_date": "2026-08-23",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-21581",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-21598",
+   "event_date": "2026-02-06",
+   "description": "FNOL received — Crushing reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21598",
+   "event_date": "2026-02-06",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21598",
+   "event_date": "2026-02-08",
+   "description": "Handler assigned — Marcus Chen",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21598",
+   "event_date": "2026-02-18",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21598",
+   "event_date": "2026-04-01",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-21598",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-21615",
+   "event_date": "2026-01-30",
+   "description": "FNOL received — Crushing reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21615",
+   "event_date": "2026-01-30",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21615",
+   "event_date": "2026-02-01",
+   "description": "Handler assigned — Marcus Chen",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21615",
+   "event_date": "2026-02-06",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21615",
+   "event_date": "2026-03-20",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-21615",
+   "event_date": "2026-04-04",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-21615",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-21632",
+   "event_date": "2026-04-03",
+   "description": "FNOL received — Strain or Tear — Shoulder reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21632",
+   "event_date": "2026-04-05",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21632",
+   "event_date": "2026-04-07",
+   "description": "Handler assigned — Marcus Chen",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21632",
+   "event_date": "2026-04-15",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21649",
+   "event_date": "2026-09-11",
+   "description": "FNOL received — Eye Injury reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21649",
+   "event_date": "2026-09-12",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21649",
+   "event_date": "2026-09-13",
+   "description": "Handler assigned — Fatima Al-Mansoori",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21649",
+   "event_date": "2026-09-22",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21649",
+   "event_date": "2026-09-30",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-21649",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-21666",
+   "event_date": "2026-06-10",
+   "description": "FNOL received — Carpal Tunnel Syndrome reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21666",
+   "event_date": "2026-06-11",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21666",
+   "event_date": "2026-06-14",
+   "description": "Handler assigned — Fatima Al-Mansoori",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21666",
+   "event_date": "2026-06-19",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21666",
+   "event_date": "2026-07-26",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-21666",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  },
+  {
+   "claim_id": "WC-21683",
+   "event_date": "2026-03-08",
+   "description": "FNOL received — Vibration White Finger (HAVS) reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21683",
+   "event_date": "2026-03-08",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21683",
+   "event_date": "2026-03-11",
+   "description": "Handler assigned — Fatima Al-Mansoori",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21700",
+   "event_date": "2026-08-10",
+   "description": "FNOL received — Amputation reported by shift supervisor",
+   "tag": "intake"
+  },
+  {
+   "claim_id": "WC-21700",
+   "event_date": "2026-08-11",
+   "description": "C-1 First Report of Injury filed with carrier",
+   "tag": "froi"
+  },
+  {
+   "claim_id": "WC-21700",
+   "event_date": "2026-08-14",
+   "description": "Handler assigned — Fatima Al-Mansoori",
+   "tag": "assignment"
+  },
+  {
+   "claim_id": "WC-21700",
+   "event_date": "2026-08-24",
+   "description": "Claim approved — treatment authorized",
+   "tag": "approval"
+  },
+  {
+   "claim_id": "WC-21700",
+   "event_date": "2026-09-29",
+   "description": "Surgical consultation completed — procedure scheduled",
+   "tag": "medical"
+  },
+  {
+   "claim_id": "WC-21700",
+   "event_date": "2026-09-26",
+   "description": "Return to work — cleared by treating physician",
+   "tag": "rtw"
+  },
+  {
+   "claim_id": "WC-21700",
+   "event_date": null,
+   "description": "Claim settled and closed — all payments finalized",
+   "tag": "settlement"
+  }
+ ],
+ "documents": [
+  {
+   "claim_id": "WC-20017",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-03-24"
+  },
+  {
+   "claim_id": "WC-20017",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-03-24"
+  },
+  {
+   "claim_id": "WC-20017",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-03-25"
+  },
+  {
+   "claim_id": "WC-20017",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-03-24"
+  },
+  {
+   "claim_id": "WC-20017",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20034",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-06-01"
+  },
+  {
+   "claim_id": "WC-20034",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-06-01"
+  },
+  {
+   "claim_id": "WC-20034",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-06-02"
+  },
+  {
+   "claim_id": "WC-20034",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-06-01"
+  },
+  {
+   "claim_id": "WC-20034",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20051",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-06-11"
+  },
+  {
+   "claim_id": "WC-20051",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-06-11"
+  },
+  {
+   "claim_id": "WC-20051",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-06-14"
+  },
+  {
+   "claim_id": "WC-20051",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-06-11"
+  },
+  {
+   "claim_id": "WC-20051",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-07-29"
+  },
+  {
+   "claim_id": "WC-20051",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20068",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-04-09"
+  },
+  {
+   "claim_id": "WC-20068",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-04-09"
+  },
+  {
+   "claim_id": "WC-20068",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-04-12"
+  },
+  {
+   "claim_id": "WC-20068",
+   "name": "Incident Investigation Report — Machine Safety",
+   "doc_type": "incident",
+   "filed_date": "2026-04-12"
+  },
+  {
+   "claim_id": "WC-20068",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-04-30"
+  },
+  {
+   "claim_id": "WC-20068",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20085",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-09-23"
+  },
+  {
+   "claim_id": "WC-20085",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-09-23"
+  },
+  {
+   "claim_id": "WC-20085",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-09-26"
+  },
+  {
+   "claim_id": "WC-20085",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-09-23"
+  },
+  {
+   "claim_id": "WC-20085",
+   "name": "Incident Investigation Report — Machine Safety",
+   "doc_type": "incident",
+   "filed_date": "2026-09-26"
+  },
+  {
+   "claim_id": "WC-20085",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20102",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-04-03"
+  },
+  {
+   "claim_id": "WC-20102",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-04-03"
+  },
+  {
+   "claim_id": "WC-20102",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-04-05"
+  },
+  {
+   "claim_id": "WC-20119",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-01-14"
+  },
+  {
+   "claim_id": "WC-20119",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-01-14"
+  },
+  {
+   "claim_id": "WC-20119",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-01-17"
+  },
+  {
+   "claim_id": "WC-20119",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-02-05"
+  },
+  {
+   "claim_id": "WC-20119",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20136",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-05-15"
+  },
+  {
+   "claim_id": "WC-20136",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-05-15"
+  },
+  {
+   "claim_id": "WC-20136",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-05-16"
+  },
+  {
+   "claim_id": "WC-20136",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-05-15"
+  },
+  {
+   "claim_id": "WC-20136",
+   "name": "Incident Investigation Report — Machine Safety",
+   "doc_type": "incident",
+   "filed_date": "2026-05-16"
+  },
+  {
+   "claim_id": "WC-20136",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-06-15"
+  },
+  {
+   "claim_id": "WC-20136",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20136",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20153",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-03-12"
+  },
+  {
+   "claim_id": "WC-20153",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-03-12"
+  },
+  {
+   "claim_id": "WC-20153",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-03-13"
+  },
+  {
+   "claim_id": "WC-20153",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-04-16"
+  },
+  {
+   "claim_id": "WC-20153",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20170",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-05-15"
+  },
+  {
+   "claim_id": "WC-20170",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-05-15"
+  },
+  {
+   "claim_id": "WC-20170",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-05-17"
+  },
+  {
+   "claim_id": "WC-20170",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-05-15"
+  },
+  {
+   "claim_id": "WC-20170",
+   "name": "Incident Investigation Report — Machine Safety",
+   "doc_type": "incident",
+   "filed_date": "2026-05-17"
+  },
+  {
+   "claim_id": "WC-20170",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-06-16"
+  },
+  {
+   "claim_id": "WC-20170",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20187",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-05-17"
+  },
+  {
+   "claim_id": "WC-20187",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-05-17"
+  },
+  {
+   "claim_id": "WC-20187",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-05-19"
+  },
+  {
+   "claim_id": "WC-20187",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-07-06"
+  },
+  {
+   "claim_id": "WC-20187",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20204",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-09-16"
+  },
+  {
+   "claim_id": "WC-20204",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-09-16"
+  },
+  {
+   "claim_id": "WC-20204",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-09-17"
+  },
+  {
+   "claim_id": "WC-20204",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-10-18"
+  },
+  {
+   "claim_id": "WC-20204",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20221",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-02-02"
+  },
+  {
+   "claim_id": "WC-20221",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-02-02"
+  },
+  {
+   "claim_id": "WC-20221",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-02-03"
+  },
+  {
+   "claim_id": "WC-20221",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-02-02"
+  },
+  {
+   "claim_id": "WC-20221",
+   "name": "Incident Investigation Report — Machine Safety",
+   "doc_type": "incident",
+   "filed_date": "2026-02-03"
+  },
+  {
+   "claim_id": "WC-20221",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-03-30"
+  },
+  {
+   "claim_id": "WC-20221",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20221",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20238",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-02-15"
+  },
+  {
+   "claim_id": "WC-20238",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-02-15"
+  },
+  {
+   "claim_id": "WC-20238",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-02-17"
+  },
+  {
+   "claim_id": "WC-20238",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-02-15"
+  },
+  {
+   "claim_id": "WC-20238",
+   "name": "Incident Investigation Report — Machine Safety",
+   "doc_type": "incident",
+   "filed_date": "2026-02-17"
+  },
+  {
+   "claim_id": "WC-20238",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-03-21"
+  },
+  {
+   "claim_id": "WC-20238",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20255",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-07-04"
+  },
+  {
+   "claim_id": "WC-20255",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-07-04"
+  },
+  {
+   "claim_id": "WC-20255",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-07-07"
+  },
+  {
+   "claim_id": "WC-20255",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-07-04"
+  },
+  {
+   "claim_id": "WC-20272",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-08-18"
+  },
+  {
+   "claim_id": "WC-20272",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-08-18"
+  },
+  {
+   "claim_id": "WC-20272",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-08-19"
+  },
+  {
+   "claim_id": "WC-20272",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-08-18"
+  },
+  {
+   "claim_id": "WC-20272",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-10-06"
+  },
+  {
+   "claim_id": "WC-20272",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20272",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20289",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-03-30"
+  },
+  {
+   "claim_id": "WC-20289",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-03-30"
+  },
+  {
+   "claim_id": "WC-20289",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-03-31"
+  },
+  {
+   "claim_id": "WC-20289",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-03-30"
+  },
+  {
+   "claim_id": "WC-20289",
+   "name": "Incident Investigation Report — Machine Safety",
+   "doc_type": "incident",
+   "filed_date": "2026-03-31"
+  },
+  {
+   "claim_id": "WC-20289",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20306",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-04-23"
+  },
+  {
+   "claim_id": "WC-20306",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-04-23"
+  },
+  {
+   "claim_id": "WC-20306",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-04-25"
+  },
+  {
+   "claim_id": "WC-20306",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-04-23"
+  },
+  {
+   "claim_id": "WC-20306",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-05-14"
+  },
+  {
+   "claim_id": "WC-20306",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20323",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-03-08"
+  },
+  {
+   "claim_id": "WC-20323",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-03-08"
+  },
+  {
+   "claim_id": "WC-20323",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-03-10"
+  },
+  {
+   "claim_id": "WC-20323",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-03-08"
+  },
+  {
+   "claim_id": "WC-20323",
+   "name": "Incident Investigation Report — Machine Safety",
+   "doc_type": "incident",
+   "filed_date": "2026-03-10"
+  },
+  {
+   "claim_id": "WC-20323",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-04-16"
+  },
+  {
+   "claim_id": "WC-20323",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20323",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20340",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-06-14"
+  },
+  {
+   "claim_id": "WC-20340",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-06-14"
+  },
+  {
+   "claim_id": "WC-20340",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-06-16"
+  },
+  {
+   "claim_id": "WC-20357",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-06-24"
+  },
+  {
+   "claim_id": "WC-20357",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-06-24"
+  },
+  {
+   "claim_id": "WC-20357",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-06-26"
+  },
+  {
+   "claim_id": "WC-20357",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-06-24"
+  },
+  {
+   "claim_id": "WC-20357",
+   "name": "Incident Investigation Report — Machine Safety",
+   "doc_type": "incident",
+   "filed_date": "2026-06-26"
+  },
+  {
+   "claim_id": "WC-20357",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-07-29"
+  },
+  {
+   "claim_id": "WC-20357",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20374",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-02-18"
+  },
+  {
+   "claim_id": "WC-20374",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-02-18"
+  },
+  {
+   "claim_id": "WC-20374",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-02-20"
+  },
+  {
+   "claim_id": "WC-20374",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-02-18"
+  },
+  {
+   "claim_id": "WC-20374",
+   "name": "Incident Investigation Report — Machine Safety",
+   "doc_type": "incident",
+   "filed_date": "2026-02-20"
+  },
+  {
+   "claim_id": "WC-20374",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-04-03"
+  },
+  {
+   "claim_id": "WC-20374",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20374",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20391",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-06-22"
+  },
+  {
+   "claim_id": "WC-20391",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-06-22"
+  },
+  {
+   "claim_id": "WC-20391",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-06-25"
+  },
+  {
+   "claim_id": "WC-20391",
+   "name": "Incident Investigation Report — Machine Safety",
+   "doc_type": "incident",
+   "filed_date": "2026-06-25"
+  },
+  {
+   "claim_id": "WC-20391",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-08-07"
+  },
+  {
+   "claim_id": "WC-20391",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20408",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-07-01"
+  },
+  {
+   "claim_id": "WC-20408",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-07-01"
+  },
+  {
+   "claim_id": "WC-20408",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-07-04"
+  },
+  {
+   "claim_id": "WC-20408",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-08-26"
+  },
+  {
+   "claim_id": "WC-20408",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20425",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-07-29"
+  },
+  {
+   "claim_id": "WC-20425",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-07-29"
+  },
+  {
+   "claim_id": "WC-20425",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-08-01"
+  },
+  {
+   "claim_id": "WC-20425",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-09-12"
+  },
+  {
+   "claim_id": "WC-20425",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20442",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-04-13"
+  },
+  {
+   "claim_id": "WC-20442",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-04-13"
+  },
+  {
+   "claim_id": "WC-20442",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-04-15"
+  },
+  {
+   "claim_id": "WC-20442",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-04-13"
+  },
+  {
+   "claim_id": "WC-20442",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-06-08"
+  },
+  {
+   "claim_id": "WC-20442",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20459",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-03-29"
+  },
+  {
+   "claim_id": "WC-20459",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-03-29"
+  },
+  {
+   "claim_id": "WC-20459",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-03-30"
+  },
+  {
+   "claim_id": "WC-20459",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-03-29"
+  },
+  {
+   "claim_id": "WC-20459",
+   "name": "Incident Investigation Report — Machine Safety",
+   "doc_type": "incident",
+   "filed_date": "2026-03-30"
+  },
+  {
+   "claim_id": "WC-20459",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20476",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-08-03"
+  },
+  {
+   "claim_id": "WC-20476",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-08-03"
+  },
+  {
+   "claim_id": "WC-20476",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-08-04"
+  },
+  {
+   "claim_id": "WC-20476",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-08-03"
+  },
+  {
+   "claim_id": "WC-20476",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-09-26"
+  },
+  {
+   "claim_id": "WC-20476",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20493",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-08-20"
+  },
+  {
+   "claim_id": "WC-20493",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-08-20"
+  },
+  {
+   "claim_id": "WC-20493",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-08-23"
+  },
+  {
+   "claim_id": "WC-20493",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-08-20"
+  },
+  {
+   "claim_id": "WC-20493",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-10-13"
+  },
+  {
+   "claim_id": "WC-20493",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20510",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-07-24"
+  },
+  {
+   "claim_id": "WC-20510",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-07-24"
+  },
+  {
+   "claim_id": "WC-20510",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-07-25"
+  },
+  {
+   "claim_id": "WC-20510",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-07-24"
+  },
+  {
+   "claim_id": "WC-20527",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-05-15"
+  },
+  {
+   "claim_id": "WC-20527",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-05-15"
+  },
+  {
+   "claim_id": "WC-20527",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-05-17"
+  },
+  {
+   "claim_id": "WC-20527",
+   "name": "Incident Investigation Report — Machine Safety",
+   "doc_type": "incident",
+   "filed_date": "2026-05-17"
+  },
+  {
+   "claim_id": "WC-20544",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-08-31"
+  },
+  {
+   "claim_id": "WC-20544",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-08-31"
+  },
+  {
+   "claim_id": "WC-20544",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-09-02"
+  },
+  {
+   "claim_id": "WC-20544",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-10-05"
+  },
+  {
+   "claim_id": "WC-20544",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20561",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-03-16"
+  },
+  {
+   "claim_id": "WC-20561",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-03-16"
+  },
+  {
+   "claim_id": "WC-20561",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-03-17"
+  },
+  {
+   "claim_id": "WC-20561",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-03-16"
+  },
+  {
+   "claim_id": "WC-20561",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20578",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-05-20"
+  },
+  {
+   "claim_id": "WC-20578",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-05-20"
+  },
+  {
+   "claim_id": "WC-20578",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-05-21"
+  },
+  {
+   "claim_id": "WC-20578",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-06-20"
+  },
+  {
+   "claim_id": "WC-20578",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20595",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-06-17"
+  },
+  {
+   "claim_id": "WC-20595",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-06-17"
+  },
+  {
+   "claim_id": "WC-20595",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-06-20"
+  },
+  {
+   "claim_id": "WC-20595",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-06-17"
+  },
+  {
+   "claim_id": "WC-20595",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-07-21"
+  },
+  {
+   "claim_id": "WC-20595",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20595",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20612",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-05-10"
+  },
+  {
+   "claim_id": "WC-20612",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-05-10"
+  },
+  {
+   "claim_id": "WC-20612",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-05-13"
+  },
+  {
+   "claim_id": "WC-20612",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-05-10"
+  },
+  {
+   "claim_id": "WC-20629",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-03-15"
+  },
+  {
+   "claim_id": "WC-20629",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-03-15"
+  },
+  {
+   "claim_id": "WC-20629",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-03-18"
+  },
+  {
+   "claim_id": "WC-20629",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-03-15"
+  },
+  {
+   "claim_id": "WC-20629",
+   "name": "Incident Investigation Report — Machine Safety",
+   "doc_type": "incident",
+   "filed_date": "2026-03-18"
+  },
+  {
+   "claim_id": "WC-20629",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-05-16"
+  },
+  {
+   "claim_id": "WC-20629",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20646",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-04-10"
+  },
+  {
+   "claim_id": "WC-20646",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-04-10"
+  },
+  {
+   "claim_id": "WC-20646",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-04-13"
+  },
+  {
+   "claim_id": "WC-20646",
+   "name": "Attorney Representation Letter",
+   "doc_type": "legal",
+   "filed_date": "2026-04-13"
+  },
+  {
+   "claim_id": "WC-20663",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-01-30"
+  },
+  {
+   "claim_id": "WC-20663",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-01-30"
+  },
+  {
+   "claim_id": "WC-20663",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-01-31"
+  },
+  {
+   "claim_id": "WC-20663",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-01-30"
+  },
+  {
+   "claim_id": "WC-20663",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-02-23"
+  },
+  {
+   "claim_id": "WC-20663",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20680",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-09-15"
+  },
+  {
+   "claim_id": "WC-20680",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-09-15"
+  },
+  {
+   "claim_id": "WC-20680",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-09-16"
+  },
+  {
+   "claim_id": "WC-20680",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-09-15"
+  },
+  {
+   "claim_id": "WC-20680",
+   "name": "Incident Investigation Report — Machine Safety",
+   "doc_type": "incident",
+   "filed_date": "2026-09-16"
+  },
+  {
+   "claim_id": "WC-20680",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20697",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-09-24"
+  },
+  {
+   "claim_id": "WC-20697",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-09-24"
+  },
+  {
+   "claim_id": "WC-20697",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-09-26"
+  },
+  {
+   "claim_id": "WC-20697",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-09-24"
+  },
+  {
+   "claim_id": "WC-20697",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20714",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-06-05"
+  },
+  {
+   "claim_id": "WC-20714",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-06-05"
+  },
+  {
+   "claim_id": "WC-20714",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-06-07"
+  },
+  {
+   "claim_id": "WC-20714",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-07-04"
+  },
+  {
+   "claim_id": "WC-20714",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20731",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-07-25"
+  },
+  {
+   "claim_id": "WC-20731",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-07-25"
+  },
+  {
+   "claim_id": "WC-20731",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-07-28"
+  },
+  {
+   "claim_id": "WC-20731",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-07-25"
+  },
+  {
+   "claim_id": "WC-20731",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-09-09"
+  },
+  {
+   "claim_id": "WC-20731",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20731",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20748",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-06-29"
+  },
+  {
+   "claim_id": "WC-20748",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-06-29"
+  },
+  {
+   "claim_id": "WC-20748",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-07-02"
+  },
+  {
+   "claim_id": "WC-20748",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-06-29"
+  },
+  {
+   "claim_id": "WC-20748",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-07-15"
+  },
+  {
+   "claim_id": "WC-20748",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20765",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-08-18"
+  },
+  {
+   "claim_id": "WC-20765",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-08-18"
+  },
+  {
+   "claim_id": "WC-20765",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-08-19"
+  },
+  {
+   "claim_id": "WC-20765",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-08-18"
+  },
+  {
+   "claim_id": "WC-20765",
+   "name": "Incident Investigation Report — Machine Safety",
+   "doc_type": "incident",
+   "filed_date": "2026-08-19"
+  },
+  {
+   "claim_id": "WC-20765",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20782",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-01-16"
+  },
+  {
+   "claim_id": "WC-20782",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-01-16"
+  },
+  {
+   "claim_id": "WC-20782",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-01-18"
+  },
+  {
+   "claim_id": "WC-20799",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-07-14"
+  },
+  {
+   "claim_id": "WC-20799",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-07-14"
+  },
+  {
+   "claim_id": "WC-20799",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-07-16"
+  },
+  {
+   "claim_id": "WC-20799",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20816",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-04-19"
+  },
+  {
+   "claim_id": "WC-20816",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-04-19"
+  },
+  {
+   "claim_id": "WC-20816",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-04-21"
+  },
+  {
+   "claim_id": "WC-20816",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-04-19"
+  },
+  {
+   "claim_id": "WC-20816",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20833",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-08-10"
+  },
+  {
+   "claim_id": "WC-20833",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-08-10"
+  },
+  {
+   "claim_id": "WC-20833",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-08-11"
+  },
+  {
+   "claim_id": "WC-20833",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-08-17"
+  },
+  {
+   "claim_id": "WC-20833",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20850",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-02-27"
+  },
+  {
+   "claim_id": "WC-20850",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-02-27"
+  },
+  {
+   "claim_id": "WC-20850",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-02-28"
+  },
+  {
+   "claim_id": "WC-20850",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-02-27"
+  },
+  {
+   "claim_id": "WC-20850",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-04-03"
+  },
+  {
+   "claim_id": "WC-20850",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20867",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-03-10"
+  },
+  {
+   "claim_id": "WC-20867",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-03-10"
+  },
+  {
+   "claim_id": "WC-20867",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-03-11"
+  },
+  {
+   "claim_id": "WC-20867",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-03-10"
+  },
+  {
+   "claim_id": "WC-20867",
+   "name": "Incident Investigation Report — Machine Safety",
+   "doc_type": "incident",
+   "filed_date": "2026-03-11"
+  },
+  {
+   "claim_id": "WC-20867",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20884",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-08-07"
+  },
+  {
+   "claim_id": "WC-20884",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-08-07"
+  },
+  {
+   "claim_id": "WC-20884",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-08-08"
+  },
+  {
+   "claim_id": "WC-20884",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20901",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-01-21"
+  },
+  {
+   "claim_id": "WC-20901",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-01-21"
+  },
+  {
+   "claim_id": "WC-20901",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-01-23"
+  },
+  {
+   "claim_id": "WC-20901",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-01-21"
+  },
+  {
+   "claim_id": "WC-20901",
+   "name": "Incident Investigation Report — Machine Safety",
+   "doc_type": "incident",
+   "filed_date": "2026-01-23"
+  },
+  {
+   "claim_id": "WC-20901",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-02-11"
+  },
+  {
+   "claim_id": "WC-20901",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20918",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-03-18"
+  },
+  {
+   "claim_id": "WC-20918",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-03-18"
+  },
+  {
+   "claim_id": "WC-20918",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-03-20"
+  },
+  {
+   "claim_id": "WC-20918",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-03-18"
+  },
+  {
+   "claim_id": "WC-20918",
+   "name": "Incident Investigation Report — Machine Safety",
+   "doc_type": "incident",
+   "filed_date": "2026-03-20"
+  },
+  {
+   "claim_id": "WC-20918",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-05-02"
+  },
+  {
+   "claim_id": "WC-20918",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20935",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-06-14"
+  },
+  {
+   "claim_id": "WC-20935",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-06-14"
+  },
+  {
+   "claim_id": "WC-20935",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-06-17"
+  },
+  {
+   "claim_id": "WC-20952",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-06-26"
+  },
+  {
+   "claim_id": "WC-20952",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-06-26"
+  },
+  {
+   "claim_id": "WC-20952",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-06-29"
+  },
+  {
+   "claim_id": "WC-20952",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-06-26"
+  },
+  {
+   "claim_id": "WC-20969",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-03-01"
+  },
+  {
+   "claim_id": "WC-20969",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-03-01"
+  },
+  {
+   "claim_id": "WC-20969",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-03-02"
+  },
+  {
+   "claim_id": "WC-20969",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-03-13"
+  },
+  {
+   "claim_id": "WC-20969",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20986",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-06-08"
+  },
+  {
+   "claim_id": "WC-20986",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-06-08"
+  },
+  {
+   "claim_id": "WC-20986",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-06-10"
+  },
+  {
+   "claim_id": "WC-20986",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-06-08"
+  },
+  {
+   "claim_id": "WC-20986",
+   "name": "Incident Investigation Report — Machine Safety",
+   "doc_type": "incident",
+   "filed_date": "2026-06-10"
+  },
+  {
+   "claim_id": "WC-20986",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-07-25"
+  },
+  {
+   "claim_id": "WC-20986",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-20986",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21003",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-06-18"
+  },
+  {
+   "claim_id": "WC-21003",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-06-18"
+  },
+  {
+   "claim_id": "WC-21003",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-06-20"
+  },
+  {
+   "claim_id": "WC-21003",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-07-23"
+  },
+  {
+   "claim_id": "WC-21003",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21020",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-02-07"
+  },
+  {
+   "claim_id": "WC-21020",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-02-07"
+  },
+  {
+   "claim_id": "WC-21020",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-02-08"
+  },
+  {
+   "claim_id": "WC-21020",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-02-07"
+  },
+  {
+   "claim_id": "WC-21020",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-04-06"
+  },
+  {
+   "claim_id": "WC-21020",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21037",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-06-13"
+  },
+  {
+   "claim_id": "WC-21037",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-06-13"
+  },
+  {
+   "claim_id": "WC-21037",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-06-14"
+  },
+  {
+   "claim_id": "WC-21037",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-06-13"
+  },
+  {
+   "claim_id": "WC-21037",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-07-08"
+  },
+  {
+   "claim_id": "WC-21037",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21054",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-08-07"
+  },
+  {
+   "claim_id": "WC-21054",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-08-07"
+  },
+  {
+   "claim_id": "WC-21054",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-08-10"
+  },
+  {
+   "claim_id": "WC-21054",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-08-07"
+  },
+  {
+   "claim_id": "WC-21054",
+   "name": "Incident Investigation Report — Machine Safety",
+   "doc_type": "incident",
+   "filed_date": "2026-08-10"
+  },
+  {
+   "claim_id": "WC-21054",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-09-17"
+  },
+  {
+   "claim_id": "WC-21054",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21054",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21071",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-02-21"
+  },
+  {
+   "claim_id": "WC-21071",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-02-21"
+  },
+  {
+   "claim_id": "WC-21071",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-02-24"
+  },
+  {
+   "claim_id": "WC-21071",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-02-21"
+  },
+  {
+   "claim_id": "WC-21071",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-03-22"
+  },
+  {
+   "claim_id": "WC-21071",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21071",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21088",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-06-26"
+  },
+  {
+   "claim_id": "WC-21088",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-06-26"
+  },
+  {
+   "claim_id": "WC-21088",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-06-28"
+  },
+  {
+   "claim_id": "WC-21088",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-06-26"
+  },
+  {
+   "claim_id": "WC-21088",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-08-01"
+  },
+  {
+   "claim_id": "WC-21088",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21105",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-02-02"
+  },
+  {
+   "claim_id": "WC-21105",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-02-02"
+  },
+  {
+   "claim_id": "WC-21105",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-02-05"
+  },
+  {
+   "claim_id": "WC-21105",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-02-02"
+  },
+  {
+   "claim_id": "WC-21122",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-04-02"
+  },
+  {
+   "claim_id": "WC-21122",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-04-02"
+  },
+  {
+   "claim_id": "WC-21122",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-04-04"
+  },
+  {
+   "claim_id": "WC-21139",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-03-28"
+  },
+  {
+   "claim_id": "WC-21139",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-03-28"
+  },
+  {
+   "claim_id": "WC-21139",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-03-29"
+  },
+  {
+   "claim_id": "WC-21139",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-03-28"
+  },
+  {
+   "claim_id": "WC-21139",
+   "name": "Incident Investigation Report — Machine Safety",
+   "doc_type": "incident",
+   "filed_date": "2026-03-29"
+  },
+  {
+   "claim_id": "WC-21139",
+   "name": "Attorney Representation Letter",
+   "doc_type": "legal",
+   "filed_date": "2026-03-29"
+  },
+  {
+   "claim_id": "WC-21139",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21156",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-06-17"
+  },
+  {
+   "claim_id": "WC-21156",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-06-17"
+  },
+  {
+   "claim_id": "WC-21156",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-06-18"
+  },
+  {
+   "claim_id": "WC-21156",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-07-24"
+  },
+  {
+   "claim_id": "WC-21156",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21173",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-04-06"
+  },
+  {
+   "claim_id": "WC-21173",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-04-06"
+  },
+  {
+   "claim_id": "WC-21173",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-04-08"
+  },
+  {
+   "claim_id": "WC-21173",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-05-12"
+  },
+  {
+   "claim_id": "WC-21173",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21173",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21190",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-04-02"
+  },
+  {
+   "claim_id": "WC-21190",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-04-02"
+  },
+  {
+   "claim_id": "WC-21190",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-04-05"
+  },
+  {
+   "claim_id": "WC-21190",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-04-02"
+  },
+  {
+   "claim_id": "WC-21190",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-05-13"
+  },
+  {
+   "claim_id": "WC-21190",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21207",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-02-08"
+  },
+  {
+   "claim_id": "WC-21207",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-02-08"
+  },
+  {
+   "claim_id": "WC-21207",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-02-11"
+  },
+  {
+   "claim_id": "WC-21207",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-02-08"
+  },
+  {
+   "claim_id": "WC-21207",
+   "name": "Incident Investigation Report — Machine Safety",
+   "doc_type": "incident",
+   "filed_date": "2026-02-11"
+  },
+  {
+   "claim_id": "WC-21207",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-04-07"
+  },
+  {
+   "claim_id": "WC-21207",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21207",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21224",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-05-21"
+  },
+  {
+   "claim_id": "WC-21224",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-05-21"
+  },
+  {
+   "claim_id": "WC-21224",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-05-22"
+  },
+  {
+   "claim_id": "WC-21241",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-01-21"
+  },
+  {
+   "claim_id": "WC-21241",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-01-21"
+  },
+  {
+   "claim_id": "WC-21241",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-01-24"
+  },
+  {
+   "claim_id": "WC-21241",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-01-21"
+  },
+  {
+   "claim_id": "WC-21241",
+   "name": "Incident Investigation Report — Machine Safety",
+   "doc_type": "incident",
+   "filed_date": "2026-01-24"
+  },
+  {
+   "claim_id": "WC-21258",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-07-29"
+  },
+  {
+   "claim_id": "WC-21258",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-07-29"
+  },
+  {
+   "claim_id": "WC-21258",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-07-30"
+  },
+  {
+   "claim_id": "WC-21275",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-09-06"
+  },
+  {
+   "claim_id": "WC-21275",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-09-06"
+  },
+  {
+   "claim_id": "WC-21275",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-09-08"
+  },
+  {
+   "claim_id": "WC-21275",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-09-06"
+  },
+  {
+   "claim_id": "WC-21275",
+   "name": "Incident Investigation Report — Machine Safety",
+   "doc_type": "incident",
+   "filed_date": "2026-09-08"
+  },
+  {
+   "claim_id": "WC-21275",
+   "name": "Attorney Representation Letter",
+   "doc_type": "legal",
+   "filed_date": "2026-09-08"
+  },
+  {
+   "claim_id": "WC-21275",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21292",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-02-06"
+  },
+  {
+   "claim_id": "WC-21292",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-02-06"
+  },
+  {
+   "claim_id": "WC-21292",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-02-08"
+  },
+  {
+   "claim_id": "WC-21292",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-02-06"
+  },
+  {
+   "claim_id": "WC-21292",
+   "name": "Incident Investigation Report — Machine Safety",
+   "doc_type": "incident",
+   "filed_date": "2026-02-08"
+  },
+  {
+   "claim_id": "WC-21292",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-03-22"
+  },
+  {
+   "claim_id": "WC-21292",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21292",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21309",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-03-03"
+  },
+  {
+   "claim_id": "WC-21309",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-03-03"
+  },
+  {
+   "claim_id": "WC-21309",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-03-05"
+  },
+  {
+   "claim_id": "WC-21326",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-04-01"
+  },
+  {
+   "claim_id": "WC-21326",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-04-01"
+  },
+  {
+   "claim_id": "WC-21326",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-04-02"
+  },
+  {
+   "claim_id": "WC-21326",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-04-01"
+  },
+  {
+   "claim_id": "WC-21326",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-05-27"
+  },
+  {
+   "claim_id": "WC-21326",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21343",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-06-01"
+  },
+  {
+   "claim_id": "WC-21343",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-06-01"
+  },
+  {
+   "claim_id": "WC-21343",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-06-02"
+  },
+  {
+   "claim_id": "WC-21343",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-07-19"
+  },
+  {
+   "claim_id": "WC-21343",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21343",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21360",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-06-24"
+  },
+  {
+   "claim_id": "WC-21360",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-06-24"
+  },
+  {
+   "claim_id": "WC-21360",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-06-26"
+  },
+  {
+   "claim_id": "WC-21360",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-08-21"
+  },
+  {
+   "claim_id": "WC-21360",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21377",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-02-24"
+  },
+  {
+   "claim_id": "WC-21377",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-02-24"
+  },
+  {
+   "claim_id": "WC-21377",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-02-26"
+  },
+  {
+   "claim_id": "WC-21377",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-02-24"
+  },
+  {
+   "claim_id": "WC-21377",
+   "name": "Incident Investigation Report — Machine Safety",
+   "doc_type": "incident",
+   "filed_date": "2026-02-26"
+  },
+  {
+   "claim_id": "WC-21377",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-03-26"
+  },
+  {
+   "claim_id": "WC-21377",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21394",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-06-14"
+  },
+  {
+   "claim_id": "WC-21394",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-06-14"
+  },
+  {
+   "claim_id": "WC-21394",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-06-15"
+  },
+  {
+   "claim_id": "WC-21394",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-07-27"
+  },
+  {
+   "claim_id": "WC-21394",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21394",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21411",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-01-25"
+  },
+  {
+   "claim_id": "WC-21411",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-01-25"
+  },
+  {
+   "claim_id": "WC-21411",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-01-26"
+  },
+  {
+   "claim_id": "WC-21411",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-01-25"
+  },
+  {
+   "claim_id": "WC-21411",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21428",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-06-12"
+  },
+  {
+   "claim_id": "WC-21428",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-06-12"
+  },
+  {
+   "claim_id": "WC-21428",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-06-13"
+  },
+  {
+   "claim_id": "WC-21428",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-06-12"
+  },
+  {
+   "claim_id": "WC-21428",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21445",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-05-14"
+  },
+  {
+   "claim_id": "WC-21445",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-05-14"
+  },
+  {
+   "claim_id": "WC-21445",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-05-15"
+  },
+  {
+   "claim_id": "WC-21445",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-05-14"
+  },
+  {
+   "claim_id": "WC-21445",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-06-14"
+  },
+  {
+   "claim_id": "WC-21445",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21462",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-08-01"
+  },
+  {
+   "claim_id": "WC-21462",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-08-01"
+  },
+  {
+   "claim_id": "WC-21462",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-08-03"
+  },
+  {
+   "claim_id": "WC-21462",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21479",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-08-05"
+  },
+  {
+   "claim_id": "WC-21479",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-08-05"
+  },
+  {
+   "claim_id": "WC-21479",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-08-06"
+  },
+  {
+   "claim_id": "WC-21479",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-08-05"
+  },
+  {
+   "claim_id": "WC-21479",
+   "name": "Incident Investigation Report — Machine Safety",
+   "doc_type": "incident",
+   "filed_date": "2026-08-06"
+  },
+  {
+   "claim_id": "WC-21479",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-09-07"
+  },
+  {
+   "claim_id": "WC-21479",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21479",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21496",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-04-23"
+  },
+  {
+   "claim_id": "WC-21496",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-04-23"
+  },
+  {
+   "claim_id": "WC-21496",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-04-26"
+  },
+  {
+   "claim_id": "WC-21496",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-05-06"
+  },
+  {
+   "claim_id": "WC-21496",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21513",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-09-29"
+  },
+  {
+   "claim_id": "WC-21513",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-09-29"
+  },
+  {
+   "claim_id": "WC-21513",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-10-01"
+  },
+  {
+   "claim_id": "WC-21513",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-09-29"
+  },
+  {
+   "claim_id": "WC-21513",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-11-26"
+  },
+  {
+   "claim_id": "WC-21513",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21530",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-09-12"
+  },
+  {
+   "claim_id": "WC-21530",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-09-12"
+  },
+  {
+   "claim_id": "WC-21530",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-09-15"
+  },
+  {
+   "claim_id": "WC-21530",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-09-12"
+  },
+  {
+   "claim_id": "WC-21530",
+   "name": "Incident Investigation Report — Machine Safety",
+   "doc_type": "incident",
+   "filed_date": "2026-09-15"
+  },
+  {
+   "claim_id": "WC-21530",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21547",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-09-10"
+  },
+  {
+   "claim_id": "WC-21547",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-09-10"
+  },
+  {
+   "claim_id": "WC-21547",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-09-13"
+  },
+  {
+   "claim_id": "WC-21547",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-09-10"
+  },
+  {
+   "claim_id": "WC-21547",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-10-22"
+  },
+  {
+   "claim_id": "WC-21547",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21547",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21564",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-04-18"
+  },
+  {
+   "claim_id": "WC-21564",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-04-18"
+  },
+  {
+   "claim_id": "WC-21564",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-04-20"
+  },
+  {
+   "claim_id": "WC-21564",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-04-18"
+  },
+  {
+   "claim_id": "WC-21581",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-07-05"
+  },
+  {
+   "claim_id": "WC-21581",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-07-05"
+  },
+  {
+   "claim_id": "WC-21581",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-07-07"
+  },
+  {
+   "claim_id": "WC-21581",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-07-05"
+  },
+  {
+   "claim_id": "WC-21581",
+   "name": "Incident Investigation Report — Machine Safety",
+   "doc_type": "incident",
+   "filed_date": "2026-07-07"
+  },
+  {
+   "claim_id": "WC-21581",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-08-23"
+  },
+  {
+   "claim_id": "WC-21581",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21581",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21598",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-02-06"
+  },
+  {
+   "claim_id": "WC-21598",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-02-06"
+  },
+  {
+   "claim_id": "WC-21598",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-02-08"
+  },
+  {
+   "claim_id": "WC-21598",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-02-06"
+  },
+  {
+   "claim_id": "WC-21598",
+   "name": "Incident Investigation Report — Machine Safety",
+   "doc_type": "incident",
+   "filed_date": "2026-02-08"
+  },
+  {
+   "claim_id": "WC-21598",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-04-01"
+  },
+  {
+   "claim_id": "WC-21598",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21615",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-01-30"
+  },
+  {
+   "claim_id": "WC-21615",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-01-30"
+  },
+  {
+   "claim_id": "WC-21615",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-02-01"
+  },
+  {
+   "claim_id": "WC-21615",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-01-30"
+  },
+  {
+   "claim_id": "WC-21615",
+   "name": "Incident Investigation Report — Machine Safety",
+   "doc_type": "incident",
+   "filed_date": "2026-02-01"
+  },
+  {
+   "claim_id": "WC-21615",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-04-04"
+  },
+  {
+   "claim_id": "WC-21615",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21615",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21632",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-04-05"
+  },
+  {
+   "claim_id": "WC-21632",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-04-05"
+  },
+  {
+   "claim_id": "WC-21632",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-04-07"
+  },
+  {
+   "claim_id": "WC-21649",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-09-12"
+  },
+  {
+   "claim_id": "WC-21649",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-09-12"
+  },
+  {
+   "claim_id": "WC-21649",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-09-13"
+  },
+  {
+   "claim_id": "WC-21649",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-09-12"
+  },
+  {
+   "claim_id": "WC-21649",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-09-30"
+  },
+  {
+   "claim_id": "WC-21649",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21666",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-06-11"
+  },
+  {
+   "claim_id": "WC-21666",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-06-11"
+  },
+  {
+   "claim_id": "WC-21666",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-06-14"
+  },
+  {
+   "claim_id": "WC-21666",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-07-26"
+  },
+  {
+   "claim_id": "WC-21666",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21683",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-03-08"
+  },
+  {
+   "claim_id": "WC-21683",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-03-08"
+  },
+  {
+   "claim_id": "WC-21683",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-03-11"
+  },
+  {
+   "claim_id": "WC-21700",
+   "name": "C-1 First Report of Injury",
+   "doc_type": "froi",
+   "filed_date": "2026-08-11"
+  },
+  {
+   "claim_id": "WC-21700",
+   "name": "Medical Authorization & Release (HIPAA)",
+   "doc_type": "medauth",
+   "filed_date": "2026-08-11"
+  },
+  {
+   "claim_id": "WC-21700",
+   "name": "Wage Statement — AWW Calculation",
+   "doc_type": "wage",
+   "filed_date": "2026-08-14"
+  },
+  {
+   "claim_id": "WC-21700",
+   "name": "OSHA 300/301 Filing Confirmation",
+   "doc_type": "legal",
+   "filed_date": "2026-08-11"
+  },
+  {
+   "claim_id": "WC-21700",
+   "name": "Incident Investigation Report — Machine Safety",
+   "doc_type": "incident",
+   "filed_date": "2026-08-14"
+  },
+  {
+   "claim_id": "WC-21700",
+   "name": "Return-to-Work Offer Letter",
+   "doc_type": "rtw",
+   "filed_date": "2026-09-26"
+  },
+  {
+   "claim_id": "WC-21700",
+   "name": "Final Settlement Agreement & PPD Rating",
+   "doc_type": "legal",
+   "filed_date": null
+  },
+  {
+   "claim_id": "WC-21700",
+   "name": "Surgical Consent & Operative Report",
+   "doc_type": "medauth",
+   "filed_date": null
+  }
+ ]
+}

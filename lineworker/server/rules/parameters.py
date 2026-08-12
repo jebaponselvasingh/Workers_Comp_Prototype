@@ -40,7 +40,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from data.models.enums import ClaimStatus
+from data.models.enums import ClaimStatus, DocType
 
 # Submodule names rather than `from rules import engine`: the package
 # `__init__` re-exports both modules, so binding through it would make this
@@ -49,6 +49,8 @@ from rules.engine import LoadedDocument, evaluate, load
 
 DERIVATION_THRESHOLDS_KEY = "derivation_thresholds"
 PRIORITY_WEIGHTS_KEY = "priority_weights"
+INTAKE_REQUIRED_DOCUMENTS_KEY = "intake_required_documents"
+INJURY_CAPTURE_KEY = "injury_capture"
 
 
 class RuleParameterError(ValueError):
@@ -152,6 +154,13 @@ class DerivationThresholds:
     siu_fraud_score_min: int
     rtw_blocked_hash_modulus: int
     payment_due_hash_modulus: int
+    # Story 2.2's four (document v2). The two ratios band `days_open /
+    # expected_days`; the two day constants are the expected window when the
+    # recovery text names a year or names nothing this rule can read.
+    treatment_early_max_ratio: float
+    treatment_active_max_ratio: float
+    recovery_year_expected_days: int
+    recovery_default_expected_days: int
 
     def __post_init__(self) -> None:
         # Story 1.4's `Field(ge=0, le=100)`, in its new home. `severity_score`
@@ -193,6 +202,33 @@ class DerivationThresholds:
         ):
             if modulus < 1:
                 raise RuleParameterError(f"{name} must be at least 1, got {modulus}")
+        # The treatment phase bands a ratio of days elapsed to days expected.
+        # A boundary outside 0–1 is not a tuning choice, it is a phase that
+        # can never be reached: `treatmentEarlyMaxRatio: 2` leaves every claim
+        # "early" for twice its own recovery window, and a negative one skips
+        # the phase entirely — both silently, with a banner still rendering.
+        for name, ratio in (
+            ("treatmentEarlyMaxRatio", self.treatment_early_max_ratio),
+            ("treatmentActiveMaxRatio", self.treatment_active_max_ratio),
+        ):
+            if not 0 <= ratio <= 1:
+                raise RuleParameterError(f"{name} must be between 0 and 1, got {ratio}")
+        # Inverted boundaries collapse the middle phase without an error, the
+        # same failure `riskMedMin > riskHighMin` is refused for: the
+        # derivation reads them in order, so `active` would never be reached.
+        if self.treatment_early_max_ratio > self.treatment_active_max_ratio:
+            raise RuleParameterError(
+                f"treatmentEarlyMaxRatio ({self.treatment_early_max_ratio}) must not exceed "
+                f"treatmentActiveMaxRatio ({self.treatment_active_max_ratio})"
+            )
+        # Both are divisors. Zero is a `ZeroDivisionError` on a request path;
+        # negative inverts the ratio and reverses the phase order.
+        for name, days in (
+            ("recoveryYearExpectedDays", self.recovery_year_expected_days),
+            ("recoveryDefaultExpectedDays", self.recovery_default_expected_days),
+        ):
+            if days < 1:
+                raise RuleParameterError(f"{name} must be at least 1 day, got {days}")
 
     @classmethod
     def of(cls, document: LoadedDocument, result: dict[str, Any]) -> "DerivationThresholds":
@@ -203,6 +239,12 @@ class DerivationThresholds:
             siu_fraud_score_min=_integer(document, result, "siuFraudScoreMin"),
             rtw_blocked_hash_modulus=_integer(document, result, "rtwBlockedHashModulus"),
             payment_due_hash_modulus=_integer(document, result, "paymentDueHashModulus"),
+            treatment_early_max_ratio=_number(document, result, "treatmentEarlyMaxRatio"),
+            treatment_active_max_ratio=_number(document, result, "treatmentActiveMaxRatio"),
+            recovery_year_expected_days=_integer(document, result, "recoveryYearExpectedDays"),
+            recovery_default_expected_days=_integer(
+                document, result, "recoveryDefaultExpectedDays"
+            ),
         )
 
 
@@ -299,7 +341,119 @@ async def thresholds_for(db: AsyncSession, as_of: date | None = None) -> Derivat
     return DerivationThresholds.of(document, evaluate(document))
 
 
+@dataclass(frozen=True)
+class IntakeRequirements:
+    """What an intake claim is checked for (Story 2.2).
+
+    A block of its own, in a document of its own, because it is not a
+    derivation parameter: `services/claims` owns the checklist, and
+    `DerivationThresholds` is the single argument every registered derivation
+    is *built* from. Folding a service's parameter into it would make the
+    registry's contract mean "whatever anybody needed a number for".
+
+    `required_doc_types` is an ordered tuple rather than a set: the checklist
+    renders one row per required type, and the order it renders in is the
+    document's, not a hash's.
+    """
+
+    version: int
+    required_doc_types: tuple[DocType, ...]
+
+    @classmethod
+    def of(cls, document: LoadedDocument, result: dict[str, Any]) -> "IntakeRequirements":
+        return cls(
+            version=document.version,
+            required_doc_types=_doc_type_list(document, result, "requiredDocTypes"),
+        )
+
+
+def _doc_type_list(
+    document: LoadedDocument, result: dict[str, Any], key: str
+) -> tuple[DocType, ...]:
+    """A document-authored list of `DocType` values, resolved member by member.
+
+    `_status_set`'s argument, with order preserved and duplicates refused
+    rather than absorbed. A repeated member in a *set* said nothing new; a
+    repeated member in a checklist is a row rendered twice, which is a
+    document bug worth a message rather than a silent de-duplication.
+    """
+    value = result.get(key)
+    if not isinstance(value, list):
+        raise RuleParameterError(
+            f"{document.key} v{document.version} has no list {key!r} "
+            f"(got {value!r}) — the document and its parameter block disagree"
+        )
+    types: list[DocType] = []
+    for member in value:
+        try:
+            doc_type = DocType(member)
+        except ValueError as exc:
+            raise RuleParameterError(
+                f"{document.key} v{document.version} lists {member!r} in {key!r}, "
+                f"which is not a document type; the types are "
+                f"{sorted(item.value for item in DocType)}"
+            ) from exc
+        if doc_type in types:
+            raise RuleParameterError(
+                f"{document.key} v{document.version} lists {member!r} twice in {key!r}; "
+                "a checklist row rendered twice is a document bug, not a stronger requirement"
+            )
+        types.append(doc_type)
+    return tuple(types)
+
+
 async def weights_for(db: AsyncSession, as_of: date | None = None) -> PriorityWeights:
     """Load and validate the priority weights effective on `as_of`."""
     document = await load(db, PRIORITY_WEIGHTS_KEY, as_of)
     return PriorityWeights.of(document, evaluate(document))
+
+
+async def intake_requirements_for(
+    db: AsyncSession, as_of: date | None = None
+) -> IntakeRequirements:
+    """Load and validate the intake document requirements effective on `as_of`."""
+    document = await load(db, INTAKE_REQUIRED_DOCUMENTS_KEY, as_of)
+    return IntakeRequirements.of(document, evaluate(document))
+
+
+@dataclass(frozen=True)
+class InjuryCapture:
+    """What the add-injury form starts at (Story 2.4).
+
+    A block of its own, in a document of its own, for `IntakeRequirements`'
+    reason: `services/claims` owns the add-injury command, and
+    `DerivationThresholds` is the single argument every registered derivation
+    is *built* from. Folding a service's default into it would make the
+    registry's contract mean "whatever anybody needed a number for".
+
+    Served rather than hardcoded in the SPA because the alternative is a
+    number in a React component that nobody can retune without a deploy —
+    and one that would sit, unversioned, next to the severity bands that were
+    deliberately moved out of `config.py` in Story 2.1.
+    """
+
+    version: int
+    new_injury_default_severity: int
+
+    def __post_init__(self) -> None:
+        # `severity_score` is a 0-100 column with a CHECK constraint behind
+        # it, so a default outside that range is not a tuning choice: it is a
+        # form whose untouched submit is refused by the command it feeds.
+        if not 0 <= self.new_injury_default_severity <= 100:
+            raise RuleParameterError(
+                "newInjuryDefaultSeverity must be between 0 and 100 (severity_score's "
+                f"range), got {self.new_injury_default_severity}"
+            )
+
+    @classmethod
+    def of(cls, document: LoadedDocument, result: dict[str, Any]) -> "InjuryCapture":
+        return cls(
+            version=document.version,
+            new_injury_default_severity=_integer(document, result, "newInjuryDefaultSeverity"),
+        )
+
+
+async def injury_capture_for(db: AsyncSession, as_of: date | None = None) -> InjuryCapture:
+    """Load and validate the injury-capture parameters effective on `as_of`."""
+    document = await load(db, INJURY_CAPTURE_KEY, as_of)
+    return InjuryCapture.of(document, evaluate(document))
