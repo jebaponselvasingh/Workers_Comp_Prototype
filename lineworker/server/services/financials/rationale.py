@@ -27,7 +27,7 @@ description, which `services/claims/timeline.py` has written server-side since
 Story 2.3. A sentence with a hole in it for the browser to fill is a template,
 and templates in the browser are what AD-1 removes.
 
-The consequence is a real obligation: `_dollars` below must agree with
+The consequence is a real obligation: `format_dollars` below must agree with
 `web/src/lib/money.ts`'s `formatCents`, because the reserve appears as prose
 here and as a formatted figure two rows above. Both drop the cents and both
 round half up; `tests/test_benefit_rationale.py` pins the pairs that differ
@@ -110,8 +110,14 @@ class RationaleClaim(Protocol):
     def litigation_flag(self) -> bool: ...
 
 
-def _dollars(cents: int) -> str:
+def format_dollars(cents: int) -> str:
     """Whole dollars with thousands separators — `web/src/lib/money.ts`'s twin.
+
+    Public since Story 3.2, which writes a second deterministic sentence about
+    the same reserve (`services/financials/reserve.py`). Two private copies of
+    this would have been two roundings of one figure, and the whole point of
+    the paragraph above is that the reserve reads identically in prose and in
+    the formatted row beside it.
 
     Half-up on the cents, matching `Intl.NumberFormat`'s default `halfExpand`
     and `services/financials/benefit.py`'s rounding convention. No seeded claim
@@ -165,7 +171,8 @@ def reserve_rationale(
     was done to the number.
     """
     parts = [
-        f"Reserve set at {_dollars(claim.reserve)} reflects a {SEVERITY_WORDS[band]} severity "
+        f"Reserve set at {format_dollars(claim.reserve)} reflects a "
+        f"{SEVERITY_WORDS[band]} severity "
         f"{claim.injury_type.lower()} (score {claim.severity_score}/100) with a "
         f"{RECOVERY_PHRASES[claim.recovery]} expected recovery window."
     ]
@@ -186,7 +193,7 @@ def reserve_rationale(
         )
     parts.append(
         f" Reviewed against {rate.state_code} statutory min/max "
-        f"({_dollars(rate.weekly_min_cents)}–{_dollars(rate.weekly_max_cents)}/wk)."
+        f"({format_dollars(rate.weekly_min_cents)}–{format_dollars(rate.weekly_max_cents)}/wk)."
     )
     if is_overridden:
         parts.append(

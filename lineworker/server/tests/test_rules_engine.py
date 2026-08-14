@@ -34,12 +34,15 @@ from rules.parameters import (
     INJURY_CAPTURE_KEY,
     INTAKE_REQUIRED_DOCUMENTS_KEY,
     PRIORITY_WEIGHTS_KEY,
+    RESERVE_BANDS_KEY,
     BenefitParams,
     DerivationThresholds,
     IntakeRequirements,
     PriorityWeights,
+    ReserveBands,
     benefit_params_for,
     intake_requirements_for,
+    reserve_bands_for,
     thresholds_for,
     weights_for,
 )
@@ -69,6 +72,8 @@ EFFECTIVE_DOCUMENTS: tuple[tuple[str, int, str], ...] = (
     (INJURY_CAPTURE_KEY, 1, "injury_capture.jdm.json"),
     # Story 3.1's, and the first document owned by `services/financials`.
     (BENEFIT_PARAMS_KEY, 1, "benefit_params.jdm.json"),
+    # Story 3.2's, the second — the reserve adequacy bands.
+    (RESERVE_BANDS_KEY, 1, "reserve_bands.jdm.json"),
 )
 
 # **Every** seeded (key, version, file), not only the effective ones.
@@ -114,6 +119,12 @@ EXPECTED_BENEFIT_PARAMS: dict[str, Any] = {
     "defaultCompRateBp": 6667,
     "ptdCompRateBp": 10_000,
     "waitingPeriodDays": 7,
+}
+
+# Story 3.2's document, restated. Ratios are BASIS POINTS: 11500 is 115%.
+EXPECTED_RESERVE_BANDS: dict[str, Any] = {
+    "lightRatioBp": 11_500,
+    "heavyRatioBp": 6_000,
 }
 
 EXPECTED_INTAKE_REQUIREMENTS: dict[str, Any] = {
@@ -253,9 +264,15 @@ async def test_a_missing_key_raises_rather_than_returning_an_empty_block(
     A silently-absent rule document would score every claim zero: the queue
     would render in claim-id order, look completely normal, and be wrong
     with nothing anywhere to say so.
+
+    **The key is deliberately one no story will ever seed** (Story 3.2). This
+    test used to ask for `reserve_bands` — a document Epic 3 was going to add —
+    and it started failing the day 3.2 added it, having quietly stopped
+    asserting anything about missing keys some time before that. A placeholder
+    that a later story turns real is a test that expires without saying so.
     """
-    with pytest.raises(RuleDocumentMissing, match="reserve_bands"):
-        await load(db, "reserve_bands")
+    with pytest.raises(RuleDocumentMissing, match="no_such_rule"):
+        await load(db, "no_such_rule")
 
 
 async def test_a_version_whose_effective_date_has_not_arrived_is_not_used(
@@ -310,6 +327,12 @@ async def test_the_benefit_params_document_evaluates_to_the_story_values(
     assert evaluate(await load(db, BENEFIT_PARAMS_KEY)) == EXPECTED_BENEFIT_PARAMS
 
 
+async def test_the_reserve_bands_document_evaluates_to_the_story_values(
+    db: AsyncSession,
+) -> None:
+    assert evaluate(await load(db, RESERVE_BANDS_KEY)) == EXPECTED_RESERVE_BANDS
+
+
 async def test_the_typed_blocks_carry_the_evaluated_values(db: AsyncSession) -> None:
     """The JSON→Python boundary, in the direction consumers use it.
 
@@ -344,6 +367,11 @@ async def test_the_typed_blocks_carry_the_evaluated_values(db: AsyncSession) -> 
         default_comp_rate_bp=EXPECTED_BENEFIT_PARAMS["defaultCompRateBp"],
         ptd_comp_rate_bp=EXPECTED_BENEFIT_PARAMS["ptdCompRateBp"],
         waiting_period_days=EXPECTED_BENEFIT_PARAMS["waitingPeriodDays"],
+    )
+    assert await reserve_bands_for(db) == ReserveBands(
+        version=1,
+        light_ratio_bp=EXPECTED_RESERVE_BANDS["lightRatioBp"],
+        heavy_ratio_bp=EXPECTED_RESERVE_BANDS["heavyRatioBp"],
     )
     assert requirements == IntakeRequirements(
         version=1,

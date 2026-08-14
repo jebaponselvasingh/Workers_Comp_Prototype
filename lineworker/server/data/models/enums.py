@@ -72,6 +72,38 @@ class RecoveryWindow(StrEnum):
     over_1_year = "over_1_year"
 
 
+class ScheduleWeekStatus(StrEnum):
+    """Where one week of the indemnity payment schedule stands (Story 3.2).
+
+    **In the data layer although Story 3.2 creates no column**, which is the
+    one thing about this enum worth arguing. `payment_schedule_week.status` is
+    Story 3.3's migration, and a native enum column needs its members here
+    (`data/` must not import from `services/`) — the argument `BodyRegion`
+    makes. What lands first is the *projection* that produces the value:
+    `services/financials/schedule.py`, which 3.2 needs for the reserve check's
+    remaining-indemnity term and which 3.3 must persist through rather than
+    write a second generator beside (AD-2). Declaring the vocabulary here now
+    means 3.3 adds a column over an existing type instead of renaming one out
+    of `services/` on its way past.
+
+    `RiskBand` and `TreatmentPhase` stay in `services/derivations` precisely
+    because no column will ever hold one; this is the other case.
+
+    Member order is the prototype's `SCHEDULE_STATUS_LABEL` order, which is
+    also the order a week moves through — pending approval, due, upcoming,
+    paid. `payment_scheduled` is the state Story 3.4's approval batch moves a
+    week into; it is named now for the reason the others are, and nothing in
+    3.2 produces it.
+    [Source: docs/Workers_Comp_Prototype.html line 844]
+    """
+
+    pending_approval = "pending_approval"
+    due_this_week = "due_this_week"
+    upcoming = "upcoming"
+    payment_scheduled = "payment_scheduled"
+    paid = "paid"
+
+
 class BodyRegion(StrEnum):
     """The eleven regions the injury diagram can point at (Story 2.4).
 

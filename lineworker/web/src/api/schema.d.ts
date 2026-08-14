@@ -608,6 +608,7 @@ export interface components {
             photos: components["schemas"]["PhotosBlockResponse"];
             /** Requirementsversion */
             requirementsVersion: number | null;
+            reserveCheck: components["schemas"]["ReserveCheckResponse"];
             /** Stepper */
             stepper: components["schemas"]["StepperStepResponse"][];
             /** Thresholdsversion */
@@ -1365,6 +1366,101 @@ export interface components {
             timing: string;
         };
         /**
+         * ReserveCheckResponse
+         * @description The reserve adequacy verdict, decided server-side (Story 3.2).
+         *
+         *     Outside the stage-variant union, like `benefit` — see `ClaimDetail`. The
+         *     *chip* renders on the treatment variant; the judgement is a fact about the
+         *     claim at every stage, and Story 3.3's Bills financial summary renders this
+         *     same field rather than judging a ratio of its own.
+         *
+         *     **`verdict` is the whole answer, and the SPA does no arithmetic to get it**
+         *     (AD-1/AD-9). No client compares `projectedRemainingCents` with
+         *     `reserveCents`: the comparison is `services/financials`', the strictness of
+         *     its boundaries is the rule, and a browser repeating it would be the second
+         *     computation AD-10 exists to prevent.
+         *
+         *     **Every money figure is integer cents.** The three are published rather
+         *     than only their total because a handler asking *why* a claim is light is
+         *     answered by which half of the exposure is large — the indemnity still
+         *     scheduled, or the bills not yet paid.
+         *
+         *     **`ratioBp` is reported, not decided by.** 11 500 is 115% of the reserve.
+         *     The verdict comes from an exact integer comparison in the service (see
+         *     `services/financials/reserve.py`), not from this rounded figure.
+         *
+         *     **Three fields are nullable and each `null` means one thing.**
+         *     `remainingMedicalCents` is `null` when a claim's bills are not on file at
+         *     all — different from a claim that has none, which is `0`. Story 3.3 creates
+         *     the `bill` table, so today it is `null` on every claim, and the verdict says
+         *     so rather than judging a reserve against half its exposure: an unknown term
+         *     is non-negative, so `light` still holds on the partial figure while
+         *     `adequate` and `heavy` are withheld as `indeterminate`.
+         *     `projectedRemainingCents` is `null` whenever the medical term is, because a
+         *     total with an unknown component is not a total — a lower bound published
+         *     under that name would be the same mislabel `disbursedIndemnityCents` exists
+         *     to undo. `ratioBp` is `null` whenever no complete comparison happened: a
+         *     settled claim, or an incomplete exposure. So "there is a ratio" and "a band
+         *     decided this" are one fact, which is what a client can rely on.
+         *
+         *     **`scheduledIndemnityCents` and `disbursedIndemnityCents` are what
+         *     `remainingIndemnityCents` is the difference of**, and they are on this block
+         *     rather than the treatment variant so that the card's indemnity-paid row and
+         *     this verdict come from one notion of "paid" (code review, 2026-08-14). They
+         *     are *not* `overview.paidIndemnityCents`, which is `claim.paid_indemnity` —
+         *     a snapshot that reads 0 on every open seeded claim while the schedule
+         *     already shows disbursements, exactly as the prototype's `billsHTML`
+         *     describes. `disbursed_` rather than `paid_` in the name for that reason.
+         *
+         *     **`rationale` is a finished sentence**, the prototype's, written by the
+         *     service from the claim's own figures — deterministic prose in the same
+         *     category as `benefit.reserveRationale` and not an `ai_insight` row (AD-2).
+         *
+         *     **`bandsVersion` names the `reserve_bands` document that answered**, for
+         *     `paramsVersion`'s reason: every rule that decided something in this
+         *     response is named in it.
+         */
+        ReserveCheckResponse: {
+            /** Bandsversion */
+            bandsVersion: number;
+            /** Disbursedindemnitycents */
+            disbursedIndemnityCents: number;
+            /** Projectedremainingcents */
+            projectedRemainingCents: number | null;
+            /** Ratiobp */
+            ratioBp: number | null;
+            /** Rationale */
+            rationale: string;
+            /** Remainingindemnitycents */
+            remainingIndemnityCents: number;
+            /** Remainingmedicalcents */
+            remainingMedicalCents: number | null;
+            /** Reservecents */
+            reserveCents: number;
+            /** Scheduledindemnitycents */
+            scheduledIndemnityCents: number;
+            verdict: components["schemas"]["ReserveVerdict"];
+        };
+        /**
+         * ReserveVerdict
+         * @description Snake_case values per the enum convention — the UI owns the labels.
+         *
+         *     `closed_final` is a verdict rather than the absence of one, which is why it
+         *     is a member here and not a `None`. A settled claim has been *judged*: there
+         *     is no further exposure, and saying so is different from having no answer.
+         *     The card colours it muted for the same reason the prototype does.
+         *
+         *     `indeterminate` is a member on the same argument, one step further. "This
+         *     claim's bills are not on file, so its reserve cannot be judged" is a
+         *     statement about the claim, and it is the statement a handler needs — the
+         *     alternative is a confident band computed from half the inputs, which is
+         *     what this console did until it was pointed out. Neither of the prototype's
+         *     four states corresponds to it, because the prototype has no data that can
+         *     be absent.
+         * @enum {string}
+         */
+        ReserveVerdict: "light" | "adequate" | "heavy" | "closed_final" | "indeterminate";
+        /**
          * ReturnStatus
          * @enum {string}
          */
@@ -1609,9 +1705,14 @@ export interface components {
          *
          *     The figures come from the claim's own paid/reserve columns. Story 3.3's
          *     bill and payment-schedule tables will be a better source for the same
-         *     numbers, and 3.2 fills the reserve-check verdict this variant leaves to
-         *     an explicit placeholder — they agree by construction because both read
-         *     the same columns through the same derivations.
+         *     numbers — they agree by construction because both read the same columns
+         *     through the same derivations.
+         *
+         *     **The reserve-check verdict is not on this block**, although the card that
+         *     renders it is this variant's. Story 3.2 publishes it as `reserveCheck` on
+         *     the case file beside `benefit`, because Story 3.3's Bills summary renders
+         *     the same judgement and one field under one query key is what makes the two
+         *     surfaces identical structurally rather than by convention.
          */
         TreatmentOverviewResponse: {
             commStatus: components["schemas"]["CommStatus"];

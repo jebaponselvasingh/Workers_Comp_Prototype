@@ -364,7 +364,32 @@ COORDINATION_RULE_READ = re.compile(
 # the vocabulary rather than apply it: the enum, and the migration that
 # creates the database type from it. Naming a member is not restating a rule;
 # deciding that those two members mean "awaiting information" is.
-PHASE_HOME = frozenset({"services/derivations/treatment_progress.py"})
+PHASE_HOME = frozenset(
+    {
+        "services/derivations/treatment_progress.py",
+        # Story 3.2's two, and each is here for a different reason.
+        #
+        # `enums.py` is a **false positive**: `ScheduleWeekStatus` contains the
+        # letters `WeekS`, which the case-insensitive window half matches as
+        # "weeks" followed by a paren. The class names a vocabulary and decides
+        # nothing — `COORDINATION_HOME` already lists this file on exactly that
+        # argument.
+        #
+        # `schedule.py` is **a real second table keyed by `RecoveryWindow`, and
+        # deliberately not a second phase rule.** `SCHEDULE_WEEKS` answers "how
+        # many weekly indemnity payments does this claim have scheduled";
+        # `EXPECTED_WEEKS` answers "how long was this claim expected to take".
+        # They read one column to decide two different things and their numbers
+        # differ (a 0-2 week window is 2 expected weeks and 4 scheduled ones,
+        # after the schedule's clamp), which is why folding either into the
+        # other would be wrong rather than tidy —
+        # `test_payment_projection.py::test_the_schedule_is_not_the_treatment_phases_window`
+        # pins that they are two rules on purpose, so this entry does not
+        # quietly become permission to grow a third.
+        "data/models/enums.py",
+        "services/financials/schedule.py",
+    }
+)
 COORDINATION_HOME = frozenset(
     {
         "services/derivations/care_coordination.py",

@@ -539,6 +539,19 @@ export type IndemnityType = components["schemas"]["IndemnityType"];
 export type CompRatePatch = components["schemas"]["CompRatePatch"];
 
 /**
+ * The reserve adequacy verdict (Story 3.2).
+ *
+ * No hook of its own, and no query key of its own — deliberately. The verdict
+ * rides on the case file, so it arrives with `useClaimDetail` under
+ * `queryKeys.claims.detail`, and Story 3.3's Bills financial summary reads the
+ * identical cached object rather than fetching a second opinion. That is what
+ * makes "the same verdict in both surfaces" structural instead of a promise
+ * two components make separately.
+ */
+export type ReserveCheck = components["schemas"]["ReserveCheckResponse"];
+export type ReserveVerdict = components["schemas"]["ReserveVerdict"];
+
+/**
  * Set or clear the comp-rate override (AC 4).
  *
  * `compRateBp: null` is the ↺ reset — one mutation for both, because they are

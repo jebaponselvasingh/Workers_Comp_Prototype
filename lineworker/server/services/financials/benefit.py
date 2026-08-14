@@ -37,7 +37,7 @@ rounds because its whole data model is dollars.
 
 ## The rounding convention, written down once for Epic 3
 
-**Round half up, on cents.** `_round_half_up` below is the only rounding in the
+**Round half up, on cents.** `round_half_up` below is the only rounding in the
 financial engine, and Stories 3.2–3.5 inherit it: a reserve adequacy ratio, a
 bill line and a payment-schedule week all round the same way, so a schedule
 that sums its weeks agrees with the weekly figure shown beside it. Half *up*
@@ -171,7 +171,7 @@ class Benefit:
     params_version: int
 
 
-def _round_half_up(value: int, divisor: int) -> int:
+def round_half_up(value: int, divisor: int) -> int:
     """Integer division rounding halves away from the lower neighbour.
 
     `divmod` floors, so `remainder` is in `[0, divisor)` for a positive
@@ -228,7 +228,7 @@ def compute_benefit(
     # unclamped figure is what the rate produces, and the clamp is what the
     # jurisdiction imposes on it. A reader tracing "why is this claim on the
     # state minimum?" needs to see the two as separate facts.
-    weekly_cents = _round_half_up(claim.aww * comp_rate_bp, BASIS_POINTS_PER_UNIT)
+    weekly_cents = round_half_up(claim.aww * comp_rate_bp, BASIS_POINTS_PER_UNIT)
     weekly_cents = max(rate.weekly_min_cents, min(rate.weekly_max_cents, weekly_cents))
 
     return Benefit(

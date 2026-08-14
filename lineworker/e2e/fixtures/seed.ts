@@ -47,6 +47,12 @@ interface SeedClaim {
   aww: number;
   disability: string;
   froi_date: string;
+  // Story 3.2's three: the schedule runs from the date of injury for as many
+  // weeks as the recovery window implies, and the reserve is what its
+  // remaining total is judged against.
+  doi: string;
+  recovery: string;
+  reserve: number;
   surgery_required: boolean;
   litigation_flag: boolean;
   fraud_flag: boolean;
@@ -516,6 +522,24 @@ export function firstClaimInStage(name: string, role: string, stage: SeedStage):
 }
 
 /**
+ * *Every* claim of a persona's book in a stage, by business id, sorted.
+ *
+ * Added by Story 3.2, where one claim is not enough evidence: a reserve
+ * verdict computed from a schedule projection has to be right across a
+ * portfolio whose injury dates span nine months — fully elapsed schedules,
+ * partly paid ones, and one that has not started. A single sample can agree
+ * with an oracle by luck.
+ */
+export function claimIdsInStage(name: string, role: string, stage: SeedStage): string[] {
+  const claims = claimsFor(name, role)
+    .filter((claim) => claim.stage === stage)
+    .map((claim) => claim.claim_id)
+    .sort();
+  if (claims.length === 0) throw new Error(`no seeded ${stage} claim for ${name}/${role}`);
+  return claims;
+}
+
+/**
  * The **last** claim of a persona's book in a stage, by business id.
  *
  * `firstClaimInStage`'s counterpart, and it exists for a specific hazard: a
@@ -979,3 +1003,167 @@ export function formatBasisPoints(basisPoints: number): string {
   const hundredths = Math.abs(basisPoints % 100);
   return `${whole}.${String(hundredths).padStart(2, "0")}`;
 }
+
+/* --- Story 3.2: the reserve adequacy check ----------------------------- */
+
+/**
+ * The reserve rule, restated independently — `expectedBenefit`'s discipline.
+ *
+ * These are `reserve_bands` v1 and the schedule constants from
+ * `services/financials/schedule.py`, written out rather than read from the
+ * document and the module: a spec that loaded the rule it is testing would
+ * agree with any rule at all. The projection below is a second implementation
+ * of `project_payments` in TypeScript for the same reason.
+ */
+const LIGHT_RATIO_BP = 11_500;
+const HEAVY_RATIO_BP = 6_000;
+const WAITING_PERIOD_DAYS = 7;
+const MIN_SCHEDULE_WEEKS = 4;
+const MAX_SCHEDULE_WEEKS = 20;
+const SCHEDULE_WEEKS: Record<string, number> = {
+  weeks_0_2: 2,
+  weeks_2_4: 4,
+  weeks_4_6: 6,
+  weeks_6_8: 8,
+  over_1_year: 26,
+};
+
+const DAY_MS = 86_400_000;
+
+export type SeedVerdict = "light" | "adequate" | "heavy" | "closed_final" | "indeterminate";
+
+export interface ExpectedReserveCheck {
+  verdict: SeedVerdict;
+  remainingIndemnityCents: number;
+  /** `null` while the `bill` table is Story 3.3's — not `0`. */
+  remainingMedicalCents: number | null;
+  /** `null` with it: a total missing a term is not a total. */
+  projectedRemainingCents: number | null;
+  scheduledIndemnityCents: number;
+  disbursedIndemnityCents: number;
+  reserveCents: number;
+}
+
+/** Midnight UTC today — `daysOpen`'s clock, and for its reason. */
+function utcToday(): number {
+  const now = new Date();
+  return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+}
+
+function utcDate(iso: string): number {
+  const [year, month, day] = iso.split("-").map(Number);
+  return Date.UTC(year, month - 1, day);
+}
+
+/**
+ * What the card must say about a claim's reserve, computed from the seed.
+ *
+ * **The medical term is nil and says so.** The `bill` table is Story 3.3's, so
+ * there is nothing to sum; when 3.3 lands its seed, this oracle grows the
+ * second half and the spec below starts asserting a fuller number. Writing the
+ * zero out rather than omitting it is what makes that a change somebody makes
+ * on purpose.
+ *
+ * **What this oracle is and is not independent of** (code review, 2026-08-14).
+ * It is a second implementation, so it catches an arithmetic slip, a boundary
+ * flipped from strict to inclusive, a clamp applied in the wrong order or a
+ * week counted twice. It does **not** cross-check the modelling assumption it
+ * shares with the server: that a week whose end date has passed on an approved
+ * claim counts as disbursed. That is the prototype's rule (`buildPaymentSchedule`,
+ * and `billsHTML`'s note that the static `paid_indemnity` column "is often 0
+ * even though the schedule already show[s] real disbursements"), ported
+ * deliberately — but an oracle that restates it cannot also be evidence for
+ * it, and saying otherwise would be the more comfortable claim rather than the
+ * true one. The assumption is checked where it is checkable: against what the
+ * card renders, in the spec's contradiction test.
+ */
+export function expectedReserveCheck(claimId: string): ExpectedReserveCheck {
+  const claim = seed.claims.find((c) => c.claim_id === claimId);
+  if (!claim) throw new Error(`no seeded claim ${claimId}`);
+
+  const reserveCents = claim.reserve;
+  // Not on file at all — Story 3.3 creates `bill`. `null` rather than 0,
+  // because the server draws the same distinction and withholds the verdicts
+  // an unknown non-negative term could flip.
+  const remainingMedicalCents = null;
+
+  if (claim.stage === "settled") {
+    const scheduled =
+      expectedBenefit(claimId).weeklyCents *
+      Math.max(
+        MIN_SCHEDULE_WEEKS,
+        Math.min(MAX_SCHEDULE_WEEKS, SCHEDULE_WEEKS[recoveryToken(claim.recovery)]),
+      );
+    return {
+      verdict: "closed_final",
+      remainingIndemnityCents: 0,
+      remainingMedicalCents,
+      projectedRemainingCents: null,
+      // A settled claim's every week is paid, which is why nothing remains.
+      scheduledIndemnityCents: scheduled,
+      disbursedIndemnityCents: scheduled,
+      reserveCents,
+    };
+  }
+
+  const weeks = Math.max(
+    MIN_SCHEDULE_WEEKS,
+    Math.min(MAX_SCHEDULE_WEEKS, SCHEDULE_WEEKS[recoveryToken(claim.recovery)]),
+  );
+  const weekly = expectedBenefit(claimId).weeklyCents;
+  const firstStart = utcDate(claim.doi) + WAITING_PERIOD_DAYS * DAY_MS;
+  const unapproved = claim.stage === "intake" || claim.stage === "investigation";
+  const today = utcToday();
+
+  let paid = 0;
+  for (let i = 0; i < weeks; i += 1) {
+    const end = firstStart + (i * 7 + 6) * DAY_MS;
+    if (!unapproved && end < today) paid += weekly;
+  }
+
+  const remainingIndemnityCents = Math.max(0, weekly * weeks - paid);
+  // The exposure that is *known*. With the bills unseen this is a lower bound
+  // on the real figure, which is exactly why only one band survives it.
+  const known = remainingIndemnityCents + (remainingMedicalCents ?? 0);
+
+  // Cross-multiplied, exactly as `classify_reserve` does — a float ratio here
+  // would make the oracle disagree with the server at the boundary, which is
+  // the one place the spec is worth having.
+  let light = false;
+  let heavy = false;
+  if (reserveCents > 0) {
+    light = known * BASIS_POINTS_PER_UNIT > LIGHT_RATIO_BP * reserveCents;
+    heavy = known * BASIS_POINTS_PER_UNIT < HEAVY_RATIO_BP * reserveCents;
+  } else {
+    light = known > 0;
+  }
+
+  // An unknown non-negative term cannot pull an exposure back under a
+  // threshold it has already passed, so `light` stands on a lower bound while
+  // `adequate` and `heavy` — both claims about an upper bound — are withheld.
+  const complete = remainingMedicalCents !== null;
+  let verdict: SeedVerdict;
+  if (light) verdict = "light";
+  else if (!complete) verdict = "indeterminate";
+  else if (heavy) verdict = "heavy";
+  else verdict = "adequate";
+
+  return {
+    verdict,
+    remainingIndemnityCents,
+    remainingMedicalCents,
+    projectedRemainingCents: complete ? known : null,
+    scheduledIndemnityCents: weekly * weeks,
+    disbursedIndemnityCents: paid,
+    reserveCents,
+  };
+}
+
+/** The label the card renders for a verdict — `labels.ts`, restated. */
+export const RESERVE_VERDICT_LABEL: Record<SeedVerdict, string> = {
+  light: "Reserve Light",
+  adequate: "Reserve Adequate",
+  heavy: "Reserve Heavy",
+  closed_final: "Closed — Final",
+  indeterminate: "Awaiting Bill Data",
+};

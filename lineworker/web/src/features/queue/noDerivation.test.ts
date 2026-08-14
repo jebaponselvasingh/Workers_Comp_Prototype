@@ -191,6 +191,16 @@ const DERIVED_FIELDS =
   // input can pre-flight refuse, and comparing against them is the intended
   // use rather than a second rule.
   "weeklyCents|compRateBp|defaultCompRateBp|isOverridden|indemnityType|" +
+  // Story 3.2's. `verdict` is the reserve adequacy answer and the three cent
+  // figures are what it was computed from — all four on the same card, one
+  // subtraction apart from a second opinion. The prototype's `reserveCheck`
+  // does exactly that comparison in the browser, against band constants that
+  // appear in no rule document, which is the failure this entry names.
+  // `ratioBp` is here too because it is the most inviting: a component that
+  // divided the exposure by the reserve to draw a bar would be re-deriving the
+  // number the server already published, with its own rounding.
+  "verdict|ratioBp|projectedRemainingCents|remainingIndemnityCents|" +
+  "remainingMedicalCents|" +
   // Story 2.5's. `path` is the claim's statutory classification and is the
   // single most consequential derived value in the console — it decides which
   // death-benefit forms a handler is shown — so a comparison against it, or
@@ -304,6 +314,12 @@ test("the scan reaches the files it claims to", () => {
   // line — which is exactly what the prototype's `computeBenefit` does in the
   // browser, clamp and all.
   expect(scanned).toContain(path.join("features", "claim-detail", "BenefitCard.tsx"));
+  // Story 3.2's verdict renders inside the treatment variant, which the scan
+  // already reaches (asserted above). Named here as the *rule* rather than the
+  // file: the reserve check is the one place in the console where the payload
+  // hands a component both a judgement and the two figures behind it, so
+  // "compare them and see" is one line away on a card that already renders
+  // `reserveCents`.
   expect(scanned.some((name) => name.includes(".test."))).toBe(false);
 });
 
@@ -341,6 +357,12 @@ test("the guard would notice a derivation if one were added", () => {
     // Story 2.4's: the prototype's marker colouring, transliterated.
     'const col = marker.severityScore >= 70 ? ER : WN;',
     "const SEVERITY_MAX = 100;",
+    // Story 3.2's: the prototype's `reserveCheck`, transliterated. Both halves
+    // — banding the ratio, and computing the ratio at all — because a card
+    // that only drew a bar from the two figures would still be the second
+    // computer AD-10 forbids, and would round differently from the server's.
+    'const verdict = check.projectedRemainingCents / check.reserveCents > 1.15 ? "light" : "ok";',
+    "const pct = (check.remainingIndemnityCents / check.reserveCents) * 100;",
   ];
 
   for (const smell of smells) {

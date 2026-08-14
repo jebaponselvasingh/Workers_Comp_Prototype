@@ -326,13 +326,18 @@ test("the treatment variant renders both derived states as sent", async () => {
   );
 });
 
-test("the treatment reserve check is an explicit placeholder, not a verdict", async () => {
-  // Story 3.2 owns the rule. A card that guessed one from the paid columns
-  // would be a different rule wearing the prototype's words.
+test("the treatment reserve check states the server's verdict and its sentence", async () => {
+  // Story 3.2. The label is the UI's (the wire carries `adequate`), the
+  // sentence is the server's, and the component compares nothing to arrive at
+  // either — `ReserveCheckCard.test.tsx` covers the variants and the absence
+  // of client-side arithmetic.
   renderPane(CLAIM_DETAIL_TREATMENT);
 
   expect(await screen.findByTestId("treatment-reserve-check")).toHaveTextContent(
-    "Verdict arrives with the financial engine",
+    "Reserve Adequate",
+  );
+  expect(screen.getByTestId("treatment-reserve-rationale")).toHaveTextContent(
+    "Reserve ($45,000) is well aligned with projected remaining exposure ($40,500).",
   );
 });
 

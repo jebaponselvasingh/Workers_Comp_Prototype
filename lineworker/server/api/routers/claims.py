@@ -47,7 +47,12 @@ from services.claims.edit import (
 from services.claims.injuries import add_additional_injury, remove_additional_injury
 from services.claims.reference import SEVERITY_MAX, SEVERITY_MIN
 from services.derivations import CoordinationStatus, IndemnityType, RiskBand, TreatmentPhase
-from services.financials import COMP_RATE_MAX_BP, COMP_RATE_MIN_BP, MissingStateRate
+from services.financials import (
+    COMP_RATE_MAX_BP,
+    COMP_RATE_MIN_BP,
+    MissingStateRate,
+    ReserveVerdict,
+)
 from services.worklist.priority import QueueFilter
 from services.worklist.queue import (
     MAX_PAGE_LIMIT,
@@ -483,9 +488,14 @@ class TreatmentOverviewResponse(ApiModel):
 
     The figures come from the claim's own paid/reserve columns. Story 3.3's
     bill and payment-schedule tables will be a better source for the same
-    numbers, and 3.2 fills the reserve-check verdict this variant leaves to
-    an explicit placeholder — they agree by construction because both read
-    the same columns through the same derivations.
+    numbers — they agree by construction because both read the same columns
+    through the same derivations.
+
+    **The reserve-check verdict is not on this block**, although the card that
+    renders it is this variant's. Story 3.2 publishes it as `reserveCheck` on
+    the case file beside `benefit`, because Story 3.3's Bills summary renders
+    the same judgement and one field under one query key is what makes the two
+    surfaces identical structurally rather than by convention.
     """
 
     stage_variant: Literal["treatment"]
@@ -801,6 +811,73 @@ class BenefitResponse(ApiModel):
     params_version: int
 
 
+class ReserveCheckResponse(ApiModel):
+    """The reserve adequacy verdict, decided server-side (Story 3.2).
+
+    Outside the stage-variant union, like `benefit` — see `ClaimDetail`. The
+    *chip* renders on the treatment variant; the judgement is a fact about the
+    claim at every stage, and Story 3.3's Bills financial summary renders this
+    same field rather than judging a ratio of its own.
+
+    **`verdict` is the whole answer, and the SPA does no arithmetic to get it**
+    (AD-1/AD-9). No client compares `projectedRemainingCents` with
+    `reserveCents`: the comparison is `services/financials`', the strictness of
+    its boundaries is the rule, and a browser repeating it would be the second
+    computation AD-10 exists to prevent.
+
+    **Every money figure is integer cents.** The three are published rather
+    than only their total because a handler asking *why* a claim is light is
+    answered by which half of the exposure is large — the indemnity still
+    scheduled, or the bills not yet paid.
+
+    **`ratioBp` is reported, not decided by.** 11 500 is 115% of the reserve.
+    The verdict comes from an exact integer comparison in the service (see
+    `services/financials/reserve.py`), not from this rounded figure.
+
+    **Three fields are nullable and each `null` means one thing.**
+    `remainingMedicalCents` is `null` when a claim's bills are not on file at
+    all — different from a claim that has none, which is `0`. Story 3.3 creates
+    the `bill` table, so today it is `null` on every claim, and the verdict says
+    so rather than judging a reserve against half its exposure: an unknown term
+    is non-negative, so `light` still holds on the partial figure while
+    `adequate` and `heavy` are withheld as `indeterminate`.
+    `projectedRemainingCents` is `null` whenever the medical term is, because a
+    total with an unknown component is not a total — a lower bound published
+    under that name would be the same mislabel `disbursedIndemnityCents` exists
+    to undo. `ratioBp` is `null` whenever no complete comparison happened: a
+    settled claim, or an incomplete exposure. So "there is a ratio" and "a band
+    decided this" are one fact, which is what a client can rely on.
+
+    **`scheduledIndemnityCents` and `disbursedIndemnityCents` are what
+    `remainingIndemnityCents` is the difference of**, and they are on this block
+    rather than the treatment variant so that the card's indemnity-paid row and
+    this verdict come from one notion of "paid" (code review, 2026-08-14). They
+    are *not* `overview.paidIndemnityCents`, which is `claim.paid_indemnity` —
+    a snapshot that reads 0 on every open seeded claim while the schedule
+    already shows disbursements, exactly as the prototype's `billsHTML`
+    describes. `disbursed_` rather than `paid_` in the name for that reason.
+
+    **`rationale` is a finished sentence**, the prototype's, written by the
+    service from the claim's own figures — deterministic prose in the same
+    category as `benefit.reserveRationale` and not an `ai_insight` row (AD-2).
+
+    **`bandsVersion` names the `reserve_bands` document that answered**, for
+    `paramsVersion`'s reason: every rule that decided something in this
+    response is named in it.
+    """
+
+    verdict: ReserveVerdict
+    ratio_bp: int | None
+    projected_remaining_cents: int | None
+    remaining_indemnity_cents: int
+    remaining_medical_cents: int | None
+    scheduled_indemnity_cents: int
+    disbursed_indemnity_cents: int
+    reserve_cents: int
+    rationale: str
+    bands_version: int
+
+
 class ClaimDetailResponse(ApiModel):
     """The case file: header, stepper, and exactly one stage variant.
 
@@ -839,6 +916,11 @@ class ClaimDetailResponse(ApiModel):
     # Story 3.1's benefit calculation, outside it for the same reason — see
     # `BenefitResponse`.
     benefit: BenefitResponse
+    # Story 3.2's reserve adequacy verdict, outside it for the same reason —
+    # and the field Story 3.3's Bills summary reads, which is what makes "the
+    # same verdict in both places" a property of the payload. See
+    # `ReserveCheckResponse`.
+    reserve_check: ReserveCheckResponse
     # Story 2.3's editable vocabularies. On the case file rather than on the
     # investigation variant because the edit command is not stage-scoped —
     # 2.4 edits the body part from the diagram tab at any stage.

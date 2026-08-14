@@ -732,6 +732,125 @@ export const BENEFIT_PTD = {
   indemnityType: "ptd" as const,
 };
 
+/**
+ * The reserve adequacy verdict (Story 3.2) — the default fixture is `adequate`.
+ *
+ * Coherent rather than round, for `BENEFIT`'s reason: the exposure is the two
+ * terms actually added up, and the ratio is what those figures produce against
+ * the reserve ($40,500 of $45,000 is 90%, which sits between the 60% and 115%
+ * bands). A component that recomputed the ratio, or dropped one of the two
+ * exposure terms, has something visibly wrong to be.
+ *
+ * `remainingMedicalCents` is a real number here and `null` in the seeded
+ * database today — deliberately. The fixture describes the payload the contract
+ * promises once Story 3.3 seeds `bill`, and a component tested only against the
+ * seam's temporary `null` would be untested for the case it is built for.
+ * `RESERVE_CHECK_INDETERMINATE` below is the seam's own shape.
+ */
+export const RESERVE_CHECK = {
+  verdict: "adequate" as const,
+  ratioBp: 9_000,
+  projectedRemainingCents: 4_050_000,
+  remainingIndemnityCents: 2_864_130,
+  remainingMedicalCents: 1_185_870,
+  // The two halves the remaining indemnity is the difference of, and the pair
+  // the card's "Indemnity paid" row renders. Coherent by construction —
+  // 4,000,000 − 1,135,870 = 2,864,130 — so a component that swapped them, or
+  // that fell back to `overview.paidIndemnityCents`, has something visibly
+  // wrong to be.
+  scheduledIndemnityCents: 4_000_000,
+  disbursedIndemnityCents: 1_135_870,
+  reserveCents: 4_500_000,
+  rationale:
+    "Reserve ($45,000) is well aligned with projected remaining exposure ($40,500).",
+  bandsVersion: 1,
+};
+
+/** Under-reserved — the error-toned verdict, and the one that asks for action. */
+export const RESERVE_CHECK_LIGHT = {
+  ...RESERVE_CHECK,
+  verdict: "light" as const,
+  ratioBp: 14_000,
+  projectedRemainingCents: 6_300_000,
+  remainingIndemnityCents: 5_114_130,
+  scheduledIndemnityCents: 6_250_000,
+  rationale:
+    "Projected remaining exposure ($63,000) exceeds current reserve ($45,000). " +
+    "Recommend re-evaluating reserve upward.",
+};
+
+/** Over-reserved — a warning rather than an error: capital tied up, not missing. */
+export const RESERVE_CHECK_HEAVY = {
+  ...RESERVE_CHECK,
+  verdict: "heavy" as const,
+  ratioBp: 4_000,
+  projectedRemainingCents: 1_800_000,
+  remainingIndemnityCents: 614_130,
+  scheduledIndemnityCents: 1_750_000,
+  rationale:
+    "Current reserve ($45,000) comfortably exceeds projected remaining exposure " +
+    "($18,000). Consider reallocating surplus.",
+};
+
+/**
+ * A settled claim: judged, but not banded.
+ *
+ * `ratioBp` is null because no comparison was made — the payload a component
+ * that assumed a number would render as "NaN%".
+ */
+export const RESERVE_CHECK_CLOSED = {
+  ...RESERVE_CHECK,
+  verdict: "closed_final" as const,
+  ratioBp: null,
+  projectedRemainingCents: 0,
+  remainingIndemnityCents: 0,
+  remainingMedicalCents: 0,
+  // A settled claim's schedule is fully disbursed, which is why nothing
+  // remains — the two halves still agree with the difference above.
+  scheduledIndemnityCents: 4_000_000,
+  disbursedIndemnityCents: 4_000_000,
+  rationale: "Claim settled and closed. No further reserve exposure.",
+};
+
+/**
+ * The shape every open claim actually has today: bills not on file.
+ *
+ * `remainingMedicalCents: null` is "nobody can see this claim's bills", which
+ * is not `0` ("this claim has no unpaid bills"). The exposure therefore has no
+ * total — `projectedRemainingCents` is `null` too — and the two verdicts an
+ * unknown non-negative term could flip (`adequate`, `heavy`) are withheld.
+ * `ratioBp` is `null` because no complete comparison happened.
+ */
+export const RESERVE_CHECK_INDETERMINATE = {
+  ...RESERVE_CHECK,
+  verdict: "indeterminate" as const,
+  ratioBp: null,
+  projectedRemainingCents: null,
+  remainingMedicalCents: null,
+  rationale:
+    "Medical bills are not yet on file, so remaining exposure cannot be totalled " +
+    "and the reserve ($45,000) cannot be judged. Scheduled indemnity alone " +
+    "accounts for $28,641. A verdict follows once bills are recorded.",
+};
+
+/**
+ * Under-reserved on indemnity alone — the verdict that survives a missing term.
+ *
+ * The one case where an incomplete exposure still decides: the unknown medical
+ * amount is non-negative, so an exposure that already exceeds 115% of the
+ * reserve cannot be brought back under it. The sentence says "before medical
+ * bills are counted" so a handler acting on it knows the figure is a floor.
+ */
+export const RESERVE_CHECK_LIGHT_ON_INDEMNITY = {
+  ...RESERVE_CHECK_LIGHT,
+  ratioBp: null,
+  projectedRemainingCents: null,
+  remainingMedicalCents: null,
+  rationale:
+    "Scheduled indemnity alone ($51,141) already exceeds current reserve ($45,000) " +
+    "before medical bills are counted. Recommend re-evaluating reserve upward.",
+};
+
 /** The two viewer sheets the content endpoint answers (Story 2.5, AC 4). */
 export const DOCUMENT_SHEET_FROI = {
   status: 200,
@@ -822,6 +941,7 @@ export const CLAIM_DETAIL_TREATMENT = {
     documents: DOCUMENTS_BLOCK,
     photos: PHOTOS_BLOCK,
     benefit: BENEFIT,
+    reserveCheck: RESERVE_CHECK,
     requirementsVersion: null,
     header: HEADER,
     stepper: stepper("treatment"),
@@ -859,6 +979,7 @@ export const CLAIM_DETAIL_INTAKE = {
     documents: DOCUMENTS_BLOCK,
     photos: PHOTOS_BLOCK,
     benefit: BENEFIT,
+    reserveCheck: RESERVE_CHECK,
     requirementsVersion: 1,
     header: {
       ...HEADER,
@@ -914,6 +1035,7 @@ export const CLAIM_DETAIL_INVESTIGATION = {
     documents: DOCUMENTS_BLOCK,
     photos: PHOTOS_BLOCK,
     benefit: BENEFIT,
+    reserveCheck: RESERVE_CHECK,
     requirementsVersion: null,
     header: { ...HEADER, claimId: "WC-20051", stage: "investigation", risk: "med" },
     stepper: stepper("investigation"),
@@ -968,6 +1090,7 @@ export const CLAIM_DETAIL_SETTLED = {
     documents: DOCUMENTS_BLOCK,
     photos: PHOTOS_BLOCK,
     benefit: BENEFIT,
+    reserveCheck: RESERVE_CHECK_CLOSED,
     requirementsVersion: null,
     header: { ...HEADER, claimId: "WC-20068", stage: "settled", risk: "low" },
     stepper: stepper("settled"),

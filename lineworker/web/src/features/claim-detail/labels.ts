@@ -19,6 +19,7 @@ import type {
   DocType,
   IndemnityType,
   RecoveryWindow,
+  ReserveVerdict,
   ReturnStatus,
   RiskBand,
   Stage,
@@ -146,6 +147,27 @@ export const INDEMNITY_TYPE_LABEL: Record<IndemnityType, string> = {
   tpd: "TPD — Temporary Partial Disability",
   ppd: "PPD — Permanent Partial Disability",
   ptd: "PTD — Permanent Total Disability",
+};
+
+/**
+ * The four reserve adequacy verdicts, spelled the way the prototype spells them.
+ *
+ * The prototype's value *is* this string (`label: "Reserve Light"`), which is
+ * what makes a re-wording a breaking change for every consumer that compared
+ * against one. Here the wire carries `light` and this map is the label — and
+ * the label is deliberately the *state* rather than the advice: what to do
+ * about a light reserve is the rationale's sentence, which the server writes.
+ */
+export const RESERVE_VERDICT_LABEL: Record<ReserveVerdict, string> = {
+  light: "Reserve Light",
+  adequate: "Reserve Adequate",
+  heavy: "Reserve Heavy",
+  closed_final: "Closed — Final",
+  // Not one of the prototype's four, because the prototype has no data that can
+  // be absent. The wording says what is missing rather than that something went
+  // wrong: a claim whose bills are not on file has not failed a check, it has
+  // not had one — and the server's sentence beside it names the missing term.
+  indeterminate: "Awaiting Bill Data",
 };
 
 /**

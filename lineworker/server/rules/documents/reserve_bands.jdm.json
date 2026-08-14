@@ -1,0 +1,53 @@
+{
+  "contentType": "application/vnd.gorules.decision",
+  "name": "reserve_bands",
+  "description": "The two thresholds the reserve adequacy verdict is banded on (Story 3.2, AD-8). A document of its own for benefit_params' reason: services/financials owns the reserve check, and derivation_thresholds is the single argument every REGISTERED DERIVATION is built from — the reserve check is a service query rather than a registered derivation, so folding its bands into that document would make the registry's contract mean 'whatever anybody needed a number for'. Only the two THRESHOLDS are here; the ratio arithmetic, the strict-inequality boundaries, the zero-reserve sentinel and the settled short-circuit are the formula and stay in typed Python, which is AD-8's split exactly. RATIOS ARE BASIS POINTS, not decimals: 11500 is 115% and 6000 is 60%. The story names the values as light_ratio 1.15 and heavy_ratio 0.60 and these are those values — only the unit differs, for the reason benefit_params gives for its rates, applied to a comparison rather than to a product. AC 4 pins the boundary at EXACTLY 1.15 and EXACTLY 0.60, and a float threshold compared against a float ratio makes 'exactly' depend on which pair of cent figures produced the ratio; with basis points, services/financials/reserve.py cross-multiplies integers and the boundary is a fact about the claim rather than about IEEE-754. lightRatioBp is the point above which projected remaining exposure is too large for the reserve to cover comfortably — the claim is UNDER-reserved, which the prototype calls 'Reserve Light' and colours as an error. heavyRatioBp is the point below which the reserve so far exceeds the exposure that surplus should be reallocated — 'Reserve Heavy', a warning. Between the two the claim is adequate, which is also where a claim sitting exactly on either boundary lands, because both comparisons are strict and the answer that asks a handler to do nothing is the right one to default to. Both are the prototype's values (reserveCheck lines 1407-1418), ported exactly.",
+  "nodes": [
+    {
+      "id": "request",
+      "type": "inputNode",
+      "name": "request",
+      "position": { "x": 0, "y": 0 }
+    },
+    {
+      "id": "bands",
+      "type": "expressionNode",
+      "name": "bands",
+      "position": { "x": 240, "y": 0 },
+      "content": {
+        "expressions": [
+          {
+            "id": "lightRatioBp",
+            "key": "lightRatioBp",
+            "value": "11500"
+          },
+          {
+            "id": "heavyRatioBp",
+            "key": "heavyRatioBp",
+            "value": "6000"
+          }
+        ]
+      }
+    },
+    {
+      "id": "response",
+      "type": "outputNode",
+      "name": "response",
+      "position": { "x": 480, "y": 0 }
+    }
+  ],
+  "edges": [
+    {
+      "id": "request-bands",
+      "type": "edge",
+      "sourceId": "request",
+      "targetId": "bands"
+    },
+    {
+      "id": "bands-response",
+      "type": "edge",
+      "sourceId": "bands",
+      "targetId": "response"
+    }
+  ]
+}

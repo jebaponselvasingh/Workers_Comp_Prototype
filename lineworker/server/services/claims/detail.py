@@ -70,7 +70,12 @@ from services.derivations import (
     TreatmentPhase,
     utc_today,
 )
-from services.financials import Benefit, benefit_for_claim
+from services.financials import (
+    Benefit,
+    ReserveCheck,
+    benefit_for_claim,
+    reserve_check_for_claim,
+)
 
 # The lifecycle, left to right — the prototype's `stageStepperHTML` order and
 # the queue's `STAGE_ORDER`. One tuple, because a stepper that disagreed with
@@ -421,6 +426,20 @@ class ClaimDetail:
     # 3.3's payment schedule, which is a Bills-tab surface, needs the same
     # figure at whatever stage the claim is in.
     benefit: Benefit
+    # Story 3.2's reserve adequacy verdict, outside the union for `benefit`'s
+    # reason and with the same extra: the *chip* renders on the treatment
+    # variant (the one the prototype puts it on), but the judgement is a fact
+    # about the claim at every stage — a settled claim's verdict is
+    # `closed_final`, which is an answer rather than an absence.
+    #
+    # **On the case file rather than on the treatment block, and that is what
+    # makes AC 3 structural.** Story 3.3's Bills financial summary renders the
+    # same verdict; sharing one field under one query key
+    # (`queryKeys.claims.detail`) is what makes "identical in both surfaces" a
+    # property of the payload rather than a convention two components are
+    # trusted to keep. A copy on the treatment variant would let 3.3 read the
+    # other one and nothing anywhere would say they had drifted.
+    reserve_check: ReserveCheck
     edit_options: EditOptions
     thresholds_version: int
     # `None` for every stage but intake, because no other variant reads the
@@ -556,6 +575,14 @@ async def claim_detail(
         db, row, risk, thresholds, events, documents, today
     )
 
+    # Computed once and handed to the reserve check rather than fetched twice.
+    # `benefit_for_claim` costs a `state_rate_schedule` lookup and a
+    # `benefit_params` load, and the reserve check needs the identical weekly
+    # figure to project the schedule the exposure is measured from — asking
+    # again would be two round trips to arrive at one number, and AD-2's "one
+    # computation" is easier to keep true when there is one call site.
+    benefit = await benefit_for_claim(db, claim, thresholds, today)
+
     return ClaimDetail(
         claim_id=claim.claim_id,
         version=claim.version,
@@ -574,7 +601,14 @@ async def claim_detail(
         # computes from columns and never queries a claim, which is what keeps
         # `claim` a table only `services/claims` reads on the case-file path
         # (AD-12). It does read `state_rate_schedule`, which belongs to nobody.
-        benefit=await benefit_for_claim(db, claim, thresholds, today),
+        benefit=benefit,
+        # The claim row and the benefit are handed over for the same reason:
+        # `services/financials` computes from columns and never queries a
+        # claim, which is what keeps `claim` a table only `services/claims`
+        # reads on the case-file path (AD-12). It does read `rule_document`,
+        # which belongs to nobody, and — from Story 3.3 — `bill`, which is a
+        # financial table rather than a claim one.
+        reserve_check=await reserve_check_for_claim(db, claim, benefit, today),
         edit_options=EDIT_OPTIONS,
         thresholds_version=thresholds.version,
         requirements_version=requirements_version,

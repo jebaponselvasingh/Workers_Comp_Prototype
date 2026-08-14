@@ -52,6 +52,7 @@ PRIORITY_WEIGHTS_KEY = "priority_weights"
 INTAKE_REQUIRED_DOCUMENTS_KEY = "intake_required_documents"
 INJURY_CAPTURE_KEY = "injury_capture"
 BENEFIT_PARAMS_KEY = "benefit_params"
+RESERVE_BANDS_KEY = "reserve_bands"
 
 
 class RuleParameterError(ValueError):
@@ -636,3 +637,74 @@ async def benefit_params_for(db: AsyncSession, as_of: date | None = None) -> Ben
     """Load and validate the benefit parameters effective on `as_of`."""
     document = await load(db, BENEFIT_PARAMS_KEY, as_of)
     return BenefitParams.of(document, evaluate(document))
+
+
+@dataclass(frozen=True)
+class ReserveBands:
+    """The two thresholds the reserve adequacy verdict is banded on (3.2).
+
+    A block of its own, in a document of its own, for `BenefitParams`' reason:
+    `services/financials` owns the reserve check, and `DerivationThresholds` is
+    the single argument every registered derivation is built from. The reserve
+    check is a service *query* rather than a registered derivation — it reads
+    two tables' worth of exposure, which is not what a derivation's `build`
+    contract describes — so its bands belong beside the benefit's rather than
+    inside the registry's argument.
+
+    **Ratios are basis points.** 11 500 is 115%, 6 000 is 60%. The unit is the
+    comp rate's, and the reason is `BenefitParams`' reason applied to a
+    comparison rather than to a product: the story pins the boundary at exactly
+    1.15 and exactly 0.60, and `services/financials/reserve.py` cross-multiplies
+    integers so that "exactly" is a fact about the claim rather than about which
+    pair of cent figures produced the ratio.
+    """
+
+    version: int
+    light_ratio_bp: int
+    heavy_ratio_bp: int
+
+    def __post_init__(self) -> None:
+        # A negative ratio bound is not a tuning choice: exposure and reserve
+        # are both non-negative in every real claim, so a negative
+        # `lightRatioBp` makes *every* claim light and a negative
+        # `heavyRatioBp` makes none heavy — silently, with a confident verdict
+        # chip still rendering on every card in the portfolio.
+        for name, bound in (
+            ("lightRatioBp", self.light_ratio_bp),
+            ("heavyRatioBp", self.heavy_ratio_bp),
+        ):
+            if bound < 0:
+                raise RuleParameterError(f"{name} must not be negative, got {bound}")
+        # `riskMedMin > riskHighMin`'s refusal, over a different pair. The
+        # verdict reads the two in order — light first — so an inverted pair
+        # does not merely re-tune the bands, it makes `adequate` unreachable:
+        # every claim above the heavy floor would already have been called
+        # light. A claim can then never be told its reserve is right.
+        if self.heavy_ratio_bp > self.light_ratio_bp:
+            raise RuleParameterError(
+                f"heavyRatioBp ({self.heavy_ratio_bp}) must not exceed "
+                f"lightRatioBp ({self.light_ratio_bp})"
+            )
+
+    # **Deliberately no upper bound.** `_status_set` accepts an empty list
+    # because "no status counts as pending approval" is a legitimate way to
+    # switch a term off from the document; the same argument applies here. A
+    # `lightRatioBp` of 1 000 000 says "nothing is ever under-reserved", which
+    # is a strange policy but a policy, and it is the kind of thing an operator
+    # retunes a rule document to try. An arbitrary cap would forbid it while
+    # protecting against nothing — the failures worth refusing are the two
+    # above, both of which make a band silently unreachable.
+
+    @classmethod
+    def of(cls, document: LoadedDocument, result: dict[str, Any]) -> "ReserveBands":
+        return cls(
+            version=document.version,
+            light_ratio_bp=_integer(document, result, "lightRatioBp"),
+            heavy_ratio_bp=_integer(document, result, "heavyRatioBp"),
+        )
+
+
+async def reserve_bands_for(db: AsyncSession, as_of: date | None = None) -> ReserveBands:
+    """Load and validate the reserve adequacy bands effective on `as_of`."""
+    document = await load(db, RESERVE_BANDS_KEY, as_of)
+    return ReserveBands.of(document, evaluate(document))
