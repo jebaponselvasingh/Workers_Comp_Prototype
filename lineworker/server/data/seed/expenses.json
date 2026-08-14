@@ -1,0 +1,2382 @@
+[
+  {
+    "claim_id": "WC-20017",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 12800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20017",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 39100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20017",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 67500,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-20017",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 9800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20034",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 10000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20034",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 28900,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20034",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 94500,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-20034",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 8100,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20051",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 7100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20051",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 45900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20051",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 10600,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20068",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 9000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20068",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 28900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20068",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 9800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20085",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 13800,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20085",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 42500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20085",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 121500,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-20085",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 8100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20102",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 8100,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20102",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 42500,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20102",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 8100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20119",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 10000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20119",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 25500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20119",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 7200,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20136",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 7100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20136",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 42500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20136",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 94500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20136",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 7200,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20153",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 11900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20153",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 28900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20153",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 11500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20170",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 9000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20170",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 45900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20170",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 6400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20187",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 10900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20187",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 28900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20187",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 12300,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20204",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 12800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20204",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 25500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20204",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 8900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20221",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 10000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20221",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 42500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20221",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 112500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20221",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 9800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20238",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 11900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20238",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 25500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20238",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 9800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20255",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 9000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20255",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 42500,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20255",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 11500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20272",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 13800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20272",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 28900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20272",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 76500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20272",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 10600,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20289",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 8100,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20289",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 325000,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-20289",
+    "category": "home_workstation_mod",
+    "label": "Home / Workstation Modification Assessment",
+    "amount_cents": 253800,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-20289",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 6400,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20306",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 10000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20306",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 39100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20306",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 8900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20323",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 7100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20323",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 28900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20323",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 351000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20323",
+    "category": "home_workstation_mod",
+    "label": "Home / Workstation Modification Assessment",
+    "amount_cents": 183800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20323",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 8900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20340",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 11900,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20340",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 42500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20340",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 6400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20357",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 13800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20357",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 25500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20357",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 12300,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20374",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 10900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20374",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 42500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20374",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 221000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20374",
+    "category": "home_workstation_mod",
+    "label": "Home / Workstation Modification Assessment",
+    "amount_cents": 201200,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20374",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 8900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20391",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 8100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20391",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 32300,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20391",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 9800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20408",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 7100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20408",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 25500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20408",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 9800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20425",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 11900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20425",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 39100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20425",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 11500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20442",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 9000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20442",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 28900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20442",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 7200,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20459",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 10900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20459",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 39100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20459",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 130500,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-20459",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 9800,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20476",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 8100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20476",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 28900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20476",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 8100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20493",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 12800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20493",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 42500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20493",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 9800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20510",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 7100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20510",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 42500,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20510",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 6400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20527",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 9000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20527",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 25500,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20527",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 12300,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20544",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 13800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20544",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 39100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20544",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 7200,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20561",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 10900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20561",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 76500,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20561",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 9800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20578",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 12800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20578",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 39100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20578",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 8100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20595",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 10000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20595",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 28900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20595",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 112500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20595",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 6400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20612",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 11900,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20612",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 25500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20612",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 7200,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20629",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 13800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20629",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 35700,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20629",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 12300,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20646",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 10900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20646",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 25500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20646",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 8100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20663",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 8100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20663",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 42500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20663",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 9800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20680",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 12800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20680",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 76500,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20680",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 12300,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20697",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 7100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20697",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 42500,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20697",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 112500,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-20697",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 12300,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20714",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 9000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20714",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 39100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20714",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 7200,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20731",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 13800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20731",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 25500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20731",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 103500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20731",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 8100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20748",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 8100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20748",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 39100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20748",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 8100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20765",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 12800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20765",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 25500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20765",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 112500,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-20765",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 9800,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20782",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 10000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20782",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 42500,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20782",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 12300,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20799",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 11900,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20799",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 67500,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20799",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 11500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20816",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 13800,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20816",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 49300,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20816",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 76500,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20816",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 8900,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20833",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 10900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20833",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 39100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20833",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 9800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20850",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 8100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20850",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 28900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20850",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 12300,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20867",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 10000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20867",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 39100,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20867",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 112500,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-20867",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 8900,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20884",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 7100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20884",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 28900,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20884",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 67500,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-20884",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 8100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20901",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 9000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20901",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 25500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20901",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 9800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20918",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 10900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20918",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 35700,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20918",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 8100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20935",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 8100,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20935",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 25500,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20935",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 10600,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20952",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 12800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20952",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 39100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20952",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 12300,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20969",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 7100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20969",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 25500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20969",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 11500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20986",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 11900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20986",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 39100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20986",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 195000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20986",
+    "category": "home_workstation_mod",
+    "label": "Home / Workstation Modification Assessment",
+    "amount_cents": 148800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20986",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 8900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21003",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 9000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21003",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 42500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21003",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 10600,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21020",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 13800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21020",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 28900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21020",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 6400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21037",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 8100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21037",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 42500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21037",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 11500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21054",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 12800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21054",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 28900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21054",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 76500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21054",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 10600,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21071",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 10000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21071",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 45900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21071",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 94500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21071",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 8900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21088",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 11900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21088",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 28900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21088",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 8100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21105",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 13800,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21105",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 25500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21105",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 11500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21122",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 10900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21122",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 10600,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21139",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 12800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21139",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 25500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21139",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 377000,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-21139",
+    "category": "home_workstation_mod",
+    "label": "Home / Workstation Modification Assessment",
+    "amount_cents": 218800,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21139",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 7200,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21156",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 10000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21156",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 42500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21156",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 7200,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21173",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 7100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21173",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 32300,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21173",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 103500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21173",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 8100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21190",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 11900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21190",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 45900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21190",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 11500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21207",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 10900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21207",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 39100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21207",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 121500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21207",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 8100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21224",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 8100,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21224",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 28900,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21224",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 7200,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21241",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 12800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21241",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 42500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21241",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 8900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21258",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 7100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21258",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 28900,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21258",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 8100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21275",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 11900,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21275",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 42500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21275",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 103500,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-21275",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 7200,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21292",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 9000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21292",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 32300,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21292",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 130500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21292",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 12300,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21309",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 8100,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21309",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 25500,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21309",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 12300,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21326",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 12800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21326",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 39100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21326",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 7200,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21343",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 10000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21343",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 28900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21343",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 103500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21343",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 11500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21360",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 7100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21360",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 45900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21360",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 11500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21377",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 9000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21377",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 28900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21377",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 10600,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21394",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 13800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21394",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 42500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21394",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 130500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21394",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 11500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21411",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 8100,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21411",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 42500,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21411",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 94500,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-21411",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 8900,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21428",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 10000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21428",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 25500,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21428",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 85500,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-21428",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 12300,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21445",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 7100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21445",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 42500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21445",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 9800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21462",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 11900,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21462",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 28900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21462",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 130500,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-21462",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 8900,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21479",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 13800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21479",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 39100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21479",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 325000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21479",
+    "category": "home_workstation_mod",
+    "label": "Home / Workstation Modification Assessment",
+    "amount_cents": 253800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21479",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 6400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21496",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 10900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21496",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 28900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21496",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 6400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21513",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 12800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21513",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 25500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21513",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 9800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21530",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 10000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21530",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 42500,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21530",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 121500,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-21530",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 6400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21547",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 11900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21547",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 25500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21547",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 112500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21547",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 9800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21564",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 9000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21564",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 42500,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21564",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 12300,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21581",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 13800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21581",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 28900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21581",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 247000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21581",
+    "category": "home_workstation_mod",
+    "label": "Home / Workstation Modification Assessment",
+    "amount_cents": 148800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21581",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 8900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21598",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 8100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21598",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 42500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21598",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 6400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21615",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 10000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21615",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 39100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21615",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 103500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21615",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 7200,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21632",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 7100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21632",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 28900,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21632",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 12300,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21649",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 9000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21649",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 39100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21649",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 10600,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21666",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 13800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21666",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 25500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21666",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 6400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21683",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 10900,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21683",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 10600,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21700",
+    "category": "mileage_travel",
+    "label": "Mileage & Travel Reimbursement",
+    "amount_cents": 12800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21700",
+    "category": "dme",
+    "label": "Durable Medical Equipment",
+    "amount_cents": 39100,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21700",
+    "category": "prosthetic_assistive",
+    "label": "Prosthetic / Assistive Device",
+    "amount_cents": 121500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21700",
+    "category": "misc",
+    "label": "Miscellaneous Claim-Related Expense",
+    "amount_cents": 9800,
+    "status": "paid"
+  }
+]

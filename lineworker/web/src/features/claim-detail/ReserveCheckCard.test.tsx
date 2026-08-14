@@ -228,6 +228,7 @@ test("a fully disbursed schedule reads as paid, beside a verdict saying nothing 
       remainingMedicalCents: 0,
       scheduledIndemnityCents: 4_000_000,
       disbursedIndemnityCents: 4_000_000,
+      disbursedMedicalCents: 0,
       ratioBp: 0,
       rationale:
         "Current reserve ($45,000) comfortably exceeds projected remaining exposure ($0). " +

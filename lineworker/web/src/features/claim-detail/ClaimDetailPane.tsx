@@ -32,6 +32,7 @@ import { useSelectedClaimId } from "@/features/queue/useSelectedClaim";
 import { CaseHeader } from "./CaseHeader";
 import { DetailTabs, useDetailTab } from "./DetailTabs";
 import { StageStepper } from "./StageStepper";
+import { BillsTab } from "./bills/BillsTab";
 import { DocumentsTab } from "./documents/DocumentsTab";
 import { InjuryTab } from "./injury/InjuryTab";
 import { PhotosTab } from "./photos/PhotosTab";
@@ -102,6 +103,10 @@ function CaseFile({ claimId }: { claimId: string }) {
         activeTab={activeTab}
         onTabChange={setActiveTab}
         injury={<InjuryTab claim={detail.data} />}
+        // The claim id rather than the case file: the Bills tab fetches its
+        // own payload under its own query key, so the only thing it needs
+        // from here is which claim to ask about.
+        bills={<BillsTab claimId={claimId} />}
         documents={<DocumentsTab claim={detail.data} />}
         photos={<PhotosTab claim={detail.data} />}
         // The server's number, not the grid's length — see `DetailTabs`. It is

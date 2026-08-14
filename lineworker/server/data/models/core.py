@@ -27,15 +27,19 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from data.models.base import Base
 from data.models.enums import (
+    BillCategory,
     BodyRegion,
     ClaimPath,
     ClaimStatus,
     CommStatus,
     Disability,
     DocType,
+    ExpenseCategory,
     Gender,
+    LineItemStatus,
     RecoveryWindow,
     ReturnStatus,
+    ScheduleWeekStatus,
     Stage,
     UserRole,
 )
@@ -524,6 +528,134 @@ class StateRateSchedule(Base):
     __table_args__ = (
         CheckConstraint("weekly_min_cents <= weekly_max_cents", name="ck_weekly_bounds"),
     )
+
+
+class PaymentScheduleWeek(Base):
+    """One week of a claim's indemnity payment schedule (Story 3.3, AC 2).
+
+    Write-owner is `services/financials` (AD-12) and it is the **only**
+    writer: Story 3.4's worklist approval calls that service's command rather
+    than reaching this table, and nothing else touches it at all.
+
+    **These rows are a materialized projection, not a ledger.**
+    `services/financials/schedule.py::project_payments` decides how many weeks
+    a claim is scheduled for, when each one runs and what it pays — one
+    generator, AD-2 — and `services/financials/materialize.py` writes what it
+    produced. That is why re-running the command is a no-op on unchanged
+    inputs rather than an append: the rows *are* the projection, keyed by
+    `(claim_id, week_no)`, and the unique constraint below is what makes that
+    a fact about the table rather than a habit of the writer.
+
+    **`status` is the one column the projection does not own outright**, and
+    the reason is the failure AD-12 names by name. Two of the five statuses
+    are *decisions* — `payment_scheduled` is a handler approving a week into
+    the next batch (3.4) and `paid` can be the batch having disbursed it —
+    while the other three are the calendar's answer. A regeneration that
+    overwrote the column wholesale would silently revoke approvals every time
+    a claim was re-read, so the command preserves decided statuses and
+    refreshes only the calendar-derived ones. `materialize.py` states the
+    partition and `tests/test_schedule_materialization.py` holds it.
+
+    **`version` from birth.** A week is a mutable entity — 3.4 moves its
+    status — so AD-4's compare-and-swap column belongs on it now rather than
+    in the migration that first needs it, which is the rule `Document` and
+    `AdditionalInjury` already follow.
+
+    **`week_no` is 1-based** because it is a label a handler reads ("Wk 3"),
+    not an index, and `period_start`/`period_end` are inclusive so a week is
+    seven days — the prototype's arithmetic, kept because an exclusive end
+    renders as the next week's start date in the Bills table.
+    """
+
+    __tablename__ = "payment_schedule_week"
+
+    id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+    # Indexed: every read of this table is "this claim's schedule".
+    claim_id: Mapped[int] = mapped_column(ForeignKey("claim.id"), index=True)
+    week_no: Mapped[int] = mapped_column(Integer)
+    period_start: Mapped[date] = mapped_column(Date)
+    period_end: Mapped[date] = mapped_column(Date)
+    amount_cents: Mapped[int] = mapped_column(BigInteger)
+    status: Mapped[ScheduleWeekStatus] = mapped_column(
+        _enum(ScheduleWeekStatus, "schedule_week_status")
+    )
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+
+    # Unnamed so `NAMING_CONVENTION` decides — `TreatmentPlanStep`'s note.
+    # This is what makes the materialization command an upsert rather than an
+    # append: a second row for one week of one claim is refused by the
+    # database, not merely avoided by the code that happens to write.
+    __table_args__ = (UniqueConstraint("claim_id", "week_no"),)
+
+
+class Bill(Base):
+    """One medical bill on a claim (Story 3.3, AC 3).
+
+    Write-owner is `services/financials` (AD-12). This story's only writer is
+    the seed migration; Story 3.4's approval is the first runtime one, moving
+    `under_review` → `payment_scheduled`.
+
+    **`label` and `category` are both stored, and neither is derivable from
+    the other.** The category is the token a query groups by; the label is the
+    sentence the prototype wrote ("Diagnostic Imaging (MRI/CT/X-Ray)") and is
+    content rather than code. Deriving the label from the category at read
+    time would put six English strings in a service, and deriving the category
+    from the label would make a reworded bill fall out of its own group.
+    `AdditionalInjury.body_part` stores its label beside its key for the same
+    reason.
+
+    **`amount_cents` is integer cents like every other money column**, and the
+    prototype's dollar figures were multiplied once, in the extractor.
+
+    `version` is present for `PaymentScheduleWeek`'s reason: 3.4 mutates the
+    status, so the compare-and-swap column arrives with the table.
+    """
+
+    __tablename__ = "bill"
+
+    id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+    # Indexed: every read is "this claim's bills" — the Bills tab is never
+    # rendered without a claim, and the reserve check sums one claim's unpaid.
+    claim_id: Mapped[int] = mapped_column(ForeignKey("claim.id"), index=True)
+    category: Mapped[BillCategory] = mapped_column(_enum(BillCategory, "bill_category"))
+    label: Mapped[str] = mapped_column(Text)
+    amount_cents: Mapped[int] = mapped_column(BigInteger)
+    status: Mapped[LineItemStatus] = mapped_column(_enum(LineItemStatus, "line_item_status"))
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+
+
+class Expense(Base):
+    """One non-medical expense on a claim (Story 3.3, AC 3).
+
+    `Bill`'s shape and `Bill`'s owner, over a different category vocabulary —
+    see `ExpenseCategory` for why the two are separate enums and
+    `LineItemStatus` for why the statuses are one.
+
+    **The readiness review's stated reason for creating this table here does
+    not survive checking, and the table is still right.** That review moved
+    `expense` into Story 3.3 because "it feeds the settled-stage payout
+    breakdown rendered by Story 2.2", and 3.3's Dev Notes ask for that surface
+    to be verified after seeding rather than assumed. Verified: it was never
+    empty. The settled Overview reads `claim.paid_expense`, and all 62 seeded
+    settled claims carry a non-zero value for it from the Story 1.2 seed.
+
+    What this table actually feeds is the Bills tab's own Expenses card (AC 3)
+    and the *effective* expense figure on open claims, where the paid columns
+    are zero — which is a good enough reason on its own. The correction is
+    recorded because the premise was about a different surface, and a later
+    story reading the old sentence would go looking for a dependency that is
+    not there. The two figures do not agree, either; see `deferred-work.md`.
+    """
+
+    __tablename__ = "expense"
+
+    id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+    claim_id: Mapped[int] = mapped_column(ForeignKey("claim.id"), index=True)
+    category: Mapped[ExpenseCategory] = mapped_column(_enum(ExpenseCategory, "expense_category"))
+    label: Mapped[str] = mapped_column(Text)
+    amount_cents: Mapped[int] = mapped_column(BigInteger)
+    status: Mapped[LineItemStatus] = mapped_column(_enum(LineItemStatus, "line_item_status"))
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
 
 
 class GlossaryTerm(Base):

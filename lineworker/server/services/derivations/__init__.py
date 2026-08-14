@@ -23,8 +23,12 @@ fatality claim looks like. Story 3.1 adds `indemnity_type` and a v4 carrying
 its cut-off, and it is the first entry whose answer another *service* consumes
 rather than a card: `services/financials` asks it whether a claim is
 permanently totally disabled instead of comparing a score itself, so the PTD
-condition has one reader rather than two. `total_incurred` joins them as its
-story lands — each one function, here, called by every consumer.
+condition has one reader rather than two. Story 3.3 adds the five the Bills &
+Payments summary needs — `paid_to_date`, `total_claim_projected`,
+`installments_paid`, `next_payment_due` and `bills_on_file` — which is what
+makes the treatment Overview card and the Bills tab agree on a figure by
+construction rather than by two components being kept in step. Each one
+function, here, called by every consumer.
 
 **Naming rule for the modules below** (code review, 2026-08-10): a module
 is named after the *rule* (`risk_band`, `open_duration`, `queue_flags`),
@@ -43,11 +47,30 @@ from services.derivations.care_coordination import (
     CoordinationStatus,
     coordination_status,
 )
+from services.derivations.claim_financials import (
+    BillsOnFileDerivation,
+    InstallmentsPaidDerivation,
+    LineItem,
+    NextPaymentDueDerivation,
+    PaidToDate,
+    PaidToDateDerivation,
+    ScheduleRow,
+    TotalClaimProjectedDerivation,
+    bills_on_file,
+    installments_paid,
+    next_payment_due,
+    paid_to_date,
+    paid_total,
+    total_claim_projected,
+    unpaid_total,
+)
 from services.derivations.claim_money import (
     CostSplit,
     CostSplitDerivation,
+    PaidColumns,
     TotalPaidDerivation,
     cost_split,
+    split_of,
     total_paid,
 )
 from services.derivations.indemnity_classification import (
@@ -82,6 +105,7 @@ from services.derivations.treatment_progress import (
 )
 
 __all__ = [
+    "BillsOnFileDerivation",
     "ClaimPathDerivation",
     "CoordinationDerivation",
     "CoordinationResult",
@@ -91,17 +115,26 @@ __all__ = [
     "Derivation",
     "IndemnityType",
     "IndemnityTypeDerivation",
+    "InstallmentsPaidDerivation",
+    "LineItem",
+    "NextPaymentDueDerivation",
     "OpenDurationDerivation",
+    "PaidColumns",
+    "PaidToDate",
+    "PaidToDateDerivation",
     "PaymentDueDerivation",
     "RiskBand",
     "RiskDerivation",
     "RtwBlockedDerivation",
+    "ScheduleRow",
     "SettlementDurationDerivation",
     "SiuReviewDerivation",
+    "TotalClaimProjectedDerivation",
     "TotalPaidDerivation",
     "TreatmentPhase",
     "TreatmentPhaseDerivation",
     "TreatmentPhaseResult",
+    "bills_on_file",
     "claim_path",
     "coordination_status",
     "cost_split",
@@ -110,13 +143,20 @@ __all__ = [
     "get",
     "hash_bucket",
     "indemnity_type",
+    "installments_paid",
+    "next_payment_due",
+    "paid_to_date",
+    "paid_total",
     "payment_due",
     "register",
     "registered_names",
     "risk",
     "rtw_blocked",
     "siu_review",
+    "split_of",
+    "total_claim_projected",
     "total_paid",
+    "unpaid_total",
     "treatment_phase",
     "utc_today",
 ]

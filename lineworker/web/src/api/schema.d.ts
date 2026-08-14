@@ -176,6 +176,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/claims/{claim_business_id}/financials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One claim's bills, expenses and week-by-week indemnity schedule
+         * @description The Bills & Payments read model for one claim in the caller's book.
+         *
+         *     **404 for out of scope, in the case file's exact wording**, and for its
+         *     reason: a route that distinguished "no such claim" from "not yours" is an
+         *     oracle for enumerating a portfolio the caller cannot read (AD-7). The
+         *     repository answers `None` to both.
+         *
+         *     **This GET can write.** Three of the five schedule statuses are the
+         *     calendar's answer, so the read model refreshes the claim's
+         *     `payment_schedule_week` rows before reading them — and so does the case
+         *     file, because AC 4 requires the two surfaces to agree whichever was fetched
+         *     first. The refresh is a no-op on every request that does not cross a week
+         *     boundary: nothing is written, committed or audited when nothing has moved.
+         */
+        get: operations["financials_claims__claim_business_id__financials_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/claims/{claim_business_id}/injuries": {
         parameters: {
             query?: never;
@@ -457,6 +489,62 @@ export interface components {
             weeklyCents: number;
         };
         /**
+         * BillCategory
+         * @description What kind of medical bill a `bill` row is (Story 3.3, AC 3).
+         *
+         *     The prototype has no category field: `buildBills` (line 766) emits six
+         *     line items identified only by their English labels, and `billsHTML`
+         *     groups nothing. The story asks for rows "by category", so the label's
+         *     *identity* becomes a token and the label stays the label — which is the
+         *     `RecoveryWindow` move one epic later, and it buys the same thing: the
+         *     seeded label is content a later story may reword, while the category is
+         *     what a query groups by and what Epic 7's financial decomposition will
+         *     sum over.
+         *
+         *     Member order is the prototype's emission order, which is also roughly
+         *     the order a claim incurs them.
+         *     [Source: docs/Workers_Comp_Prototype.html lines 774-780]
+         * @enum {string}
+         */
+        BillCategory: "initial_treatment" | "surgery_facility" | "imaging" | "physical_therapy" | "follow_up" | "pharmacy";
+        /**
+         * BillGroupResponse
+         * @description A claim's bills with the three figures their card heading states.
+         *
+         *     The totals are the server's (AD-1): the heading reads "6 on file ($4,120 of
+         *     $23,400 paid)", and a browser adding two of them itself is the arithmetic
+         *     the architecture keeps out of components.
+         */
+        BillGroupResponse: {
+            /** Count */
+            count: number;
+            /** Items */
+            items: components["schemas"]["BillResponse"][];
+            /** Paidcents */
+            paidCents: number;
+            /** Totalcents */
+            totalCents: number;
+        };
+        /**
+         * BillResponse
+         * @description One medical bill (AC 3).
+         *
+         *     `id` is published — unlike on a schedule week — because a line item has no
+         *     business identifier and no natural key: two rows on one claim can share a
+         *     label, and the label is content a later story may reword. It is what a list
+         *     key and Story 3.4's approval address the row by, exactly as `document` does.
+         */
+        BillResponse: {
+            /** Amountcents */
+            amountCents: number;
+            category: components["schemas"]["BillCategory"];
+            /** Id */
+            id: number;
+            /** Label */
+            label: string;
+            status: components["schemas"]["LineItemStatus"];
+        };
+        /**
          * BodyPartOptionResponse
          * @description One region of the body diagram: the key stored, the label shown.
          */
@@ -660,6 +748,40 @@ export interface components {
             recovery?: components["schemas"]["RecoveryWindow"] | null;
         };
         /**
+         * ClaimFinancialsResponse
+         * @description The whole Bills & Payments tab, in one payload (AC 1-4).
+         *
+         *     **One resource rather than four**, and the reason is consistency rather
+         *     than round trips: the summary's figures are sums over the three lists
+         *     beside it, so a client holding a summary fetched before a schedule refresh
+         *     and a schedule fetched after one would render a totals row that disagreed
+         *     with the rows it totals. One payload under one query key makes that
+         *     unrepresentable.
+         *
+         *     **`reserveCheck` is here *and* on the case file, and it is the same
+         *     value.** Both come from one assembler over one set of rows
+         *     (`services/financials/summary.py`), so the treatment Overview card and this
+         *     tab cannot show different verdicts or different figures whenever either was
+         *     fetched — which is what AC 4 asks for. It is repeated rather than referenced
+         *     because a client rendering the Bills tab should not have to have loaded the
+         *     case file first.
+         *
+         *     **The schedule is embedded rather than paginated.** The Lists convention
+         *     specifies `{items, nextCursor}` for list endpoints; a claim's schedule is
+         *     clamped to at most twenty weeks by the generator and its line items to a
+         *     handful, so the whole of each is one page and always will be. Documented
+         *     here because the convention is a default, not an exemption anybody should
+         *     have to guess at.
+         */
+        ClaimFinancialsResponse: {
+            bills: components["schemas"]["BillGroupResponse"];
+            expenses: components["schemas"]["ExpenseGroupResponse"];
+            reserveCheck: components["schemas"]["ReserveCheckResponse"];
+            /** Schedule */
+            schedule: components["schemas"]["ScheduleWeekResponse"][];
+            summary: components["schemas"]["FinancialSummaryResponse"];
+        };
+        /**
          * ClaimPath
          * @description The three statutory handling paths a claim can be classified onto (2.5).
          *
@@ -765,6 +887,18 @@ export interface components {
         /**
          * CostSplitResponse
          * @description The cost bar's three shares, as whole percentages summing to 100.
+         *
+         *     Guaranteed to total exactly 100 — `services/derivations/claim_money.py`
+         *     rounds the first two and gives the third the remainder — because three
+         *     independently rounded shares can total 99 or 101, and a bar drawn as three
+         *     widths then under- or overflows its track. The prototype has that bug.
+         *
+         *     **One model for three surfaces** (Story 3.3): the investigation card's
+         *     total-incurred bar, the settled payout breakdown and the Bills tab's
+         *     paid-cost bar. They are drawn over different triples — the last one uses
+         *     the effective breakdown rather than the `paid_*` columns — but the *shape*
+         *     and the summing rule are one thing, and a second identical model here
+         *     would have published two names for one contract to the generated client.
          */
         CostSplitResponse: {
             /** Expensepct */
@@ -923,6 +1057,117 @@ export interface components {
             workerName: string;
             /** Workerrole */
             workerRole: string;
+        };
+        /**
+         * ExpenseCategory
+         * @description What kind of claim expense an `expense` row is (Story 3.3, AC 3).
+         *
+         *     `BillCategory`'s argument, over `buildExpenses` (line 784). A separate
+         *     enum rather than more members on that one because the two lists answer
+         *     different questions — "what did treating this injury cost" against "what
+         *     did *administering* the claim cost" — and the settled-stage payout
+         *     breakdown adds them as two figures, not as one grouped total.
+         *
+         *     Member order is the prototype's emission order.
+         *     [Source: docs/Workers_Comp_Prototype.html lines 793-798]
+         * @enum {string}
+         */
+        ExpenseCategory: "mileage_travel" | "dme" | "prosthetic_assistive" | "home_workstation_mod" | "misc";
+        /**
+         * ExpenseGroupResponse
+         * @description A claim's expenses and their totals — `BillGroupResponse`'s shape.
+         */
+        ExpenseGroupResponse: {
+            /** Count */
+            count: number;
+            /** Items */
+            items: components["schemas"]["ExpenseResponse"][];
+            /** Paidcents */
+            paidCents: number;
+            /** Totalcents */
+            totalCents: number;
+        };
+        /**
+         * ExpenseResponse
+         * @description One claim expense (AC 3) — `BillResponse`'s shape over its own vocabulary.
+         *
+         *     A separate model rather than a generic one with a union category, because
+         *     the two categories are genuinely different closed sets and a client
+         *     switching on `category` should get exhaustiveness from the type. The
+         *     *status* vocabulary is shared, which is why `LineItemStatus` is one enum.
+         */
+        ExpenseResponse: {
+            /** Amountcents */
+            amountCents: number;
+            category: components["schemas"]["ExpenseCategory"];
+            /** Id */
+            id: number;
+            /** Label */
+            label: string;
+            status: components["schemas"]["LineItemStatus"];
+        };
+        /**
+         * FinancialSummaryResponse
+         * @description The four paycards, the cost bar and the metrics row (AC 1).
+         *
+         *     **Every figure here is a registered derivation's answer** (AD-10), and the
+         *     treatment Overview's paid-vs-reserve card reads the same computers over the
+         *     same rows — which is what makes AC 4's "identical figures" a property of the
+         *     code rather than of two components being kept in step.
+         *
+         *     **`paidToDateCents` is not the sum of the `paid_*` columns on an open
+         *     claim.** Those are a snapshot and read zero on every open seeded claim
+         *     while the schedule shows elapsed weeks and the bills show payments, so this
+         *     figure falls back to the live sources — the prototype's own rule, which its
+         *     `billsHTML` explains in a comment. `paidFromColumns` says which source
+         *     answered. The fallback is decided once on the total rather than per
+         *     component, so the three `paid*Cents` figures below always come from one
+         *     source and always add to `paidToDateCents`.
+         *
+         *     **`costSplit` is null when nothing has been disbursed**, which the card
+         *     renders as "No payments disbursed yet — reserve of $X held against
+         *     projected exposure" rather than as a bar of three zero-width segments.
+         *
+         *     **`nextPaymentDue` skips weeks that are awaiting approval or already
+         *     scheduled into a batch.** A claim whose schedule is unapproved has no
+         *     payment *due*, and one already approved is waiting to be paid rather than
+         *     to fall due — so `null` here is an answer, not a missing value.
+         *
+         *     `weekCount` is the number of rows in `schedule`, which is not always the
+         *     projection's week count: a shortened schedule keeps any week that was
+         *     already approved or paid, so the table can show more weeks than the claim
+         *     now projects.
+         */
+        FinancialSummaryResponse: {
+            /** Billsonfile */
+            billsOnFile: number;
+            costSplit: components["schemas"]["CostSplitResponse"] | null;
+            /** Disbursedindemnitycents */
+            disbursedIndemnityCents: number;
+            /** Installmentspaid */
+            installmentsPaid: number;
+            /** Nextpaymentdue */
+            nextPaymentDue: string | null;
+            /** Paidexpensecents */
+            paidExpenseCents: number;
+            /** Paidfromcolumns */
+            paidFromColumns: boolean;
+            /** Paidindemnitycents */
+            paidIndemnityCents: number;
+            /** Paidmedicalcents */
+            paidMedicalCents: number;
+            /** Paidtodatecents */
+            paidToDateCents: number;
+            /** Reservecents */
+            reserveCents: number;
+            /** Scheduledindemnitycents */
+            scheduledIndemnityCents: number;
+            /** Totalclaimprojectedcents */
+            totalClaimProjectedCents: number;
+            /** Weekcount */
+            weekCount: number;
+            /** Weeklyindemnitycents */
+            weeklyIndemnityCents: number;
         };
         /**
          * GlossaryList
@@ -1149,6 +1394,36 @@ export interface components {
             /** Totalpaidcents */
             totalPaidCents: number;
         };
+        /**
+         * LineItemStatus
+         * @description Where one medical bill or claim expense stands (Story 3.3).
+         *
+         *     **One vocabulary for both tables**, which is the decision worth stating.
+         *     `bill` and `expense` are separate tables because their *categories* are
+         *     different vocabularies — a surgical facility fee and a mileage
+         *     reimbursement are not members of one list — but the states a line item
+         *     moves through are identical, and the prototype says so by rendering both
+         *     through one `billStatusLabel`. Two enums holding the same five tokens
+         *     would be two places to widen when 3.4's approval adds a transition, and
+         *     the first divergence between them would be a bug nothing could name.
+         *
+         *     **`pending_submission` and `payment_scheduled` are distinct members with
+         *     distinct labels, and the prototype conflates them.** Its
+         *     `BILL_STATUS_LABEL` maps `PendingSubmission` to the string "Payment
+         *     Scheduled" (line 806) — so a bill nobody has submitted reads, on screen,
+         *     as money already queued for disbursement. Those are opposite facts about
+         *     a claim's cost. The console keeps them apart: `pending_submission` is a
+         *     bill the provider has not filed, `payment_scheduled` is one a handler has
+         *     approved into the next batch, and Story 3.4's approval is the single
+         *     transition `under_review` → `payment_scheduled` that connects them. The
+         *     story's Dev Notes name this as an enum-label quirk not to copy.
+         *
+         *     Member order is the order a line item moves through, which is also the
+         *     order PostgreSQL sorts the type in.
+         *     [Source: docs/Workers_Comp_Prototype.html lines 806, 843-845]
+         * @enum {string}
+         */
+        LineItemStatus: "pending_submission" | "under_review" | "payment_scheduled" | "paid";
         /** LoginRequest */
         LoginRequest: {
             /** Personaid */
@@ -1412,6 +1687,14 @@ export interface components {
          *     already shows disbursements, exactly as the prototype's `billsHTML`
          *     describes. `disbursed_` rather than `paid_` in the name for that reason.
          *
+         *     **`disbursedMedicalCents` is the same field one row up**, added by the
+         *     second review of this story. The card's "Medical paid" row was still
+         *     reading `overview.paidMedicalCents` — `claim.paid_medical`, 0 on all 38
+         *     open seeded claims — directly above the corrected indemnity row and
+         *     directly above a link to a tab that shows the same claim's paid bills as a
+         *     real figure. It is the paid half of the bill list whose unpaid half is
+         *     `remainingMedicalCents`, summed from one read.
+         *
          *     **`rationale` is a finished sentence**, the prototype's, written by the
          *     service from the claim's own figures — deterministic prose in the same
          *     category as `benefit.reserveRationale` and not an `ai_insight` row (AD-2).
@@ -1425,6 +1708,8 @@ export interface components {
             bandsVersion: number;
             /** Disbursedindemnitycents */
             disbursedIndemnityCents: number;
+            /** Disbursedmedicalcents */
+            disbursedMedicalCents: number;
             /** Projectedremainingcents */
             projectedRemainingCents: number | null;
             /** Ratiobp */
@@ -1471,6 +1756,68 @@ export interface components {
          * @enum {string}
          */
         RiskBand: "high" | "med" | "low";
+        /**
+         * ScheduleWeekResponse
+         * @description One week of the indemnity payment schedule (AC 2).
+         *
+         *     **`status` is a snake_case enum and the label is the UI's.** "Due This
+         *     Week" and "Pending Approval" are display strings the browser owns, per the
+         *     Enums convention; what travels is the token a client can branch on.
+         *
+         *     **No `id` and no `version`.** A week is identified by its claim and its
+         *     number — the table's unique constraint — so a surrogate would be a second
+         *     identity for one row. Story 3.4's approval needs `version` to
+         *     compare-and-swap and will add it with the command that reads it, rather
+         *     than this story publishing a field nothing can use.
+         *
+         *     `periodStart` and `periodEnd` are **inclusive**, so a week is seven days
+         *     and the table renders "Apr 26 – May 2". An exclusive end would render as
+         *     the next week's start date.
+         */
+        ScheduleWeekResponse: {
+            /** Amountcents */
+            amountCents: number;
+            /**
+             * Periodend
+             * Format: date
+             */
+            periodEnd: string;
+            /**
+             * Periodstart
+             * Format: date
+             */
+            periodStart: string;
+            status: components["schemas"]["ScheduleWeekStatus"];
+            /** Weekno */
+            weekNo: number;
+        };
+        /**
+         * ScheduleWeekStatus
+         * @description Where one week of the indemnity payment schedule stands (Story 3.2).
+         *
+         *     **In the data layer although Story 3.2 creates no column**, which is the
+         *     one thing about this enum worth arguing. `payment_schedule_week.status` is
+         *     Story 3.3's migration, and a native enum column needs its members here
+         *     (`data/` must not import from `services/`) — the argument `BodyRegion`
+         *     makes. What lands first is the *projection* that produces the value:
+         *     `services/financials/schedule.py`, which 3.2 needs for the reserve check's
+         *     remaining-indemnity term and which 3.3 must persist through rather than
+         *     write a second generator beside (AD-2). Declaring the vocabulary here now
+         *     means 3.3 adds a column over an existing type instead of renaming one out
+         *     of `services/` on its way past.
+         *
+         *     `RiskBand` and `TreatmentPhase` stay in `services/derivations` precisely
+         *     because no column will ever hold one; this is the other case.
+         *
+         *     Member order is the prototype's `SCHEDULE_STATUS_LABEL` order, which is
+         *     also the order a week moves through — pending approval, due, upcoming,
+         *     paid. `payment_scheduled` is the state Story 3.4's approval batch moves a
+         *     week into; it is named now for the reason the others are, and nothing in
+         *     3.2 produces it.
+         *     [Source: docs/Workers_Comp_Prototype.html line 844]
+         * @enum {string}
+         */
+        ScheduleWeekStatus: "pending_approval" | "due_this_week" | "upcoming" | "payment_scheduled" | "paid";
         /**
          * SettledOverviewResponse
          * @description The settled variant: banner, payout breakdown, outcome, action summary.
@@ -2338,6 +2685,92 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    financials_claims__claim_business_id__financials_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The claim's business id, `WC-nnnn`. */
+                claim_business_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaimFinancialsResponse"];
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description No such claim in the caller's scope. Deliberately the same answer for a claim that does not exist and one that belongs to another employer — see the route docstring (RFC 9457 problem document). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description The claim's jurisdiction has no `state_rate_schedule` row, so its weekly benefit cannot be calculated and no default is substituted (RFC 9457 problem document). Unreachable against a correctly migrated database — 0023 refuses to complete otherwise. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
                 };
             };
         };

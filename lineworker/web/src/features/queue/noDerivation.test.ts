@@ -201,6 +201,21 @@ const DERIVED_FIELDS =
   // number the server already published, with its own rounding.
   "verdict|ratioBp|projectedRemainingCents|remainingIndemnityCents|" +
   "remainingMedicalCents|" +
+  // Story 3.3's. This tab hands a component a totals row *and* the rows it
+  // totals, which is the strongest invitation to arithmetic anywhere in the
+  // console: `paidCents` and `totalCents` sit beside a list whose amounts add
+  // up to them, and `installmentsPaid` beside a schedule a component could
+  // just count. Each is a registered derivation, and each has a rule behind it
+  // that a re-implementation would get wrong — `paidToDateCents` falls back
+  // from the `paid_*` columns to the live figures on a rule the browser cannot
+  // see, `installmentsPaid` counts rows rather than dividing (paid weeks keep
+  // the amount they were paid at), and `nextPaymentDue` skips two statuses.
+  // `weekCount` is here because it is *not* the projection's week count: a
+  // shortened schedule keeps its decided weeks, so `schedule.length` is the
+  // answer and a recomputation from the recovery window is not.
+  "paidToDateCents|totalClaimProjectedCents|paidIndemnityCents|paidMedicalCents|" +
+  "paidExpenseCents|paidFromColumns|installmentsPaid|weekCount|nextPaymentDue|" +
+  "billsOnFile|scheduledIndemnityCents|disbursedIndemnityCents|paidCents|totalCents|" +
   // Story 2.5's. `path` is the claim's statutory classification and is the
   // single most consequential derived value in the console — it decides which
   // death-benefit forms a handler is shown — so a comparison against it, or
@@ -320,6 +335,15 @@ test("the scan reaches the files it claims to", () => {
   // hands a component both a judgement and the two figures behind it, so
   // "compare them and see" is one line away on a card that already renders
   // `reserveCents`.
+  // Story 3.3's tab, in a fifth nested folder. The pull here is the whole
+  // shape of the payload: a summary served beside the very rows it summarises,
+  // so every figure in the heading is one `reduce` away from being recomputed
+  // — and the recomputation would be *right* on most claims and wrong on the
+  // ones where the fallback rule or a frozen paid week applies.
+  expect(scanned).toContain(path.join("features", "claim-detail", "bills", "BillsTab.tsx"));
+  expect(scanned).toContain(
+    path.join("features", "claim-detail", "bills", "FinancialSummaryCard.tsx"),
+  );
   expect(scanned.some((name) => name.includes(".test."))).toBe(false);
 });
 
@@ -363,6 +387,13 @@ test("the guard would notice a derivation if one were added", () => {
     // computer AD-10 forbids, and would round differently from the server's.
     'const verdict = check.projectedRemainingCents / check.reserveCents > 1.15 ? "light" : "ok";',
     "const pct = (check.remainingIndemnityCents / check.reserveCents) * 100;",
+    // Story 3.3's: the three shapes the Bills tab invites. Summing the rows
+    // the heading already totals, counting the paid weeks the summary already
+    // counted, and adding the reserve to the paid figure to get the projected
+    // total — each one line, each a second computer for a published number.
+    "const paid = bills.items.reduce((s, b) => s + b.paidCents, 0);",
+    "const done = summary.installmentsPaid + 1;",
+    "const projected = summary.paidToDateCents + summary.reserveCents;",
   ];
 
   for (const smell of smells) {

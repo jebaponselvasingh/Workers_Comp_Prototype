@@ -552,6 +552,51 @@ export type ReserveCheck = components["schemas"]["ReserveCheckResponse"];
 export type ReserveVerdict = components["schemas"]["ReserveVerdict"];
 
 /**
+ * The Bills & Payments read model (Story 3.3).
+ *
+ * **A key of its own, unlike the reserve check — and the two do not disagree.**
+ * The verdict rides on the case file so the treatment Overview card can render
+ * it without a second request; this payload is the whole tab, which is far
+ * more than that card needs and is fetched only when the tab is opened. What
+ * makes them agree is not a shared cache entry but a shared *computation*:
+ * both come from one assembler over one set of rows on the server
+ * (`services/financials/summary.py`), so whichever was fetched first, the
+ * figures are the same answer rather than two answers that happen to match.
+ * `reserveCheck` is therefore published on both payloads, and
+ * `BillsTab.test.tsx` pins that the tab renders this one.
+ *
+ * **The schedule is not paginated and will not need to be**: the generator
+ * clamps a claim to at most twenty weeks, and the line items are a handful.
+ */
+export type ClaimFinancials = components["schemas"]["ClaimFinancialsResponse"];
+export type FinancialSummary = components["schemas"]["FinancialSummaryResponse"];
+export type ScheduleWeek = components["schemas"]["ScheduleWeekResponse"];
+export type ScheduleWeekStatus = components["schemas"]["ScheduleWeekStatus"];
+export type BillLine = components["schemas"]["BillResponse"];
+export type ExpenseLine = components["schemas"]["ExpenseResponse"];
+export type LineItemStatus = components["schemas"]["LineItemStatus"];
+export type BillCategory = components["schemas"]["BillCategory"];
+export type ExpenseCategory = components["schemas"]["ExpenseCategory"];
+
+export function useClaimFinancials(claimId: string | null) {
+  return useQuery({
+    queryKey: queryKeys.claims.financials(claimId ?? ""),
+    queryFn: async (): Promise<ClaimFinancials> => {
+      const { data } = await api.GET("/claims/{claim_business_id}/financials", {
+        params: { path: { claim_business_id: claimId! } },
+      });
+      return data!;
+    },
+    enabled: claimId !== null,
+    // The case file's 15s, for the reason the document sheet gives: this
+    // payload and the case file are cut from the same rows, so two staleness
+    // clocks would let the Overview card and the Bills tab drift apart on
+    // screen even though the server cannot compute them differently.
+    staleTime: 15_000,
+  });
+}
+
+/**
  * Set or clear the comp-rate override (AC 4).
  *
  * `compRateBp: null` is the ↺ reset — one mutation for both, because they are

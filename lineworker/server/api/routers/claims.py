@@ -26,16 +26,25 @@ from api.errors import PROBLEM_CONTENT_TYPE, ProblemDocument, ProblemException
 from api.routers.auth import UNAUTHENTICATED_RESPONSE
 from api.schemas import ApiModel
 from data.models.enums import (
+    BillCategory,
     ClaimPath,
     CommStatus,
     Disability,
     DocType,
+    ExpenseCategory,
+    LineItemStatus,
     RecoveryWindow,
     ReturnStatus,
+    ScheduleWeekStatus,
     Stage,
 )
 from services.claims.comp_rate import update_comp_rate_override
-from services.claims.detail import ClaimDetail, ClaimNotVisible, claim_detail
+from services.claims.detail import (
+    ClaimDetail,
+    ClaimNotVisible,
+    claim_detail,
+    claim_financial_detail,
+)
 from services.claims.documents import DocumentNotVisible, document_content
 from services.claims.edit import (
     EditNotPermitted,
@@ -50,6 +59,7 @@ from services.derivations import CoordinationStatus, IndemnityType, RiskBand, Tr
 from services.financials import (
     COMP_RATE_MAX_BP,
     COMP_RATE_MIN_BP,
+    ClaimFinancials,
     MissingStateRate,
     ReserveVerdict,
 )
@@ -359,7 +369,20 @@ class StepperStepResponse(ApiModel):
 
 
 class CostSplitResponse(ApiModel):
-    """The cost bar's three shares, as whole percentages summing to 100."""
+    """The cost bar's three shares, as whole percentages summing to 100.
+
+    Guaranteed to total exactly 100 — `services/derivations/claim_money.py`
+    rounds the first two and gives the third the remainder — because three
+    independently rounded shares can total 99 or 101, and a bar drawn as three
+    widths then under- or overflows its track. The prototype has that bug.
+
+    **One model for three surfaces** (Story 3.3): the investigation card's
+    total-incurred bar, the settled payout breakdown and the Bills tab's
+    paid-cost bar. They are drawn over different triples — the last one uses
+    the effective breakdown rather than the `paid_*` columns — but the *shape*
+    and the summing rule are one thing, and a second identical model here
+    would have published two names for one contract to the generated client.
+    """
 
     indemnity_pct: int
     medical_pct: int
@@ -857,6 +880,14 @@ class ReserveCheckResponse(ApiModel):
     already shows disbursements, exactly as the prototype's `billsHTML`
     describes. `disbursed_` rather than `paid_` in the name for that reason.
 
+    **`disbursedMedicalCents` is the same field one row up**, added by the
+    second review of this story. The card's "Medical paid" row was still
+    reading `overview.paidMedicalCents` — `claim.paid_medical`, 0 on all 38
+    open seeded claims — directly above the corrected indemnity row and
+    directly above a link to a tab that shows the same claim's paid bills as a
+    real figure. It is the paid half of the bill list whose unpaid half is
+    `remainingMedicalCents`, summed from one read.
+
     **`rationale` is a finished sentence**, the prototype's, written by the
     service from the claim's own figures — deterministic prose in the same
     category as `benefit.reserveRationale` and not an `ai_insight` row (AD-2).
@@ -873,6 +904,7 @@ class ReserveCheckResponse(ApiModel):
     remaining_medical_cents: int | None
     scheduled_indemnity_cents: int
     disbursed_indemnity_cents: int
+    disbursed_medical_cents: int
     reserve_cents: int
     rationale: str
     bands_version: int
@@ -1735,3 +1767,219 @@ async def document_sheet(
         # itself the answer to "does this claim exist?".
         raise _not_found(claim_business_id) from exc
     return DocumentSheetResponse.model_validate(sheet)
+
+
+# --- Bills & Payments: the claim-financials read model (Story 3.3) --------
+
+
+class ScheduleWeekResponse(ApiModel):
+    """One week of the indemnity payment schedule (AC 2).
+
+    **`status` is a snake_case enum and the label is the UI's.** "Due This
+    Week" and "Pending Approval" are display strings the browser owns, per the
+    Enums convention; what travels is the token a client can branch on.
+
+    **No `id` and no `version`.** A week is identified by its claim and its
+    number — the table's unique constraint — so a surrogate would be a second
+    identity for one row. Story 3.4's approval needs `version` to
+    compare-and-swap and will add it with the command that reads it, rather
+    than this story publishing a field nothing can use.
+
+    `periodStart` and `periodEnd` are **inclusive**, so a week is seven days
+    and the table renders "Apr 26 – May 2". An exclusive end would render as
+    the next week's start date.
+    """
+
+    week_no: int
+    period_start: date
+    period_end: date
+    amount_cents: int
+    status: ScheduleWeekStatus
+
+
+class BillResponse(ApiModel):
+    """One medical bill (AC 3).
+
+    `id` is published — unlike on a schedule week — because a line item has no
+    business identifier and no natural key: two rows on one claim can share a
+    label, and the label is content a later story may reword. It is what a list
+    key and Story 3.4's approval address the row by, exactly as `document` does.
+    """
+
+    id: int
+    category: BillCategory
+    label: str
+    amount_cents: int
+    status: LineItemStatus
+
+
+class ExpenseResponse(ApiModel):
+    """One claim expense (AC 3) — `BillResponse`'s shape over its own vocabulary.
+
+    A separate model rather than a generic one with a union category, because
+    the two categories are genuinely different closed sets and a client
+    switching on `category` should get exhaustiveness from the type. The
+    *status* vocabulary is shared, which is why `LineItemStatus` is one enum.
+    """
+
+    id: int
+    category: ExpenseCategory
+    label: str
+    amount_cents: int
+    status: LineItemStatus
+
+
+class BillGroupResponse(ApiModel):
+    """A claim's bills with the three figures their card heading states.
+
+    The totals are the server's (AD-1): the heading reads "6 on file ($4,120 of
+    $23,400 paid)", and a browser adding two of them itself is the arithmetic
+    the architecture keeps out of components.
+    """
+
+    items: list[BillResponse]
+    count: int
+    total_cents: int
+    paid_cents: int
+
+
+class ExpenseGroupResponse(ApiModel):
+    """A claim's expenses and their totals — `BillGroupResponse`'s shape."""
+
+    items: list[ExpenseResponse]
+    count: int
+    total_cents: int
+    paid_cents: int
+
+
+class FinancialSummaryResponse(ApiModel):
+    """The four paycards, the cost bar and the metrics row (AC 1).
+
+    **Every figure here is a registered derivation's answer** (AD-10), and the
+    treatment Overview's paid-vs-reserve card reads the same computers over the
+    same rows — which is what makes AC 4's "identical figures" a property of the
+    code rather than of two components being kept in step.
+
+    **`paidToDateCents` is not the sum of the `paid_*` columns on an open
+    claim.** Those are a snapshot and read zero on every open seeded claim
+    while the schedule shows elapsed weeks and the bills show payments, so this
+    figure falls back to the live sources — the prototype's own rule, which its
+    `billsHTML` explains in a comment. `paidFromColumns` says which source
+    answered. The fallback is decided once on the total rather than per
+    component, so the three `paid*Cents` figures below always come from one
+    source and always add to `paidToDateCents`.
+
+    **`costSplit` is null when nothing has been disbursed**, which the card
+    renders as "No payments disbursed yet — reserve of $X held against
+    projected exposure" rather than as a bar of three zero-width segments.
+
+    **`nextPaymentDue` skips weeks that are awaiting approval or already
+    scheduled into a batch.** A claim whose schedule is unapproved has no
+    payment *due*, and one already approved is waiting to be paid rather than
+    to fall due — so `null` here is an answer, not a missing value.
+
+    `weekCount` is the number of rows in `schedule`, which is not always the
+    projection's week count: a shortened schedule keeps any week that was
+    already approved or paid, so the table can show more weeks than the claim
+    now projects.
+    """
+
+    paid_to_date_cents: int
+    total_claim_projected_cents: int
+    reserve_cents: int
+    cost_split: CostSplitResponse | None
+    paid_indemnity_cents: int
+    paid_medical_cents: int
+    paid_expense_cents: int
+    paid_from_columns: bool
+
+    weekly_indemnity_cents: int
+    installments_paid: int
+    week_count: int
+    next_payment_due: date | None
+    bills_on_file: int
+
+    scheduled_indemnity_cents: int
+    disbursed_indemnity_cents: int
+
+
+class ClaimFinancialsResponse(ApiModel):
+    """The whole Bills & Payments tab, in one payload (AC 1-4).
+
+    **One resource rather than four**, and the reason is consistency rather
+    than round trips: the summary's figures are sums over the three lists
+    beside it, so a client holding a summary fetched before a schedule refresh
+    and a schedule fetched after one would render a totals row that disagreed
+    with the rows it totals. One payload under one query key makes that
+    unrepresentable.
+
+    **`reserveCheck` is here *and* on the case file, and it is the same
+    value.** Both come from one assembler over one set of rows
+    (`services/financials/summary.py`), so the treatment Overview card and this
+    tab cannot show different verdicts or different figures whenever either was
+    fetched — which is what AC 4 asks for. It is repeated rather than referenced
+    because a client rendering the Bills tab should not have to have loaded the
+    case file first.
+
+    **The schedule is embedded rather than paginated.** The Lists convention
+    specifies `{items, nextCursor}` for list endpoints; a claim's schedule is
+    clamped to at most twenty weeks by the generator and its line items to a
+    handful, so the whole of each is one page and always will be. Documented
+    here because the convention is a default, not an exemption anybody should
+    have to guess at.
+    """
+
+    summary: FinancialSummaryResponse
+    schedule: list[ScheduleWeekResponse]
+    bills: BillGroupResponse
+    expenses: ExpenseGroupResponse
+    reserve_check: ReserveCheckResponse
+
+
+@router.get(
+    "/claims/{claim_business_id}/financials",
+    response_model=ClaimFinancialsResponse,
+    summary="One claim's bills, expenses and week-by-week indemnity schedule",
+    responses={
+        **UNAUTHENTICATED_RESPONSE,
+        **NOT_FOUND_RESPONSE,
+        **RATE_SCHEDULE_RESPONSE,
+    },
+)
+async def financials(
+    ctx: CallerContextDep,
+    db: DbDep,
+    response: Response,
+    claim_business_id: Annotated[
+        str,
+        Path(
+            pattern=CLAIM_ID_PATTERN,
+            description="The claim's business id, `WC-nnnn`.",
+            examples=["WC-20017"],
+        ),
+    ],
+) -> ClaimFinancialsResponse:
+    """The Bills & Payments read model for one claim in the caller's book.
+
+    **404 for out of scope, in the case file's exact wording**, and for its
+    reason: a route that distinguished "no such claim" from "not yours" is an
+    oracle for enumerating a portfolio the caller cannot read (AD-7). The
+    repository answers `None` to both.
+
+    **This GET can write.** Three of the five schedule statuses are the
+    calendar's answer, so the read model refreshes the claim's
+    `payment_schedule_week` rows before reading them — and so does the case
+    file, because AC 4 requires the two surfaces to agree whichever was fetched
+    first. The refresh is a no-op on every request that does not cross a week
+    boundary: nothing is written, committed or audited when nothing has moved.
+    """
+    # Specific to one persona's book, so never served to another from a cache
+    # upstream — the same reason every other route on this router says so.
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        result: ClaimFinancials = await claim_financial_detail(db, ctx, claim_business_id)
+    except ClaimNotVisible as exc:
+        raise _not_found(claim_business_id) from exc
+    except MissingStateRate as exc:
+        raise _missing_state_rate(exc) from exc
+    return ClaimFinancialsResponse.model_validate(result)

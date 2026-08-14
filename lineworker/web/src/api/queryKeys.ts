@@ -112,6 +112,25 @@ export const queryKeys = {
     documentSheet: (claimId: string, documentId: number) =>
       ["claims", "detail", claimId, "document", documentId] as const,
     /**
+     * One claim's Bills & Payments read model (Story 3.3).
+     *
+     * Nested under the claim's own segment, `documentSheet`'s arrangement and
+     * for the same reason: this payload is cut from the claim's rows, so an
+     * edit that invalidates the case file has to be able to reach it. A flat
+     * `["financials", id]` key would leave the Bills tab showing figures from
+     * before a comp-rate override while the card two tabs over showed the new
+     * weekly benefit.
+     *
+     * **A separate entry from `detail` rather than a field on it.** The tab is
+     * a schedule, two line-item lists and their totals — far more than the
+     * Overview card needs, on a payload the console fetches for every claim a
+     * handler clicks. Splitting it means the cost is paid by the tab that
+     * shows it. The two cannot disagree despite being two entries, because the
+     * server computes both from one assembler over one set of rows; see
+     * `useClaimFinancials`.
+     */
+    financials: (claimId: string) => ["claims", "detail", claimId, "financials"] as const,
+    /**
      * The **mutation** key every write against one claim carries (Story 2.4).
      *
      * Not a query key: nothing is cached under it. It exists so that

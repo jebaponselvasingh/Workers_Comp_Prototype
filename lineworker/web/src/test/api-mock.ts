@@ -47,6 +47,13 @@ export interface StubRoutes {
    * it inferred from the row it was opened by" is written.
    */
   documentSheet?: StubRouteFor;
+  /**
+   * `GET /claims/{id}/financials` (Story 3.3) — the Bills & Payments read
+   * model. A function for `claimDetail`'s reason: the tab is opened from a
+   * case file, so a test that renders two claims needs the two payloads to
+   * differ.
+   */
+  claimFinancials?: StubRouteFor;
 }
 
 const problem = (status: number, detail: string) => ({
@@ -760,6 +767,11 @@ export const RESERVE_CHECK = {
   // wrong to be.
   scheduledIndemnityCents: 4_000_000,
   disbursedIndemnityCents: 1_135_870,
+  // The paid half of the same bill list `remainingMedicalCents` is the unpaid
+  // half of: 1,185,870 unpaid + 127,500 paid. The card's "Medical paid" row
+  // renders this rather than `overview.paidMedicalCents`, which is 0 on every
+  // open seeded claim (code review, 2026-08-14).
+  disbursedMedicalCents: 127_500,
   reserveCents: 4_500_000,
   rationale:
     "Reserve ($45,000) is well aligned with projected remaining exposure ($40,500).",
@@ -809,6 +821,7 @@ export const RESERVE_CHECK_CLOSED = {
   // remains — the two halves still agree with the difference above.
   scheduledIndemnityCents: 4_000_000,
   disbursedIndemnityCents: 4_000_000,
+  disbursedMedicalCents: 1_185_870,
   rationale: "Claim settled and closed. No further reserve exposure.",
 };
 
@@ -1196,6 +1209,179 @@ function respond(status: number, body: unknown): Response {
   });
 }
 
+/**
+ * The Bills & Payments read model (Story 3.3).
+ *
+ * **Coherent by construction, because that is what makes the tab's assertions
+ * mean anything.** Every figure below is consistent with every other: the
+ * schedule's five weeks sum to `scheduledIndemnityCents`, the two paid weeks
+ * sum to `disbursedIndemnityCents`, the bills' and expenses' `paidCents` are
+ * the sums of their paid rows, and `paidToDateCents` is the three paid figures
+ * added up. A component that summed the wrong rows, or that fell back to a
+ * different notion of "paid", therefore has something visibly wrong to be —
+ * which a fixture of unrelated round numbers could not give it.
+ *
+ * `reserveCheck` is `RESERVE_CHECK` itself rather than a copy: the server
+ * publishes the same block on both payloads, computed once, and the fixture
+ * says so by identity (AC 4).
+ */
+const SCHEDULE_WEEKS = [
+  {
+    weekNo: 1,
+    periodStart: "2026-04-05",
+    periodEnd: "2026-04-11",
+    amountCents: 567_935,
+    status: "paid" as const,
+  },
+  {
+    weekNo: 2,
+    periodStart: "2026-04-12",
+    periodEnd: "2026-04-18",
+    amountCents: 567_935,
+    status: "paid" as const,
+  },
+  {
+    weekNo: 3,
+    periodStart: "2026-04-19",
+    periodEnd: "2026-04-25",
+    amountCents: 567_935,
+    status: "due_this_week" as const,
+  },
+  {
+    weekNo: 4,
+    periodStart: "2026-04-26",
+    periodEnd: "2026-05-02",
+    amountCents: 567_935,
+    status: "upcoming" as const,
+  },
+  {
+    weekNo: 5,
+    periodStart: "2026-05-03",
+    periodEnd: "2026-05-09",
+    amountCents: 1_728_260,
+    status: "upcoming" as const,
+  },
+];
+
+const BILL_ITEMS = [
+  {
+    id: 1,
+    category: "initial_treatment" as const,
+    label: "Emergency / Initial Treatment",
+    amountCents: 127_500,
+    status: "paid" as const,
+  },
+  {
+    id: 2,
+    category: "imaging" as const,
+    label: "Diagnostic Imaging (MRI/CT/X-Ray)",
+    amountCents: 174_000,
+    status: "under_review" as const,
+  },
+  {
+    id: 3,
+    category: "physical_therapy" as const,
+    label: "Physical Therapy Session Bundle",
+    amountCents: 264_000,
+    status: "pending_submission" as const,
+  },
+];
+
+const EXPENSE_ITEMS = [
+  {
+    id: 11,
+    category: "mileage_travel" as const,
+    label: "Mileage & Travel Reimbursement",
+    amountCents: 10_450,
+    status: "paid" as const,
+  },
+  {
+    id: 12,
+    category: "dme" as const,
+    label: "Durable Medical Equipment",
+    amountCents: 40_800,
+    status: "under_review" as const,
+  },
+];
+
+export const CLAIM_FINANCIALS = {
+  status: 200,
+  body: {
+    summary: {
+      // 1,135,870 indemnity + 127,500 paid bills + 10,450 paid expenses.
+      paidToDateCents: 1_273_820,
+      // Paid to date + the reserve.
+      totalClaimProjectedCents: 5_773_820,
+      reserveCents: 4_500_000,
+      costSplit: { indemnityPct: 89, medicalPct: 10, expensePct: 1 },
+      paidIndemnityCents: 1_135_870,
+      paidMedicalCents: 127_500,
+      paidExpenseCents: 10_450,
+      // The live sources answered, which is the case on every open claim.
+      paidFromColumns: false,
+      weeklyIndemnityCents: 567_935,
+      installmentsPaid: 2,
+      weekCount: 5,
+      // The first `due_this_week` row's start.
+      nextPaymentDue: "2026-04-19",
+      billsOnFile: 3,
+      // The same two figures the treatment Overview card's "Indemnity paid"
+      // row renders, from the same server block.
+      scheduledIndemnityCents: 4_000_000,
+      disbursedIndemnityCents: 1_135_870,
+    },
+    schedule: SCHEDULE_WEEKS,
+    bills: {
+      items: BILL_ITEMS,
+      count: 3,
+      totalCents: 565_500,
+      paidCents: 127_500,
+    },
+    expenses: {
+      items: EXPENSE_ITEMS,
+      count: 2,
+      totalCents: 51_250,
+      paidCents: 10_450,
+    },
+    reserveCheck: RESERVE_CHECK,
+  },
+};
+
+/**
+ * A claim with nothing disbursed — the cost bar's `null` split (NFR-3).
+ *
+ * Every week awaits approval, so there is no indemnity paid and no bill paid,
+ * and the summary's three paid figures are zero. `costSplit: null` is the
+ * server saying "this claim has no composition", which the card renders as a
+ * sentence rather than as a bar of three zero-width segments.
+ */
+export const CLAIM_FINANCIALS_UNPAID = {
+  status: 200,
+  body: {
+    ...CLAIM_FINANCIALS.body,
+    summary: {
+      ...CLAIM_FINANCIALS.body.summary,
+      paidToDateCents: 0,
+      totalClaimProjectedCents: 4_500_000,
+      costSplit: null,
+      paidIndemnityCents: 0,
+      paidMedicalCents: 0,
+      paidExpenseCents: 0,
+      installmentsPaid: 0,
+      nextPaymentDue: null,
+      disbursedIndemnityCents: 0,
+    },
+    schedule: SCHEDULE_WEEKS.map((week) => ({ ...week, status: "pending_approval" as const })),
+    bills: {
+      items: BILL_ITEMS.map((item) => ({ ...item, status: "under_review" as const })),
+      count: 3,
+      totalCents: 565_500,
+      paidCents: 0,
+    },
+    expenses: { items: [], count: 0, totalCents: 0, paidCents: 0 },
+  },
+};
+
 /** Never settles — the request stays in flight for the life of the test. */
 const pending = (): Promise<Response> => new Promise<Response>(() => {});
 
@@ -1244,6 +1430,11 @@ export function stubApi(routes: StubRoutes): void {
       // case file first would answer a viewer's request with a case file.
       if (url.includes("/documents/") && url.includes("/content")) {
         return answerFor(routes.documentSheet ?? DOCUMENT_SHEET_FROI, url);
+      }
+      // Before the case file too, and for exactly that reason:
+      // `/api/claims/WC-1/financials` contains `/api/claims/`.
+      if (url.includes("/financials")) {
+        return answerFor(routes.claimFinancials ?? CLAIM_FINANCIALS, url);
       }
       // After the queue, deliberately: the two share a prefix, and the
       // server resolves the same ambiguity the same way (the queue route is

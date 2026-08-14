@@ -13,15 +13,19 @@
  * claimant's name.
  */
 import type {
+  BillCategory,
   CommStatus,
   CoordinationStatus,
   Disability,
   DocType,
+  ExpenseCategory,
   IndemnityType,
+  LineItemStatus,
   RecoveryWindow,
   ReserveVerdict,
   ReturnStatus,
   RiskBand,
+  ScheduleWeekStatus,
   Stage,
   TreatmentPhase,
 } from "@/api/claims";
@@ -185,4 +189,66 @@ export const DOC_TYPE_LABEL: Record<DocType, string> = {
   wage: "Wage Statement (AWW)",
   rtw: "Return-to-Work Letter",
   legal: "Legal / Statutory Filing",
+};
+
+/**
+ * The five states one week of the indemnity schedule can be in (Story 3.3).
+ *
+ * The prototype's `SCHEDULE_STATUS_LABEL`, verbatim. The tokens are
+ * snake_case on the wire and these are the display strings — the Enums
+ * convention's UI half, and the reason the server never sends a label.
+ */
+export const SCHEDULE_STATUS_LABEL: Record<ScheduleWeekStatus, string> = {
+  pending_approval: "Pending Approval",
+  due_this_week: "Due This Week",
+  upcoming: "Upcoming",
+  payment_scheduled: "Payment Scheduled",
+  paid: "Paid",
+};
+
+/**
+ * The four states a medical bill or a claim expense can be in (Story 3.3).
+ *
+ * One map for both, because `LineItemStatus` is one enum: the prototype
+ * renders bills and expenses through a single `billStatusLabel` too.
+ *
+ * **The prototype's own map is wrong here and this is where it is corrected.**
+ * `BILL_STATUS_LABEL` maps `PendingSubmission` to the string "Payment
+ * Scheduled" (line 806), so a bill the provider has never filed reads on
+ * screen as money already queued for disbursement — opposite facts about what
+ * a claim is about to cost. The two are distinct enum members with distinct
+ * labels here, and Story 3.4's approval is the transition between them.
+ */
+export const LINE_ITEM_STATUS_LABEL: Record<LineItemStatus, string> = {
+  pending_submission: "Pending Submission",
+  under_review: "Under Review",
+  payment_scheduled: "Payment Scheduled",
+  paid: "Paid",
+};
+
+/**
+ * Medical-bill categories (Story 3.3).
+ *
+ * The prototype has no categories — `buildBills` identifies its six line items
+ * by their English labels alone. These are the labels of the tokens the seed
+ * derived from them, and they are shown where the *kind* of bill matters (the
+ * line-item sheet) rather than in the list, which renders each row's own
+ * `label`.
+ */
+export const BILL_CATEGORY_LABEL: Record<BillCategory, string> = {
+  initial_treatment: "Initial Treatment",
+  surgery_facility: "Surgery & Facility",
+  imaging: "Diagnostic Imaging",
+  physical_therapy: "Physical Therapy",
+  follow_up: "Follow-Up Care",
+  pharmacy: "Pharmacy",
+};
+
+/** Claim-expense categories (Story 3.3) — `BILL_CATEGORY_LABEL`'s twin. */
+export const EXPENSE_CATEGORY_LABEL: Record<ExpenseCategory, string> = {
+  mileage_travel: "Mileage & Travel",
+  dme: "Durable Medical Equipment",
+  prosthetic_assistive: "Prosthetic / Assistive Device",
+  home_workstation_mod: "Home / Workstation Modification",
+  misc: "Miscellaneous",
 };

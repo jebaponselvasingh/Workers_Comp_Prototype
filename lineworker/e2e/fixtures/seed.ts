@@ -47,6 +47,11 @@ interface SeedClaim {
   aww: number;
   disability: string;
   froi_date: string;
+  // Story 3.3's three: the paid snapshot the summary falls back *from*. Zero
+  // on every open seeded claim, which is the whole reason there is a fallback.
+  paid_indemnity: number;
+  paid_medical: number;
+  paid_expense: number;
   // Story 3.2's three: the schedule runs from the date of injury for as many
   // weeks as the recovery window implies, and the reserve is what its
   // remaining total is judged against.
@@ -904,6 +909,147 @@ interface SeedStateRate {
 
 const stateRates = JSON.parse(readFileSync(STATE_RATES_PATH, "utf8")) as SeedStateRate[];
 
+// --- Story 3.3: bills and expenses ---------------------------------------
+
+const BILLS_PATH = fileURLToPath(new URL("../../server/data/seed/bills.json", import.meta.url));
+const EXPENSES_PATH = fileURLToPath(
+  new URL("../../server/data/seed/expenses.json", import.meta.url),
+);
+
+export interface SeedLineItem {
+  claim_id: string;
+  category: string;
+  label: string;
+  amount_cents: number;
+  status: string;
+}
+
+const bills = JSON.parse(readFileSync(BILLS_PATH, "utf8")) as SeedLineItem[];
+const expenses = JSON.parse(readFileSync(EXPENSES_PATH, "utf8")) as SeedLineItem[];
+
+/** A claim's medical bills, in the order the seed migration inserted them. */
+export function expectedBills(claimId: string): SeedLineItem[] {
+  return bills.filter((bill) => bill.claim_id === claimId);
+}
+
+/** A claim's expenses, in seeded order. */
+export function expectedExpenses(claimId: string): SeedLineItem[] {
+  return expenses.filter((expense) => expense.claim_id === claimId);
+}
+
+function sumWhere(items: SeedLineItem[], paid: boolean): number {
+  return items
+    .filter((item) => (item.status === "paid") === paid)
+    .reduce((total, item) => total + item.amount_cents, 0);
+}
+
+/** What the bills card's heading must state: count, paid, total. */
+export function expectedBillTotals(claimId: string): {
+  count: number;
+  paidCents: number;
+  totalCents: number;
+} {
+  const items = expectedBills(claimId);
+  return {
+    count: items.length,
+    paidCents: sumWhere(items, true),
+    totalCents: items.reduce((total, item) => total + item.amount_cents, 0),
+  };
+}
+
+/** The same three for the expenses card. */
+export function expectedExpenseTotals(claimId: string): {
+  count: number;
+  paidCents: number;
+  totalCents: number;
+} {
+  const items = expectedExpenses(claimId);
+  return {
+    count: items.length,
+    paidCents: sumWhere(items, true),
+    totalCents: items.reduce((total, item) => total + item.amount_cents, 0),
+  };
+}
+
+/**
+ * The claim's unpaid medical exposure — the reserve check's second term.
+ *
+ * Story 3.2's oracle hardcoded `null` here because the `bill` table did not
+ * exist; this is the half it said it would grow when 3.3 landed its seed.
+ */
+export function unpaidMedicalCents(claimId: string): number {
+  return sumWhere(expectedBills(claimId), false);
+}
+
+/**
+ * What the summary's "Total Paid To Date" must be, and its three components.
+ *
+ * The prototype's effective-breakdown rule, restated: the `paid_*` columns
+ * answer when their **sum** is positive, and the live figures answer when it
+ * is not. All-or-nothing on the sum rather than per component, which is the
+ * part a re-implementation gets wrong — see the server's
+ * `PaidToDateDerivation`.
+ */
+export function expectedPaidToDate(claimId: string): {
+  totalCents: number;
+  indemnityCents: number;
+  medicalCents: number;
+  expenseCents: number;
+  fromColumns: boolean;
+} {
+  const claim = seed.claims.find((c) => c.claim_id === claimId);
+  if (!claim) throw new Error(`no seeded claim ${claimId}`);
+
+  const staticTotal = claim.paid_indemnity + claim.paid_medical + claim.paid_expense;
+  if (staticTotal > 0) {
+    return {
+      totalCents: staticTotal,
+      indemnityCents: claim.paid_indemnity,
+      medicalCents: claim.paid_medical,
+      expenseCents: claim.paid_expense,
+      fromColumns: true,
+    };
+  }
+
+  const indemnityCents = expectedReserveCheck(claimId).disbursedIndemnityCents;
+  const medicalCents = sumWhere(expectedBills(claimId), true);
+  const expenseCents = sumWhere(expectedExpenses(claimId), true);
+  return {
+    totalCents: indemnityCents + medicalCents + expenseCents,
+    indemnityCents,
+    medicalCents,
+    expenseCents,
+    fromColumns: false,
+  };
+}
+
+/** How many weeks a claim's schedule runs for — the generator's clamp. */
+export function expectedWeekCount(claimId: string): number {
+  const claim = seed.claims.find((c) => c.claim_id === claimId);
+  if (!claim) throw new Error(`no seeded claim ${claimId}`);
+  return Math.max(
+    MIN_SCHEDULE_WEEKS,
+    Math.min(MAX_SCHEDULE_WEEKS, SCHEDULE_WEEKS[recoveryToken(claim.recovery)]),
+  );
+}
+
+/** The UI's schedule-status labels — `labels.ts`, restated. */
+export const SCHEDULE_STATUS_LABEL: Record<string, string> = {
+  pending_approval: "Pending Approval",
+  due_this_week: "Due This Week",
+  upcoming: "Upcoming",
+  payment_scheduled: "Payment Scheduled",
+  paid: "Paid",
+};
+
+/** The UI's line-item status labels — `labels.ts`, restated. */
+export const LINE_ITEM_STATUS_LABEL: Record<string, string> = {
+  pending_submission: "Pending Submission",
+  under_review: "Under Review",
+  payment_scheduled: "Payment Scheduled",
+  paid: "Paid",
+};
+
 /**
  * The benefit rule, restated independently — `expectedRiskFor`'s discipline.
  *
@@ -1035,12 +1181,14 @@ export type SeedVerdict = "light" | "adequate" | "heavy" | "closed_final" | "ind
 export interface ExpectedReserveCheck {
   verdict: SeedVerdict;
   remainingIndemnityCents: number;
-  /** `null` while the `bill` table is Story 3.3's — not `0`. */
+  /** A real sum since Story 3.3 seeded `bill`. `null` would mean "not on file". */
   remainingMedicalCents: number | null;
   /** `null` with it: a total missing a term is not a total. */
   projectedRemainingCents: number | null;
   scheduledIndemnityCents: number;
   disbursedIndemnityCents: number;
+  /** The paid half of the bill list whose unpaid half is the medical term. */
+  disbursedMedicalCents: number;
   reserveCents: number;
 }
 
@@ -1058,11 +1206,11 @@ function utcDate(iso: string): number {
 /**
  * What the card must say about a claim's reserve, computed from the seed.
  *
- * **The medical term is nil and says so.** The `bill` table is Story 3.3's, so
- * there is nothing to sum; when 3.3 lands its seed, this oracle grows the
- * second half and the spec below starts asserting a fuller number. Writing the
- * zero out rather than omitting it is what makes that a change somebody makes
- * on purpose.
+ * **Both exposure terms are on file since Story 3.3.** The 3.2 oracle carried
+ * `null` for the medical half and said it would grow the second term when the
+ * `bill` table landed; `unpaidMedicalCents` is that term, summed from the same
+ * `bills.json` the seed migration inserted. Every open claim therefore gets a
+ * complete verdict, and `indeterminate` is unreachable against this seed.
  *
  * **What this oracle is and is not independent of** (code review, 2026-08-14).
  * It is a second implementation, so it catches an arithmetic slip, a boundary
@@ -1082,10 +1230,11 @@ export function expectedReserveCheck(claimId: string): ExpectedReserveCheck {
   if (!claim) throw new Error(`no seeded claim ${claimId}`);
 
   const reserveCents = claim.reserve;
-  // Not on file at all — Story 3.3 creates `bill`. `null` rather than 0,
-  // because the server draws the same distinction and withholds the verdicts
-  // an unknown non-negative term could flip.
-  const remainingMedicalCents = null;
+  // Story 3.3 seeded `bill`, so this is a real sum rather than the `null` the
+  // 3.2 oracle carried. `0` is now a legitimate answer — a claim whose bills
+  // are all paid has no unpaid medical exposure — and the `null` branch below
+  // survives only because the server's typed distinction does.
+  const remainingMedicalCents: number | null = unpaidMedicalCents(claimId);
 
   if (claim.stage === "settled") {
     const scheduled =
@@ -1098,10 +1247,17 @@ export function expectedReserveCheck(claimId: string): ExpectedReserveCheck {
       verdict: "closed_final",
       remainingIndemnityCents: 0,
       remainingMedicalCents,
-      projectedRemainingCents: null,
+      // A settled claim is short-circuited before any band arithmetic, so the
+      // total is still reported — it is the *ratio* that is withheld. Written
+      // as the sum of its two terms rather than as `remainingMedicalCents`,
+      // although the indemnity half is zero here: the server publishes the
+      // computed figures rather than hardcoded zeroes, precisely so a settled
+      // claim with an unpaid bill shows up instead of being asserted away.
+      projectedRemainingCents: 0 + remainingMedicalCents,
       // A settled claim's every week is paid, which is why nothing remains.
       scheduledIndemnityCents: scheduled,
       disbursedIndemnityCents: scheduled,
+      disbursedMedicalCents: sumWhere(expectedBills(claimId), true),
       reserveCents,
     };
   }
@@ -1155,6 +1311,7 @@ export function expectedReserveCheck(claimId: string): ExpectedReserveCheck {
     projectedRemainingCents: complete ? known : null,
     scheduledIndemnityCents: weekly * weeks,
     disbursedIndemnityCents: paid,
+    disbursedMedicalCents: sumWhere(expectedBills(claimId), true),
     reserveCents,
   };
 }

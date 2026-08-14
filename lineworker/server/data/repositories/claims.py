@@ -41,10 +41,13 @@ from data.context import AllEmployers, CallerContext
 from data.models import (
     AdditionalInjury,
     AppUser,
+    Bill,
     Claim,
     Document,
     Employee,
     Employer,
+    Expense,
+    PaymentScheduleWeek,
     Photo,
     TimelineEvent,
     TreatmentPlanStep,
@@ -264,6 +267,73 @@ async def select_photos(
         .where(employer_scope(ctx))
         .where(Claim.claim_id == claim_business_id)
         .order_by(Photo.id)
+    )
+    return rows.all()
+
+
+async def select_payment_schedule(
+    db: AsyncSession,
+    ctx: CallerContext,
+    claim_business_id: str,
+) -> Sequence[PaymentScheduleWeek]:
+    """A claim's indemnity schedule, in week order — scoped like everything else.
+
+    `ORDER BY week_no` rather than `id`, unlike every other child read here,
+    and the difference is the table's: these rows are a materialized projection
+    keyed by `(claim_id, week_no)`, so a week that was inserted late by a
+    refresh (a schedule that lengthened) carries a higher `id` than weeks it
+    precedes. Insertion order is the display order for `document` and `photo`
+    because nothing else orders them; here the week number is the order, and it
+    is what the table's unique constraint makes total.
+    """
+    rows = await db.scalars(
+        sa.select(PaymentScheduleWeek)
+        .select_from(PaymentScheduleWeek)
+        .join(Claim, PaymentScheduleWeek.claim_id == Claim.id)
+        .where(employer_scope(ctx))
+        .where(Claim.claim_id == claim_business_id)
+        .order_by(PaymentScheduleWeek.week_no)
+    )
+    return rows.all()
+
+
+async def select_bills(
+    db: AsyncSession,
+    ctx: CallerContext,
+    claim_business_id: str,
+) -> Sequence[Bill]:
+    """A claim's medical bills, in seeded order (`id`) — scoped like everything else.
+
+    `ORDER BY id` is the display order for `select_documents`' reason: the seed
+    inserted each claim's bills in the prototype's emission order and nothing
+    else in the row is a total order. Category would look like a natural sort
+    key and is not — it is a grouping, and two claims' bills in category order
+    would render in an order neither the prototype nor a handler expects.
+    """
+    rows = await db.scalars(
+        sa.select(Bill)
+        .select_from(Bill)
+        .join(Claim, Bill.claim_id == Claim.id)
+        .where(employer_scope(ctx))
+        .where(Claim.claim_id == claim_business_id)
+        .order_by(Bill.id)
+    )
+    return rows.all()
+
+
+async def select_expenses(
+    db: AsyncSession,
+    ctx: CallerContext,
+    claim_business_id: str,
+) -> Sequence[Expense]:
+    """A claim's expenses, in seeded order (`id`) — `select_bills`' rule."""
+    rows = await db.scalars(
+        sa.select(Expense)
+        .select_from(Expense)
+        .join(Claim, Expense.claim_id == Claim.id)
+        .where(employer_scope(ctx))
+        .where(Claim.claim_id == claim_business_id)
+        .order_by(Expense.id)
     )
     return rows.all()
 

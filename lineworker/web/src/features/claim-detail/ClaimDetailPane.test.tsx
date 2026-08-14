@@ -5,6 +5,7 @@ import { MemoryRouter } from "react-router";
 import { afterEach, expect, test, vi } from "vitest";
 
 import { createQueryClient } from "@/api/queryClient";
+import { formatCents } from "@/lib/money";
 import {
   CLAIM_DETAIL_INTAKE,
   CLAIM_DETAIL_INVESTIGATION,
@@ -14,13 +15,16 @@ import {
   CLAIM_DETAIL_SETTLED,
   CLAIM_DETAIL_SETTLED_DATED,
   CLAIM_DETAIL_TREATMENT,
+  CLAIM_FINANCIALS,
   ME_HANDLER,
+  RESERVE_CHECK,
   type StubRoute,
   type StubRouteFor,
   stubApi,
 } from "@/test/api-mock";
 
 import { ClaimDetailPane } from "./ClaimDetailPane";
+import { RESERVE_VERDICT_LABEL } from "./labels";
 
 /**
  * The case file, rendered from a payload.
@@ -200,28 +204,30 @@ test("the Photos tab's label counts what the payload says it counts", async () =
   expect(await screen.findByTestId("tab-photos")).toHaveTextContent(/^Photos \(3\)$/);
 });
 
-// Story 2.4 removed the `injury` row, 2.5 the `documents` one and 2.6 the
-// `photos` one: the tabs they named are built, so an assertion that any of
-// them still says "arrives with Story 2.x" would be asserting the seam rather
-// than the shipped surface. What the rows were really guaranteeing — every
-// unbuilt tab is honest about being unbuilt — is asserted by the two that
-// remain, and each built tab's content is asserted in its own suite
-// (`InjuryTab.test.tsx`, `DocumentsTab.test.tsx`, `PhotosTab.test.tsx`).
+// Story 2.4 removed the `injury` row, 2.5 the `documents` one, 2.6 the
+// `photos` one and 3.3 the `bills` one: the tabs they named are built, so an
+// assertion that any of them still says "arrives with Story 2.x" would be
+// asserting the seam rather than the shipped surface. What the rows were
+// really guaranteeing — every unbuilt tab is honest about being unbuilt — is
+// asserted by the one that remains, and each built tab's content is asserted
+// in its own suite (`InjuryTab.test.tsx`, `DocumentsTab.test.tsx`,
+// `PhotosTab.test.tsx`, `BillsTab.test.tsx`).
 //
-// Two rows left, and both name an *epic* rather than a story. That is the
-// state Epic 2 closes in: every seam still standing belongs to somebody else.
-test.each([
-  ["bills", "financial engine"],
-  ["insights", "copilot"],
-])("the %s tab shows an explicit empty state naming its story", async (tab, mentions) => {
-  renderPane(CLAIM_DETAIL_TREATMENT);
-  await screen.findByTestId("case-header");
+// One row left, and it names an *epic* rather than a story. That is the state
+// Epic 3's financial engine closes in: the only seam still standing belongs to
+// the copilot.
+test.each([["insights", "copilot"]])(
+  "the %s tab shows an explicit empty state naming its story",
+  async (tab, mentions) => {
+    renderPane(CLAIM_DETAIL_TREATMENT);
+    await screen.findByTestId("case-header");
 
-  await userEvent.click(screen.getByTestId(`tab-${tab}`));
+    await userEvent.click(screen.getByTestId(`tab-${tab}`));
 
-  expect(screen.getByTestId(`tab-empty-${tab}`)).toHaveTextContent(mentions);
-  expect(screen.queryByTestId("stage-stepper")).not.toBeInTheDocument();
-});
+    expect(screen.getByTestId(`tab-empty-${tab}`)).toHaveTextContent(mentions);
+    expect(screen.queryByTestId("stage-stepper")).not.toBeInTheDocument();
+  },
+);
 
 test("the Photos tab is built, and renders its grid rather than a seam", async () => {
   // The stronger half of the row that was just removed: a seam assertion goes
@@ -236,15 +242,63 @@ test("the Photos tab is built, and renders its grid rather than a seam", async (
   expect(screen.queryByTestId("tab-empty-photos")).not.toBeInTheDocument();
 });
 
-test("the Bills jump-link lands on the Bills tab's empty state", async () => {
-  // The @smoke path's last step. The link is a tab switch, not a route, and
-  // the tab it switches to is honest about being unbuilt.
+test("the Bills jump-link lands on the built Bills tab", async () => {
+  // The @smoke path's last step, and the assertion Story 3.3 promoted: the
+  // link is still a tab switch rather than a route, but the tab it switches to
+  // now renders the financial picture instead of naming the epic that would
+  // bring it. Checking the *panel* rather than only the selected state, on
+  // Story 2.5's rule for the Documents seam — a tab can be selected and empty.
   renderPane(CLAIM_DETAIL_TREATMENT);
 
   await userEvent.click(await screen.findByTestId("treatment-bills-link"));
 
   expect(screen.getByTestId("tab-bills")).toHaveAttribute("aria-selected", "true");
-  expect(screen.getByTestId("tab-empty-bills")).toHaveTextContent("financial engine");
+  expect(await screen.findByTestId("bills-tab")).toBeVisible();
+  expect(screen.queryByTestId("tab-empty-bills")).not.toBeInTheDocument();
+});
+
+test("the Overview's medical-paid row is the bills' figure, not the empty column", async () => {
+  // The defect the second review of Story 3.3 found: this row read
+  // `overview.paidMedicalCents` — `claim.paid_medical`, 0 on all 38 open
+  // seeded claims — directly above a live indemnity figure and directly above
+  // the link to a tab showing the same claim's paid bills as a real number.
+  //
+  // The fixture makes it a real check rather than a coincidence: the case-file
+  // block's `paidMedicalCents` and the reserve block's `disbursedMedicalCents`
+  // are deliberately different numbers, so a component reading the wrong one
+  // has something visibly wrong to be.
+  renderPane(CLAIM_DETAIL_TREATMENT);
+
+  await expect(screen.findByTestId("treatment-medical-paid")).resolves.toHaveTextContent(
+    formatCents(RESERVE_CHECK.disbursedMedicalCents),
+  );
+});
+
+test("the Bills tab and the Overview card state the same indemnity figures", async () => {
+  // AC 4, at the component level: the jump-link's whole point is that the
+  // handler lands on the same numbers they just left. Both surfaces read the
+  // *same* `reserveCheck` block — the case file's on one side, the financials
+  // payload's on the other — so this fails if either component starts
+  // computing rather than rendering, or reads a different pair of fields.
+  //
+  // The fixtures make that a real check rather than a tautology: `RESERVE_CHECK`
+  // is the object `CLAIM_FINANCIALS` publishes, so the two payloads agree the
+  // way the server's do.
+  renderPane(CLAIM_DETAIL_TREATMENT);
+
+  const overviewPaid = (await screen.findByTestId("treatment-indemnity-paid")).textContent;
+
+  await userEvent.click(screen.getByTestId("treatment-bills-link"));
+  await screen.findByTestId("bills-tab");
+
+  const disbursed = screen.getByTestId("schedule-disbursed").textContent;
+  const scheduled = screen.getByTestId("schedule-scheduled").textContent;
+  expect(overviewPaid).toBe(`${disbursed} of ${scheduled}`);
+
+  // And the verdict itself, which is the other thing both cards render.
+  expect(screen.getByTestId("summary-reserve-check")).toHaveTextContent(
+    RESERVE_VERDICT_LABEL[CLAIM_FINANCIALS.body.reserveCheck.verdict],
+  );
 });
 
 // --- AC 3: one variant per stage ----------------------------------------

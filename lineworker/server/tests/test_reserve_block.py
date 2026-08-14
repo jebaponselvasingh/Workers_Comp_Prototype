@@ -49,6 +49,7 @@ RESERVE_CHECK_FIELDS = {
     "remainingMedicalCents",
     "scheduledIndemnityCents",
     "disbursedIndemnityCents",
+    "disbursedMedicalCents",
     "reserveCents",
     "rationale",
     "bandsVersion",
@@ -60,6 +61,7 @@ CENTS_FIELDS = {
     "remainingMedicalCents",
     "scheduledIndemnityCents",
     "disbursedIndemnityCents",
+    "disbursedMedicalCents",
     "reserveCents",
 }
 
@@ -324,48 +326,69 @@ async def test_the_reserve_on_the_block_is_the_claims_own_reserve(
     assert payload["reserveCheck"]["reserveCents"] == payload["overview"]["reserveCents"]
 
 
-# --- the Story 3.3 seam ---------------------------------------------------
+# --- the Story 3.3 seam, now closed ---------------------------------------
 
 
-async def test_the_medical_term_is_unknown_until_story_3_3_seeds_the_bills(
+async def test_the_medical_term_is_a_real_sum_now_that_the_bills_are_seeded(
     seeded_db_url: str,
 ) -> None:
-    """The seam, asserted rather than assumed.
+    """The seam Story 3.2 opened, asserted closed (Story 3.3).
 
-    The `bill` table is Story 3.3's migration, so there is nothing to sum and
-    no honest number to report — `null`, not `0`, because "nobody can see this
-    claim's bills" is not "this claim has no unpaid bills". This test turns the
-    seam from an unstated assumption into a recorded state: when 3.3 lands its
-    seed this fails, and the failure is the reminder rather than a surprise.
+    This test was `test_the_medical_term_is_unknown_until_story_3_3_seeds_the_bills`
+    and it asserted `null` — a deliberate tripwire, so that seeding the `bill`
+    table would fail a test rather than silently change every verdict in the
+    portfolio. It did exactly that, and this is the other side of it.
+
+    **`0` is now a legitimate answer and `null` is not.** Every claim has bills
+    on file, so the medical term is always a sum; a claim whose bills are all
+    paid reports `0`, which is the statement "no unpaid medical exposure" that
+    3.2 refused to let a missing table make on a claim's behalf.
     """
     for stage in STAGES:
         check = (await detail_for(seeded_db_url, KAYA, a_claim_in_stage(KAYA, stage)))[
             "reserveCheck"
         ]
-        assert check["remainingMedicalCents"] is None
+        assert check["remainingMedicalCents"] is not None
+        assert check["remainingMedicalCents"] >= 0
 
 
-async def test_no_open_claim_is_judged_adequate_or_heavy_while_bills_are_unseen(
+async def test_every_open_claim_now_gets_a_complete_verdict(
     seeded_db_url: str,
 ) -> None:
-    """Honest degradation, over the whole book (Story 3.3's seam).
+    """No claim is `indeterminate` once both exposure terms are on file.
 
-    The unknown medical term is non-negative, so an exposure computed without
-    it is a lower bound — which leaves `light` sound and makes `adequate` and
-    `heavy` claims about an upper bound that nobody can stand behind. Asserted
-    across every open claim rather than one, because the failure it replaced
-    was portfolio-wide: 26 of 38 open claims carried "reallocate surplus"
-    advice derived from half their inputs.
+    The replacement for
+    `test_no_open_claim_is_judged_adequate_or_heavy_while_bills_are_unseen`,
+    and the point of the story from a handler's side: 3.2 shipped with 15 of
+    Kaya's 19 open claims reading "Awaiting Bill Data" because one of the two
+    exposure terms could not be seen, which was honest and nearly useless.
+    With `bill` seeded, every open claim is banded.
+
+    **`indeterminate` is asserted absent rather than deleted from the enum.**
+    The withholding machinery is still the right answer for a term that
+    genuinely cannot be read, and `test_reserve_check.py` still exercises it at
+    the classifier. What this pins is that the seeded portfolio no longer
+    *reaches* it — so a regression that broke the bill query would surface as
+    a book full of withheld verdicts here, rather than as a quietly emptier
+    Bills tab.
+
+    The distribution is also checked for spread: a rule that answered one thing
+    for every claim would pass an "is it banded" assertion and be visibly
+    useless in a demo.
     """
-    withheld = 0
+    verdicts: dict[str, int] = {}
     for stage in ("intake", "investigation", "treatment"):
         for claim_id in claim_ids_in_stage(KAYA, stage):
             check = (await detail_for(seeded_db_url, KAYA, claim_id))["reserveCheck"]
-            assert check["verdict"] in {"light", "indeterminate"}, claim_id
-            assert "reallocating surplus" not in check["rationale"], claim_id
-            withheld += check["verdict"] == "indeterminate"
+            assert check["verdict"] in {"light", "adequate", "heavy"}, claim_id
+            # Both terms are known, so the two figures 3.2 nulls out alongside
+            # a withheld verdict must both be present.
+            assert check["projectedRemainingCents"] is not None, claim_id
+            assert check["ratioBp"] is not None, claim_id
+            verdicts[check["verdict"]] = verdicts.get(check["verdict"], 0) + 1
 
-    assert withheld > 0, "no claim exercised the withheld path — is the seam still open?"
+    assert "indeterminate" not in verdicts
+    assert len(verdicts) > 1, f"every open claim banded the same way: {verdicts}"
 
 
 async def test_the_under_reserved_warnings_survive_the_missing_term(
@@ -482,3 +505,51 @@ def test_the_settled_stage_is_the_only_short_circuit() -> None:
         Stage.treatment,
         Stage.settled,
     }
+
+
+async def test_the_two_medical_figures_are_the_halves_of_one_bill_list(
+    seeded_db_url: str,
+) -> None:
+    """`disbursedMedicalCents` and `remainingMedicalCents` partition the bills.
+
+    Added by the second review of Story 3.3. The card's "Medical paid" row read
+    `claim.paid_medical` — 0 on all 38 open seeded claims — directly above a
+    live indemnity figure and a link to a tab showing the same claim's paid
+    bills as a real number. Publishing the paid half beside the unpaid one is
+    the fix, and this is what keeps them two halves of *one* read rather than
+    two sums of one table taken at different moments.
+    """
+    for stage in STAGES:
+        claim_id = a_claim_in_stage(KAYA, stage)
+        check = (await detail_for(seeded_db_url, KAYA, claim_id))["reserveCheck"]
+        financials = None
+        async with make_client(seeded_db_url) as client:
+            await login_as(client, *KAYA)
+            financials = (await client.get(f"/claims/{claim_id}/financials")).json()
+
+        bills = financials["bills"]
+        assert check["disbursedMedicalCents"] == bills["paidCents"], claim_id
+        # The two halves add to the whole list, which is what makes them a
+        # partition rather than two independently computed figures.
+        assert (
+            check["disbursedMedicalCents"] + check["remainingMedicalCents"] == bills["totalCents"]
+        ), claim_id
+
+
+async def test_an_open_claim_has_a_real_medical_paid_figure(seeded_db_url: str) -> None:
+    """The defect in one assertion: not zero, while the column is.
+
+    `overview.paidMedicalCents` is `claim.paid_medical` and is 0 on every open
+    seeded claim; the figure the card now renders comes from the bills and is
+    not. A regression that re-pointed the row at the column would leave the
+    payload passing every other test in this file and the card reading $0.00.
+
+    Treatment only, because that is the one open variant carrying
+    `paidMedicalCents` — it is the stage whose card renders the row, and the
+    stage the defect was found on. The other two open stages are covered by the
+    partition test above, which needs no overview field.
+    """
+    payload = await detail_for(seeded_db_url, KAYA, a_claim_in_stage(KAYA, "treatment"))
+
+    assert payload["overview"]["paidMedicalCents"] == 0, "the seed's premise has moved"
+    assert payload["reserveCheck"]["disbursedMedicalCents"] > 0

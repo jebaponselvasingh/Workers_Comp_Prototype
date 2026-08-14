@@ -46,10 +46,19 @@ function against the prototype should find the prototype's two sentinels.
 
 ## An exposure term that is not on file withholds the verdict it could flip
 
-`remaining_medical_cents` is `None` — not zero — while the `bill` table has not
-been created (Story 3.3). Zero is a claim with no unpaid bills; `None` is a
-claim whose bills nobody can see, and treating the second as the first is how
-this console came to advise releasing the reserve on two thirds of an open book.
+**Story 3.3 closed this seam and the machinery stays.** The `bill` table now
+exists and is seeded for every claim, so `unpaid_medical_cents` returns a sum
+and both exposure terms are always known — no seeded claim reaches
+`indeterminate`. What follows is therefore about a state the console can still
+enter rather than one it is stuck in, and it is kept for two reasons: the
+typed distinction between "no unpaid bills" and "no bills on file" is the one
+Epic 6's honest-degradation work inherits, and deleting a refusal because
+today's data never triggers it is how it comes back as a silent default.
+
+`remaining_medical_cents` is `None` — not zero — when the bills cannot be
+seen. Zero is a claim with no unpaid bills; `None` is a claim whose bills
+nobody can see, and treating the second as the first is how this console came
+to advise releasing the reserve on two thirds of an open book.
 
 **Which verdicts survive a missing term is arithmetic, not preference.** The
 unknown quantity is non-negative, so the exposure computed without it is a
@@ -88,6 +97,7 @@ thing this server formats money into; the same argument applies here, and
 paragraph and in the row above it.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum
@@ -95,11 +105,20 @@ from typing import Final, Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from data.models.enums import Stage
+from data.context import CallerContext
+from data.models.enums import ScheduleWeekStatus, Stage
+from data.repositories import claims as claim_repo
 from rules.parameters import ReserveBands, reserve_bands_for
+from services.derivations.claim_financials import (
+    LineItem,
+    ScheduleRow,
+    paid_total,
+    unpaid_total,
+)
 from services.financials.benefit import BASIS_POINTS_PER_UNIT, Benefit, round_half_up
+from services.financials.materialize import materialize_schedule
 from services.financials.rationale import format_dollars
-from services.financials.schedule import ScheduleClaim, project_payments
+from services.financials.schedule import ScheduleClaim
 
 #: The ratio a zero-reserve claim is reported at when exposure remains, and
 #: when none does. The prototype's `2` and `1`, in basis points. They are
@@ -201,6 +220,16 @@ class ReserveCheck:
     is the column and still exists, so two fields called the same thing meaning
     different things is precisely the trap this is undoing.
 
+    **`disbursed_medical_cents` is the same fix one row up** (code review,
+    2026-08-14). The 3.2 review corrected the indemnity row and left the card's
+    "Medical paid" reading `claim.paid_medical` — which is 0 on all 38 open
+    seeded claims, directly above a live indemnity figure and directly above a
+    link to a tab showing that claim's paid bills as a real number. It is the
+    identical defect in the identical place, so it takes the identical shape:
+    the block publishes the figure the verdict's *other* exposure term was
+    computed from, and the card renders it. `remaining_medical_cents` and this
+    are the unpaid and paid halves of one bill list, read once.
+
     `bands_version` names the rule document that answered, for
     `params_version`'s reason on `Benefit`: every rule that decided something
     in a response is named in it.
@@ -213,6 +242,7 @@ class ReserveCheck:
     remaining_medical_cents: int | None
     scheduled_indemnity_cents: int
     disbursed_indemnity_cents: int
+    disbursed_medical_cents: int
     reserve_cents: int
     rationale: str
     bands_version: int
@@ -277,6 +307,7 @@ def classify_reserve(
     remaining_medical_cents: int | None,
     scheduled_indemnity_cents: int,
     disbursed_indemnity_cents: int,
+    disbursed_medical_cents: int,
     bands: ReserveBands,
 ) -> ReserveCheck:
     """The verdict, its ratio, the exposure behind it and the sentence for it.
@@ -334,6 +365,7 @@ def classify_reserve(
             remaining_medical_cents=remaining_medical_cents,
             scheduled_indemnity_cents=scheduled_indemnity_cents,
             disbursed_indemnity_cents=disbursed_indemnity_cents,
+            disbursed_medical_cents=disbursed_medical_cents,
             reserve_cents=reserve_cents,
             # A settled claim is closed whether or not its bills are on file:
             # the sentence names no figures, so there is nothing in it that an
@@ -391,6 +423,7 @@ def classify_reserve(
         remaining_medical_cents=remaining_medical_cents,
         scheduled_indemnity_cents=scheduled_indemnity_cents,
         disbursed_indemnity_cents=disbursed_indemnity_cents,
+        disbursed_medical_cents=disbursed_medical_cents,
         reserve_cents=reserve_cents,
         rationale=_rationale(
             verdict,
@@ -402,51 +435,108 @@ def classify_reserve(
     )
 
 
-async def unpaid_medical_cents(db: AsyncSession, claim: ReserveClaim) -> int | None:
-    """Medical bills on this claim that are not yet paid, in cents — or `None`.
+async def unpaid_medical_cents(db: AsyncSession, ctx: CallerContext, claim_business_id: str) -> int:
+    """Medical bills on this claim that are not yet paid, in cents.
 
-    **`None` today, and the distinction is the whole point.** The `bill` table
-    is created and seeded by Story 3.3 (this story creates no tables — see its
-    Dev Notes), so there are no rows to sum and there is no honest number to
-    return. `None` says "nobody can see this claim's bills"; `0` would say "this
-    claim has no unpaid bills", which is a statement about the claim that
-    nothing here is entitled to make. `classify_reserve` withholds the verdicts
-    that the difference could change. When 3.3 lands, this returns a sum and
-    every verdict completes without a line of the classifier changing. The
-    story's Dev Notes call this seam deliberate; this function is where it sits,
-    so that "wire the bill query" is a change to one body rather than a search
-    through the service.
+    **Story 3.3 filled this in, and the seam closed exactly where 3.2 left
+    it.** Until the `bill` table existed there were no rows to sum and no
+    honest number to return, so this answered `None` — "nobody can see this
+    claim's bills" — and `classify_reserve` withheld the two verdicts an
+    unknown non-negative term could flip. The table now exists and is seeded
+    for all 100 claims, so the answer is a sum and every verdict completes
+    without a line of the classifier changing.
 
-    **What Story 3.3 replaces this with**, stated so the shape is not
-    rediscovered: a scoped repository call summing `bill.amount_cents` where
-    `bill.claim_id` is this claim and `bill.status != paid`, reached through
-    `data/repositories` with the caller context (AD-7) exactly as
-    `select_documents` and `select_photos` are. It takes `db` and the claim now
-    for that reason — the signature is the one 3.3 fills in, not a placeholder
-    to be rewritten.
+    **`0` now means what 3.2 refused to let it mean.** A claim whose bills are
+    all paid has no unpaid medical exposure, and saying so is a statement this
+    function is finally entitled to make. The `None` branch survives in
+    `classify_reserve` rather than being deleted with the seam: it is the
+    typed way to say "a term is not on file", and Epic 6's honest-degradation
+    work inherits it.
 
-    **No `CallerContext` yet, and its absence is the point** — `_overview`'s
-    argument in `services/claims/detail.py`: a context that is accepted and
-    never read is decoration, and the next author would take the scoping as
-    already done. AD-7 is satisfied a step earlier and in the usual place: the
-    claim handed to this service came out of `select_claim_detail`, which is
-    scoped, so a handler cannot reach a verdict for a claim outside their book
-    at all. `benefit_for_claim` takes its claim on exactly the same terms.
+    Scoped through `data/repositories` with the caller context (AD-7), exactly
+    as `select_documents` and `select_photos` are — the shape 3.2's docstring
+    predicted. The **business id** rather than the claim row, because that is
+    what the scoped repositories key on, and `ctx` is now genuinely read
+    rather than accepted for decoration.
     """
-    # Deliberately not a query. See the docstring — there is no table yet, and
-    # a table-existence probe on the case-file path would be a worse answer
-    # than an honest "unknown" with the contract written down beside it.
-    _ = (db, claim)
-    return None
+    return unpaid_total(await claim_repo.select_bills(db, ctx, claim_business_id))
+
+
+def indemnity_terms(weeks: Sequence[ScheduleRow]) -> tuple[int, int, int]:
+    """`(scheduled, disbursed, remaining)` indemnity, in cents, from stored rows.
+
+    **Summed from the rows rather than computed as `weekly × weeks`**, which is
+    the change Story 3.3 makes to how this verdict is reached. Once a schedule
+    is materialized the rows are the truth: a week that has been paid keeps the
+    amount it was paid at even if the claim's comp rate has since been
+    overridden (`services/financials/materialize.py` freezes decided weeks), so
+    a product of the *current* weekly figure and the week count would restate
+    history the moment a rate moved.
+
+    `payment_scheduled` deliberately does **not** count as disbursed. A week
+    approved into the next batch is money committed, not money paid, and the
+    figure this feeds is the one the card labels "Indemnity paid".
+
+    Remaining is floored at zero, `PaymentProjection`'s rule and for its
+    reason: a schedule that shortened after weeks had been paid would otherwise
+    hand the classifier a negative exposure, which bands as heavy with total
+    confidence.
+    """
+    scheduled = sum(week.amount_cents for week in weeks)
+    disbursed = sum(week.amount_cents for week in weeks if week.status is ScheduleWeekStatus.paid)
+    return scheduled, disbursed, max(0, scheduled - disbursed)
+
+
+def reserve_check_from_rows(
+    claim: ReserveClaim,
+    *,
+    weeks: Sequence[ScheduleRow],
+    bills: Sequence[LineItem],
+    bands: ReserveBands,
+) -> ReserveCheck:
+    """`classify_reserve`, with its exposure terms read off the stored rows.
+
+    The one place a `payment_schedule_week` row set becomes a reserve verdict.
+    Both callers go through it — `reserve_check_for_claim` below, which fetches
+    what it needs, and `services/financials/summary.py`, which already holds
+    the rows — so the case file and the Bills tab reach the verdict by the same
+    route rather than by two that agree today. That is what makes AC 4's
+    "identical figures" a property of the code rather than of the fixtures.
+
+    **Takes the bill rows rather than a pre-summed unpaid figure** (code
+    review, 2026-08-14). Both halves of the list are published — the unpaid one
+    is the exposure the verdict is computed from, the paid one is what the
+    card's "Medical paid" row renders — and summing them in one place is what
+    stops the two coming from different reads of one table.
+    """
+    scheduled, disbursed, remaining = indemnity_terms(weeks)
+    return classify_reserve(
+        stage=claim.stage,
+        reserve_cents=claim.reserve,
+        remaining_indemnity_cents=remaining,
+        remaining_medical_cents=unpaid_total(bills),
+        disbursed_medical_cents=paid_total(bills),
+        # The two halves the remaining figure is the difference of, so the card
+        # states the indemnity-paid figure this verdict was reached from rather
+        # than `claim.paid_indemnity`, which is a stale snapshot on an open
+        # claim and contradicted it — see `ReserveCheck`.
+        scheduled_indemnity_cents=scheduled,
+        disbursed_indemnity_cents=disbursed,
+        bands=bands,
+    )
 
 
 async def reserve_check_for_claim(
     db: AsyncSession,
+    ctx: CallerContext,
     claim: ReserveClaim,
     benefit: Benefit,
     as_of: date,
+    *,
+    claim_pk: int,
+    claim_ref: str,
 ) -> ReserveCheck:
-    """`classify_reserve`, with its two exposure terms assembled.
+    """The verdict for one claim, over a freshly refreshed schedule.
 
     `benefit` is handed in rather than recomputed. `compute_benefit` is the one
     place a weekly indemnity figure exists (AD-2), and `claim_detail` has
@@ -454,27 +544,31 @@ async def reserve_check_for_claim(
     lookup and a second `benefit_params` load per case-file read, to arrive at
     the identical number.
 
+    **The schedule is materialized before it is read**, which is the reason
+    this function grew a `ctx` and the claim's two identifiers in Story 3.3.
+    Three of the five week statuses move with the calendar, so a verdict
+    computed from rows nobody had refreshed would drift from the Bills tab's
+    the moment a week elapsed — and AC 4 requires that those two surfaces
+    cannot disagree. `materialize_schedule` is a no-op when nothing has moved,
+    so the ordinary case costs one indexed SELECT.
+
     Raises nothing of its own: the two failures available here — a missing rate
     schedule and a missing rule document — are raised by the calls that own
     them and mapped to problem documents by the router.
     """
-    projection = project_payments(
+    weeks = await materialize_schedule(
+        db,
         claim,
-        weekly_cents=benefit.weekly_cents,
-        waiting_days=benefit.waiting_days,
+        claim_pk=claim_pk,
+        claim_ref=claim_ref,
+        benefit=benefit,
         as_of=as_of,
+        ctx=ctx,
     )
-    return classify_reserve(
-        stage=claim.stage,
-        reserve_cents=claim.reserve,
-        remaining_indemnity_cents=projection.remaining_indemnity_cents,
-        remaining_medical_cents=await unpaid_medical_cents(db, claim),
-        # The two halves the remaining figure is the difference of, so the card
-        # states the indemnity-paid figure this verdict was reached from rather
-        # than `claim.paid_indemnity`, which is a stale snapshot on an open
-        # claim and contradicted it — see `ReserveCheck`.
-        scheduled_indemnity_cents=projection.total_scheduled_cents,
-        disbursed_indemnity_cents=projection.paid_so_far_cents,
+    return reserve_check_from_rows(
+        claim,
+        weeks=weeks,
+        bills=await claim_repo.select_bills(db, ctx, claim_ref),
         bands=await reserve_bands_for(db, as_of),
     )
 
@@ -487,6 +581,8 @@ __all__ = [
     "ReserveClaim",
     "ReserveVerdict",
     "classify_reserve",
+    "indemnity_terms",
     "reserve_check_for_claim",
+    "reserve_check_from_rows",
     "unpaid_medical_cents",
 ]

@@ -1,0 +1,3642 @@
+[
+  {
+    "claim_id": "WC-20017",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 127500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20017",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 1850000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20017",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 174000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20017",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 264000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20017",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 48000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20017",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 16200,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20034",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 85000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20034",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 1850000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20034",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 188500,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20034",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 264000,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-20034",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 48000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20034",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 16200,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20051",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 110500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20051",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 130500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20051",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 308000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20051",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 38400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20051",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 27000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20068",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 93500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20068",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 203000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20068",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 308000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20068",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 38400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20068",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 27000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20085",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 119000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20085",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 2405000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20085",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 217500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20085",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 264000,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-20085",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 48000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20085",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 16200,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20102",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 102000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20102",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 203000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20102",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 220000,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-20102",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 44800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20102",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 27000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20119",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 85000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20119",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 159500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20119",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 242000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20119",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 44800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20119",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 27000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20136",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 110500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20136",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 1850000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20136",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 174000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20136",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 308000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20136",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 48000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20136",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 16200,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20153",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 68000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20153",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 145000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20153",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 41600,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20153",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 25200,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20170",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 93500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20170",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 130500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20170",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 308000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20170",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 44800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20170",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 27000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20187",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 76500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20187",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 203000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20187",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 308000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20187",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 44800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20187",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 27000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20204",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 127500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20204",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 203000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20204",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 28800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20204",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 14400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20221",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 85000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20221",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 2590000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20221",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 145000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20221",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 176000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20221",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 25600,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20221",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 18000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20238",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 68000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20238",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 159500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20238",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 242000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20238",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 25600,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20238",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 14400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20255",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 93500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20255",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 145000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20255",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 264000,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-20255",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 25600,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20255",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 14400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20272",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 119000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20272",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 1665000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20272",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 188500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20272",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 176000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20272",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 25600,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20272",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 18000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20289",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 102000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20289",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 2590000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20289",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 188500,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20289",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 176000,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-20289",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 25600,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20289",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 18000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20306",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 85000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20306",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 217500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20306",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 176000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20306",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 32000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20306",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 14400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20323",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 110500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20323",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 2590000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20323",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 130500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20323",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 220000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20323",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 25600,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20323",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 18000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20340",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 68000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20340",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 203000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20340",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 32000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20340",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 18000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20357",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 119000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20357",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 145000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20357",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 242000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20357",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 32000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20357",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 14400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20374",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 76500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20374",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 1850000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20374",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 174000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20374",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 220000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20374",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 25600,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20374",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 18000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20391",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 102000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20391",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 130500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20391",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 286000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20391",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 32000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20391",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 14400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20408",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 110500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20408",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 217500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20408",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 330000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20408",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 35200,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20408",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 14400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20425",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 68000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20425",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 217500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20425",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 25600,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20425",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 21600,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20442",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 93500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20442",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 203000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20442",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 198000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20442",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 38400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20442",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 14400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20459",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 76500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20459",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 2035000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20459",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 145000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20459",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 264000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20459",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 25600,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20459",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 18000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20476",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 102000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20476",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 145000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20476",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 242000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20476",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 38400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20476",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 14400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20493",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 127500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20493",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 130500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20493",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 264000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20493",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 38400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20493",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 14400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20510",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 110500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20510",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 145000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20510",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 48000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20510",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 23400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20527",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 93500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20527",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 217500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20527",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 330000,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-20527",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 41600,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20527",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 14400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20544",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 119000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20544",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 203000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20544",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 176000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20544",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 44800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20544",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 14400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20561",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 76500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20561",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 2590000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20561",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 130500,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20561",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 308000,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-20561",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 25600,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20561",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 18000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20578",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 127500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20578",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 145000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20578",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 220000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20578",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 44800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20578",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 14400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20595",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 85000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20595",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 1850000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20595",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 159500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20595",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 44800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20595",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 14400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20612",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 68000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20612",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 159500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20612",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 308000,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-20612",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 48000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20612",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 14400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20629",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 119000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20629",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 217500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20629",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 308000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20629",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 48000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20629",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 14400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20646",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 76500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20646",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 217500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20646",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 330000,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-20646",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 48000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20646",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 14400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20663",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 102000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20663",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 203000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20663",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 176000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20663",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 25600,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20663",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 16200,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20680",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 127500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20680",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 2405000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20680",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 130500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20680",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 176000,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-20680",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 28800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20680",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 18000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20697",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 110500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20697",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 1850000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20697",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 145000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20697",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 176000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20697",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 28800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20697",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 18000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20714",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 93500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20714",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 159500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20714",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 41600,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20714",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 16200,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20731",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 119000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20731",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 1850000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20731",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 203000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20731",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 198000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20731",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 28800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20731",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 18000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20748",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 102000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20748",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 217500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20748",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 308000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20748",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 28800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20748",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 16200,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20765",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 127500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20765",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 2590000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20765",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 217500,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20765",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 198000,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-20765",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 28800,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20765",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 18000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20782",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 85000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20782",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 203000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20782",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 176000,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-20782",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 32000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20782",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 16200,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20799",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 68000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20799",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 2035000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20799",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 130500,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20799",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 32000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20799",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 16200,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20816",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 119000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20816",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 2035000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20816",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 174000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20816",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 242000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20816",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 28800,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20816",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 18000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20833",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 76500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20833",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 159500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20833",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 286000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20833",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 35200,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20833",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 16200,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20850",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 102000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20850",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 145000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20850",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 44800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20850",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 19800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20867",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 85000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20867",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 2775000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20867",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 203000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20867",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 242000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20867",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 28800,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20867",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 18000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20884",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 110500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20884",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 2590000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20884",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 217500,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20884",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 242000,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-20884",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 28800,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20884",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 18000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20901",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 93500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20901",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 217500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20901",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 220000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20901",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 41600,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20901",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 16200,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20918",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 76500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20918",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 174000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20918",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 242000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20918",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 41600,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20918",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 16200,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20935",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 102000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20935",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 159500,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20935",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 264000,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-20935",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 41600,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20935",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 16200,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20952",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 127500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20952",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 145000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20952",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 286000,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-20952",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 41600,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-20952",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 16200,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20969",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 110500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20969",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 217500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20969",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 41600,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20969",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 23400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20986",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 68000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20986",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 2775000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20986",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 203000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20986",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 286000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20986",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 28800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-20986",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 18000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21003",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 93500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21003",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 145000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21003",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 41600,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21003",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 25200,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21020",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 119000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21020",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 130500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21020",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 308000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21020",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 44800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21020",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 25200,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21037",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 102000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21037",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 203000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21037",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 44800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21037",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 25200,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21054",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 127500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21054",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 2405000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21054",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 217500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21054",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 308000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21054",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 44800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21054",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 18000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21071",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 85000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21071",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 2405000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21071",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 116000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21071",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 330000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21071",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 44800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21071",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 18000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21088",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 68000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21088",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 145000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21088",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 198000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21088",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 48000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21088",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 25200,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21105",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 119000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21105",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 145000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21105",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 264000,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-21105",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 25600,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21105",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 27000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21122",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 76500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21122",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 145000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21122",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 41600,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21122",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 14400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21139",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 127500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21139",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 2590000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21139",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 188500,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21139",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 176000,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-21139",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 48000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21139",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 18000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21156",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 85000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21156",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 203000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21156",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 44800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21156",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 14400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21173",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 110500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21173",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 2405000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21173",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 217500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21173",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 25600,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21173",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 27000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21190",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 68000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21190",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 188500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21190",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 176000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21190",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 28800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21190",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 27000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21207",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 76500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21207",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 2035000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21207",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 159500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21207",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 220000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21207",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 48000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21207",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 18000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21224",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 102000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21224",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 145000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21224",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 264000,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-21224",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 32000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21224",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 27000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21241",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 127500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21241",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 130500,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21241",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 286000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21241",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 32000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21241",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 27000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21258",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 110500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21258",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 203000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21258",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 286000,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-21258",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 32000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21258",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 27000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21275",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 68000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21275",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 2590000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21275",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 203000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21275",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 220000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21275",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 48000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21275",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 18000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21292",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 93500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21292",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 2405000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21292",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 217500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21292",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 220000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21292",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 48000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21292",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 18000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21309",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 102000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21309",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 159500,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21309",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 32000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21309",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 21600,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21326",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 127500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21326",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 145000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21326",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 242000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21326",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 38400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21326",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 27000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21343",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 85000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21343",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 1850000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21343",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 174000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21343",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 264000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21343",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 48000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21343",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 18000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21360",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 110500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21360",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 130500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21360",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 286000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21360",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 38400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21360",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 27000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21377",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 93500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21377",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 203000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21377",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 286000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21377",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 38400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21377",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 27000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21394",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 119000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21394",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 2405000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21394",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 203000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21394",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 38400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21394",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 27000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21411",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 102000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21411",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 2590000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21411",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 130500,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21411",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 308000,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-21411",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 48000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21411",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 18000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21428",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 85000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21428",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 2035000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21428",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 145000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21428",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 308000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21428",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 48000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21428",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 18000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21445",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 110500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21445",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 145000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21445",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 242000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21445",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 44800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21445",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 27000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21462",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 68000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21462",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 1850000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21462",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 174000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21462",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 308000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21462",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 48000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21462",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 18000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21479",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 119000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21479",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 2590000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21479",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 174000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21479",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 308000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21479",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 48000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21479",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 18000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21496",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 76500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21496",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 203000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21496",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 286000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21496",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 44800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21496",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 27000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21513",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 127500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21513",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 203000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21513",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 176000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21513",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 25600,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21513",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 14400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21530",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 85000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21530",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 2590000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21530",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 130500,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21530",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 176000,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-21530",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 25600,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21530",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 19800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21547",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 68000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21547",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 2035000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21547",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 145000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21547",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 25600,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21547",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 14400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21564",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 93500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21564",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 145000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21564",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 242000,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-21564",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 25600,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21564",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 14400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21581",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 119000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21581",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 1665000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21581",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 174000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21581",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 176000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21581",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 25600,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21581",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 19800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21598",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 102000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21598",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 203000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21598",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 264000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21598",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 25600,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21598",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 14400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21615",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 85000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21615",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 2775000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21615",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 217500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21615",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 198000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21615",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 25600,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21615",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 19800,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21632",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 110500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21632",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 203000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21632",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 176000,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-21632",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 32000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21632",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 14400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21649",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 93500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21649",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 159500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21649",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 198000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21649",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 32000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21649",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 14400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21666",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 119000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21666",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 145000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21666",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 32000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21666",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 18000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21683",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 76500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21683",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 145000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21683",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 242000,
+    "status": "pending_submission"
+  },
+  {
+    "claim_id": "WC-21683",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 32000,
+    "status": "under_review"
+  },
+  {
+    "claim_id": "WC-21683",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 14400,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21700",
+    "category": "initial_treatment",
+    "label": "Emergency / Initial Treatment",
+    "amount_cents": 127500,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21700",
+    "category": "surgery_facility",
+    "label": "Surgical Procedure & Facility Fee",
+    "amount_cents": 1850000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21700",
+    "category": "imaging",
+    "label": "Diagnostic Imaging (MRI/CT/X-Ray)",
+    "amount_cents": 203000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21700",
+    "category": "physical_therapy",
+    "label": "Physical Therapy Session Bundle",
+    "amount_cents": 242000,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21700",
+    "category": "follow_up",
+    "label": "Follow-Up Physician Visit",
+    "amount_cents": 25600,
+    "status": "paid"
+  },
+  {
+    "claim_id": "WC-21700",
+    "category": "pharmacy",
+    "label": "Prescription / Pharmacy",
+    "amount_cents": 19800,
+    "status": "paid"
+  }
+]

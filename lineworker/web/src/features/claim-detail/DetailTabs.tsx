@@ -30,10 +30,10 @@
  * panels are mounted only while selected, so a label sourced from the Photos
  * panel would render `Photos ()` until somebody clicked it.
  *
- * **Story 2.4 deleted the first seam entry, 2.5 the second and 2.6 the
- * third**, which is what the list shape was for: filling a tab removes a row
- * from `SEAMS` and adds a branch, and both are one line. Two remain — the two
- * that belong to other epics.
+ * **Story 2.4 deleted the first seam entry, 2.5 the second, 2.6 the third and
+ * 3.3 the fourth**, which is what the list shape was for: filling a tab
+ * removes a row from `SEAMS` and adds a branch, and both are one line. One
+ * remains — AI Insights, which belongs to Epic 6.
  */
 import { useState } from "react";
 
@@ -55,13 +55,9 @@ export type TabKey = (typeof TABS)[number]["key"];
  * reviewer can read against the epic — and so the story that fills one
  * deletes an entry here rather than hunting for a paragraph.
  */
-type BuiltTab = "overview" | "injury" | "documents" | "photos";
+type BuiltTab = "overview" | "injury" | "bills" | "documents" | "photos";
 
 const SEAMS: Record<Exclude<TabKey, BuiltTab>, { message: string; story: string }> = {
-  bills: {
-    message: "Financial detail arrives with the financial engine.",
-    story: "Epic 3",
-  },
   insights: {
     message: "AI insights arrive with the copilot.",
     story: "Epic 6",
@@ -130,6 +126,7 @@ export function DetailTabs({
   onTabChange,
   children,
   injury,
+  bills,
   documents,
   photos,
   photoCount,
@@ -147,6 +144,16 @@ export function DetailTabs({
    * keep that state alive across a tab the handler is not looking at.
    */
   injury: React.ReactNode;
+  /**
+   * The Bills & Payments tab's content (Story 3.3).
+   *
+   * A prop and rendered only when selected, for `injury`'s reason twice over:
+   * the panel owns which row's sheet is open, *and* it fetches its own
+   * payload — a schedule, two line-item lists and their totals — so mounting
+   * it behind an unselected tab would put a request on every case file a
+   * handler opens in order to render nothing.
+   */
+  bills: React.ReactNode;
   /**
    * The Documents & ID tab's content (Story 2.5).
    *
@@ -215,6 +222,8 @@ export function DetailTabs({
           children
         ) : activeTab === "injury" ? (
           injury
+        ) : activeTab === "bills" ? (
+          bills
         ) : activeTab === "documents" ? (
           documents
         ) : activeTab === "photos" ? (

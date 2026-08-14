@@ -38,6 +38,14 @@ from services.financials.benefit import (
     compute_benefit,
     round_half_up,
 )
+from services.financials.materialize import (
+    DECIDED_STATUSES,
+    MATERIALIZE_ACTION,
+    MaterializationPlan,
+    StoredWeek,
+    materialize_schedule,
+    plan_materialization,
+)
 from services.financials.rationale import format_comp_rate, format_dollars, reserve_rationale
 from services.financials.reserve import (
     CLOSED_FINAL_RATIONALE,
@@ -47,7 +55,9 @@ from services.financials.reserve import (
     ReserveClaim,
     ReserveVerdict,
     classify_reserve,
+    indemnity_terms,
     reserve_check_for_claim,
+    reserve_check_from_rows,
     unpaid_medical_cents,
 )
 from services.financials.schedule import (
@@ -60,12 +70,22 @@ from services.financials.schedule import (
     project_payments,
     scheduled_weeks,
 )
+from services.financials.summary import (
+    ClaimFinancials,
+    FinancialSummary,
+    LineItemGroup,
+    LineItemView,
+    ScheduleWeekView,
+    claim_financials,
+)
 
 __all__ = [
     "BASIS_POINTS_PER_UNIT",
     "CLOSED_FINAL_RATIONALE",
     "COMP_RATE_MAX_BP",
     "COMP_RATE_MIN_BP",
+    "DECIDED_STATUSES",
+    "MATERIALIZE_ACTION",
     "MAX_WEEKS",
     "MIN_WEEKS",
     "SCHEDULE_WEEKS",
@@ -73,6 +93,11 @@ __all__ = [
     "ZERO_RESERVE_EXPOSED_RATIO_BP",
     "Benefit",
     "BenefitClaim",
+    "ClaimFinancials",
+    "FinancialSummary",
+    "LineItemGroup",
+    "LineItemView",
+    "MaterializationPlan",
     "MissingStateRate",
     "PaymentProjection",
     "ReserveCheck",
@@ -80,13 +105,20 @@ __all__ = [
     "ReserveVerdict",
     "ScheduleClaim",
     "ScheduleWeek",
+    "ScheduleWeekView",
+    "StoredWeek",
     "benefit_for_claim",
+    "claim_financials",
     "classify_reserve",
     "compute_benefit",
+    "indemnity_terms",
     "format_comp_rate",
     "format_dollars",
+    "materialize_schedule",
+    "plan_materialization",
     "project_payments",
     "reserve_check_for_claim",
+    "reserve_check_from_rows",
     "reserve_rationale",
     "round_half_up",
     "scheduled_weeks",

@@ -64,6 +64,7 @@ def check(
     scheduled: int | None = None,
     disbursed: int = 0,
     stage: Stage = Stage.treatment,
+    paid_medical: int = 0,
     bands: ReserveBands = BANDS,
 ) -> ReserveCheck:
     """`classify_reserve` with this module's defaults — one call, named args.
@@ -79,6 +80,7 @@ def check(
         remaining_medical_cents=medical,
         scheduled_indemnity_cents=disbursed + indemnity if scheduled is None else scheduled,
         disbursed_indemnity_cents=disbursed,
+        disbursed_medical_cents=paid_medical,
         bands=bands,
     )
 
@@ -591,6 +593,7 @@ def test_exactly_one_verdict_is_returned_and_the_exposure_is_its_two_terms(
         remaining_medical_cents=medical,
         scheduled_indemnity_cents=indemnity,
         disbursed_indemnity_cents=0,
+        disbursed_medical_cents=0,
         bands=BANDS,
     )
 
@@ -639,6 +642,7 @@ def test_the_verdict_agrees_with_the_ratio_it_publishes(reserve: int, exposure: 
         remaining_medical_cents=0,
         scheduled_indemnity_cents=exposure,
         disbursed_indemnity_cents=0,
+        disbursed_medical_cents=0,
         bands=BANDS,
     )
     assert result.ratio_bp is not None

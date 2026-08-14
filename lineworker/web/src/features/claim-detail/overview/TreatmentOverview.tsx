@@ -8,9 +8,10 @@
  * enum convention leaves to the UI, and renders the sentence as sent.
  *
  * **The Bills jump-link is a tab switch, not a route.** The tab is local UI
- * state, so "View full Bills & Payments →" hands the pane a tab key; the
- * Bills tab then shows its Epic-3 empty state, which is the honest end of
- * that journey until the financial engine lands.
+ * state, so "View full Bills & Payments →" hands the pane a tab key. Story 3.3
+ * filled that tab in, so the journey now ends on the full financial picture —
+ * and on figures identical to this card's, because both render the same
+ * `reserveCheck` block computed by one assembler on the server (AC 4).
  *
  * **The reserve-check verdict arrives from the case file, not from this
  * block** (Story 3.2). `claim.reserveCheck` sits beside `claim.benefit`
@@ -22,12 +23,7 @@
  * compares no figures: the ratio, its boundaries and the word for them are
  * all `services/financials`' (AD-1, AD-9, AD-10).
  */
-import type {
-  ClaimDetail,
-  RecoveryWindow,
-  ReserveVerdict,
-  TreatmentOverviewData,
-} from "@/api/claims";
+import type { ClaimDetail, RecoveryWindow, TreatmentOverviewData } from "@/api/claims";
 import { formatCents } from "@/lib/money";
 
 import { BenefitCard } from "../BenefitCard";
@@ -41,31 +37,8 @@ import {
   RESERVE_VERDICT_LABEL,
   RETURN_STATUS_LABEL,
 } from "../labels";
+import { VERDICT_ACCENT } from "../reserveAccent";
 import { useInlineEdits } from "../useInlineEdits";
-
-/**
- * The prototype's verdict colours, on Epic 1's tokens.
- *
- * Note which way round the two warnings go, because it reads backwards at
- * first glance: **light is the error**. A light reserve is one that will not
- * cover the exposure — money the carrier has not put aside — while a heavy one
- * is merely capital tied up, which is a warning rather than a problem. The
- * prototype makes the same call (`var(--er)` for light, `var(--wn)` for
- * heavy), and it is the only sensible one.
- *
- * `closed_final` is muted: a settled claim's verdict is a statement, not a
- * status to act on, and colouring it green would read as a pass mark on a
- * comparison nobody made. `indeterminate` is muted for the stronger version of
- * the same reason — it is the *absence* of a comparison, and any of the three
- * status colours would be the console implying it had reached a conclusion.
- */
-const VERDICT_ACCENT: Record<ReserveVerdict, { text: string; box: string }> = {
-  light: { text: "text-error", box: "border-error/30 bg-error-soft" },
-  adequate: { text: "text-ok", box: "border-ok/30 bg-ok-soft" },
-  heavy: { text: "text-warn", box: "border-warn/30 bg-warn-soft" },
-  closed_final: { text: "text-faint", box: "border-border bg-surface-2" },
-  indeterminate: { text: "text-muted-text", box: "border-border bg-surface-2" },
-};
 
 /** The prototype's phase colours: steel, warn, then ok as MMI approaches. */
 const PHASE_ACCENT: Record<TreatmentOverviewData["phase"], string> = {
@@ -146,7 +119,18 @@ export function TreatmentOverview({
 
       <CardGrid>
         <CaseCard title="💵 Paid to date vs. reserve" testId="treatment-financials">
-          <Kv label="Medical paid">{formatCents(overview.paidMedicalCents)}</Kv>
+          {/* **The bills' paid figure, not `overview.paidMedicalCents`**
+              (code review, 2026-08-14). That field is `claim.paid_medical`, a
+              snapshot which reads $0 on all 38 open seeded claims — so this
+              row said "Medical paid $0.00" directly above a live indemnity
+              figure and directly above a link to a tab showing the same
+              claim's paid bills as a real number. It is precisely the defect
+              the row below was corrected for a review earlier, one row up, and
+              it takes the same shape: both figures are the server's, from the
+              rows the verdict beside them was computed from. */}
+          <Kv label="Medical paid" testId="treatment-medical-paid">
+            {formatCents(reserve.disbursedMedicalCents)}
+          </Kv>
           {/* **The schedule's figures, not `overview.paidIndemnityCents`**
               (code review, 2026-08-14). This card shows an indemnity-paid
               figure and a reserve verdict, and the two have to come from one

@@ -72,8 +72,10 @@ from services.derivations import (
 )
 from services.financials import (
     Benefit,
+    ClaimFinancials,
     ReserveCheck,
     benefit_for_claim,
+    claim_financials,
     reserve_check_for_claim,
 )
 
@@ -606,12 +608,69 @@ async def claim_detail(
         # `services/financials` computes from columns and never queries a
         # claim, which is what keeps `claim` a table only `services/claims`
         # reads on the case-file path (AD-12). It does read `rule_document`,
-        # which belongs to nobody, and — from Story 3.3 — `bill`, which is a
-        # financial table rather than a claim one.
-        reserve_check=await reserve_check_for_claim(db, claim, benefit, today),
+        # which belongs to nobody, and — from Story 3.3 — `payment_schedule_week`
+        # and `bill`, which are financial tables rather than claim ones.
+        #
+        # **This refreshes the schedule before judging it** (Story 3.3), which
+        # is why a GET now writes on the ~1-in-n requests that cross a week
+        # boundary. Three of the five week statuses move with the calendar, and
+        # AC 4 requires that this card and the Bills tab cannot show different
+        # figures — which is only true if the refresh happens ahead of *both*
+        # reads rather than ahead of one. `materialize_schedule` writes,
+        # commits and audits nothing when nothing has moved.
+        reserve_check=await reserve_check_for_claim(
+            db,
+            ctx,
+            claim,
+            benefit,
+            today,
+            claim_pk=claim.id,
+            claim_ref=claim.claim_id,
+        ),
         edit_options=EDIT_OPTIONS,
         thresholds_version=thresholds.version,
         requirements_version=requirements_version,
+    )
+
+
+async def claim_financial_detail(
+    db: AsyncSession,
+    ctx: CallerContext,
+    claim_business_id: str,
+    *,
+    as_of: date | None = None,
+) -> ClaimFinancials:
+    """The Bills & Payments read model for one claim, or `ClaimNotVisible`.
+
+    **Here rather than in `services/financials` because of who owns `claim`.**
+    AD-12 makes `services/claims` the only reader of the claim row on this
+    path, and `services/financials` computes from columns it is handed and
+    never queries one — the rule Story 3.2 recorded and Story 3.1 before it.
+    So this function does the scoped resolve and the two rule-tier loads, and
+    `claim_financials` does the money. The split is the same one
+    `claim_detail` already keeps three lines further up.
+
+    Raises `ClaimNotVisible` for a claim outside the caller's book *and* for
+    one that does not exist, which is `select_claim_detail`'s deliberate
+    conflation: two different answers would make this route an oracle for
+    enumerating the portfolio (AD-7).
+    """
+    today = as_of or utc_today()
+    row = await claim_repo.select_claim_detail(db, ctx, claim_business_id)
+    if row is None:
+        raise ClaimNotVisible(claim_business_id)
+
+    claim = row.Claim
+    thresholds = await thresholds_for(db, today)
+    return await claim_financials(
+        db,
+        ctx,
+        claim,
+        claim_pk=claim.id,
+        claim_ref=claim.claim_id,
+        benefit=await benefit_for_claim(db, claim, thresholds, today),
+        thresholds=thresholds,
+        as_of=today,
     )
 
 

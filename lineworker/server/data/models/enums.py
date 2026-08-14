@@ -104,6 +104,85 @@ class ScheduleWeekStatus(StrEnum):
     paid = "paid"
 
 
+class LineItemStatus(StrEnum):
+    """Where one medical bill or claim expense stands (Story 3.3).
+
+    **One vocabulary for both tables**, which is the decision worth stating.
+    `bill` and `expense` are separate tables because their *categories* are
+    different vocabularies — a surgical facility fee and a mileage
+    reimbursement are not members of one list — but the states a line item
+    moves through are identical, and the prototype says so by rendering both
+    through one `billStatusLabel`. Two enums holding the same five tokens
+    would be two places to widen when 3.4's approval adds a transition, and
+    the first divergence between them would be a bug nothing could name.
+
+    **`pending_submission` and `payment_scheduled` are distinct members with
+    distinct labels, and the prototype conflates them.** Its
+    `BILL_STATUS_LABEL` maps `PendingSubmission` to the string "Payment
+    Scheduled" (line 806) — so a bill nobody has submitted reads, on screen,
+    as money already queued for disbursement. Those are opposite facts about
+    a claim's cost. The console keeps them apart: `pending_submission` is a
+    bill the provider has not filed, `payment_scheduled` is one a handler has
+    approved into the next batch, and Story 3.4's approval is the single
+    transition `under_review` → `payment_scheduled` that connects them. The
+    story's Dev Notes name this as an enum-label quirk not to copy.
+
+    Member order is the order a line item moves through, which is also the
+    order PostgreSQL sorts the type in.
+    [Source: docs/Workers_Comp_Prototype.html lines 806, 843-845]
+    """
+
+    pending_submission = "pending_submission"
+    under_review = "under_review"
+    payment_scheduled = "payment_scheduled"
+    paid = "paid"
+
+
+class BillCategory(StrEnum):
+    """What kind of medical bill a `bill` row is (Story 3.3, AC 3).
+
+    The prototype has no category field: `buildBills` (line 766) emits six
+    line items identified only by their English labels, and `billsHTML`
+    groups nothing. The story asks for rows "by category", so the label's
+    *identity* becomes a token and the label stays the label — which is the
+    `RecoveryWindow` move one epic later, and it buys the same thing: the
+    seeded label is content a later story may reword, while the category is
+    what a query groups by and what Epic 7's financial decomposition will
+    sum over.
+
+    Member order is the prototype's emission order, which is also roughly
+    the order a claim incurs them.
+    [Source: docs/Workers_Comp_Prototype.html lines 774-780]
+    """
+
+    initial_treatment = "initial_treatment"
+    surgery_facility = "surgery_facility"
+    imaging = "imaging"
+    physical_therapy = "physical_therapy"
+    follow_up = "follow_up"
+    pharmacy = "pharmacy"
+
+
+class ExpenseCategory(StrEnum):
+    """What kind of claim expense an `expense` row is (Story 3.3, AC 3).
+
+    `BillCategory`'s argument, over `buildExpenses` (line 784). A separate
+    enum rather than more members on that one because the two lists answer
+    different questions — "what did treating this injury cost" against "what
+    did *administering* the claim cost" — and the settled-stage payout
+    breakdown adds them as two figures, not as one grouped total.
+
+    Member order is the prototype's emission order.
+    [Source: docs/Workers_Comp_Prototype.html lines 793-798]
+    """
+
+    mileage_travel = "mileage_travel"
+    dme = "dme"
+    prosthetic_assistive = "prosthetic_assistive"
+    home_workstation_mod = "home_workstation_mod"
+    misc = "misc"
+
+
 class BodyRegion(StrEnum):
     """The eleven regions the injury diagram can point at (Story 2.4).
 

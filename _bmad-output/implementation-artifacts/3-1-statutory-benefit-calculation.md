@@ -4,7 +4,7 @@ baseline_commit: ae93ae5d0f6ca592c02f60095d5bd170b0de4e0e
 
 # Story 3.1: Statutory Benefit Calculation
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 

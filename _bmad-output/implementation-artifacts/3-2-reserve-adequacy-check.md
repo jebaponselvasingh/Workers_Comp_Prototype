@@ -4,7 +4,7 @@ baseline_commit: 98aa8c2dffcb962407574620a599c4263db7f67d
 
 # Story 3.2: Reserve Adequacy Check
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 

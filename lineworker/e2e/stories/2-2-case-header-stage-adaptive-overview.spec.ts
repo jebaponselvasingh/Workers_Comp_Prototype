@@ -77,10 +77,13 @@ test.describe("@story:2-2 @epic:2 case header and stage-adaptive overview", () =
     await expect(byTestId(page, "treatment-coordination-label")).not.toBeEmpty();
     await expect(byTestId(page, "treatment-coordination-note")).not.toBeEmpty();
 
-    // --- the Bills jump-link lands on the Epic-3 empty state (NFR-3) ----
+    // --- the Bills jump-link switches tabs (AC 4) -----------------------
+    // Story 3.3 filled the tab in, so this asserts the *switch* and that the
+    // panel is real; the figures it lands on are 3.3's own spec's subject.
     await byTestId(page, "treatment-bills-link").click();
     await expect(byTestId(page, "tab-bills")).toHaveAttribute("aria-selected", "true");
-    await expect(byTestId(page, "tab-empty-bills")).toContainText("financial engine");
+    await expect(byTestId(page, "bills-tab")).toBeVisible();
+    await expect(byTestId(page, "tab-empty-bills")).toHaveCount(0);
   });
 
   test("the intake variant shows its checklist against the claim's documents (AC 3)", async ({
@@ -201,19 +204,17 @@ test.describe("@story:2-2 @epic:2 case header and stage-adaptive overview", () =
 
     await expect(byRole(page, "tab")).toHaveCount(6);
 
-    // **Story 2.4 built the Injury Diagram tab, 2.5 the Documents & ID tab and
-    // 2.6 the Photos tab, so their rows are gone from this table and their
-    // panels are asserted below instead.** Re-pointed rather than deleted
-    // (1.5, 1.6 and 2.1's precedent): what the rows were really guaranteeing is
-    // that a tab is either built or honest about not being, and both halves of
-    // that are still asserted here.
+    // **Story 2.4 built the Injury Diagram tab, 2.5 the Documents & ID tab,
+    // 2.6 the Photos tab and 3.3 the Bills & Payments tab, so their rows are
+    // gone from this table and their panels are asserted below instead.**
+    // Re-pointed rather than deleted (1.5, 1.6 and 2.1's precedent): what the
+    // rows were really guaranteeing is that a tab is either built or honest
+    // about not being, and both halves of that are still asserted here.
     //
-    // Two rows left, and both name an *epic*. That is the state Epic 2 closes
-    // in — every seam still standing belongs to somebody else's epic.
-    for (const [tab, mentions] of [
-      ["bills", "financial engine"],
-      ["insights", "copilot"],
-    ] as const) {
+    // One row left, and it names an *epic*. That is the state Epic 3's
+    // financial engine closes in — the only seam still standing is the
+    // copilot's.
+    for (const [tab, mentions] of [["insights", "copilot"]] as const) {
       await byTestId(page, `tab-${tab}`).click();
       await expect(byTestId(page, `tab-empty-${tab}`)).toContainText(mentions);
       // The Overview content is gone, so the seam is a real panel switch
@@ -224,6 +225,7 @@ test.describe("@story:2-2 @epic:2 case header and stage-adaptive overview", () =
     // The tabs that are built show their content rather than a seam.
     for (const [tab, panel] of [
       ["injury", "injury-tab"],
+      ["bills", "bills-tab"],
       ["documents", "documents-tab"],
       ["photos", "photos-tab"],
     ] as const) {

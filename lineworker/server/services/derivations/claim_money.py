@@ -61,33 +61,59 @@ class CostSplit:
     expense_pct: int
 
 
+def split_of(indemnity_cents: int, medical_cents: int, expense_cents: int) -> CostSplit | None:
+    """The three shares of a cost bar, or `None` when nothing has been paid.
+
+    **The one place the percentages are computed**, which is why it is a
+    module function rather than a method on the derivation below. Story 3.3's
+    Bills tab draws the same bar over a *different* triple — the effective
+    breakdown, which falls back to live figures when the paid columns are a
+    stale zero — and two implementations of "round two shares and give the
+    remainder to the third" would be free to disagree about a claim whose
+    figures land on a half percent. `services/derivations/claim_financials.py`
+    calls this; nothing else does the arithmetic.
+
+    `None` rather than three zeros: a claim with no payments has no
+    composition, and a bar of three zero-width segments is a *drawing* of a
+    fact the sentence beside it states better ("Active — payments pending").
+    Returning zeros would leave that choice to the component.
+    """
+    total = indemnity_cents + medical_cents + expense_cents
+    if total <= 0:
+        return None
+    indemnity_pct = round(indemnity_cents * 100 / total)
+    medical_pct = round(medical_cents * 100 / total)
+    return CostSplit(
+        indemnity_pct=indemnity_pct,
+        medical_pct=medical_pct,
+        expense_pct=100 - indemnity_pct - medical_pct,
+    )
+
+
 @dataclass(frozen=True)
 class TotalPaidDerivation:
     def of(self, claim: PaidColumns) -> int:
-        """Indemnity + medical + expense, in cents."""
+        """Indemnity + medical + expense, in cents.
+
+        **The paid *columns*, and Story 3.3 adds a second question next to
+        this one.** This is what the snapshot on the claim row says, which is
+        the right answer to "total incurred" on the investigation card and to
+        the settled payout breakdown — on a settled claim the columns are
+        populated and complete. It is *not* the right answer to "paid to
+        date" on an open claim, where the columns are routinely zero while
+        the schedule and the bills show real disbursements;
+        `claim_financials.paid_to_date` is the computer for that, and it calls
+        this one for the static half rather than adding the three columns a
+        second time.
+        """
         return claim.paid_indemnity + claim.paid_medical + claim.paid_expense
 
 
 @dataclass(frozen=True)
 class CostSplitDerivation:
     def of(self, claim: PaidColumns) -> CostSplit | None:
-        """The split, or `None` when nothing has been paid.
-
-        `None` rather than three zeros: a claim with no payments has no
-        composition, and a bar of three zero-width segments is a *drawing* of
-        a fact the sentence beside it states better ("Active — payments
-        pending"). Returning zeros would leave that choice to the component.
-        """
-        total = TotalPaidDerivation().of(claim)
-        if total <= 0:
-            return None
-        indemnity_pct = round(claim.paid_indemnity * 100 / total)
-        medical_pct = round(claim.paid_medical * 100 / total)
-        return CostSplit(
-            indemnity_pct=indemnity_pct,
-            medical_pct=medical_pct,
-            expense_pct=100 - indemnity_pct - medical_pct,
-        )
+        """The split of the paid columns — `split_of`, over the static triple."""
+        return split_of(claim.paid_indemnity, claim.paid_medical, claim.paid_expense)
 
 
 total_paid = register(

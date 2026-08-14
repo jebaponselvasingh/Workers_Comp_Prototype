@@ -348,9 +348,39 @@ PHASE_RULE_READ = re.compile(
     # periods in ordinary prose; a word match would have failed that story's
     # CI with "no module outside the derivation restates the phase rule",
     # which is not what would have happened.
+    #
+    # **The follow-set lost `)` and `]` in Story 3.3**, and the reason is that
+    # they were never evidence of anything. They matched `weeks)` and
+    # `weeks]` — which is to say, any code that *iterates a list of weeks* —
+    # and 3.3 is the story that makes a claim's schedule a persisted list of
+    # them. Five modules tripped it, every one on a false positive:
+    # `ScheduleWeekStatus` contains the letters `WeekS`, and
+    # `sum(w.amount_cents for w in weeks)` is arithmetic over rows rather than
+    # a second reading of the recovery window. Adding five entries to
+    # `PHASE_HOME` would have kept the tick green by turning the guard off
+    # over most of `services/financials`, which is exactly where a second
+    # phase rule would be worth catching.
+    #
+    # What is left in the follow-set are regex metacharacters — `\s`, `\d` —
+    # so `r"Weeks\s*"` still trips it and `for week in weeks)` does not. The
+    # three assertions in `test_the_guards_would_notice_a_second_implementation`
+    # were all matched by the other two alternatives already, and it gained a
+    # fourth that pins ordinary week iteration as *not* an offence, so this
+    # narrowing cannot be quietly undone.
+    #
+    # **The third alternative is new in Story 3.3, and it is the one that
+    # catches the real thing.** Narrowing the window half showed that neither
+    # `PHASE_HOME` entry had ever matched on its own merits: `schedule.py` was
+    # caught by the prose "`Math.max(4, Math.min(weeks, 20))`" in a docstring,
+    # not by `SCHEDULE_WEEKS` — the actual second table keyed by
+    # `RecoveryWindow` that 3.2 argued for at length. A guard that would have
+    # missed the very thing its entry describes is not a guard. Matching a
+    # `RecoveryWindow`-keyed mapping to a number is what a second phase rule
+    # *is*, so both homes now trip it for the reason their comments give.
     r"(?:0\.3|0\.7)\s*[<>]|[<>]\s*(?:0\.3|0\.7)"
-    r"|weeks[^\n]{0,20}(?:\\s|\)|\]|re\.|match|search|compile)"
-    r"|(?:re\.|match|search|compile|\\d\+|\\s\*)[^\n]{0,20}weeks",
+    r"|weeks[^\n]{0,20}(?:\\s|\\d|re\.|match|search|compile)"
+    r"|(?:re\.|match|search|compile|\\d\+|\\s\*)[^\n]{0,20}weeks"
+    r"|RecoveryWindow[^\n]{0,20}\bint\b",
     re.IGNORECASE,
 )
 
@@ -367,26 +397,25 @@ COORDINATION_RULE_READ = re.compile(
 PHASE_HOME = frozenset(
     {
         "services/derivations/treatment_progress.py",
-        # Story 3.2's two, and each is here for a different reason.
-        #
-        # `enums.py` is a **false positive**: `ScheduleWeekStatus` contains the
-        # letters `WeekS`, which the case-insensitive window half matches as
-        # "weeks" followed by a paren. The class names a vocabulary and decides
-        # nothing — `COORDINATION_HOME` already lists this file on exactly that
-        # argument.
-        #
         # `schedule.py` is **a real second table keyed by `RecoveryWindow`, and
-        # deliberately not a second phase rule.** `SCHEDULE_WEEKS` answers "how
-        # many weekly indemnity payments does this claim have scheduled";
-        # `EXPECTED_WEEKS` answers "how long was this claim expected to take".
-        # They read one column to decide two different things and their numbers
-        # differ (a 0-2 week window is 2 expected weeks and 4 scheduled ones,
-        # after the schedule's clamp), which is why folding either into the
-        # other would be wrong rather than tidy —
+        # deliberately not a second phase rule** (Story 3.2). `SCHEDULE_WEEKS`
+        # answers "how many weekly indemnity payments does this claim have
+        # scheduled"; `EXPECTED_WEEKS` answers "how long was this claim
+        # expected to take". They read one column to decide two different
+        # things and their numbers differ (a 0-2 week window is 2 expected
+        # weeks and 4 scheduled ones, after the schedule's clamp), which is why
+        # folding either into the other would be wrong rather than tidy —
         # `test_payment_projection.py::test_the_schedule_is_not_the_treatment_phases_window`
         # pins that they are two rules on purpose, so this entry does not
         # quietly become permission to grow a third.
-        "data/models/enums.py",
+        #
+        # **`data/models/enums.py` was here and is not any more** (Story 3.3).
+        # It was admitted as a *false positive* — `ScheduleWeekStatus` contains
+        # the letters `WeekS`, which the old follow-set matched as "weeks"
+        # beside a paren — and once that noise was removed from the pattern the
+        # entry stopped covering anything. A home that excuses a file the guard
+        # no longer accuses is an exemption waiting to hide a real one.
+        # `COORDINATION_HOME` still lists the file, on its own argument.
         "services/financials/schedule.py",
     }
 )
@@ -463,10 +492,35 @@ def test_the_guards_would_notice_a_second_implementation() -> None:
     assert PHASE_RULE_READ.search("if ratio < 0.3: return 'early'")
     assert PHASE_RULE_READ.search('re.search(r"(\\d+)-(\\d+) Weeks", claim.recovery)')
     assert PHASE_RULE_READ.search('WINDOW = re.compile(r"(\\d+)\\s*weeks")')
+    # A regex whose metacharacter comes *after* the word — the half of the
+    # window pattern that survived Story 3.3's narrowing, kept honest here.
+    assert PHASE_RULE_READ.search('TAIL = r"Weeks\\s*$"')
+    # The shape a second phase rule actually takes, and the one the guard was
+    # missing until Story 3.3: another duration table keyed by the window.
+    assert PHASE_RULE_READ.search("PHASE_WEEKS: dict[RecoveryWindow, int] = {...}")
     assert COORDINATION_RULE_READ.search(
         'if claim.comm_status == "need_for_additional_information": ...'
     )
     assert COORDINATION_RULE_READ.search("statuses = {CommStatus.incomplete_information}")
+
+
+def test_the_phase_guard_does_not_fire_on_ordinary_week_iteration() -> None:
+    """The other half of a guard's honesty: what it must *not* call an offence.
+
+    Story 3.3 persists a claim's schedule, so summing and filtering a list of
+    weeks is now ordinary code in four modules. While the follow-set contained
+    `)` and `]`, every one of these lines was an "offence" — and the cheap fix
+    would have been five `PHASE_HOME` entries, which is the guard being
+    switched off over the package it most needs to watch.
+
+    Pinned as a test rather than left to the scan above, because the scan only
+    fails when somebody *writes* such a line; this fails the moment somebody
+    re-broadens the pattern, which is when the decision is actually being made.
+    """
+    assert not PHASE_RULE_READ.search("return sum(w.amount_cents for w in weeks)")
+    assert not PHASE_RULE_READ.search("plan = plan_materialization(projection.weeks, rows)")
+    assert not PHASE_RULE_READ.search("status: Mapped[ScheduleWeekStatus] = mapped_column(")
+    assert not PHASE_RULE_READ.search("installments = derivation.of(weeks)")
 
 
 def test_the_guards_leave_ordinary_code_alone() -> None:
