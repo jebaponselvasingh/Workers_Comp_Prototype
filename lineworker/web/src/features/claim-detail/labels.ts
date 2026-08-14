@@ -17,6 +17,7 @@ import type {
   CoordinationStatus,
   Disability,
   DocType,
+  IndemnityType,
   RecoveryWindow,
   ReturnStatus,
   RiskBand,
@@ -128,6 +129,23 @@ export const RECOVERY_LABEL: Record<RecoveryWindow, string> = {
   weeks_4_6: "4-6 Weeks",
   weeks_6_8: "6-8 Weeks",
   over_1_year: "Greater than 1 Year",
+};
+
+/**
+ * The four indemnity types, spelled the way the prototype spells them.
+ *
+ * The prototype's value *is* this string — `"TTD — Temporary Total
+ * Disability"` — and it recovers the abbreviation with `.split(" — ")[0]`
+ * wherever it needs the short form. Here the wire carries the token and this
+ * map is the label, so nothing has to be parsed back apart; the one place the
+ * abbreviation is still spelled server-side is the reserve-rationale
+ * paragraph, which is prose the server writes.
+ */
+export const INDEMNITY_TYPE_LABEL: Record<IndemnityType, string> = {
+  ttd: "TTD — Temporary Total Disability",
+  tpd: "TPD — Temporary Partial Disability",
+  ppd: "PPD — Permanent Partial Disability",
+  ptd: "PTD — Permanent Total Disability",
 };
 
 /**

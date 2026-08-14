@@ -17,6 +17,7 @@ from collections.abc import Awaitable, Callable
 from datetime import date
 from typing import Annotated, Any, Literal
 
+import structlog
 from fastapi import APIRouter, Path, Query, Response, status
 from pydantic import ConfigDict, Field
 
@@ -33,6 +34,7 @@ from data.models.enums import (
     ReturnStatus,
     Stage,
 )
+from services.claims.comp_rate import update_comp_rate_override
 from services.claims.detail import ClaimDetail, ClaimNotVisible, claim_detail
 from services.claims.documents import DocumentNotVisible, document_content
 from services.claims.edit import (
@@ -44,7 +46,8 @@ from services.claims.edit import (
 )
 from services.claims.injuries import add_additional_injury, remove_additional_injury
 from services.claims.reference import SEVERITY_MAX, SEVERITY_MIN
-from services.derivations import CoordinationStatus, RiskBand, TreatmentPhase
+from services.derivations import CoordinationStatus, IndemnityType, RiskBand, TreatmentPhase
+from services.financials import COMP_RATE_MAX_BP, COMP_RATE_MIN_BP, MissingStateRate
 from services.worklist.priority import QueueFilter
 from services.worklist.queue import (
     MAX_PAGE_LIMIT,
@@ -57,6 +60,8 @@ from services.worklist.queue import (
 )
 
 router = APIRouter(tags=["claims"])
+
+log = structlog.get_logger()
 
 BAD_CURSOR_RESPONSE: dict[int | str, dict[str, object]] = {
     400: {
@@ -289,6 +294,24 @@ NOT_FOUND_RESPONSE: dict[int | str, dict[str, object]] = {
             "No such claim in the caller's scope. Deliberately the same answer "
             "for a claim that does not exist and one that belongs to another "
             "employer — see the route docstring (RFC 9457 problem document)."
+        ),
+        "content": {PROBLEM_CONTENT_TYPE: {"schema": ProblemDocument.model_json_schema()}},
+    }
+}
+
+#: Declared on every route that assembles a case file, which is all of them
+#: except the document sheet: the benefit block is part of the payload, so a
+#: jurisdiction with no statutory rate schedule takes the whole response down
+#: rather than blanking one card. That is the intended behaviour (NFR-4 — no
+#: silent default), and a contract that did not say so would leave a client
+#: with an undeclared 500 in its generated types.
+RATE_SCHEDULE_RESPONSE: dict[int | str, dict[str, object]] = {
+    500: {
+        "description": (
+            "The claim's jurisdiction has no `state_rate_schedule` row, so its "
+            "weekly benefit cannot be calculated and no default is substituted "
+            "(RFC 9457 problem document). Unreachable against a correctly "
+            "migrated database — 0023 refuses to complete otherwise."
         ),
         "content": {PROBLEM_CONTENT_TYPE: {"schema": ProblemDocument.model_json_schema()}},
     }
@@ -718,6 +741,66 @@ class PhotosBlockResponse(ApiModel):
     count: int
 
 
+class BenefitResponse(ApiModel):
+    """The statutory weekly indemnity benefit, decided server-side (Story 3.1).
+
+    Outside the stage-variant union, like `injury`, `documents` and `photos`.
+    The *card* renders on two variants (the two the prototype puts it on), but
+    the figure is a fact about the claim at every stage — see `ClaimDetail`.
+
+    **Every figure is integer cents; both rates are integer basis points.**
+    `compRateBp: 6667` is 66.67%, and the unit is the column's, the rule
+    document's and the PATCH body's — so a rate never becomes a float anywhere
+    between the database and the input a handler types in. The SPA formats it
+    through `lib/rate.ts` exactly as it formats cents through `lib/money.ts`.
+
+    **`weeklyCents` is already clamped.** The bounds ride along so the card can
+    state them (the prototype's "min/max" row), not so a client can apply them:
+    the clamp happened in `services/financials`, which is the only place that
+    knows the AWW.
+
+    **`isOverridden` is published rather than inferred** from
+    `compRateBp != defaultCompRateBp` — a handler who types the default back in
+    has still overridden the claim, and the ↺ control has to appear for them.
+
+    **`reserveRationale` is a finished paragraph, not a template.** Written by
+    `services/financials/rationale.py` from the claim's own columns — a
+    deterministic service output, not an LLM narrative and not an `ai_insight`
+    row (AD-2). It is the one string in this contract that carries formatted
+    money, because it is prose rather than a figure; the reasoning is in that
+    module's docstring.
+
+    **`scheduleEffectiveDate` is the provenance line.** The prototype closes
+    the card with "Illustrative figures for prototype purposes — verify against
+    the current WC board benefit schedule"; until per-jurisdiction statutory
+    data is validated (NFR-4, Deferred), the equivalent honest note is the date
+    the schedule on file took effect, which is a fact the table holds rather
+    than a disclaimer hardcoded in a component.
+    """
+
+    weekly_cents: int
+    comp_rate_bp: int
+    default_comp_rate_bp: int
+    is_overridden: bool
+    indemnity_type: IndemnityType
+    state_code: str
+    state_name: str
+    state_min_cents: int
+    state_max_cents: int
+    schedule_effective_date: date
+    waiting_days: int
+    reserve_rationale: str
+    # The override's domain, served for the reason `injury.severityMin/Max`
+    # are: a number input and a pre-flight refusal both need it, and two
+    # literals in a React component is the shape `noDerivation.test.ts`
+    # refuses. They are what `PATCH /claims/{id}/comp-rate` enforces.
+    comp_rate_min_bp: int
+    comp_rate_max_bp: int
+    # The `benefit_params` document that answered, for `thresholdsVersion`'s
+    # reason: every rule that decided something in this response is named in it.
+    params_version: int
+
+
 class ClaimDetailResponse(ApiModel):
     """The case file: header, stepper, and exactly one stage variant.
 
@@ -753,6 +836,9 @@ class ClaimDetailResponse(ApiModel):
     # Story 2.6's Photos tab, outside it for the same reason — and the tab
     # bar reads its `count` at every stage. See `PhotosBlockResponse`.
     photos: PhotosBlockResponse
+    # Story 3.1's benefit calculation, outside it for the same reason — see
+    # `BenefitResponse`.
+    benefit: BenefitResponse
     # Story 2.3's editable vocabularies. On the case file rather than on the
     # investigation variant because the edit command is not stage-scoped —
     # 2.4 edits the body part from the diagram tab at any stage.
@@ -770,7 +856,11 @@ class ClaimDetailResponse(ApiModel):
     "/claims/{claim_business_id}",
     response_model=ClaimDetailResponse,
     summary="One claim's case file — header, stepper and stage-adaptive overview",
-    responses={**UNAUTHENTICATED_RESPONSE, **NOT_FOUND_RESPONSE},
+    responses={
+        **UNAUTHENTICATED_RESPONSE,
+        **NOT_FOUND_RESPONSE,
+        **RATE_SCHEDULE_RESPONSE,
+    },
 )
 async def detail(
     ctx: CallerContextDep,
@@ -805,7 +895,41 @@ async def detail(
         result = await claim_detail(db, ctx, claim_business_id)
     except ClaimNotVisible as exc:
         raise _not_found(claim_business_id) from exc
+    except MissingStateRate as exc:
+        raise _missing_state_rate(exc) from exc
     return ClaimDetailResponse.model_validate(result)
+
+
+def _missing_state_rate(exc: MissingStateRate) -> ProblemException:
+    """The 500 for a jurisdiction with no statutory rate schedule (AC 1).
+
+    A problem document rather than a bare 500, because the story is explicit
+    that a missing state is a *data error surfaced*, never a default: the
+    prototype substitutes ``{max:1200, min:250}`` and shows the claim's real
+    state name beside two numbers belonging to no jurisdiction (NFR-4).
+
+    **500 rather than 4xx**, because the caller did nothing wrong and can do
+    nothing about it: migration 0023 refuses to complete while any seeded
+    claim's state is uncovered, so reaching this means reference data was
+    loaded incompletely or a claim was inserted for a jurisdiction nobody has
+    rates for. It is the same class of failure as a missing rule document.
+
+    **The state code goes to the log, not to the body** (AD-11, and
+    `api/errors.py`'s standing rule that `detail` carries no claim data). An
+    operator needs the code and gets it from structlog; the caller needs to
+    know the console cannot answer, and gets a sentence that says so.
+    """
+    log.error("benefit.state_rate_missing", state=exc.state_code)
+    return ProblemException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        title="Internal Server Error",
+        detail=(
+            "This claim's jurisdiction has no statutory rate schedule on file, "
+            "so its weekly benefit cannot be calculated."
+        ),
+        type_="/problems/missing-state-rate",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 def _not_found(claim_business_id: str) -> ProblemException:
@@ -964,6 +1088,7 @@ FORBIDDEN_RESPONSE: dict[int | str, dict[str, object]] = {
         **FORBIDDEN_RESPONSE,
         **NOT_FOUND_RESPONSE,
         **CONFLICT_RESPONSE,
+        **RATE_SCHEDULE_RESPONSE,
     },
 )
 async def edit_fields(
@@ -1029,6 +1154,14 @@ async def _answer(
     """
     try:
         result = await call()
+    except MissingStateRate as exc:
+        # Caught **first**, and the ordering is not arbitrary: a command that
+        # succeeded and then failed while re-reading the case file has already
+        # committed, so the caller must not be told their patch was invalid.
+        # `MissingStateRate` is not a `ValueError` and could not be caught by
+        # `InvalidPatch` below in any case — this is here so the next reader
+        # does not have to work that out.
+        raise _missing_state_rate(exc) from exc
     except EditNotPermitted as exc:
         # Raised before the claim is read, so this answer is identical for a
         # claim in the caller's book, one in somebody else's, and one that
@@ -1161,6 +1294,7 @@ class NewInjury(ApiModel):
         **FORBIDDEN_RESPONSE,
         **NOT_FOUND_RESPONSE,
         **CONFLICT_RESPONSE,
+        **RATE_SCHEDULE_RESPONSE,
     },
 )
 async def add_injury(
@@ -1211,6 +1345,7 @@ async def add_injury(
         **FORBIDDEN_RESPONSE,
         **NOT_FOUND_RESPONSE,
         **CONFLICT_RESPONSE,
+        **RATE_SCHEDULE_RESPONSE,
     },
 )
 async def remove_injury(
@@ -1277,6 +1412,7 @@ async def remove_injury(
         **FORBIDDEN_RESPONSE,
         **NOT_FOUND_RESPONSE,
         **CONFLICT_RESPONSE,
+        **RATE_SCHEDULE_RESPONSE,
     },
 )
 async def edit_severity(
@@ -1308,6 +1444,111 @@ async def edit_severity(
             claim_business_id,
             expected_version=patch.expected_version,
             severity_score=patch.severity_score,
+        ),
+        claim_business_id,
+    )
+
+
+# --- Story 3.1: the comp-rate override ----------------------------------
+
+
+#: The override's unit, with its domain attached, so the bound reaches the
+#: OpenAPI document and the generated client refuses `20000` before it becomes
+#: a round trip. Declared as an alias rather than inline because `int | None`
+#: cannot carry `ge`/`le` directly — the constraint has to sit on the `int`
+#: half of the union, not on the nullable whole.
+CompRateBasisPoints = Annotated[int, Field(ge=COMP_RATE_MIN_BP, le=COMP_RATE_MAX_BP)]
+
+
+class CompRatePatch(ApiModel):
+    """The comp-rate PATCH body: a version, and a rate or `null`.
+
+    **`compRateBp` is required and nullable, which is the opposite of
+    `ClaimFieldPatch`'s members** — and the difference is the story rather than
+    an inconsistency. There, an explicit `null` is a caller error: none of the
+    six clinical fields has a meaningful empty value, and a handler who cleared
+    an input meant to cancel. Here `null` *is* the ↺ reset: it is the value
+    that puts the claim back on the statutory default, and the command records
+    it as a change like any other.
+
+    A required field, then, rather than an optional one — there is exactly one
+    thing this route does and omitting it is not a way to ask for it.
+
+    **The bounds are declared here as well as enforced in the command**, on
+    `SeverityPatch`'s argument: `0..15000` basis points is the comp rate's
+    domain rather than a vocabulary that might move, so putting it in the
+    contract lets the generated client refuse out-of-range input before a
+    round trip — and the command still refuses it for the AD-13 agent tools
+    that never pass through Pydantic.
+    """
+
+    model_config = ApiModel.model_config | ConfigDict(extra="forbid")
+
+    expected_version: int = Field(
+        ge=1,
+        description=(
+            "The `version` the client read. The write is compare-and-swapped "
+            "on it and answers 409 with the fresh entity on a mismatch."
+        ),
+    )
+    comp_rate_bp: CompRateBasisPoints | None = Field(
+        description=(
+            "The comp rate to apply, in **basis points** — 6667 is 66.67% of "
+            "AWW. `null` clears the override and restores the statutory "
+            "default (the ↺ control). Basis points rather than a percentage "
+            "so the value is exact: 66.67 does not round-trip through a float."
+        ),
+    )
+
+
+@router.patch(
+    "/claims/{claim_business_id}/comp-rate",
+    response_model=ClaimDetailResponse,
+    summary="Set or clear a claim's comp-rate override (audited, versioned)",
+    responses={
+        **UNAUTHENTICATED_RESPONSE,
+        **FORBIDDEN_RESPONSE,
+        **NOT_FOUND_RESPONSE,
+        **CONFLICT_RESPONSE,
+        **RATE_SCHEDULE_RESPONSE,
+    },
+)
+async def edit_comp_rate(
+    ctx: CallerContextDep,
+    db: DbDep,
+    response: Response,
+    patch: CompRatePatch,
+    claim_business_id: Annotated[
+        str,
+        Path(
+            pattern=CLAIM_ID_PATTERN,
+            description="The claim's business id, `WC-nnnn`.",
+            examples=["WC-20017"],
+        ),
+    ],
+) -> ClaimDetailResponse:
+    """Override the comp rate — or reset it — and answer with the case file.
+
+    **One route for both, because they are one column.** `compRateBp: null` is
+    the reset; a second endpoint would duplicate the refusal ladder to express
+    "write NULL" and give one column's history two action names in the audit
+    log.
+
+    The response's `benefit` block is recomputed **server-side** from the new
+    column (AC 4): the weekly figure, the clamp against the state's bounds and
+    the rationale's closing sentence all move because `services/financials` ran
+    again, not because this route told the client anything. That is what makes
+    the override a server-side recalculation rather than a number the browser
+    displays back to itself.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    return await _answer(
+        lambda: update_comp_rate_override(
+            db,
+            ctx,
+            claim_business_id,
+            expected_version=patch.expected_version,
+            comp_rate_bp=patch.comp_rate_bp,
         ),
         claim_business_id,
     )

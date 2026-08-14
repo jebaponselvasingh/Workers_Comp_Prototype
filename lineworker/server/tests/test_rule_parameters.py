@@ -24,15 +24,18 @@ import pytest
 from data.models.enums import ClaimStatus, DocType
 from rules.engine import LoadedDocument
 from rules.parameters import (
+    BenefitParams,
     DerivationThresholds,
     IntakeRequirements,
     PriorityWeights,
     RuleParameterError,
 )
+from services.financials import COMP_RATE_MAX_BP, COMP_RATE_MIN_BP
 
 THRESHOLDS_DOC = LoadedDocument(key="derivation_thresholds", version=4, content={})
 WEIGHTS_DOC = LoadedDocument(key="priority_weights", version=7, content={})
 REQUIREMENTS_DOC = LoadedDocument(key="intake_required_documents", version=3, content={})
+BENEFIT_DOC = LoadedDocument(key="benefit_params", version=2, content={})
 
 VALID_THRESHOLDS = {
     "riskHighMin": 65,
@@ -49,6 +52,14 @@ VALID_THRESHOLDS = {
     "pathMinorSeverityMax": 35,
     "pathMinorRecoveryWindows": ["weeks_0_2"],
     "pathFatalitySeverityMin": 100,
+    # Story 3.1's one, which arrived with version 4.
+    "ptdSeverityThreshold": 85,
+}
+
+VALID_BENEFIT_PARAMS = {
+    "defaultCompRateBp": 6667,
+    "ptdCompRateBp": 10_000,
+    "waitingPeriodDays": 7,
 }
 
 VALID_INTAKE_REQUIREMENTS = {"requiredDocTypes": ["froi", "incident", "medauth", "wage"]}
@@ -79,6 +90,10 @@ def weights(**changes: object) -> PriorityWeights:
     return PriorityWeights.of(WEIGHTS_DOC, {**VALID_WEIGHTS, **changes})
 
 
+def benefit(**changes: object) -> BenefitParams:
+    return BenefitParams.of(BENEFIT_DOC, {**VALID_BENEFIT_PARAMS, **changes})
+
+
 def requirements(**changes: object) -> IntakeRequirements:
     return IntakeRequirements.of(REQUIREMENTS_DOC, {**VALID_INTAKE_REQUIREMENTS, **changes})
 
@@ -89,6 +104,7 @@ def test_the_valid_blocks_are_valid() -> None:
     assert thresholds().version == 4
     assert weights().version == 7
     assert requirements().version == 3
+    assert benefit().version == 2
 
 
 # --- types --------------------------------------------------------------
@@ -334,3 +350,90 @@ def test_an_empty_required_list_is_a_checklist_with_no_rows() -> None:
     required at intake" is a position an operator may take from the
     document, and the UI's empty state is what renders it."""
     assert requirements(requiredDocTypes=[]).required_doc_types == ()
+
+
+# --- Story 3.1: the PTD threshold and the benefit parameters -------------
+
+
+@pytest.mark.parametrize("value", [-1, 101, 1000])
+def test_the_ptd_threshold_is_held_to_severity_scores_range(value: int) -> None:
+    """`riskHighMin`'s argument, applied to the cut-off that decides pay.
+
+    A threshold above 100 is unreachable, so every permanently disabled
+    worker is classified `ppd` and paid two thirds of wage where the statute
+    pays all of it — silently, with the card still rendering a confident
+    figure. Below zero it fires for everyone, which pays a partial disability
+    at the total rate.
+    """
+    with pytest.raises(RuleParameterError, match="ptdSeverityThreshold"):
+        thresholds(ptdSeverityThreshold=value)
+
+
+@pytest.mark.parametrize("value", [0, 100])
+def test_the_ptd_threshold_may_sit_on_either_end_of_the_range(value: int) -> None:
+    """Both bounds inclusive: "every permanent disability is total" and "none
+    is" are positions an operator may take from the document, and neither is
+    the kind of mistake a range check should be catching."""
+    assert thresholds(ptdSeverityThreshold=value).ptd_severity_threshold == value
+
+
+@pytest.mark.parametrize("value", [None, "6667", [6667], True])
+def test_a_non_integer_comp_rate_parameter_is_refused(value: object) -> None:
+    """`True` is in the list for the reason it is everywhere else in this
+    file: it is an `int` in Python, and a document answering `true` for the
+    default comp rate would pay one basis point of wage — 0.01% — rather
+    than being refused."""
+    with pytest.raises(RuleParameterError, match="benefit_params v2"):
+        benefit(defaultCompRateBp=value)
+
+
+@pytest.mark.parametrize("value", [-1, 15_001, 100_000])
+def test_a_comp_rate_parameter_outside_the_overrides_domain_is_refused(value: int) -> None:
+    """A default a handler's own override input could not reproduce.
+
+    The card offers 0-150%; a document declaring 1000% would render a comp
+    rate nobody can correct back down, because the ↺ reset restores *this*
+    value. Both parameters are checked, because either can be the one that
+    applies to a given claim.
+    """
+    with pytest.raises(RuleParameterError, match="defaultCompRateBp"):
+        benefit(defaultCompRateBp=value)
+    with pytest.raises(RuleParameterError, match="ptdCompRateBp"):
+        benefit(ptdCompRateBp=value)
+
+
+@pytest.mark.parametrize("value", [COMP_RATE_MIN_BP, COMP_RATE_MAX_BP])
+def test_a_comp_rate_parameter_may_sit_on_either_bound(value: int) -> None:
+    assert benefit(defaultCompRateBp=value).default_comp_rate_bp == value
+
+
+def test_the_rules_tiers_comp_rate_domain_agrees_with_the_services_one() -> None:
+    """The duplication `rules/parameters.py` documents, pinned.
+
+    The rules tier must not import from `services/`, so it restates the comp
+    rate's domain to validate a document against it — exactly as it restates
+    `severity_score`'s 0-100 for the risk bands. Restating is fine; drifting
+    is not, and nothing else would notice: a services-side widening to 200%
+    would leave documents refused at 150% with a message naming a bound
+    nobody could find.
+
+    Asserted from the outside, by probing the *boundary* rather than by
+    importing the private constants — one basis point past each end must be
+    refused and each end itself accepted, which is what makes this a statement
+    about behaviour rather than about two names being equal.
+    """
+    assert benefit(defaultCompRateBp=COMP_RATE_MIN_BP).default_comp_rate_bp == COMP_RATE_MIN_BP
+    assert benefit(defaultCompRateBp=COMP_RATE_MAX_BP).default_comp_rate_bp == COMP_RATE_MAX_BP
+    with pytest.raises(RuleParameterError):
+        benefit(defaultCompRateBp=COMP_RATE_MIN_BP - 1)
+    with pytest.raises(RuleParameterError):
+        benefit(defaultCompRateBp=COMP_RATE_MAX_BP + 1)
+
+
+def test_a_negative_waiting_period_is_refused_but_zero_is_not() -> None:
+    """Zero is a real jurisdiction's rule — "no waiting period" — and a
+    parameter that could not express it would be describing the world
+    incorrectly. A negative one is a first payment due before the injury."""
+    assert benefit(waitingPeriodDays=0).waiting_period_days == 0
+    with pytest.raises(RuleParameterError, match="waitingPeriodDays"):
+        benefit(waitingPeriodDays=-1)

@@ -70,6 +70,7 @@ from services.derivations import (
     TreatmentPhase,
     utc_today,
 )
+from services.financials import Benefit, benefit_for_claim
 
 # The lifecycle, left to right — the prototype's `stageStepperHTML` order and
 # the queue's `STAGE_ORDER`. One tuple, because a stepper that disagreed with
@@ -410,6 +411,16 @@ class ClaimDetail:
     # reason: a claim does not stop having evidence when it settles, and the
     # tab bar reads this block's `count` at every stage.
     photos: PhotosBlock
+    # Story 3.1's benefit calculation, outside the union for `injury`'s and
+    # `documents`' reason — with one extra. The *card* renders on two of the
+    # four stage variants (the two the prototype puts it on), but the figure is
+    # meaningful at every stage: a settled claim was paid a weekly indemnity,
+    # and an intake claim already has an AWW, a state and a disability. Putting
+    # the block on the variants would mean two copies of one field list and a
+    # payload whose shape changed under a claim as it progressed — and Story
+    # 3.3's payment schedule, which is a Bills-tab surface, needs the same
+    # figure at whatever stage the claim is in.
+    benefit: Benefit
     edit_options: EditOptions
     thresholds_version: int
     # `None` for every stage but intake, because no other variant reads the
@@ -559,6 +570,11 @@ async def claim_detail(
         # parameter exists on `photos_block` so that wiring one in later is a
         # change to this line and to nothing else.
         photos=photos_block(await claim_repo.select_photos(db, ctx, claim.claim_id)),
+        # The claim row is handed over rather than re-read: `services/financials`
+        # computes from columns and never queries a claim, which is what keeps
+        # `claim` a table only `services/claims` reads on the case-file path
+        # (AD-12). It does read `state_rate_schedule`, which belongs to nobody.
+        benefit=await benefit_for_claim(db, claim, thresholds, today),
         edit_options=EDIT_OPTIONS,
         thresholds_version=thresholds.version,
         requirements_version=requirements_version,

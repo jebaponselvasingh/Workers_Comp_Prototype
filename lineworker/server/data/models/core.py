@@ -161,6 +161,25 @@ class Claim(Base):
     reserve: Mapped[int] = mapped_column(BigInteger)
     aww: Mapped[int] = mapped_column(BigInteger)
 
+    # The handler's comp-rate override, in **basis points** (6667 = 66.67%),
+    # or NULL when the statutory default applies (Story 3.1, FR-H-3).
+    #
+    # **Integer basis points, not a percentage float.** The rest of this table
+    # keeps money in integer cents for the reason a rate wants here too: 66.67
+    # is not representable in binary floating point, and a column that stored
+    # it would make "is this claim overridden?" a comparison two values could
+    # fail by 1e-14. Basis points are the smallest unit the prototype's input
+    # can produce (`step="0.5"`, two decimal places displayed), so nothing is
+    # lost, and the weekly benefit is then computed with integer arithmetic
+    # end to end — see `services/financials/benefit.py`.
+    #
+    # **Nullable, and null is the meaningful state**, not a missing value: it
+    # is what the ↺ reset restores, and it is what makes "the default applies"
+    # a fact about the row rather than a comparison against a rule document
+    # version that may since have changed. Written only by
+    # `services/claims/comp_rate.py` (AD-12).
+    comp_rate_override_bp: Mapped[int | None] = mapped_column(Integer)
+
     # Duration / SLA source data (see story note: seeds as data, dataset's
     # SLA figures don't reconcile with its dates by design)
     days_recovery: Mapped[int | None] = mapped_column(Integer)
@@ -441,6 +460,70 @@ class PathRequiredForm(Base):
     timing: Mapped[str] = mapped_column(Text)
     download_url: Mapped[str] = mapped_column(Text)
     sort_order: Mapped[int] = mapped_column(Integer)
+
+
+class StateRateSchedule(Base):
+    """One jurisdiction's statutory weekly indemnity bounds (Story 3.1, AC 1).
+
+    Reference data, seeded from the prototype's `STATE_WC_RATES` — the
+    seventeen states the portfolio's fifteen plants sit in. Read-only to the
+    application in the same sense `GlossaryTerm` and `PathRequiredForm` are,
+    and absent the same three things for the same reasons:
+
+    - **No `version` column.** Compare-and-swap arbitrates concurrent writers
+      and this table has none: the migration is its only writer.
+    - **No audit wiring.** AD-4 audits commands; there are none here.
+    - **No employer column and no claim FK.** A statutory weekly maximum is a
+      statement about a *jurisdiction*, not about anybody's claim, which is
+      what makes the AD-7 carve-out in `data/repositories/state_rates.py`
+      legitimate rather than convenient. The claim's state is a column on
+      `claim` and joins to these rows at read time.
+
+    **The prototype's silent fallback does not survive.** `computeBenefit`
+    reads ``STATE_WC_RATES[c.state] || {max:1200, min:250}`` — so a claim in a
+    state the object does not list is clamped to two numbers that belong to no
+    jurisdiction, and the card names the state beside them with total
+    confidence. Here a missing row is a data error: migration 0023 refuses to
+    complete if any seeded claim's state has no schedule, and
+    `services/financials` raises rather than defaulting (NFR-4).
+
+    **`effective_date` is what the card cites, and today it is one row per
+    state.** `state_code` is unique, so the table holds the *current* schedule
+    rather than a history — the story's shape. The column is here because a
+    weekly maximum is only true of a period: a refresh process adds the next
+    year's figures, at which point the unique constraint moves to
+    `(state_code, effective_date)` and the read selects the latest row whose
+    date has arrived, exactly as `rule_document` already does for rules. Until
+    then it is the provenance date the benefit card shows in place of the
+    prototype's "Illustrative figures" disclaimer.
+
+    **The seeded bounds are illustrative and this docstring says so where it
+    matters.** NFR-4 and an explicit Deferred architecture decision put
+    per-jurisdiction validation of statutory rates before go-live; the values
+    are the prototype's, in cents.
+    """
+
+    __tablename__ = "state_rate_schedule"
+
+    id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+    # Unique: one live schedule per jurisdiction — see the docstring on what
+    # changes when a second one arrives.
+    state_code: Mapped[str] = mapped_column(Text, unique=True)
+    state_name: Mapped[str] = mapped_column(Text)
+    # Integer cents, like every other money column. The prototype's dollars
+    # were multiplied once, in the extractor.
+    weekly_min_cents: Mapped[int] = mapped_column(BigInteger)
+    weekly_max_cents: Mapped[int] = mapped_column(BigInteger)
+    effective_date: Mapped[date] = mapped_column(Date)
+
+    # The database's half of a bound the extractor and the migration also
+    # check. Not redundancy: an inverted pair pins every claim in the state to
+    # the lower bound and the card still renders a confident figure, so "no
+    # such row exists" should be true of the table rather than of the code
+    # paths anyone remembered.
+    __table_args__ = (
+        CheckConstraint("weekly_min_cents <= weekly_max_cents", name="ck_weekly_bounds"),
+    )
 
 
 class GlossaryTerm(Base):

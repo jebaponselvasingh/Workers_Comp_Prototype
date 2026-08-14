@@ -1,0 +1,58 @@
+{
+  "contentType": "application/vnd.gorules.decision",
+  "name": "benefit_params",
+  "description": "The tunables the statutory weekly indemnity benefit is computed from (Story 3.1, AD-8). A document of its own for intake_required_documents' and injury_capture's reason: services/financials owns the benefit formula, while derivation_thresholds is the single argument every REGISTERED DERIVATION is built from — folding a service's parameters into it would make the registry's contract mean 'whatever anybody needed a number for'. The one benefit parameter that is NOT here is ptdSeverityThreshold, and its absence is the same argument in the other direction: which indemnity type a claim is on is a registered derivation (AD-10), so its cut-off lives in derivation_thresholds v4 and this document never restates it. compute_benefit asks the derivation whether the claim is PTD and pays the rate below accordingly; the threshold therefore has exactly one reader. RATES ARE BASIS POINTS, not percentages: 6667 is 66.67%. The unit is the one claim.comp_rate_override_bp stores, so a handler's override and the default it replaces are the same kind of integer and the whole calculation is integer arithmetic — 66.67 has no exact binary representation, and a default expressed as a float beside an override expressed as an integer would make 'is this claim overridden?' a comparison two values can fail by 1e-14. (The money convention's 'integer cents across the ZEN boundary' does not literally apply — a comp rate is a rate, not money — but its reason does.) defaultCompRateBp is the statutory two-thirds every US jurisdiction in this portfolio pays a temporarily disabled worker; ptdCompRateBp is the full wage a permanent total disability is paid at. waitingPeriodDays is the statutory wait before the first indemnity payment; Story 3.1 only DISPLAYS it in the payment-schedule note, and Story 3.3 is where the schedule that applies it (first payment = DOI + waitingPeriodDays) is generated — which is precisely why it is data now rather than a literal in 3.3's generator. All three are the prototype's values (computeBenefit lines 715-728), ported exactly.",
+  "nodes": [
+    {
+      "id": "request",
+      "type": "inputNode",
+      "name": "request",
+      "position": { "x": 0, "y": 0 }
+    },
+    {
+      "id": "benefit",
+      "type": "expressionNode",
+      "name": "benefit",
+      "position": { "x": 240, "y": 0 },
+      "content": {
+        "expressions": [
+          {
+            "id": "defaultCompRateBp",
+            "key": "defaultCompRateBp",
+            "value": "6667"
+          },
+          {
+            "id": "ptdCompRateBp",
+            "key": "ptdCompRateBp",
+            "value": "10000"
+          },
+          {
+            "id": "waitingPeriodDays",
+            "key": "waitingPeriodDays",
+            "value": "7"
+          }
+        ]
+      }
+    },
+    {
+      "id": "response",
+      "type": "outputNode",
+      "name": "response",
+      "position": { "x": 480, "y": 0 }
+    }
+  ],
+  "edges": [
+    {
+      "id": "request-benefit",
+      "type": "edge",
+      "sourceId": "request",
+      "targetId": "benefit"
+    },
+    {
+      "id": "benefit-response",
+      "type": "edge",
+      "sourceId": "benefit",
+      "targetId": "response"
+    }
+  ]
+}

@@ -533,6 +533,106 @@ export function useRemoveInjury(claimId: string) {
   });
 }
 
+/** The statutory benefit calculation (Story 3.1). */
+export type Benefit = components["schemas"]["BenefitResponse"];
+export type IndemnityType = components["schemas"]["IndemnityType"];
+export type CompRatePatch = components["schemas"]["CompRatePatch"];
+
+/**
+ * Set or clear the comp-rate override (AC 4).
+ *
+ * `compRateBp: null` is the ↺ reset — one mutation for both, because they are
+ * one column and one command. The value is **basis points**; `lib/rate.ts` is
+ * the only place a percentage is turned into one.
+ *
+ * **Optimistic, unlike the severity score.** AD-9 permits an optimistic update
+ * for the user-entered scalar, and here the scalar's one *visible* consequence
+ * — the digits in the input — is the scalar itself: the comp rate is not
+ * banded, coloured or thresholded by anything. The weekly figure, the
+ * indemnity type and the rationale paragraph beside it are all the server's
+ * answers and deliberately do **not** move until it replies, which is why the
+ * echo is written into `compRateBp` and `isOverridden` and nothing else. Story
+ * 2.4's severity card takes the opposite call for the opposite reason: every
+ * visible consequence of *that* number is derived, so a 78 would render in
+ * green for a round trip.
+ *
+ * `isOverridden` moves with it because the ↺ control is bound to it, and a
+ * reset whose button stayed on screen for the round trip invites a second
+ * click that 409s against the version the first is consuming.
+ */
+export function useEditCompRate(claimId: string) {
+  const client = useQueryClient();
+  const key = queryKeys.claims.detail(claimId);
+
+  return useMutation({
+    mutationKey: queryKeys.claims.writes(claimId),
+    mutationFn: async (variables: {
+      compRateBp: number | null;
+      expectedVersion: number;
+    }): Promise<ClaimDetail> => {
+      const { data } = await api.PATCH("/claims/{claim_business_id}/comp-rate", {
+        params: { path: { claim_business_id: claimId } },
+        body: {
+          expectedVersion: variables.expectedVersion,
+          compRateBp: variables.compRateBp,
+        },
+      });
+      return data!;
+    },
+    onMutate: async (variables) => {
+      await client.cancelQueries({ queryKey: key });
+      const snapshot = client.getQueryData<ClaimDetail>(key);
+      if (snapshot) {
+        client.setQueryData(key, applyOptimisticCompRate(snapshot, variables.compRateBp));
+      }
+      return { snapshot };
+    },
+    onError: (error, _variables, context) => {
+      // Version-guarded, exactly as `useEditClaimFields`' rollback is: if a
+      // concurrent mutation committed in the meantime, restoring the snapshot
+      // would throw away a *saved* edit and leave every later write 409ing.
+      const current = client.getQueryData<ClaimDetail>(key);
+      if (context?.snapshot && current?.version === context.snapshot.version) {
+        client.setQueryData(key, context.snapshot);
+      }
+      const fresh = freshClaimFrom(error);
+      if (fresh) client.setQueryData(key, fresh);
+    },
+    onSuccess: (fresh) => {
+      // The response *is* the fresh case file. The queue is deliberately not
+      // invalidated: no queue card shows a comp rate, and nothing in the
+      // priority score reads one — unlike the severity score, which moves a
+      // card's band and its position.
+      client.setQueryData(key, fresh);
+      void client.invalidateQueries({ queryKey: key, refetchType: "none" });
+    },
+    onSettled: () => {
+      void client.invalidateQueries({ queryKey: key, refetchType: "none" });
+    },
+  });
+}
+
+/**
+ * Write the submitted rate into a cached case file — and nothing else.
+ *
+ * Exported so a test can assert exactly what waits for the server, without
+ * rendering anything. `weeklyCents`, `indemnityType`, the statutory bounds and
+ * the rationale paragraph are every one of them the server's answer.
+ */
+export function applyOptimisticCompRate(
+  detail: ClaimDetail,
+  compRateBp: number | null,
+): ClaimDetail {
+  return {
+    ...detail,
+    benefit: {
+      ...detail.benefit,
+      compRateBp: compRateBp ?? detail.benefit.defaultCompRateBp,
+      isOverridden: compRateBp !== null,
+    },
+  };
+}
+
 /** The Documents & ID tab (Story 2.5). */
 export type DocumentsBlock = components["schemas"]["DocumentsBlockResponse"];
 export type RequiredForm = components["schemas"]["RequiredFormResponse"];

@@ -19,8 +19,12 @@ carrying the phase parameters. Story 2.5 adds `claim_path` and a v3 carrying
 its three — the entry that closes the prototype's always-Path-B gap, and the
 clearest illustration of what this registry is for: the forms card and Epic
 3's action worklist ask the same function rather than each deciding what a
-fatality claim looks like. `total_incurred` joins them as its story lands —
-each one function, here, called by every consumer.
+fatality claim looks like. Story 3.1 adds `indemnity_type` and a v4 carrying
+its cut-off, and it is the first entry whose answer another *service* consumes
+rather than a card: `services/financials` asks it whether a claim is
+permanently totally disabled instead of comparing a score itself, so the PTD
+condition has one reader rather than two. `total_incurred` joins them as its
+story lands — each one function, here, called by every consumer.
 
 **Naming rule for the modules below** (code review, 2026-08-10): a module
 is named after the *rule* (`risk_band`, `open_duration`, `queue_flags`),
@@ -45,6 +49,11 @@ from services.derivations.claim_money import (
     TotalPaidDerivation,
     cost_split,
     total_paid,
+)
+from services.derivations.indemnity_classification import (
+    IndemnityType,
+    IndemnityTypeDerivation,
+    indemnity_type,
 )
 from services.derivations.open_duration import (
     OpenDurationDerivation,
@@ -80,6 +89,8 @@ __all__ = [
     "CostSplit",
     "CostSplitDerivation",
     "Derivation",
+    "IndemnityType",
+    "IndemnityTypeDerivation",
     "OpenDurationDerivation",
     "PaymentDueDerivation",
     "RiskBand",
@@ -98,6 +109,7 @@ __all__ = [
     "days_to_settlement",
     "get",
     "hash_bucket",
+    "indemnity_type",
     "payment_due",
     "register",
     "registered_names",

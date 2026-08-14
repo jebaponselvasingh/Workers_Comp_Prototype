@@ -51,6 +51,7 @@ DERIVATION_THRESHOLDS_KEY = "derivation_thresholds"
 PRIORITY_WEIGHTS_KEY = "priority_weights"
 INTAKE_REQUIRED_DOCUMENTS_KEY = "intake_required_documents"
 INJURY_CAPTURE_KEY = "injury_capture"
+BENEFIT_PARAMS_KEY = "benefit_params"
 
 
 class RuleParameterError(ValueError):
@@ -206,6 +207,13 @@ class DerivationThresholds:
     path_minor_severity_max: int
     path_minor_recovery_windows: frozenset[RecoveryWindow]
     path_fatality_severity_min: int
+    # Story 3.1's one (document v4). `indemnity_type` is a registered
+    # derivation, so its cut-off belongs in this block rather than in
+    # `benefit_params` — and putting it here is what gives the PTD test a
+    # single reader: `services/financials` asks the derivation whether the
+    # claim is permanently *totally* disabled and pays the matching rate,
+    # instead of comparing a score against a threshold of its own.
+    ptd_severity_threshold: int
 
     def __post_init__(self) -> None:
         # Story 1.4's `Field(ge=0, le=100)`, in its new home. `severity_score`
@@ -297,6 +305,18 @@ class DerivationThresholds:
                 f"pathMinorSeverityMax ({self.path_minor_severity_max}) must not exceed "
                 f"pathFatalitySeverityMin ({self.path_fatality_severity_min})"
             )
+        # `severity_score`'s range again, for the same reason the risk bands
+        # and the path cut-offs are checked against it: a threshold outside the
+        # column's domain classifies the whole portfolio one way and says
+        # nothing about it. `ptdSeverityThreshold: 200` files every permanently
+        # disabled worker as *partially* disabled and pays two thirds of wage
+        # where the statute pays all of it — silently, with the benefit card
+        # still rendering a confident figure.
+        if not 0 <= self.ptd_severity_threshold <= 100:
+            raise RuleParameterError(
+                "ptdSeverityThreshold must be between 0 and 100 (severity_score's range), "
+                f"got {self.ptd_severity_threshold}"
+            )
 
     @classmethod
     def of(cls, document: LoadedDocument, result: dict[str, Any]) -> "DerivationThresholds":
@@ -318,6 +338,7 @@ class DerivationThresholds:
                 document, result, "pathMinorRecoveryWindows"
             ),
             path_fatality_severity_min=_integer(document, result, "pathFatalitySeverityMin"),
+            ptd_severity_threshold=_integer(document, result, "ptdSeverityThreshold"),
         )
 
 
@@ -530,3 +551,88 @@ async def injury_capture_for(db: AsyncSession, as_of: date | None = None) -> Inj
     """Load and validate the injury-capture parameters effective on `as_of`."""
     document = await load(db, INJURY_CAPTURE_KEY, as_of)
     return InjuryCapture.of(document, evaluate(document))
+
+
+#: The comp rate's domain, in basis points — 0% to 150%.
+#:
+#: **Restated here rather than imported**, and that is the pattern
+#: `DerivationThresholds` already follows for `severity_score`'s 0-100: the
+#: rules tier must not import from `services/`, so a block that validates a
+#: parameter against its consumer's domain writes the bound out with a comment
+#: naming where it comes from. The authoritative statement is
+#: `services/financials/benefit.py`'s `COMP_RATE_MIN_BP` / `COMP_RATE_MAX_BP`,
+#: which is what the override command refuses against;
+#: `tests/test_rule_parameters.py` asserts the two agree, so the duplication
+#: cannot drift silently.
+_COMP_RATE_MIN_BP = 0
+_COMP_RATE_MAX_BP = 15_000
+
+
+@dataclass(frozen=True)
+class BenefitParams:
+    """What the statutory weekly indemnity benefit is computed from (3.1).
+
+    A block of its own, in a document of its own, for `IntakeRequirements`'
+    reason: `services/financials` owns the benefit formula, and
+    `DerivationThresholds` is the single argument every registered derivation
+    is *built* from. Folding a service's parameters into it would make the
+    registry's contract mean "whatever anybody needed a number for".
+
+    **The PTD *threshold* is deliberately not here.** Which indemnity type a
+    claim is on is a registered derivation (AD-10), so its cut-off is
+    `DerivationThresholds.ptd_severity_threshold` and this block never restates
+    it — `compute_benefit` asks the derivation and pays `ptd_comp_rate_bp` when
+    the answer is `ptd`. That is what makes AD-8's "each rule element in
+    exactly one tier" a fact about the code here rather than a convention: the
+    threshold has one reader, and the rate it selects has another.
+
+    **Rates are basis points.** 6667 is 66.67%, and the unit is the one
+    `claim.comp_rate_override_bp` stores — so the default and a handler's
+    override are the same kind of integer and the whole calculation is integer
+    arithmetic. A float default beside an integer override would make "is this
+    claim overridden?" a comparison two values can fail by 1e-14.
+    """
+
+    version: int
+    default_comp_rate_bp: int
+    ptd_comp_rate_bp: int
+    waiting_period_days: int
+
+    def __post_init__(self) -> None:
+        # A rate outside the domain a *handler* may set is not a tuning
+        # choice: it is a default the console's own override input could not
+        # reproduce, and it would render on the benefit card as a comp rate
+        # nobody can correct back down. Both bounds inclusive, matching the
+        # command's refusal exactly.
+        for name, rate in (
+            ("defaultCompRateBp", self.default_comp_rate_bp),
+            ("ptdCompRateBp", self.ptd_comp_rate_bp),
+        ):
+            if not _COMP_RATE_MIN_BP <= rate <= _COMP_RATE_MAX_BP:
+                raise RuleParameterError(
+                    f"{name} must be between {_COMP_RATE_MIN_BP} and {_COMP_RATE_MAX_BP} "
+                    f"basis points (0-150% of AWW), got {rate}"
+                )
+        # A negative wait is a first payment due before the injury. Zero is
+        # accepted and is a real jurisdiction's rule — "no waiting period" is a
+        # legitimate thing for this parameter to say, and refusing it would
+        # make the document unable to describe one.
+        if self.waiting_period_days < 0:
+            raise RuleParameterError(
+                f"waitingPeriodDays must not be negative, got {self.waiting_period_days}"
+            )
+
+    @classmethod
+    def of(cls, document: LoadedDocument, result: dict[str, Any]) -> "BenefitParams":
+        return cls(
+            version=document.version,
+            default_comp_rate_bp=_integer(document, result, "defaultCompRateBp"),
+            ptd_comp_rate_bp=_integer(document, result, "ptdCompRateBp"),
+            waiting_period_days=_integer(document, result, "waitingPeriodDays"),
+        )
+
+
+async def benefit_params_for(db: AsyncSession, as_of: date | None = None) -> BenefitParams:
+    """Load and validate the benefit parameters effective on `as_of`."""
+    document = await load(db, BENEFIT_PARAMS_KEY, as_of)
+    return BenefitParams.of(document, evaluate(document))

@@ -16,11 +16,14 @@
  * shows "Reserve Adequate / Light / Heavy" here, computed from the bill and
  * payment-schedule tables that arrive in Story 3.3 and judged by the rule
  * Story 3.2 owns. Rendering a verdict from the claim's paid columns alone
- * would be a different rule wearing the same words.
+ * would be a different rule wearing the same words. The benefit card below —
+ * Story 3.1's — is a different question and arrived first: what this claim
+ * pays weekly, not whether the reserve for it is adequate.
  */
 import type { ClaimDetail, RecoveryWindow, TreatmentOverviewData } from "@/api/claims";
 import { formatCents } from "@/lib/money";
 
+import { BenefitCard } from "../BenefitCard";
 import { CardGrid, CaseCard, Kv, TimelineCard } from "../Cards";
 import { EditableRow } from "../EditableRow";
 import {
@@ -150,6 +153,12 @@ export function TreatmentOverview({
           <Kv label="Claim handler">{overview.handlerName}</Kv>
         </CaseCard>
       </CardGrid>
+
+      {/* The prototype's placement: below the two-column grid, above the
+          timeline, on this variant and on investigation alike. */}
+      <div className="mb-[10px]">
+        <BenefitCard claim={claim} />
+      </div>
 
       <TimelineCard
         // "Recent" only when it is: the server says whether it cut the log,

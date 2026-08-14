@@ -112,6 +112,38 @@ export interface paths {
         patch: operations["edit_fields_claims__claim_business_id__patch"];
         trace?: never;
     };
+    "/claims/{claim_business_id}/comp-rate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Set or clear a claim's comp-rate override (audited, versioned)
+         * @description Override the comp rate — or reset it — and answer with the case file.
+         *
+         *     **One route for both, because they are one column.** `compRateBp: null` is
+         *     the reset; a second endpoint would duplicate the refusal ladder to express
+         *     "write NULL" and give one column's history two action names in the audit
+         *     log.
+         *
+         *     The response's `benefit` block is recomputed **server-side** from the new
+         *     column (AC 4): the weekly figure, the clamp against the state's bounds and
+         *     the rationale's closing sentence all move because `services/financials` ran
+         *     again, not because this route told the client anything. That is what makes
+         *     the override a server-side recalculation rather than a number the browser
+         *     displays back to itself.
+         */
+        patch: operations["edit_comp_rate_claims__claim_business_id__comp_rate_patch"];
+        trace?: never;
+    };
     "/claims/{claim_business_id}/documents/{document_id}/content": {
         parameters: {
             query?: never;
@@ -354,6 +386,77 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * BenefitResponse
+         * @description The statutory weekly indemnity benefit, decided server-side (Story 3.1).
+         *
+         *     Outside the stage-variant union, like `injury`, `documents` and `photos`.
+         *     The *card* renders on two variants (the two the prototype puts it on), but
+         *     the figure is a fact about the claim at every stage — see `ClaimDetail`.
+         *
+         *     **Every figure is integer cents; both rates are integer basis points.**
+         *     `compRateBp: 6667` is 66.67%, and the unit is the column's, the rule
+         *     document's and the PATCH body's — so a rate never becomes a float anywhere
+         *     between the database and the input a handler types in. The SPA formats it
+         *     through `lib/rate.ts` exactly as it formats cents through `lib/money.ts`.
+         *
+         *     **`weeklyCents` is already clamped.** The bounds ride along so the card can
+         *     state them (the prototype's "min/max" row), not so a client can apply them:
+         *     the clamp happened in `services/financials`, which is the only place that
+         *     knows the AWW.
+         *
+         *     **`isOverridden` is published rather than inferred** from
+         *     `compRateBp != defaultCompRateBp` — a handler who types the default back in
+         *     has still overridden the claim, and the ↺ control has to appear for them.
+         *
+         *     **`reserveRationale` is a finished paragraph, not a template.** Written by
+         *     `services/financials/rationale.py` from the claim's own columns — a
+         *     deterministic service output, not an LLM narrative and not an `ai_insight`
+         *     row (AD-2). It is the one string in this contract that carries formatted
+         *     money, because it is prose rather than a figure; the reasoning is in that
+         *     module's docstring.
+         *
+         *     **`scheduleEffectiveDate` is the provenance line.** The prototype closes
+         *     the card with "Illustrative figures for prototype purposes — verify against
+         *     the current WC board benefit schedule"; until per-jurisdiction statutory
+         *     data is validated (NFR-4, Deferred), the equivalent honest note is the date
+         *     the schedule on file took effect, which is a fact the table holds rather
+         *     than a disclaimer hardcoded in a component.
+         */
+        BenefitResponse: {
+            /** Compratebp */
+            compRateBp: number;
+            /** Compratemaxbp */
+            compRateMaxBp: number;
+            /** Comprateminbp */
+            compRateMinBp: number;
+            /** Defaultcompratebp */
+            defaultCompRateBp: number;
+            indemnityType: components["schemas"]["IndemnityType"];
+            /** Isoverridden */
+            isOverridden: boolean;
+            /** Paramsversion */
+            paramsVersion: number;
+            /** Reserverationale */
+            reserveRationale: string;
+            /**
+             * Scheduleeffectivedate
+             * Format: date
+             */
+            scheduleEffectiveDate: string;
+            /** Statecode */
+            stateCode: string;
+            /** Statemaxcents */
+            stateMaxCents: number;
+            /** Statemincents */
+            stateMinCents: number;
+            /** Statename */
+            stateName: string;
+            /** Waitingdays */
+            waitingDays: number;
+            /** Weeklycents */
+            weeklyCents: number;
+        };
+        /**
          * BodyPartOptionResponse
          * @description One region of the body diagram: the key stored, the label shown.
          */
@@ -493,6 +596,7 @@ export interface components {
          *     the response rather than reconstructed.
          */
         ClaimDetailResponse: {
+            benefit: components["schemas"]["BenefitResponse"];
             /** Claimid */
             claimId: string;
             documents: components["schemas"]["DocumentsBlockResponse"];
@@ -617,6 +721,40 @@ export interface components {
          * @enum {string}
          */
         CommStatus: "fnol_received" | "incomplete_information" | "need_for_additional_information" | "documents_received_and_approved" | "initial_approval_provided_treatment_underway";
+        /**
+         * CompRatePatch
+         * @description The comp-rate PATCH body: a version, and a rate or `null`.
+         *
+         *     **`compRateBp` is required and nullable, which is the opposite of
+         *     `ClaimFieldPatch`'s members** — and the difference is the story rather than
+         *     an inconsistency. There, an explicit `null` is a caller error: none of the
+         *     six clinical fields has a meaningful empty value, and a handler who cleared
+         *     an input meant to cancel. Here `null` *is* the ↺ reset: it is the value
+         *     that puts the claim back on the statutory default, and the command records
+         *     it as a change like any other.
+         *
+         *     A required field, then, rather than an optional one — there is exactly one
+         *     thing this route does and omitting it is not a way to ask for it.
+         *
+         *     **The bounds are declared here as well as enforced in the command**, on
+         *     `SeverityPatch`'s argument: `0..15000` basis points is the comp rate's
+         *     domain rather than a vocabulary that might move, so putting it in the
+         *     contract lets the generated client refuse out-of-range input before a
+         *     round trip — and the command still refuses it for the AD-13 agent tools
+         *     that never pass through Pydantic.
+         */
+        CompRatePatch: {
+            /**
+             * Compratebp
+             * @description The comp rate to apply, in **basis points** — 6667 is 66.67% of AWW. `null` clears the override and restores the statutory default (the ↺ control). Basis points rather than a percentage so the value is exact: 66.67 does not round-trip through a float.
+             */
+            compRateBp: number | null;
+            /**
+             * Expectedversion
+             * @description The `version` the client read. The write is compare-and-swapped on it and answers 409 with the fresh entity on a mismatch.
+             */
+            expectedVersion: number;
+        };
         /**
          * CoordinationStatus
          * @description Snake_case values per the enum convention — the UI owns labels.
@@ -823,6 +961,25 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /**
+         * IndemnityType
+         * @description Snake/lowercase values per the enum convention — the UI owns labels.
+         *
+         *     Here rather than in `data/models/enums.py` for `RiskBand`'s reason: no
+         *     column holds one. `BodyRegion` and `ClaimPath` moved to the data layer
+         *     only because `additional_injury.body_key` and `path_required_form.path`
+         *     are native enum columns; nothing stores an indemnity type, and AD-10 says
+         *     nothing may.
+         *
+         *     The prototype's strings are the label and the abbreviation glued together
+         *     (`"TTD — Temporary Total Disability"`) and it recovers the short form with
+         *     `.split(" — ")[0]`. Both halves are display text, so both live in the
+         *     browser (`web/src/features/claim-detail/labels.ts`); the wire carries the
+         *     token. The one exception is the reserve-rationale sentence, which is prose
+         *     the *server* writes and therefore spells the abbreviation itself.
+         * @enum {string}
+         */
+        IndemnityType: "ttd" | "tpd" | "ppd" | "ptd";
         /**
          * InjuryDiagramResponse
          * @description The Injury Diagram tab's whole payload (Story 2.4, AC 1).
@@ -1740,6 +1897,24 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description The claim's jurisdiction has no `state_rate_schedule` row, so its weekly benefit cannot be calculated and no default is substituted (RFC 9457 problem document). Unreachable against a correctly migrated database — 0023 refuses to complete otherwise. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
         };
     };
     edit_fields_claims__claim_business_id__patch: {
@@ -1847,6 +2022,151 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description The claim's jurisdiction has no `state_rate_schedule` row, so its weekly benefit cannot be calculated and no default is substituted (RFC 9457 problem document). Unreachable against a correctly migrated database — 0023 refuses to complete otherwise. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+        };
+    };
+    edit_comp_rate_claims__claim_business_id__comp_rate_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The claim's business id, `WC-nnnn`. */
+                claim_business_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CompRatePatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaimDetailResponse"];
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The caller's role does not carry the edit capability. Answered before the claim is looked up, so it says nothing about whether the claim exists (RFC 9457 problem document). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description No such claim in the caller's scope. Deliberately the same answer for a claim that does not exist and one that belongs to another employer — see the route docstring (RFC 9457 problem document). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The claim has changed since the caller read it. The body is an RFC 9457 problem document carrying the fresh entity under `claim` — re-read and redo; nothing is merged server-side. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        claim: components["schemas"]["ClaimDetailResponse"];
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description The claim's jurisdiction has no `state_rate_schedule` row, so its weekly benefit cannot be calculated and no default is substituted (RFC 9457 problem document). Unreachable against a correctly migrated database — 0023 refuses to complete otherwise. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
                 };
             };
         };
@@ -2028,6 +2348,24 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description The claim's jurisdiction has no `state_rate_schedule` row, so its weekly benefit cannot be calculated and no default is substituted (RFC 9457 problem document). Unreachable against a correctly migrated database — 0023 refuses to complete otherwise. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
         };
     };
     remove_injury_claims__claim_business_id__injuries__injury_id__delete: {
@@ -2138,6 +2476,24 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description The claim's jurisdiction has no `state_rate_schedule` row, so its weekly benefit cannot be calculated and no default is substituted (RFC 9457 problem document). Unreachable against a correctly migrated database — 0023 refuses to complete otherwise. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
         };
     };
     edit_severity_claims__claim_business_id__severity_patch: {
@@ -2245,6 +2601,24 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description The claim's jurisdiction has no `state_rate_schedule` row, so its weekly benefit cannot be calculated and no default is substituted (RFC 9457 problem document). Unreachable against a correctly migrated database — 0023 refuses to complete otherwise. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
                 };
             };
         };

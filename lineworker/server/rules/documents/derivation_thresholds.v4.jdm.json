@@ -1,0 +1,117 @@
+{
+  "contentType": "application/vnd.gorules.decision",
+  "name": "derivation_thresholds",
+  "description": "Version 4 (Story 3.1): version 3's twelve parameters unchanged, plus the one the indemnity-type derivation reads. Superseding is a new document, never an edit — v1, v2 and v3 stay exactly what Stories 2.1, 2.2 and 2.5 shipped, so an ordering, a banner or a forms card produced under any of them is still explainable. ptdSeverityThreshold is the severity score at or above which a permanently disabled worker is treated as permanently TOTALLY disabled rather than partially: it decides the indemnity type (ptd vs ppd) and, through it, the comp rate the weekly benefit is computed at. It lives in THIS document rather than in benefit_params because indemnity_type is a registered derivation (AD-10) and DerivationThresholds is the single argument every registered derivation is built from — the same argument v3 made for the path parameters. The split matters more here than it did there: the PTD test is asked ONCE, of the derivation, and services/financials consumes its answer rather than re-deriving it, so this threshold has exactly one reader and AD-8's 'each rule element in exactly one tier' is a fact about the code rather than a convention. The rate the PTD branch then pays (ptdCompRateBp) is financial tuning and lives in benefit_params, which services/financials owns. 85 is the prototype's cut-off (computeBenefit: c.disability===\"Permanent\" && c.sevScore>=85), ported exactly.",
+  "nodes": [
+    {
+      "id": "request",
+      "type": "inputNode",
+      "name": "request",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "thresholds",
+      "type": "expressionNode",
+      "name": "thresholds",
+      "position": {
+        "x": 240,
+        "y": 0
+      },
+      "content": {
+        "expressions": [
+          {
+            "id": "riskHighMin",
+            "key": "riskHighMin",
+            "value": "65"
+          },
+          {
+            "id": "riskMedMin",
+            "key": "riskMedMin",
+            "value": "35"
+          },
+          {
+            "id": "siuFraudScoreMin",
+            "key": "siuFraudScoreMin",
+            "value": "60"
+          },
+          {
+            "id": "rtwBlockedHashModulus",
+            "key": "rtwBlockedHashModulus",
+            "value": "5"
+          },
+          {
+            "id": "paymentDueHashModulus",
+            "key": "paymentDueHashModulus",
+            "value": "3"
+          },
+          {
+            "id": "treatmentEarlyMaxRatio",
+            "key": "treatmentEarlyMaxRatio",
+            "value": "0.3"
+          },
+          {
+            "id": "treatmentActiveMaxRatio",
+            "key": "treatmentActiveMaxRatio",
+            "value": "0.7"
+          },
+          {
+            "id": "recoveryYearExpectedDays",
+            "key": "recoveryYearExpectedDays",
+            "value": "180"
+          },
+          {
+            "id": "recoveryDefaultExpectedDays",
+            "key": "recoveryDefaultExpectedDays",
+            "value": "42"
+          },
+          {
+            "id": "pathMinorSeverityMax",
+            "key": "pathMinorSeverityMax",
+            "value": "35"
+          },
+          {
+            "id": "pathMinorRecoveryWindows",
+            "key": "pathMinorRecoveryWindows",
+            "value": "['weeks_0_2']"
+          },
+          {
+            "id": "pathFatalitySeverityMin",
+            "key": "pathFatalitySeverityMin",
+            "value": "100"
+          },
+          {
+            "id": "ptdSeverityThreshold",
+            "key": "ptdSeverityThreshold",
+            "value": "85"
+          }
+        ]
+      }
+    },
+    {
+      "id": "response",
+      "type": "outputNode",
+      "name": "response",
+      "position": {
+        "x": 480,
+        "y": 0
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "request-thresholds",
+      "type": "edge",
+      "sourceId": "request",
+      "targetId": "thresholds"
+    },
+    {
+      "id": "thresholds-response",
+      "type": "edge",
+      "sourceId": "thresholds",
+      "targetId": "response"
+    }
+  ]
+}

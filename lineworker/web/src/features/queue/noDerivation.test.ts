@@ -181,6 +181,16 @@ const DERIVED_FIELDS =
   // `blobUrl === null` is the same mistake in the other direction: a
   // volume-backed store answers null for a photo that exists.
   "count|hasBlob|" +
+  // Story 3.1's. `weeklyCents` is the most tempting recomputation in the
+  // console — an AWW and a percentage are both on screen — and `isOverridden`
+  // is the one a client would most plausibly *infer*, by comparing the two
+  // rates, which answers wrongly for a handler who typed the default back in.
+  // `indemnityType` is a four-way classification with a rules-tier cut-off
+  // behind it. The comp rate's *bounds* are deliberately absent from this
+  // list, exactly as `severityMin`/`severityMax` are: they are served so the
+  // input can pre-flight refuse, and comparing against them is the intended
+  // use rather than a second rule.
+  "weeklyCents|compRateBp|defaultCompRateBp|isOverridden|indemnityType|" +
   // Story 2.5's. `path` is the claim's statutory classification and is the
   // single most consequential derived value in the console — it decides which
   // death-benefit forms a handler is shown — so a comparison against it, or
@@ -289,6 +299,11 @@ test("the scan reaches the files it claims to", () => {
   // thumbnail state, which a component would get wrong by reading the URL
   // instead of the flag.
   expect(scanned).toContain(path.join("features", "claim-detail", "photos", "PhotoCard.tsx"));
+  // Story 3.1's benefit card. The pull here is the strongest of the lot: an
+  // AWW and a comp rate are on screen together, and multiplying them is one
+  // line — which is exactly what the prototype's `computeBenefit` does in the
+  // browser, clamp and all.
+  expect(scanned).toContain(path.join("features", "claim-detail", "BenefitCard.tsx"));
   expect(scanned.some((name) => name.includes(".test."))).toBe(false);
 });
 

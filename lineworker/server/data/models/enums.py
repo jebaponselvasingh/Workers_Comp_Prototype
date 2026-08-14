@@ -203,6 +203,13 @@ class TimelineTag(StrEnum):
     # enough to be named rather than left for a reader to infer from a
     # failing test — see `RUNTIME_ONLY_TIMELINE_TAGS`.
     edit = "edit"
+    # Story 3.1, and the first Epic 3 member: a financial decision on the case
+    # file (today, the comp-rate override; 3.4's payment approvals next). Not
+    # folded into `edit` because a reader scanning a timeline for what moved a
+    # claim's money should be able to filter on a token rather than parse
+    # descriptions — which is the one thing `settlement` already proves a tag
+    # is good for (`_settlement_date` matches on it).
+    benefit = "benefit"
 
 
 #: Tags no seeded row carries because they are emitted by a command rather
@@ -210,4 +217,6 @@ class TimelineTag(StrEnum):
 #: asserting that the seeded tag set is exactly the enum — which keeps that
 #: assertion an equality (it would be vacuous as a subset check) while
 #: letting later epics add their own event kinds.
-RUNTIME_ONLY_TIMELINE_TAGS: frozenset[TimelineTag] = frozenset({TimelineTag.edit})
+RUNTIME_ONLY_TIMELINE_TAGS: frozenset[TimelineTag] = frozenset(
+    {TimelineTag.edit, TimelineTag.benefit}
+)

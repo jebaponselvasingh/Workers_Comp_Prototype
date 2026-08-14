@@ -1,0 +1,104 @@
+[
+ {
+  "state_code": "OH",
+  "state_name": "Ohio",
+  "weekly_min_cents": 28700,
+  "weekly_max_cents": 114700
+ },
+ {
+  "state_code": "MN",
+  "state_name": "Minnesota",
+  "weekly_min_cents": 26200,
+  "weekly_max_cents": 131200
+ },
+ {
+  "state_code": "IL",
+  "state_name": "Illinois",
+  "weekly_min_cents": 27700,
+  "weekly_max_cents": 184800
+ },
+ {
+  "state_code": "WA",
+  "state_name": "Washington",
+  "weekly_min_cents": 25700,
+  "weekly_max_cents": 171100
+ },
+ {
+  "state_code": "TX",
+  "state_name": "Texas",
+  "weekly_min_cents": 16700,
+  "weekly_max_cents": 111600
+ },
+ {
+  "state_code": "MA",
+  "state_name": "Massachusetts",
+  "weekly_min_cents": 35900,
+  "weekly_max_cents": 179600
+ },
+ {
+  "state_code": "IA",
+  "state_name": "Iowa",
+  "weekly_min_cents": 42000,
+  "weekly_max_cents": 210100
+ },
+ {
+  "state_code": "MI",
+  "state_name": "Michigan",
+  "weekly_min_cents": 29700,
+  "weekly_max_cents": 118800
+ },
+ {
+  "state_code": "SC",
+  "state_name": "South Carolina",
+  "weekly_min_cents": 21800,
+  "weekly_max_cents": 109300
+ },
+ {
+  "state_code": "KY",
+  "state_name": "Kentucky",
+  "weekly_min_cents": 23100,
+  "weekly_max_cents": 115700
+ },
+ {
+  "state_code": "AL",
+  "state_name": "Alabama",
+  "weekly_min_cents": 27800,
+  "weekly_max_cents": 111300
+ },
+ {
+  "state_code": "NJ",
+  "state_name": "New Jersey",
+  "weekly_min_cents": 28000,
+  "weekly_max_cents": 112100
+ },
+ {
+  "state_code": "SD",
+  "state_name": "South Dakota",
+  "weekly_min_cents": 24400,
+  "weekly_max_cents": 97500
+ },
+ {
+  "state_code": "IN",
+  "state_name": "Indiana",
+  "weekly_min_cents": 7500,
+  "weekly_max_cents": 117000
+ },
+ {
+  "state_code": "CA",
+  "state_name": "California",
+  "weekly_min_cents": 24300,
+  "weekly_max_cents": 162000
+ },
+ {
+  "state_code": "NC",
+  "state_name": "North Carolina",
+  "weekly_min_cents": 62700,
+  "weekly_max_cents": 125400
+ },
+ {
+  "state_code": "AZ",
+  "state_name": "Arizona",
+  "weekly_min_cents": 26300,
+  "weekly_max_cents": 105300
+ }
+]

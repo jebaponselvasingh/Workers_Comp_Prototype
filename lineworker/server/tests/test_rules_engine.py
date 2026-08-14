@@ -29,13 +29,16 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from data.models.enums import ClaimStatus, DocType, RecoveryWindow
 from rules.engine import LoadedDocument, RuleDocumentMissing, evaluate, load
 from rules.parameters import (
+    BENEFIT_PARAMS_KEY,
     DERIVATION_THRESHOLDS_KEY,
     INJURY_CAPTURE_KEY,
     INTAKE_REQUIRED_DOCUMENTS_KEY,
     PRIORITY_WEIGHTS_KEY,
+    BenefitParams,
     DerivationThresholds,
     IntakeRequirements,
     PriorityWeights,
+    benefit_params_for,
     intake_requirements_for,
     thresholds_for,
     weights_for,
@@ -57,13 +60,15 @@ DOCUMENTS_DIR = Path(__file__).resolve().parents[1] / "rules" / "documents"
 # reads the unversioned name at migration time and editing it would rewrite
 # v1's content on a fresh database.
 EFFECTIVE_DOCUMENTS: tuple[tuple[str, int, str], ...] = (
-    (DERIVATION_THRESHOLDS_KEY, 3, "derivation_thresholds.v3.jdm.json"),
+    (DERIVATION_THRESHOLDS_KEY, 4, "derivation_thresholds.v4.jdm.json"),
     (PRIORITY_WEIGHTS_KEY, 1, "priority_weights.jdm.json"),
     (INTAKE_REQUIRED_DOCUMENTS_KEY, 1, "intake_required_documents.jdm.json"),
     # Story 2.4's, missing from this tuple until Story 2.6's review pass found
     # it — see `test_every_committed_rule_document_is_covered_by_this_file`,
     # which is what stops the next one being missed.
     (INJURY_CAPTURE_KEY, 1, "injury_capture.jdm.json"),
+    # Story 3.1's, and the first document owned by `services/financials`.
+    (BENEFIT_PARAMS_KEY, 1, "benefit_params.jdm.json"),
 )
 
 # **Every** seeded (key, version, file), not only the effective ones.
@@ -78,6 +83,7 @@ EFFECTIVE_DOCUMENTS: tuple[tuple[str, int, str], ...] = (
 SEEDED_DOCUMENTS: tuple[tuple[str, int, str], ...] = (
     (DERIVATION_THRESHOLDS_KEY, 1, "derivation_thresholds.jdm.json"),
     (DERIVATION_THRESHOLDS_KEY, 2, "derivation_thresholds.v2.jdm.json"),
+    (DERIVATION_THRESHOLDS_KEY, 3, "derivation_thresholds.v3.jdm.json"),
     *EFFECTIVE_DOCUMENTS,
 )
 
@@ -97,6 +103,17 @@ EXPECTED_THRESHOLDS: dict[str, Any] = {
     "pathMinorSeverityMax": 35,
     "pathMinorRecoveryWindows": ["weeks_0_2"],
     "pathFatalitySeverityMin": 100,
+    # Story 3.1's one, added in version 4. It parameterises `indemnity_type`,
+    # which is a registered derivation — the rate it selects lives in
+    # `benefit_params` instead, which is the AD-8 split this pair illustrates.
+    "ptdSeverityThreshold": 85,
+}
+
+# Story 3.1's document, restated. Rates are BASIS POINTS: 6667 is 66.67%.
+EXPECTED_BENEFIT_PARAMS: dict[str, Any] = {
+    "defaultCompRateBp": 6667,
+    "ptdCompRateBp": 10_000,
+    "waitingPeriodDays": 7,
 }
 
 EXPECTED_INTAKE_REQUIREMENTS: dict[str, Any] = {
@@ -195,7 +212,19 @@ async def test_every_superseded_version_is_still_exactly_what_it_was(
         },
         # v2 is v1 plus the treatment-phase four, and *without* Story 2.5's
         # three: a v3 that had been written as an edit would show up here.
-        2: {key: value for key, value in EXPECTED_THRESHOLDS.items() if not key.startswith("path")},
+        2: {
+            key: value
+            for key, value in EXPECTED_THRESHOLDS.items()
+            if not key.startswith("path") and key != "ptdSeverityThreshold"
+        },
+        # v3 is v2 plus the path three, and *without* Story 3.1's one — the
+        # same assertion one story later, against the version the forms card
+        # is still explained by.
+        3: {
+            key: value
+            for key, value in EXPECTED_THRESHOLDS.items()
+            if key != "ptdSeverityThreshold"
+        },
     }
 
     for version, expected in superseded.items():
@@ -275,6 +304,12 @@ async def test_the_intake_requirements_document_evaluates_to_the_story_values(
     assert evaluate(await load(db, INTAKE_REQUIRED_DOCUMENTS_KEY)) == EXPECTED_INTAKE_REQUIREMENTS
 
 
+async def test_the_benefit_params_document_evaluates_to_the_story_values(
+    db: AsyncSession,
+) -> None:
+    assert evaluate(await load(db, BENEFIT_PARAMS_KEY)) == EXPECTED_BENEFIT_PARAMS
+
+
 async def test_the_typed_blocks_carry_the_evaluated_values(db: AsyncSession) -> None:
     """The JSON→Python boundary, in the direction consumers use it.
 
@@ -287,7 +322,7 @@ async def test_the_typed_blocks_carry_the_evaluated_values(db: AsyncSession) -> 
     requirements = await intake_requirements_for(db)
 
     assert thresholds == DerivationThresholds(
-        version=3,
+        version=4,
         risk_high_min=EXPECTED_THRESHOLDS["riskHighMin"],
         risk_med_min=EXPECTED_THRESHOLDS["riskMedMin"],
         siu_fraud_score_min=EXPECTED_THRESHOLDS["siuFraudScoreMin"],
@@ -302,6 +337,13 @@ async def test_the_typed_blocks_carry_the_evaluated_values(db: AsyncSession) -> 
             RecoveryWindow(value) for value in EXPECTED_THRESHOLDS["pathMinorRecoveryWindows"]
         ),
         path_fatality_severity_min=EXPECTED_THRESHOLDS["pathFatalitySeverityMin"],
+        ptd_severity_threshold=EXPECTED_THRESHOLDS["ptdSeverityThreshold"],
+    )
+    assert await benefit_params_for(db) == BenefitParams(
+        version=1,
+        default_comp_rate_bp=EXPECTED_BENEFIT_PARAMS["defaultCompRateBp"],
+        ptd_comp_rate_bp=EXPECTED_BENEFIT_PARAMS["ptdCompRateBp"],
+        waiting_period_days=EXPECTED_BENEFIT_PARAMS["waitingPeriodDays"],
     )
     assert requirements == IntakeRequirements(
         version=1,

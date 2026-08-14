@@ -14,11 +14,11 @@
  * file. Either row sends both; the unchanged half is dropped server-side, so
  * the audit diff still records only what moved.
  *
- * **Two things this variant still does not show.** The prototype embeds a
- * benefit-calculation card and an "Upcoming actions required" worklist here;
- * both are Epic 3 (3.1 and 3.5). They are omitted rather than stubbed: an
- * empty actions panel would read as "no outstanding actions", which is a
- * statement about the claim this story cannot make.
+ * **One thing this variant still does not show.** The prototype embeds an
+ * "Upcoming actions required" worklist below the benefit card; it is Story
+ * 3.5's. It is omitted rather than stubbed: an empty actions panel would read
+ * as "no outstanding actions", which is a statement about the claim this
+ * story cannot make. The benefit card beside it arrived with Story 3.1.
  */
 import type {
   ClaimDetail,
@@ -28,6 +28,7 @@ import type {
 } from "@/api/claims";
 import { formatCents } from "@/lib/money";
 
+import { BenefitCard } from "../BenefitCard";
 import {
   CardGrid,
   CaseCard,
@@ -189,6 +190,13 @@ export function InvestigationOverview({
           )}
         </CaseCard>
       </CardGrid>
+
+      {/* The prototype puts the benefit card between the two-column grid and
+          the timeline on this variant and on treatment (`benefitCardHTML` is
+          called from both). */}
+      <div className="mb-[10px]">
+        <BenefitCard claim={claim} />
+      </div>
 
       <TimelineCard title="Case timeline" entries={overview.timeline} />
     </>

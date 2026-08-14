@@ -663,6 +663,75 @@ export const PHOTOS_BLOCK_WITH_IMAGE = {
   ],
 };
 
+/**
+ * The benefit block (Story 3.1) — one claim's statutory weekly indemnity.
+ *
+ * Every figure is integer cents and both rates are integer basis points, as
+ * they are on the wire: `compRateBp: 6667` is 66.67% of AWW. The values are a
+ * *coherent* answer for the Washington claim above (66.67% of a $1,432 wage is
+ * $954.71, inside WA's $257–$1,711 range) rather than round numbers, so a
+ * component that reformatted a rate or dropped a decimal has something to be
+ * visibly wrong against.
+ *
+ * `isOverridden` is `false` and `compRateBp` equals `defaultCompRateBp`, which
+ * is the *un*-overridden state — see `BENEFIT_OVERRIDDEN_AT_DEFAULT` for the
+ * fixture that tells "on the default" apart from "overridden to the default".
+ */
+export const BENEFIT = {
+  weeklyCents: 95_471,
+  compRateBp: 6667,
+  defaultCompRateBp: 6667,
+  isOverridden: false,
+  indemnityType: "ttd" as const,
+  stateCode: "WA",
+  stateName: "Washington",
+  stateMinCents: 25_700,
+  stateMaxCents: 171_100,
+  scheduleEffectiveDate: "2026-01-01",
+  waitingDays: 7,
+  reserveRationale:
+    "Reserve set at $22,349 reflects a medium severity fall from height " +
+    "(score 52/100) with a 6-8 weeks expected recovery window. Indemnity " +
+    "exposure estimated at TTD weekly benefit through projected MMI. " +
+    "Reviewed against WA statutory min/max ($257–$1,711/wk).",
+  compRateMinBp: 0,
+  compRateMaxBp: 15_000,
+  paramsVersion: 1,
+};
+
+/** The same claim with a handler's override applied — the ↺ state. */
+export const BENEFIT_OVERRIDDEN = {
+  ...BENEFIT,
+  weeklyCents: 100_598,
+  compRateBp: 7025,
+  isOverridden: true,
+  reserveRationale:
+    BENEFIT.reserveRationale +
+    " Comp rate manually adjusted to 70.25% (default 66.67%) by handler.",
+};
+
+/**
+ * Overridden to *exactly* the statutory default.
+ *
+ * The payload a component reading `compRateBp !== defaultCompRateBp` cannot
+ * tell from an un-overridden claim — which is why the server publishes
+ * `isOverridden` and why the ↺ has to be bound to it. Real: a handler who
+ * types 66.67 has made a decision the case file records.
+ */
+export const BENEFIT_OVERRIDDEN_AT_DEFAULT = {
+  ...BENEFIT,
+  isOverridden: true,
+};
+
+/** A permanent total disability: full wage, and the clamp biting at the top. */
+export const BENEFIT_PTD = {
+  ...BENEFIT,
+  weeklyCents: 171_100,
+  compRateBp: 10_000,
+  defaultCompRateBp: 10_000,
+  indemnityType: "ptd" as const,
+};
+
 /** The two viewer sheets the content endpoint answers (Story 2.5, AC 4). */
 export const DOCUMENT_SHEET_FROI = {
   status: 200,
@@ -752,6 +821,7 @@ export const CLAIM_DETAIL_TREATMENT = {
     injury: INJURY_DIAGRAM,
     documents: DOCUMENTS_BLOCK,
     photos: PHOTOS_BLOCK,
+    benefit: BENEFIT,
     requirementsVersion: null,
     header: HEADER,
     stepper: stepper("treatment"),
@@ -788,6 +858,7 @@ export const CLAIM_DETAIL_INTAKE = {
     injury: INJURY_DIAGRAM,
     documents: DOCUMENTS_BLOCK,
     photos: PHOTOS_BLOCK,
+    benefit: BENEFIT,
     requirementsVersion: 1,
     header: {
       ...HEADER,
@@ -842,6 +913,7 @@ export const CLAIM_DETAIL_INVESTIGATION = {
     injury: INJURY_DIAGRAM,
     documents: DOCUMENTS_BLOCK,
     photos: PHOTOS_BLOCK,
+    benefit: BENEFIT,
     requirementsVersion: null,
     header: { ...HEADER, claimId: "WC-20051", stage: "investigation", risk: "med" },
     stepper: stepper("investigation"),
@@ -895,6 +967,7 @@ export const CLAIM_DETAIL_SETTLED = {
     injury: INJURY_DIAGRAM,
     documents: DOCUMENTS_BLOCK,
     photos: PHOTOS_BLOCK,
+    benefit: BENEFIT,
     requirementsVersion: null,
     header: { ...HEADER, claimId: "WC-20068", stage: "settled", risk: "low" },
     stepper: stepper("settled"),

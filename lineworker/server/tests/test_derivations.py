@@ -44,7 +44,7 @@ SERVER_ROOT = Path(__file__).resolve().parents[1]
 # with that code however wrong both were. `tests/test_rules_engine.py` is
 # what ties these values back to the committed document.
 SEEDED_THRESHOLDS = DerivationThresholds(
-    version=3,
+    version=4,
     risk_high_min=65,
     risk_med_min=35,
     siu_fraud_score_min=60,
@@ -59,6 +59,9 @@ SEEDED_THRESHOLDS = DerivationThresholds(
     path_minor_severity_max=35,
     path_minor_recovery_windows=frozenset({RecoveryWindow.weeks_0_2}),
     path_fatality_severity_min=100,
+    # Story 3.1's, added in version 4 — the PTD cut-off `indemnity_type`
+    # bands `severity_score` against.
+    ptd_severity_threshold=85,
 )
 
 

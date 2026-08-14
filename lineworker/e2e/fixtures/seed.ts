@@ -41,6 +41,11 @@ interface SeedClaim {
   status: string;
   severity_score: number;
   return_status: string;
+  // Story 3.1's four: the benefit is a function of the wage, the
+  // jurisdiction and the disability.
+  state: string;
+  aww: number;
+  disability: string;
   froi_date: string;
   surgery_required: boolean;
   litigation_flag: boolean;
@@ -857,4 +862,120 @@ export function claimWithMostPhotos(name: string, role: string): string {
     .sort((a, b) => b.n - a.n || a.claimId.localeCompare(b.claimId))[0];
   if (!best || best.n === 0) throw new Error(`no photographed claim for ${name}/${role}`);
   return best.claimId;
+}
+
+
+/* --- Story 3.1: the statutory benefit calculation ---------------------- */
+
+const STATE_RATES_PATH = fileURLToPath(
+  new URL("../../server/data/seed/state_rates.json", import.meta.url),
+);
+
+interface SeedStateRate {
+  state_code: string;
+  state_name: string;
+  weekly_min_cents: number;
+  weekly_max_cents: number;
+}
+
+const stateRates = JSON.parse(readFileSync(STATE_RATES_PATH, "utf8")) as SeedStateRate[];
+
+/**
+ * The benefit rule, restated independently — `expectedRiskFor`'s discipline.
+ *
+ * These four constants are `benefit_params` v1 and `derivation_thresholds`
+ * v4's PTD cut-off, written out rather than read from the documents: a spec
+ * that loaded the rule it is testing would agree with any rule at all. The
+ * arithmetic below is a second implementation of `compute_benefit` in
+ * TypeScript for the same reason.
+ */
+const DEFAULT_COMP_RATE_BP = 6667;
+const PTD_COMP_RATE_BP = 10_000;
+const PTD_SEVERITY_THRESHOLD = 85;
+const BASIS_POINTS_PER_UNIT = 10_000;
+
+/** The date migration 0023 supplies, which the card cites as provenance. */
+export const SCHEDULE_EFFECTIVE_FROM = "2026-01-01";
+
+export function expectedStateRate(claimId: string): SeedStateRate {
+  const claim = seed.claims.find((c) => c.claim_id === claimId);
+  if (!claim) throw new Error(`no seeded claim ${claimId}`);
+  const rate = stateRates.find((r) => r.state_code === claim.state);
+  // The prototype falls back to `{max:1200,min:250}` here; this throws,
+  // because a jurisdiction with no schedule is the thing Story 3.1 refuses to
+  // paper over and a spec that quietly invented bounds would hide it.
+  if (!rate) throw new Error(`no statutory rate schedule for ${claim.state}`);
+  return rate;
+}
+
+export interface ExpectedBenefit {
+  weeklyCents: number;
+  compRateBp: number;
+  defaultCompRateBp: number;
+  indemnityType: "ttd" | "tpd" | "ppd" | "ptd";
+  stateMinCents: number;
+  stateMaxCents: number;
+  stateName: string;
+}
+
+/** Half up on the cents, matching the engine's one rounding convention. */
+function roundHalfUp(value: number, divisor: number): number {
+  const quotient = Math.floor(value / divisor);
+  const remainder = value - quotient * divisor;
+  return remainder * 2 >= divisor ? quotient + 1 : quotient;
+}
+
+/**
+ * What the card must show for a claim, at the default rate or an override.
+ *
+ * Written out step by step rather than delegating, because every step is an
+ * assertion: the PTD branch, the rate it selects, the rounding and the clamp.
+ */
+export function expectedBenefit(claimId: string, overrideBp?: number): ExpectedBenefit {
+  const claim = seed.claims.find((c) => c.claim_id === claimId);
+  if (!claim) throw new Error(`no seeded claim ${claimId}`);
+  const rate = expectedStateRate(claimId);
+
+  const permanent = claim.disability === "permanent";
+  const isPtd = permanent && claim.severity_score >= PTD_SEVERITY_THRESHOLD;
+  const indemnityType: ExpectedBenefit["indemnityType"] = permanent
+    ? isPtd
+      ? "ptd"
+      : "ppd"
+    : claim.return_status === "returned_and_under_therapy"
+      ? "tpd"
+      : "ttd";
+
+  const defaultCompRateBp = isPtd ? PTD_COMP_RATE_BP : DEFAULT_COMP_RATE_BP;
+  const compRateBp = overrideBp ?? defaultCompRateBp;
+  const unclamped = roundHalfUp(claim.aww * compRateBp, BASIS_POINTS_PER_UNIT);
+
+  return {
+    weeklyCents: Math.max(
+      rate.weekly_min_cents,
+      Math.min(rate.weekly_max_cents, unclamped),
+    ),
+    compRateBp,
+    defaultCompRateBp,
+    indemnityType,
+    stateMinCents: rate.weekly_min_cents,
+    stateMaxCents: rate.weekly_max_cents,
+    stateName: rate.state_name,
+  };
+}
+
+/**
+ * Whole dollars with separators — `web/src/lib/money.ts`'s `formatCents`,
+ * restated so a spec can assert what is on screen rather than what is on the
+ * wire.
+ */
+export function formatCents(cents: number): string {
+  return `$${Math.round(cents / 100).toLocaleString("en-US")}`;
+}
+
+/** Basis points as the card renders them — `lib/rate.ts`, restated. */
+export function formatBasisPoints(basisPoints: number): string {
+  const whole = Math.trunc(basisPoints / 100);
+  const hundredths = Math.abs(basisPoints % 100);
+  return `${whole}.${String(hundredths).padStart(2, "0")}`;
 }

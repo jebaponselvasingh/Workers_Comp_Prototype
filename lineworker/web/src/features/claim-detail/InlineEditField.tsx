@@ -54,12 +54,30 @@ export interface FieldFeedback {
  * `edit-*` selector in the vitest and Playwright suites names a member of
  * this type, and a typo would otherwise be a silently missing assertion.
  */
-export type EditableFieldName = EditableField | "severityScore";
+export type EditableFieldName = EditableField | "severityScore" | "compRate";
 
 /** Bounds for a numeric field, passed to the input and enforced server-side. */
 export interface NumericBounds {
   min: number;
   max: number;
+  /**
+   * The value granularity, when the field is not a whole number.
+   *
+   * Added for Story 3.1's comp rate, whose values have two decimal places
+   * (66.67% of AWW). With the default step of 1 the browser marks every such
+   * rate a `stepMismatch` and one click of the spinner's up arrow snaps to
+   * 67, discarding the decimals the handler typed.
+   *
+   * **It has to be the storage granularity, not a convenient increment**
+   * (code review, 2026-08-14). `stepUp()` moves to the nearest multiple of
+   * `step` above the step base (`min`), so any step the stored value is not a
+   * multiple of rounds the value away on the first click — a step of 0.5
+   * fixes the whole-percent case and reintroduces the same bug one decimal
+   * down. The comp rate passes 0.01, which is one basis point: exactly the
+   * unit the column stores and `parseBasisPoints` accepts. The severity score
+   * passes nothing and keeps integer steps, which is what it wants.
+   */
+  step?: number;
 }
 
 export function InlineEditField({
@@ -146,6 +164,7 @@ export function InlineEditField({
           type={numeric ? "number" : "text"}
           min={numeric?.min}
           max={numeric?.max}
+          step={numeric?.step}
           value={shown}
           onCommit={onCommit}
         />
