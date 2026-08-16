@@ -1,5 +1,6 @@
 /**
- * Story 3.3 — the Bills & Payments tab renders what it was sent.
+ * Stories 3.3 and 3.4 — the Bills & Payments tab renders what it was sent, and
+ * approving a payment changes what it was sent.
  *
  * Every assertion here is of the same kind: the payload said X, the screen
  * says X. That is deliberate and it is the point of the tab — the summary, the
@@ -18,6 +19,7 @@ import { afterEach, expect, test, vi } from "vitest";
 
 import { createQueryClient } from "@/api/queryClient";
 import {
+  APPROVAL_CONFLICT_PAID,
   CLAIM_FINANCIALS,
   CLAIM_FINANCIALS_UNPAID,
   ME_HANDLER,
@@ -25,6 +27,7 @@ import {
   stubApi,
 } from "@/test/api-mock";
 
+import { formatDate } from "../Cards";
 import { LINE_ITEM_STATUS_LABEL, RESERVE_VERDICT_LABEL, SCHEDULE_STATUS_LABEL } from "../labels";
 import { BillsTab } from "./BillsTab";
 
@@ -271,12 +274,9 @@ test("a pending-submission bill does not read as payment scheduled", async () =>
   expect(within(pending!).queryByText("Payment Scheduled")).not.toBeInTheDocument();
 });
 
-// --- the read-only sheet --------------------------------------------------
+// --- the sheet, and Story 3.4's approval ----------------------------------
 
-test("clicking a week opens a sheet describing it, with no approve button", async () => {
-  // Story 3.3 ships no status-mutating command, so an approve control here
-  // would be a button that either does nothing or writes through a path that
-  // does not exist. 3.4 adds the command and the button together.
+test("clicking a week opens a sheet describing it", async () => {
   renderTab();
   await screen.findByTestId("bills-tab");
 
@@ -286,7 +286,144 @@ test("clicking a week opens a sheet describing it, with no approve button", asyn
   expect(within(sheet).getByTestId("line-sheet-title")).toHaveTextContent("Week 3");
   expect(within(sheet).getByTestId("line-sheet")).toHaveAttribute("data-kind", "week");
   expect(within(sheet).getByTestId("line-sheet-note")).toHaveTextContent("falls due");
-  expect(within(sheet).queryByRole("button", { name: /approve/i })).not.toBeInTheDocument();
+});
+
+test("the approve button is offered exactly where the server says it may be", async () => {
+  // **`approvable` is read, not recomputed** (Story 3.4, AD-1). The fixture's
+  // week 1 is paid and its week 3 is due this week, and the server's answer
+  // about each is a boolean on the row — so a component that had branched on
+  // `status` instead would still pass this, which is why the *next* test
+  // approves a week the status alone would not obviously admit.
+  renderTab();
+  await screen.findByTestId("bills-tab");
+
+  await userEvent.click(screen.getAllByTestId("schedule-week-button")[0]);
+  let sheet = await screen.findByTestId("line-item-sheet");
+  expect(within(sheet).queryByTestId("approve-payment")).not.toBeInTheDocument();
+  expect(within(sheet).getByTestId("approve-paid")).toHaveTextContent("Payment already made");
+
+  await userEvent.keyboard("{Escape}");
+  await userEvent.click(screen.getAllByTestId("schedule-week-button")[2]);
+  sheet = await screen.findByTestId("line-item-sheet");
+  expect(within(sheet).getByTestId("approve-payment")).toBeInTheDocument();
+});
+
+test("approving a week re-renders the sheet from the response, not from a copy", async () => {
+  // The behaviour the sheet's whole shape exists for. `SheetTarget` holds a
+  // week *number*, so the row is looked up in the payload on every render —
+  // and the payload the approval returns has the new status on it. A sheet
+  // that had kept the row it was opened with would still read "Due This Week"
+  // over a button that had just succeeded.
+  //
+  // Note what is asserted about the *button*: it is gone, replaced by the
+  // batch sentence. That is `approvable: false` coming back from the server,
+  // not a local flag — the fixture is what decides it.
+  renderTab();
+  await screen.findByTestId("bills-tab");
+
+  await userEvent.click(screen.getAllByTestId("schedule-week-button")[2]);
+  const sheet = await screen.findByTestId("line-item-sheet");
+  await userEvent.click(within(sheet).getByTestId("approve-payment"));
+
+  expect(await within(sheet).findByTestId("approve-scheduled")).toHaveTextContent(
+    "Scheduled for next payment batch",
+  );
+  expect(within(sheet).queryByTestId("approve-payment")).not.toBeInTheDocument();
+  expect(within(sheet).getByTestId("line-sheet-note")).toHaveTextContent(
+    "queued for disbursement",
+  );
+
+  // And the table behind it moved with it, because both read one payload.
+  const row = screen.getAllByTestId("schedule-row")[2];
+  expect(row).toHaveAttribute("data-status", "payment_scheduled");
+});
+
+test("a conflict says which conflict it was, inline, and refreshes the figures", async () => {
+  // AD-9: roll back to the server's state, render it inline, never retry. The
+  // message distinguishes "the batch paid it" from "somebody approved it"
+  // because `paymentStatus` on the problem document says which — two different
+  // things for a handler to do next, and a generic "someone changed this"
+  // would send them looking for a colleague who was never involved.
+  renderTab();
+  stubApi({
+    me: ME_HANDLER,
+    claimFinancials: CLAIM_FINANCIALS,
+    approvePayment: APPROVAL_CONFLICT_PAID,
+  });
+  await screen.findByTestId("bills-tab");
+
+  await userEvent.click(screen.getAllByTestId("schedule-week-button")[2]);
+  const sheet = await screen.findByTestId("line-item-sheet");
+  await userEvent.click(within(sheet).getByTestId("approve-payment"));
+
+  const error = await within(sheet).findByTestId("approve-error");
+  expect(error).toHaveTextContent("disbursed in a batch");
+  expect(error).toHaveAttribute("role", "alert");
+  // The fresh payload the 409 carried was installed, so the row now reads paid
+  // rather than sitting at the state the failed approval was written against.
+  expect(within(sheet).getByTestId("approve-paid")).toBeInTheDocument();
+  expect(screen.getAllByTestId("schedule-row")[2]).toHaveAttribute("data-status", "paid");
+});
+
+test("a refusal does not follow the handler onto the next row they open", async () => {
+  // The error is keyed by the row it was raised about and read back by
+  // comparison, so opening a different week shows that week's state and not
+  // the previous one's refusal — which would read as this week being refused.
+  renderTab();
+  stubApi({
+    me: ME_HANDLER,
+    claimFinancials: CLAIM_FINANCIALS,
+    approvePayment: APPROVAL_CONFLICT_PAID,
+  });
+  await screen.findByTestId("bills-tab");
+
+  await userEvent.click(screen.getAllByTestId("schedule-week-button")[2]);
+  const sheet = await screen.findByTestId("line-item-sheet");
+  await userEvent.click(within(sheet).getByTestId("approve-payment"));
+  await within(sheet).findByTestId("approve-error");
+
+  await userEvent.keyboard("{Escape}");
+  await userEvent.click(screen.getAllByTestId("schedule-week-button")[3]);
+
+  const next = await screen.findByTestId("line-item-sheet");
+  expect(within(next).getByTestId("line-sheet-title")).toHaveTextContent("Week 4");
+  expect(within(next).queryByTestId("approve-error")).not.toBeInTheDocument();
+});
+
+test("a bill nobody has submitted offers nothing to approve, and says why", async () => {
+  // The prototype's own sheet falls through to "✓ Payment already made" for a
+  // `PendingSubmission` bill, which is the opposite of true. `approvable` is
+  // false and the status is neither scheduled nor paid, so this is the one
+  // branch of the control that is not a port.
+  renderTab();
+  await screen.findByTestId("bills-tab");
+
+  const pending = screen
+    .getAllByTestId("bills-card-row")
+    .find((row) => row.getAttribute("data-status") === "pending_submission");
+  await userEvent.click(within(pending!).getByRole("button"));
+
+  const sheet = await screen.findByTestId("line-item-sheet");
+  expect(within(sheet).getByTestId("approve-unavailable")).toHaveTextContent(
+    "has not been submitted",
+  );
+  expect(within(sheet).queryByTestId("approve-payment")).not.toBeInTheDocument();
+  expect(within(sheet).queryByTestId("approve-paid")).not.toBeInTheDocument();
+});
+
+test("the summary names the next batch date the server computed", async () => {
+  // The sentence Story 3.3 withheld because there was no batch behind it. The
+  // *date* is the server's — a component that worked out "the next Tuesday"
+  // would answer differently on a deployment that disburses on Mondays.
+  renderTab();
+  await screen.findByTestId("bills-tab");
+
+  expect(screen.getByTestId("summary-batch-note")).toHaveTextContent(
+    "Approved payments are disbursed in the next scheduled batch run",
+  );
+  expect(screen.getByTestId("summary-next-batch")).toHaveTextContent(
+    formatDate(SUMMARY.nextBatchDate),
+  );
 });
 
 test("clicking a bill opens its own sheet naming the category", async () => {

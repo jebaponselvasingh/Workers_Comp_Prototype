@@ -216,6 +216,17 @@ const DERIVED_FIELDS =
   "paidToDateCents|totalClaimProjectedCents|paidIndemnityCents|paidMedicalCents|" +
   "paidExpenseCents|paidFromColumns|installmentsPaid|weekCount|nextPaymentDue|" +
   "billsOnFile|scheduledIndemnityCents|disbursedIndemnityCents|paidCents|totalCents|" +
+  // Story 3.4's two. `approvable` is the server's answer to whether the ✓
+  // button belongs on a row, and it is the single most tempting thing on this
+  // list to reconstruct — `status === "pending_approval"` looks like the whole
+  // rule and is not: a week is approvable from three statuses and a line item
+  // from exactly one, so a browser deciding it would offer a button the
+  // command refuses. `nextBatchDate` is the disbursement calendar, computed
+  // from a *deployment* cadence the SPA has never been told; "the next
+  // Tuesday" worked out here would be right until somebody changed
+  // `PAYMENT_BATCH_WEEKDAYS`, and then silently wrong on a date a handler is
+  // told to expect money on.
+  "approvable|nextBatchDate|" +
   // Story 2.5's. `path` is the claim's statutory classification and is the
   // single most consequential derived value in the console — it decides which
   // death-benefit forms a handler is shown — so a comparison against it, or

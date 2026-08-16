@@ -256,9 +256,64 @@ class Gender(StrEnum):
 
 
 class UserRole(StrEnum):
+    """Who an `app_user` row is, and therefore what an audit event's actor was.
+
+    The first three are the prototype's personas and the login picker's whole
+    vocabulary. `system` is Story 3.4's and is a different kind of member, so
+    the distinction is written down rather than left to be inferred:
+
+    **`system` is an actor, not a persona.** AD-4 fixes the audit schema with a
+    non-nullable `actor_id` and an `actor_role`, and the payment batch is a
+    scheduled job with no request and no human behind it. Something has to be
+    named in `audit_event.actor_id` for every row the batch writes, and the
+    three honest alternatives were all worse: attributing thousands of
+    disbursements to whichever handler the seed happened to list first is a
+    false record of who acted; making `actor_id` nullable rewrites the fixed
+    schema AD-4 names to accommodate one caller; and leaving the batch
+    unaudited fails AC 3 outright. So the batch has an identity, and its role
+    says what kind of identity it is.
+
+    **It can never hold a session.** `list_personas` excludes it from the login
+    picker and `get_persona` refuses it outright — both pinned by tests in
+    `tests/test_personas.py`, because `POST /auth/login` is a *public* path and
+    a system actor that could be selected by id would be a scope-all account
+    anyone could assume. That refusal is the security property; the picker
+    omission is only tidiness.
+
+    **Every capability gate already refuses it**, without knowing it exists:
+    the five commands that gate on a role spell the check `is not
+    UserRole.handler`, so a fourth member is refused by construction rather
+    than by an allowlist somebody has to remember to narrow.
+
+    Its `scope_all` is `true`, and that is the honest value rather than a
+    convenience: the batch disburses across the whole portfolio, so its
+    `employer_scope` predicate is `TRUE` because its scope genuinely is
+    everything — the AD-7 tautology, not a repository skipping a filter.
+
+    Epic 6's scheduled embedding refresh is the second job that will need an
+    actor; it inherits this one rather than minting a second convention.
+    """
+
     handler = "handler"
     supervisor = "supervisor"
     analyst = "analyst"
+    system = "system"
+
+
+#: The roles a human can log in as — `UserRole` minus the machine actors.
+#:
+#: Declared as the *complement* of the system set rather than as a literal
+#: triple, so a fifth persona role added above is admitted automatically while
+#: a second machine actor has to be named here to be excluded. The failure this
+#: shape prevents is the dangerous direction: a new machine actor silently
+#: becoming selectable in a picker that fronts an unauthenticated endpoint.
+SYSTEM_ROLES: frozenset[UserRole] = frozenset({UserRole.system})
+LOGIN_ROLES: frozenset[UserRole] = frozenset(UserRole) - SYSTEM_ROLES
+
+#: The seeded system actor's name. Referenced by the migration that inserts it
+#: and by the batch command that looks it up, so the two cannot drift — and it
+#: reads as a machine in an audit log a human is scanning.
+SYSTEM_ACTOR_NAME: str = "LINEWORKER Payment Batch"
 
 
 class DocType(StrEnum):

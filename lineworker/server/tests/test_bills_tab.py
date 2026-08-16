@@ -48,6 +48,11 @@ SUMMARY_FIELDS = {
     "billsOnFile",
     "scheduledIndemnityCents",
     "disbursedIndemnityCents",
+    # Story 3.4: when the next payment batch runs. Server-computed from the
+    # configured cadence, and on the summary because that is the only place it
+    # is rendered — see `services/financials/summary.py` on why a portfolio-wide
+    # date rides a per-claim payload.
+    "nextBatchDate",
 }
 
 

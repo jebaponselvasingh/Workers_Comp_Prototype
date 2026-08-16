@@ -8,10 +8,11 @@
  * (AD-1, AD-10), which is what lets the treatment Overview card show the same
  * numbers without the two being kept in step by hand.
  *
- * **The "next batch: Tuesdays & Fridays" line the prototype puts here is
- * deliberately absent.** It belongs to Story 3.4 with the batch it describes;
- * shipping the sentence before the mechanism would promise a handler a
- * disbursement schedule nothing in this system yet runs.
+ * **The prototype's "next batch" line arrives with Story 3.4**, which is the
+ * story that makes the sentence true. 3.3 deliberately left it out rather than
+ * promise a handler a disbursement schedule nothing yet ran; the batch now
+ * exists, and the date is the server's answer from the configured cadence
+ * rather than "the next Tuesday" worked out in a browser.
  */
 import type { FinancialSummary, ReserveCheck } from "@/api/claims";
 import { formatCents } from "@/lib/money";
@@ -168,6 +169,16 @@ export function FinancialSummaryCard({
         className={`mt-[10px] rounded border p-[8px_10px] text-[11.5px] leading-relaxed text-text ${verdict.box}`}
       >
         <b>Reserve check:</b> {reserveCheck.rationale}
+      </p>
+
+      {/* The prototype's italic footnote (line 1451), and the one place the
+          cadence is stated in prose. The *date* is `summary.nextBatchDate` —
+          computed by a registered derivation from `PAYMENT_BATCH_WEEKDAYS` —
+          so a deployment that disburses on Mondays and Thursdays shows the
+          right date here without this component knowing anything about it. */}
+      <p data-testid="summary-batch-note" className="mt-2 text-[10.5px] text-faint italic">
+        Approved payments are disbursed in the next scheduled batch run. Next batch:{" "}
+        <span data-testid="summary-next-batch">{formatDate(summary.nextBatchDate)}</span>.
       </p>
 
       <div

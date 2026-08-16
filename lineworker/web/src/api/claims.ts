@@ -596,6 +596,117 @@ export function useClaimFinancials(claimId: string | null) {
   });
 }
 
+/** Approving a payment into the next batch (Story 3.4). */
+export type PaymentApproval = components["schemas"]["PaymentApproval"];
+export type ApprovalKind = PaymentApproval["kind"];
+
+/**
+ * A 409's `financials` member, if it really is a Bills payload.
+ *
+ * `freshClaimFrom`'s check over this story's entity, and for the same reason:
+ * `problemExtension` is an unchecked cast over something that crossed a
+ * network, and a truncated body written into the financials cache would blank
+ * the tab. Three structural probes are enough to tell the payload from a
+ * fragment.
+ */
+function freshFinancialsFrom(error: unknown): ClaimFinancials | undefined {
+  const fresh = problemExtension<ClaimFinancials>(error, "financials");
+  return fresh && fresh.summary && fresh.schedule && fresh.bills ? fresh : undefined;
+}
+
+/** The row's fresh status on a 409, so the sheet can say *why* it was refused. */
+export function conflictPaymentStatus(error: unknown): string | undefined {
+  return problemExtension<string>(error, "paymentStatus");
+}
+
+/**
+ * Approve one payment row into the next batch (AC 1).
+ *
+ * **Nothing optimistic, and this is the clearest case in the console for that
+ * rule.** AD-9 permits an optimistic update for a user-entered scalar; a
+ * payment status is not one — it is a *server decision*, and the server may
+ * refuse it on a guard the browser cannot evaluate (the row's current status,
+ * which may have moved since this payload was fetched). Flipping the chip to
+ * "Payment Scheduled" and then rolling it back would show a handler money
+ * queued that was not.
+ *
+ * So the three outcomes are:
+ *
+ * - **Success.** The response *is* the fresh Bills payload, installed straight
+ *   into the cache — the chip, the schedule's next-due date and the sheet's
+ *   state all move together because they come from one object. The case file
+ *   is invalidated beside it: its treatment card shows the same claim's
+ *   disbursed-of-scheduled figures.
+ * - **Conflict (409).** Install the fresh payload the problem document
+ *   carries and let the sheet render the refusal inline. No retry, no merge —
+ *   re-sending an approval against a row somebody has already paid is the one
+ *   thing this must never do.
+ * - **Anything else.** The sheet shows the message inline (NFR-3, UX-DR11:
+ *   never a blocking dialog).
+ *
+ * There is no snapshot to roll back to, so `onError` has only the fresh-state
+ * branch — `useEditSeverity`'s shape rather than `useEditClaimFields`'.
+ */
+export function useApprovePayment(claimId: string) {
+  const client = useQueryClient();
+  const key = queryKeys.claims.financials(claimId);
+
+  return useMutation({
+    // The claim's shared write key, so `useClaimWriteInFlight` counts an
+    // approval like any other command: every control on the case file reads
+    // `expectedVersion` out of a cached payload, and two overlapping writes
+    // send versions the first has already consumed.
+    mutationKey: queryKeys.claims.writes(claimId),
+    mutationFn: async (variables: {
+      kind: ApprovalKind;
+      targetId: number;
+      expectedVersion: number;
+    }): Promise<ClaimFinancials> => {
+      const { data } = await api.POST("/claims/{claim_business_id}/payments/approvals", {
+        params: { path: { claim_business_id: claimId } },
+        body: {
+          kind: variables.kind,
+          targetId: variables.targetId,
+          expectedVersion: variables.expectedVersion,
+        },
+      });
+      return data!;
+    },
+    onError: (error) => {
+      const fresh = freshFinancialsFrom(error);
+      if (fresh) client.setQueryData(key, fresh);
+    },
+    onSuccess: (fresh) => {
+      client.setQueryData(key, fresh);
+      // Marked stale without an immediate refetch, `useEditClaimFields`' rule:
+      // the body *is* the fresh payload, and a follow-up GET would re-open the
+      // read-after-write window that returning it closes.
+      void client.invalidateQueries({ queryKey: key, refetchType: "none" });
+      // The case file genuinely must re-fetch: its treatment Overview card
+      // renders `disbursedIndemnityCents` of `scheduledIndemnityCents` from the
+      // same rows, and it has no fresh copy of them.
+      //
+      // **`exact: true`, and leaving it off was a real defect** — caught by
+      // `approving a week re-renders the sheet from the response`, which failed
+      // showing the *pre-approval* status. TanStack matches query keys by
+      // prefix, and Story 3.3 deliberately nested `financials` **under** the
+      // claim's own segment (`["claims","detail",id,"financials"]`) so that an
+      // edit invalidating the case file could reach it. That is right for an
+      // edit and wrong here: this mutation has just installed the authoritative
+      // payload under that very key, so a prefix invalidation fires a GET that
+      // races its own write — re-opening exactly the read-after-write window
+      // `refetchType: "none"` is used two lines up to close.
+      void client.invalidateQueries({
+        queryKey: queryKeys.claims.detail(claimId),
+        exact: true,
+      });
+    },
+    onSettled: () => {
+      void client.invalidateQueries({ queryKey: key, refetchType: "none" });
+    },
+  });
+}
+
 /**
  * Set or clear the comp-rate override (AC 4).
  *

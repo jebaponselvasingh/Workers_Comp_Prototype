@@ -28,7 +28,10 @@
  *
  * **Which row's sheet is open is local UI state** (AD-9), like the tab
  * selection above it: not a server resource, and not shareable the way
- * `?claim=` is.
+ * `?claim=` is. What that state holds is an *identity* rather than a row
+ * (Story 3.4): approving a payment replaces the payload, and a sheet holding a
+ * copy of the pre-approval row would go on showing "Pending Approval" over a
+ * button that had just succeeded.
  */
 import { useState } from "react";
 
@@ -76,10 +79,7 @@ export function BillsTab({ claimId }: { claimId: string }) {
       <PaymentScheduleCard
         schedule={schedule}
         summary={summary}
-        onOpenWeek={(weekNo) => {
-          const week = schedule.find((row) => row.weekNo === weekNo);
-          if (week) setTarget({ kind: "week", week });
-        }}
+        onOpenWeek={(weekNo) => setTarget({ kind: "week", weekNo })}
       />
 
       <LineItemsCard
@@ -94,10 +94,7 @@ export function BillsTab({ claimId }: { claimId: string }) {
         // bills — but a card with a heading over nothing reads as a load that
         // never finished, so it gets a sentence (NFR-3).
         emptyMessage="No medical bills on file for this claim."
-        onOpen={(id) => {
-          const item = bills.items.find((row) => row.id === id);
-          if (item) setTarget({ kind: "bill", item });
-        }}
+        onOpen={(id) => setTarget({ kind: "bill", id })}
       />
 
       <LineItemsCard
@@ -109,13 +106,15 @@ export function BillsTab({ claimId }: { claimId: string }) {
         totalCents={expenses.totalCents}
         paidCents={expenses.paidCents}
         emptyMessage="No expenses filed for this claim."
-        onOpen={(id) => {
-          const item = expenses.items.find((row) => row.id === id);
-          if (item) setTarget({ kind: "expense", item });
-        }}
+        onOpen={(id) => setTarget({ kind: "expense", id })}
       />
 
-      <LineItemDialog claimId={claimId} target={target} onClose={() => setTarget(null)} />
+      <LineItemDialog
+        claimId={claimId}
+        financials={financials.data}
+        target={target}
+        onClose={() => setTarget(null)}
+      />
     </div>
   );
 }

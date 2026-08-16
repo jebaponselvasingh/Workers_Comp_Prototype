@@ -50,6 +50,7 @@ from data.repositories import claims as claim_repo
 from rules.parameters import DerivationThresholds, reserve_bands_for
 from services import derivations
 from services.derivations.claim_money import CostSplit, PaidColumns
+from services.financials.approval import line_item_is_approvable, week_is_approvable
 from services.financials.benefit import Benefit
 from services.financials.materialize import materialize_schedule
 from services.financials.reserve import ReserveCheck, ReserveClaim, reserve_check_from_rows
@@ -73,9 +74,20 @@ class ScheduleWeekView:
     """One row of the week-by-week table.
 
     A view type rather than the ORM row for the reason every other block on the
-    case file has one: the wire shape is a decision this layer makes, and
-    `version` and the surrogate `id` are not part of it. Story 3.4 will need
-    both to compare-and-swap an approval, and will add them deliberately.
+    case file has one: the wire shape is a decision this layer makes.
+
+    **`version` arrives with Story 3.4, which is the story that reads it** —
+    3.3 published neither it nor a surrogate id and said this would add them
+    "deliberately". The approval compare-and-swaps on this number, so a client
+    that renders the ✓ button must be holding the version it will send. The
+    surrogate `id` is still absent: a week is identified by `(claim, week_no)`,
+    the table's own unique constraint, and publishing a second identity for one
+    row would let two callers address it two ways.
+
+    **`approvable` is the server's answer, not a client-side status check.**
+    Which statuses can be approved is the same rule
+    `services/financials/approval.py` refuses on, and a browser deciding it
+    independently would offer a button the server rejects (AD-1).
     """
 
     week_no: int
@@ -83,6 +95,8 @@ class ScheduleWeekView:
     period_end: date
     amount_cents: int
     status: ScheduleWeekStatus
+    version: int
+    approvable: bool
 
 
 @dataclass(frozen=True)
@@ -103,6 +117,11 @@ class LineItemView:
     label: str
     amount_cents: int
     status: LineItemStatus
+    #: `ScheduleWeekView`'s two Story 3.4 fields, for the same reasons — the
+    #: version the approval compare-and-swaps on, and the server's own answer
+    #: to whether the ✓ button belongs on this row.
+    version: int
+    approvable: bool
 
 
 @dataclass(frozen=True)
@@ -160,6 +179,19 @@ class FinancialSummary:
     scheduled_indemnity_cents: int
     disbursed_indemnity_cents: int
 
+    #: When the next payment batch runs (Story 3.4). The prototype's
+    #: `nextBatchDate`, and the date its Bills summary and both approval sheets
+    #: render — "Approved payments are disbursed in the next scheduled batch
+    #: run. Next batch: Friday, Aug 15."
+    #:
+    #: **Not claim-specific**, which is the one odd thing about it living on a
+    #: per-claim payload. It rides here because it is only ever shown beside
+    #: these figures and because a second endpoint for one date would be a
+    #: second cache entry the Bills tab has to keep in step with this one; a
+    #: dashboard that needs it later should take it from the registered
+    #: derivation, not from a claim's summary.
+    next_batch_date: date
+
 
 @dataclass(frozen=True)
 class ClaimFinancials:
@@ -188,6 +220,8 @@ def _group(rows: Sequence[Bill] | Sequence[Expense]) -> LineItemGroup:
             label=row.label,
             amount_cents=row.amount_cents,
             status=row.status,
+            version=row.version,
+            approvable=line_item_is_approvable(row.status),
         )
         for row in rows
     )
@@ -209,6 +243,7 @@ async def claim_financials(
     benefit: Benefit,
     thresholds: DerivationThresholds,
     as_of: date,
+    batch_weekdays: frozenset[int],
 ) -> ClaimFinancials:
     """Everything the Bills & Payments tab shows, for one claim.
 
@@ -216,6 +251,13 @@ async def claim_financials(
     `reserve_check_for_claim`'s reason: both callers have already loaded them,
     and a second `state_rate_schedule` lookup and rule-document load to reach
     the identical values is two round trips for nothing.
+
+    `batch_weekdays` arrives the same way and from a different tier —
+    `Settings.payment_batch_weekday_numbers`, a deployment knob rather than a
+    JDM parameter, threaded from the route exactly as `services/worklist/sla.py`
+    threads its four targets. A service that read `get_settings()` itself would
+    be a second place configuration is consumed, and the SLA strip already set
+    the precedent against that.
 
     Four queries: the schedule refresh's SELECT, the bills, the expenses and
     the reserve bands' document. AD-7 is enforced on the two line-item reads by
@@ -277,6 +319,9 @@ async def claim_financials(
         bills_on_file=derivations.bills_on_file.for_thresholds(thresholds).of(bill_group.items),
         scheduled_indemnity_cents=reserve_check.scheduled_indemnity_cents,
         disbursed_indemnity_cents=reserve_check.disbursed_indemnity_cents,
+        next_batch_date=derivations.next_batch_date.for_thresholds(thresholds).of(
+            as_of, batch_weekdays
+        ),
     )
 
     return ClaimFinancials(
@@ -288,6 +333,8 @@ async def claim_financials(
                 period_end=week.period_end,
                 amount_cents=week.amount_cents,
                 status=week.status,
+                version=week.version,
+                approvable=week_is_approvable(week.status),
             )
             for week in weeks
         ),

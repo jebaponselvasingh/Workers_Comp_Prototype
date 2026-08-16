@@ -21,7 +21,7 @@ import structlog
 from fastapi import APIRouter, Path, Query, Response, status
 from pydantic import ConfigDict, Field
 
-from api.deps import CallerContextDep, DbDep
+from api.deps import CallerContextDep, DbDep, SettingsDep
 from api.errors import PROBLEM_CONTENT_TYPE, ProblemDocument, ProblemException
 from api.routers.auth import UNAUTHENTICATED_RESPONSE
 from api.schemas import ApiModel
@@ -61,7 +61,15 @@ from services.financials import (
     COMP_RATE_MIN_BP,
     ClaimFinancials,
     MissingStateRate,
+    PaymentNotVisible,
     ReserveVerdict,
+    StalePaymentRow,
+)
+from services.worklist.approvals import (
+    ApprovalKind,
+    ApprovalNotPermitted,
+    ApprovalResult,
+    approve_payment,
 )
 from services.worklist.priority import QueueFilter
 from services.worklist.queue import (
@@ -1779,11 +1787,18 @@ class ScheduleWeekResponse(ApiModel):
     Week" and "Pending Approval" are display strings the browser owns, per the
     Enums convention; what travels is the token a client can branch on.
 
-    **No `id` and no `version`.** A week is identified by its claim and its
-    number — the table's unique constraint — so a surrogate would be a second
-    identity for one row. Story 3.4's approval needs `version` to
-    compare-and-swap and will add it with the command that reads it, rather
-    than this story publishing a field nothing can use.
+    **No `id`, and a `version` that arrived with the story that reads it.** A
+    week is identified by its claim and its number — the table's unique
+    constraint — so a surrogate would be a second identity for one row. Story
+    3.3 deferred `version` on the grounds that it would be "a field nothing can
+    use"; Story 3.4 is the command that uses it, and the approval
+    compare-and-swaps on exactly this number.
+
+    **`approvable` is the server's answer to whether the ✓ button belongs on
+    this row** (AD-1). Which statuses can be approved is the rule
+    `services/financials/approval.py` refuses on, so a client deriving it from
+    `status` would be a second copy of that rule — and the first divergence
+    would be a button that 409s.
 
     `periodStart` and `periodEnd` are **inclusive**, so a week is seven days
     and the table renders "Apr 26 – May 2". An exclusive end would render as
@@ -1795,6 +1810,8 @@ class ScheduleWeekResponse(ApiModel):
     period_end: date
     amount_cents: int
     status: ScheduleWeekStatus
+    version: int
+    approvable: bool
 
 
 class BillResponse(ApiModel):
@@ -1811,6 +1828,12 @@ class BillResponse(ApiModel):
     label: str
     amount_cents: int
     status: LineItemStatus
+    #: `ScheduleWeekResponse`'s two Story 3.4 fields, for the same reasons.
+    #: Note that `approvable` is narrower here: a line item is approvable only
+    #: from `under_review`, because `pending_submission` is the *provider's*
+    #: state and there is nothing yet to approve.
+    version: int
+    approvable: bool
 
 
 class ExpenseResponse(ApiModel):
@@ -1827,6 +1850,8 @@ class ExpenseResponse(ApiModel):
     label: str
     amount_cents: int
     status: LineItemStatus
+    version: int
+    approvable: bool
 
 
 class BillGroupResponse(ApiModel):
@@ -1901,6 +1926,11 @@ class FinancialSummaryResponse(ApiModel):
 
     scheduled_indemnity_cents: int
     disbursed_indemnity_cents: int
+    #: When the next payment batch runs (Story 3.4) — the date the summary's
+    #: batch note and both approval sheets render. Server-computed from the
+    #: configured cadence (`PAYMENT_BATCH_WEEKDAYS`) through a registered
+    #: derivation, never "the next Tuesday" worked out in a browser.
+    next_batch_date: date
 
 
 class ClaimFinancialsResponse(ApiModel):
@@ -1949,6 +1979,7 @@ class ClaimFinancialsResponse(ApiModel):
 async def financials(
     ctx: CallerContextDep,
     db: DbDep,
+    settings: SettingsDep,
     response: Response,
     claim_business_id: Annotated[
         str,
@@ -1977,9 +2008,242 @@ async def financials(
     # upstream — the same reason every other route on this router says so.
     response.headers["Cache-Control"] = "no-store"
     try:
-        result: ClaimFinancials = await claim_financial_detail(db, ctx, claim_business_id)
+        result: ClaimFinancials = await claim_financial_detail(
+            db,
+            ctx,
+            claim_business_id,
+            batch_weekdays=settings.payment_batch_weekday_numbers,
+        )
     except ClaimNotVisible as exc:
         raise _not_found(claim_business_id) from exc
     except MissingStateRate as exc:
         raise _missing_state_rate(exc) from exc
     return ClaimFinancialsResponse.model_validate(result)
+
+
+# --- Story 3.4: approving a payment into the next batch -------------------
+
+
+class FinancialsConflictProblemDocument(ProblemDocument):
+    """The approval's 409 body — a problem document carrying the fresh payload.
+
+    `ConflictProblemDocument`'s shape with a different entity attached, and the
+    difference is the story's. A stale *edit* needs the case file back; a stale
+    *approval* needs the Bills payload, because the row that moved is one line
+    of a table whose totals moved with it. Attaching the whole read model means
+    the SPA installs one object and re-renders the tab, which is the same thing
+    the 200 path does — no second code path for a conflict (AD-9).
+
+    `paymentStatus` is the extension worth having beside it: "somebody else
+    approved this" and "the batch paid it while your sheet was open" are
+    different sentences to show a handler, and only the row's fresh status
+    tells them apart. It is redundant with the payload — the row is in there —
+    but finding it means knowing which of three lists to look in and by what
+    key, and a client that got that wrong would render the generic message.
+    """
+
+    financials: ClaimFinancialsResponse
+    payment_status: str
+
+
+def _financials_conflict_schema() -> dict[str, Any]:
+    """`FinancialsConflictProblemDocument`'s schema, pointed at the components
+    section — `_conflict_schema`'s fix, for the same reason and with the same
+    consequence if it is skipped (twenty-five dangling `$defs` references and a
+    generated client that will not build)."""
+    schema = FinancialsConflictProblemDocument.model_json_schema(
+        ref_template="#/components/schemas/{model}"
+    )
+    schema.pop("$defs", None)
+    return schema
+
+
+FINANCIALS_CONFLICT_RESPONSE: dict[int | str, dict[str, object]] = {
+    409: {
+        "description": (
+            "The payment row has moved since the caller read it — approved by "
+            "somebody else, or already disbursed by the batch. The body is an "
+            "RFC 9457 problem document carrying the fresh Bills & Payments "
+            "payload under `financials` and the row's current status under "
+            "`paymentStatus`. Re-read and redo; nothing is merged server-side."
+        ),
+        "content": {PROBLEM_CONTENT_TYPE: {"schema": _financials_conflict_schema()}},
+    }
+}
+
+
+class PaymentApproval(ApiModel):
+    """The approval POST body: what to approve, and the version it was read at.
+
+    **`targetId` means a week *number* for `kind: week` and a row *id*
+    otherwise**, which is the two tables' own identities rather than an
+    inconsistency: a schedule week is addressed by `(claim, weekNo)` — its
+    unique constraint, and why `ScheduleWeekResponse` publishes no `id` — and a
+    line item has no natural key at all. Both are published on the payload the
+    caller is looking at, so neither has to be constructed.
+
+    **One route for three entities, rather than three routes.** They are one
+    decision ("this payment is approved for the next batch"), they take one
+    body, they answer with one payload and they share every refusal. Three
+    endpoints would be three chances for one of them to drop the status guard —
+    and Story 3.5's checklist would then have to know which to call.
+    """
+
+    model_config = ApiModel.model_config | ConfigDict(extra="forbid")
+
+    kind: ApprovalKind = Field(
+        description=(
+            "Which kind of payment row to approve: an indemnity schedule "
+            "`week`, a medical `bill`, or a claim `expense`."
+        ),
+    )
+    target_id: int = Field(
+        ge=1,
+        description=(
+            "The week number (`kind: week`) or the line item's `id` "
+            "(`kind: bill | expense`) — both published on the financials payload."
+        ),
+    )
+    expected_version: int = Field(
+        ge=1,
+        description=(
+            "The `version` the client read **off the row**, not off the claim. "
+            "The write is compare-and-swapped on it and additionally guarded on "
+            "the row's current status; either mismatch answers 409 with the "
+            "fresh payload."
+        ),
+    )
+
+
+@router.post(
+    "/claims/{claim_business_id}/payments/approvals",
+    response_model=ClaimFinancialsResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Approve one payment into the next batch (audited, versioned)",
+    responses={
+        **UNAUTHENTICATED_RESPONSE,
+        **FORBIDDEN_RESPONSE,
+        **NOT_FOUND_RESPONSE,
+        **FINANCIALS_CONFLICT_RESPONSE,
+        **RATE_SCHEDULE_RESPONSE,
+    },
+)
+async def approve_payment_route(
+    ctx: CallerContextDep,
+    db: DbDep,
+    settings: SettingsDep,
+    response: Response,
+    body: PaymentApproval,
+    claim_business_id: Annotated[
+        str,
+        Path(
+            pattern=CLAIM_ID_PATTERN,
+            description="The claim's business id, `WC-nnnn`.",
+            examples=["WC-20017"],
+        ),
+    ],
+) -> ClaimFinancialsResponse:
+    """Set one payment row to `payment_scheduled`, and answer with the tab.
+
+    **POST rather than PATCH, and a resource rather than a field.** The client
+    is not proposing a status — it is requesting a transition, and the server
+    decides both the target status and whether the transition is available.
+    A `PATCH {status: "payment_scheduled"}` would publish `paid` as something a
+    client could ask for, which is exactly the invariant this story exists to
+    protect: approval never marks paid.
+
+    Thin in AD-1's sense: this validates a body, calls one worklist command and
+    maps four exceptions onto four statuses. The command delegates the write to
+    `services/financials`, which AD-12 names as the only writer of these three
+    tables — this route reaches none of them.
+
+    The success body is the **whole Bills & Payments payload**, not an
+    acknowledgement. An approval moves the row's chip, the schedule's next-due
+    date and the sheet's state, so returning the read model is what keeps the
+    SPA from deciding which of its figures the approval invalidated (AD-9).
+    """
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        result: ApprovalResult = await approve_payment(
+            db,
+            ctx,
+            claim_business_id,
+            kind=body.kind,
+            target_id=body.target_id,
+            expected_version=body.expected_version,
+            batch_weekdays=settings.payment_batch_weekday_numbers,
+        )
+    except MissingStateRate as exc:
+        # First, for `_answer`'s reason: a command that succeeded and then
+        # failed while re-reading has already committed, so the caller must not
+        # be told their request was refused.
+        raise _missing_state_rate(exc) from exc
+    except ApprovalNotPermitted as exc:
+        # Raised before the claim is read, so this answer is identical for a
+        # claim in the caller's book, one in somebody else's, and one that does
+        # not exist — the ordering `services/claims/edit.py` argues for.
+        raise ProblemException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            title="Forbidden",
+            detail=str(exc),
+            type_="/problems/approval-not-permitted",
+            headers={"Cache-Control": "no-store"},
+        ) from exc
+    except (ClaimNotVisible, PaymentNotVisible) as exc:
+        # **One answer for a claim outside the book and a week that is not on
+        # it**, in the case file's exact wording. A distinct "no such week"
+        # would confirm that the claim exists, which is the enumeration oracle
+        # `select_claim_detail`'s single-answer rule closes.
+        raise _not_found(claim_business_id) from exc
+    except StalePaymentRow as exc:
+        raise await _approval_conflict(db, ctx, settings, claim_business_id, exc) from exc
+    return ClaimFinancialsResponse.model_validate(result.financials)
+
+
+async def _approval_conflict(
+    db: DbDep,
+    ctx: CallerContextDep,
+    settings: SettingsDep,
+    claim_business_id: str,
+    exc: StalePaymentRow,
+) -> ProblemException:
+    """Build the 409, re-reading the payload the caller should render.
+
+    The fresh read happens **here rather than inside the command**, and that is
+    deliberate: the command's job ends when its write is refused, and having it
+    assemble a whole read model on its failure path would make every caller —
+    including Story 3.5's checklist and Epic 6's agent tools — pay for a
+    response shape only HTTP needs. `StaleClaim` takes the opposite call
+    because its entity is one the command already had in hand.
+
+    Returns rather than raises, so the call site reads `raise await
+    _approval_conflict(...)` and mypy keeps its flow analysis
+    (`services/claims/edit.py::conflict`'s trick, from the other direction).
+    """
+    fresh = await claim_financial_detail(
+        db,
+        ctx,
+        claim_business_id,
+        batch_weekdays=settings.payment_batch_weekday_numbers,
+    )
+    return ProblemException(
+        status_code=status.HTTP_409_CONFLICT,
+        title="Conflict",
+        detail=(
+            "This payment has already moved on — it was approved or disbursed "
+            "while you were looking at it. The current figures are attached."
+        ),
+        type_="/problems/stale-payment",
+        headers={"Cache-Control": "no-store"},
+        extensions={
+            # `mode="json"` for `_answer`'s reason: the extension is merged
+            # into a plain dict and encoded by `json.dumps`, which has never
+            # heard of `datetime.date`.
+            "financials": ClaimFinancialsResponse.model_validate(fresh).model_dump(
+                by_alias=True, mode="json"
+            ),
+            # The enum's value, not the member — the wire speaks snake_case
+            # tokens and the UI owns the label (Enums convention).
+            "paymentStatus": str(exc.status.value),
+        },
+    )

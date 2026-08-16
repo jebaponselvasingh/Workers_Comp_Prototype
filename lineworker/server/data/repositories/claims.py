@@ -338,6 +338,215 @@ async def select_expenses(
     return rows.all()
 
 
+async def select_schedule_week(
+    db: AsyncSession,
+    ctx: CallerContext,
+    claim_business_id: str,
+    week_no: int,
+) -> PaymentScheduleWeek | None:
+    """One week of one claim's schedule, or `None` — scoped (Story 3.4).
+
+    `select_additional_injury`'s counterpart for the approval command, and it
+    exists for the same reason: the compare-and-swapped UPDATE reports only
+    "one row or none", and 404 (no such week) and 409 (somebody moved it first)
+    are different answers to a handler. Reading the row back is the only way to
+    tell them apart, and it happens only after the write has already failed.
+
+    Addressed by `(claim, week_no)` rather than by a surrogate, which is the
+    table's own unique constraint and the reason `ScheduleWeekResponse`
+    publishes no `id`.
+    """
+    rows = await db.scalars(
+        sa.select(PaymentScheduleWeek)
+        .select_from(PaymentScheduleWeek)
+        .join(Claim, PaymentScheduleWeek.claim_id == Claim.id)
+        .where(employer_scope(ctx))
+        .where(Claim.claim_id == claim_business_id)
+        .where(PaymentScheduleWeek.week_no == week_no)
+    )
+    return rows.one_or_none()
+
+
+async def select_bill(
+    db: AsyncSession,
+    ctx: CallerContext,
+    claim_business_id: str,
+    bill_id: int,
+) -> Bill | None:
+    """One medical bill of one claim, or `None` — scoped (Story 3.4).
+
+    `select_document`'s shape, and its conflation of "no such row", "another
+    claim's row" and "not your claim" into one answer, for the same reason: a
+    line item is addressed by a dense surrogate id, so a route that
+    distinguished them would let a caller size the portfolio's bill table.
+    """
+    rows = await db.scalars(
+        sa.select(Bill)
+        .select_from(Bill)
+        .join(Claim, Bill.claim_id == Claim.id)
+        .where(employer_scope(ctx))
+        .where(Claim.claim_id == claim_business_id)
+        .where(Bill.id == bill_id)
+    )
+    return rows.one_or_none()
+
+
+async def select_expense(
+    db: AsyncSession,
+    ctx: CallerContext,
+    claim_business_id: str,
+    expense_id: int,
+) -> Expense | None:
+    """One expense of one claim, or `None` — `select_bill`'s rule (Story 3.4)."""
+    rows = await db.scalars(
+        sa.select(Expense)
+        .select_from(Expense)
+        .join(Claim, Expense.claim_id == Claim.id)
+        .where(employer_scope(ctx))
+        .where(Claim.claim_id == claim_business_id)
+        .where(Expense.id == expense_id)
+    )
+    return rows.one_or_none()
+
+
+#: The three tables `services/financials` owns (AD-12), and the two write
+#: functions below are generic over them.
+type PaymentRow = PaymentScheduleWeek | Bill | Expense
+PAYMENT_TABLES: tuple[type[PaymentScheduleWeek], type[Bill], type[Expense]] = (
+    PaymentScheduleWeek,
+    Bill,
+    Expense,
+)
+
+
+async def transition_payment_row_cas(
+    db: AsyncSession,
+    ctx: CallerContext,
+    table: type[PaymentRow],
+    *,
+    row_id: int,
+    expected_version: int,
+    expected_statuses: frozenset[Any],
+    new_status: Any,
+) -> int:
+    """Move one payment row's status under compare-and-swap. Returns rows changed.
+
+    `update_claim_fields_cas`'s contract, over the three tables
+    `services/financials` owns — and with **one predicate the claim's CAS does
+    not have**: the row's current status must be in `expected_statuses`.
+
+    That extra guard is AD-4's, quoted: "lifecycle/status updates additionally
+    guard on expected current status". A version alone is not enough for a
+    lifecycle move, because two callers reading the same version can want
+    different transitions — and the failure it prevents is concrete: a week
+    already approved into a batch could be approved again by a client holding
+    a stale-but-matching version, emitting a second audit event for a decision
+    that was made once.
+
+    Generic over the table rather than written three times, because the three
+    statements would be identical but for a class name, and the first one to
+    drift would be the one that dropped the scope predicate. The status
+    vocabularies differ (`ScheduleWeekStatus` for weeks, `LineItemStatus` for
+    line items), so those arrive as values.
+
+    **The scope predicate is here, exactly as on every read.** The service has
+    already resolved the claim, and the filter still goes on the WHERE clause —
+    `update_claim_fields_cas`'s argument, and here it also closes the same race
+    it does there: scope is re-resolved per request, and this is the statement
+    that decides.
+
+    `version = version + 1` is a SQL expression, so the increment happens
+    inside the same row lock as the predicate.
+    """
+    result = await db.execute(
+        sa.update(table)
+        .where(table.id == row_id)
+        .where(table.version == expected_version)
+        .where(table.status.in_(expected_statuses))
+        .where(table.claim_id.in_(sa.select(Claim.id).where(employer_scope(ctx))))
+        .values(status=new_status, version=table.version + 1)
+        .execution_options(synchronize_session=False)
+    )
+    return int(cast(CursorResult[Any], result).rowcount)
+
+
+async def pay_scheduled_rows(
+    db: AsyncSession,
+    ctx: CallerContext,
+    table: type[PaymentRow],
+    *,
+    scheduled_status: Any,
+    paid_status: Any,
+) -> Sequence[sa.Row[Any]]:
+    """The payment batch's one statement per table: `payment_scheduled` → `paid`.
+
+    Returns `(id, claim_id)` for every row it moved — the surrogate claim id,
+    which the command resolves to business ids in one further query so that
+    each audit event can name a claim the way `AuditEvent.entity_id` always
+    does.
+
+    **A single UPDATE … WHERE status, not a SELECT then an UPDATE.** The status
+    predicate is what makes the batch idempotent *by construction* rather than
+    by bookkeeping: a second run selects nothing, because the first run's rows
+    are no longer `payment_scheduled`. A read-modify-write would be a lost
+    update waiting for two batch processes, which is precisely what AD-4
+    forbids ("no command performs an unguarded read-modify-write").
+
+    **No version predicate, and that is not an omission.** Compare-and-swap
+    arbitrates between a caller's *stale read* and the current row; the batch
+    has read nothing. Its guard is the status, and the status is stronger here:
+    it is the exact set of rows that should be paid, whatever version each is
+    at. `version` still increments, so a client holding one of these rows gets
+    its 409 on the next write.
+
+    **Scoped like every other query in this module** (AD-7). The batch runs as
+    the system actor, whose `scope_all` makes the predicate `TRUE` — the
+    tautology, not a skipped filter. Passing a *bounded* context here is
+    meaningful rather than nonsense: it pays that book and no other, which is
+    what an admin-triggered per-caller run would want.
+    """
+    result = await db.execute(
+        sa.update(table)
+        .where(table.status == scheduled_status)
+        .where(table.claim_id.in_(sa.select(Claim.id).where(employer_scope(ctx))))
+        .values(status=paid_status, version=table.version + 1)
+        .returning(table.id, table.claim_id)
+        .execution_options(synchronize_session=False)
+    )
+    return result.all()
+
+
+async def select_claim_refs(
+    db: AsyncSession,
+    ctx: CallerContext,
+    claim_pks: Sequence[int],
+) -> dict[int, str]:
+    """Surrogate claim ids → business ids, for rows already resolved in scope.
+
+    The payment batch's second query: `pay_scheduled_rows` returns the rows it
+    moved keyed by `claim.id`, and every audit event has to name a claim the
+    way `AuditEvent.entity_id` always does — by its `WC-nnnn` business id.
+
+    **Scoped like everything else, although the filter can never remove a
+    row.** The primary keys handed in came from a statement run under this very
+    context, so the predicate is satisfied by construction. It goes on the
+    WHERE clause anyway, for `update_claim_fields_cas`' reason: "every query in
+    this module applies the filter" is only an invariant while it has no
+    exceptions, and a function that looked up claim identity *without* one
+    would be the obvious thing for a later story to reach for with pks from
+    somewhere else. The signature takes explicit keys rather than a predicate
+    for the same reason — this cannot be pointed at the table at large.
+    """
+    if not claim_pks:
+        return {}
+    rows = await db.execute(
+        sa.select(Claim.id, Claim.claim_id)
+        .where(employer_scope(ctx))
+        .where(Claim.id.in_(set(claim_pks)))
+    )
+    return {pk: ref for pk, ref in rows.all()}
+
+
 async def select_document(
     db: AsyncSession,
     ctx: CallerContext,

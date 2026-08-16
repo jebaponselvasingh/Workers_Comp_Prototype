@@ -8,7 +8,7 @@ another) the derived form uses `employer.short_name` uniformly — a label
 that cannot drift from the assignments it describes.
 """
 
-from data.models.enums import UserRole
+from data.models.enums import LOGIN_ROLES, SYSTEM_ROLES, UserRole
 from data.repositories.identity import initials, persona_label
 
 
@@ -70,4 +70,26 @@ def test_a_persona_with_no_employers_says_so_rather_than_rendering_empty_parens(
     assert (
         persona_label("Nobody Home", UserRole.handler, False, [])
         == "Nobody Home — Handler (No employers assigned)"
+    )
+
+
+# --- Story 3.4: the system actor is not a persona -------------------------
+
+
+def test_the_login_roles_are_every_role_except_the_machine_ones() -> None:
+    """Declared as the *complement* of the system set, so a fifth persona role
+    is admitted automatically while a second machine actor must be named to be
+    excluded. The dangerous direction is the one that is closed by default."""
+    assert {UserRole.handler, UserRole.supervisor, UserRole.analyst} == LOGIN_ROLES
+    assert UserRole.system not in LOGIN_ROLES
+    assert set(UserRole) == LOGIN_ROLES | SYSTEM_ROLES
+
+
+def test_an_unknown_role_still_renders_a_label_rather_than_raising() -> None:
+    """`persona_label` runs on the *unauthenticated* login picker, so a role a
+    later story adds must degrade to a plain title, not 500 the login screen
+    for everybody. `system` is the first member to exercise that path."""
+    assert (
+        persona_label("LINEWORKER Payment Batch", UserRole.system, True, [])
+        == "LINEWORKER Payment Batch — System (Full portfolio)"
     )

@@ -18,7 +18,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from data.models import AppUser, Employer, Session, UserEmployerAssignment
-from data.models.enums import UserRole
+from data.models.enums import LOGIN_ROLES, UserRole
 
 # The persona picker is a demo affordance: the parenthetical tells a
 # reviewer at a glance whether they are about to log in scoped or
@@ -90,6 +90,14 @@ async def list_personas(db: AsyncSession) -> list[dict[str, object]]:
     returns no employer ids; the label's parenthetical does name a scoped
     persona's employers, which is a deliberate demo affordance the story
     specifies, but nothing here is machine-consumable scope.
+
+    **Machine actors are filtered out** (Story 3.4). `app_user` gained a
+    `system` row — the identity the payment batch audits under — and it is not
+    a persona: nobody logs in as the batch, and listing it would offer a
+    full-portfolio account in an unauthenticated picker. The *enforcement* is
+    `get_persona`'s refusal one function down, because omitting a row from a
+    list is not a control when the login endpoint takes an id; this filter is
+    what stops the picker showing something a click cannot use.
     """
     scope_rows = (
         await db.execute(
@@ -102,7 +110,11 @@ async def list_personas(db: AsyncSession) -> list[dict[str, object]]:
     for user_id, short_name in scope_rows:
         short_names.setdefault(user_id, []).append(short_name)
 
-    users = (await db.scalars(sa.select(AppUser).order_by(AppUser.id))).all()
+    users = (
+        await db.scalars(
+            sa.select(AppUser).where(AppUser.role.in_(LOGIN_ROLES)).order_by(AppUser.id)
+        )
+    ).all()
     return [
         {
             "id": user.id,
@@ -120,7 +132,24 @@ async def list_personas(db: AsyncSession) -> list[dict[str, object]]:
 
 
 async def get_persona(db: AsyncSession, persona_id: int) -> AppUser | None:
-    return await db.get(AppUser, persona_id)
+    """The `app_user` a login request names, or `None` if it may not log in.
+
+    **The `system` refusal is the security control, not the picker's filter**
+    (Story 3.4). `POST /auth/login` is a `PUBLIC_PATHS` endpoint that takes an
+    integer and mints a session for it, and `app_user.id` is a dense identity
+    column — so an unauthenticated caller can enumerate ids whatever the picker
+    shows. The batch's actor is `scope_all`, which makes it the widest account
+    in the system; without this line, assuming it would be a matter of POSTing
+    the right small integer.
+
+    `None` rather than a distinct refusal, so the router's existing "unknown
+    persona" branch answers, and a system id is indistinguishable from an id
+    that does not exist.
+    """
+    user = await db.get(AppUser, persona_id)
+    if user is None or user.role not in LOGIN_ROLES:
+        return None
+    return user
 
 
 async def mint_session(db: AsyncSession, user_id: int, ttl_hours: int) -> str:

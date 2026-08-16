@@ -78,3 +78,62 @@ def test_an_unrelated_unknown_variable_is_still_ignored() -> None:
     anywhere but a clean room.
     """
     assert Settings.model_validate({"some_other_teams_variable": "whatever"}).env is Env.dev
+
+
+# --- Story 3.4: the payment batch's cadence -------------------------------
+
+
+def test_the_default_cadence_is_the_prototypes_tuesdays_and_fridays() -> None:
+    """`date.weekday()` is Monday-first, so Tuesday is 1 and Friday is 4.
+
+    Worth an assertion because the prototype counts from a *different* origin:
+    JavaScript's `getDay()` is Sunday-first, and its `getDay()===2||===5` names
+    the same two days from 2 and 5. Transliterating those integers would have
+    shifted the whole schedule by a day.
+    """
+    assert Settings().payment_batch_weekday_numbers == frozenset({1, 4})
+
+
+@pytest.mark.parametrize(
+    "configured, expected",
+    [
+        ("mon", {0}),
+        ("Mon, Thu", {0, 3}),
+        ("monday,thursday", {0, 3}),
+        ("sun", {6}),
+        ("tue, tue", {1}),
+    ],
+)
+def test_the_cadence_is_parsed_from_day_names(configured: str, expected: set[int]) -> None:
+    """Day names rather than integers, because this is a value an operator
+    reads and edits: `[1,4]` is a value nobody can check at a glance. Full
+    names and abbreviations both work, and a repeat is a set."""
+    assert Settings(payment_batch_weekdays=configured).payment_batch_weekday_numbers == frozenset(
+        expected
+    )
+
+
+def test_an_unparseable_day_stops_the_process_naming_what_was_typed() -> None:
+    """A `list[int]` field would take `[9]` happily and the batch would then
+    never run, silently, for ever. This fails at read time with the token."""
+    settings = Settings(payment_batch_weekdays="mon,Funday")
+    with pytest.raises(ValueError, match="Funday"):
+        _ = settings.payment_batch_weekday_numbers
+
+
+def test_an_empty_cadence_is_refused_rather_than_meaning_never() -> None:
+    settings = Settings(payment_batch_weekdays=" , ")
+    with pytest.raises(ValueError, match="never run"):
+        _ = settings.payment_batch_weekday_numbers
+
+
+def test_the_scheduler_is_off_under_e2e_and_on_elsewhere() -> None:
+    """A determinism property, not a deployment preference: a suite whose stack
+    pays invoices on a wall clock cannot assert what a claim's figures are. The
+    e2e profile triggers the batch explicitly instead."""
+    assert Settings(env=Env.e2e).scheduler_runs is False
+    assert Settings(env=Env.dev).scheduler_runs is True
+    # An explicit setting still wins in both directions, so a developer can
+    # watch the real thing run.
+    assert Settings(env=Env.e2e, scheduler_enabled=True).scheduler_runs is True
+    assert Settings(env=Env.dev, scheduler_enabled=False).scheduler_runs is False

@@ -67,7 +67,11 @@ def test_seed_counts(engine: sa.Engine) -> None:
     assert counts["claim"] == 100
     assert counts["employee"] == 100
     assert counts["employer"] == 10
-    assert counts["app_user"] == 10
+    # Ten personas plus Story 3.4's system actor, which is not a persona: it is
+    # the identity the payment batch audits under, it appears in no login
+    # picker, and `get_persona` refuses it. `test_the_system_actor_cannot_log_in`
+    # in `tests/test_personas.py` is where that is enforced rather than counted.
+    assert counts["app_user"] == 11
     assert counts["user_employer_assignment"] == 16  # HANDLER_MAP partitions
 
 

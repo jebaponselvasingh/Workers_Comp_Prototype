@@ -25,8 +25,35 @@ both are argued at length in `benefit.py`:
   handler reads.
 - **Rounding is half up, on cents** — `round_half_up`, the only rounding in
   the engine.
+
+Story 3.4 adds the package's write half: `approval.py` moves a payment row to
+`payment_scheduled` and `batch.py` is the only place anything moves to `paid`.
+Together with `materialize.py` those are the three modules that write, and the
+three tables they write are the ones AD-12 gives this package exclusive
+ownership of.
 """
 
+from services.financials.approval import (
+    APPROVABLE_LINE_ITEM_STATUSES,
+    APPROVABLE_WEEK_STATUSES,
+    APPROVE_BILL_ACTION,
+    APPROVE_EXPENSE_ACTION,
+    APPROVE_WEEK_ACTION,
+    Approval,
+    PaymentNotVisible,
+    StalePaymentRow,
+    approve_bill_payment,
+    approve_expense_payment,
+    approve_schedule_week,
+    line_item_is_approvable,
+    week_is_approvable,
+)
+from services.financials.batch import (
+    BATCH_ACTION,
+    PaymentBatchRun,
+    run_payment_batch,
+    system_context,
+)
 from services.financials.benefit import (
     BASIS_POINTS_PER_UNIT,
     COMP_RATE_MAX_BP,
@@ -80,7 +107,13 @@ from services.financials.summary import (
 )
 
 __all__ = [
+    "APPROVABLE_LINE_ITEM_STATUSES",
+    "APPROVABLE_WEEK_STATUSES",
+    "APPROVE_BILL_ACTION",
+    "APPROVE_EXPENSE_ACTION",
+    "APPROVE_WEEK_ACTION",
     "BASIS_POINTS_PER_UNIT",
+    "BATCH_ACTION",
     "CLOSED_FINAL_RATIONALE",
     "COMP_RATE_MAX_BP",
     "COMP_RATE_MIN_BP",
@@ -91,6 +124,7 @@ __all__ = [
     "SCHEDULE_WEEKS",
     "ZERO_RESERVE_CLEAR_RATIO_BP",
     "ZERO_RESERVE_EXPOSED_RATIO_BP",
+    "Approval",
     "Benefit",
     "BenefitClaim",
     "ClaimFinancials",
@@ -99,6 +133,8 @@ __all__ = [
     "LineItemView",
     "MaterializationPlan",
     "MissingStateRate",
+    "PaymentBatchRun",
+    "PaymentNotVisible",
     "PaymentProjection",
     "ReserveCheck",
     "ReserveClaim",
@@ -106,12 +142,17 @@ __all__ = [
     "ScheduleClaim",
     "ScheduleWeek",
     "ScheduleWeekView",
+    "StalePaymentRow",
     "StoredWeek",
+    "approve_bill_payment",
+    "approve_expense_payment",
+    "approve_schedule_week",
     "benefit_for_claim",
     "claim_financials",
     "classify_reserve",
     "compute_benefit",
     "indemnity_terms",
+    "line_item_is_approvable",
     "format_comp_rate",
     "format_dollars",
     "materialize_schedule",
@@ -121,6 +162,9 @@ __all__ = [
     "reserve_check_from_rows",
     "reserve_rationale",
     "round_half_up",
+    "run_payment_batch",
     "scheduled_weeks",
+    "system_context",
     "unpaid_medical_cents",
+    "week_is_approvable",
 ]

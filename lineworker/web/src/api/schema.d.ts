@@ -264,6 +264,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/claims/{claim_business_id}/payments/approvals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve one payment into the next batch (audited, versioned)
+         * @description Set one payment row to `payment_scheduled`, and answer with the tab.
+         *
+         *     **POST rather than PATCH, and a resource rather than a field.** The client
+         *     is not proposing a status — it is requesting a transition, and the server
+         *     decides both the target status and whether the transition is available.
+         *     A `PATCH {status: "payment_scheduled"}` would publish `paid` as something a
+         *     client could ask for, which is exactly the invariant this story exists to
+         *     protect: approval never marks paid.
+         *
+         *     Thin in AD-1's sense: this validates a body, calls one worklist command and
+         *     maps four exceptions onto four statuses. The command delegates the write to
+         *     `services/financials`, which AD-12 names as the only writer of these three
+         *     tables — this route reaches none of them.
+         *
+         *     The success body is the **whole Bills & Payments payload**, not an
+         *     acknowledgement. An approval moves the row's chip, the schedule's next-due
+         *     date and the sheet's state, so returning the read model is what keeps the
+         *     SPA from deciding which of its figures the approval invalidated (AD-9).
+         */
+        post: operations["approve_payment_route_claims__claim_business_id__payments_approvals_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/claims/{claim_business_id}/severity": {
         parameters: {
             query?: never;
@@ -537,12 +574,16 @@ export interface components {
         BillResponse: {
             /** Amountcents */
             amountCents: number;
+            /** Approvable */
+            approvable: boolean;
             category: components["schemas"]["BillCategory"];
             /** Id */
             id: number;
             /** Label */
             label: string;
             status: components["schemas"]["LineItemStatus"];
+            /** Version */
+            version: number;
         };
         /**
          * BodyPartOptionResponse
@@ -1099,12 +1140,16 @@ export interface components {
         ExpenseResponse: {
             /** Amountcents */
             amountCents: number;
+            /** Approvable */
+            approvable: boolean;
             category: components["schemas"]["ExpenseCategory"];
             /** Id */
             id: number;
             /** Label */
             label: string;
             status: components["schemas"]["LineItemStatus"];
+            /** Version */
+            version: number;
         };
         /**
          * FinancialSummaryResponse
@@ -1146,6 +1191,11 @@ export interface components {
             disbursedIndemnityCents: number;
             /** Installmentspaid */
             installmentsPaid: number;
+            /**
+             * Nextbatchdate
+             * Format: date
+             */
+            nextBatchDate: string;
             /** Nextpaymentdue */
             nextPaymentDue: string | null;
             /** Paidexpensecents */
@@ -1475,6 +1525,41 @@ export interface components {
              */
             severityScore: number;
         };
+        /**
+         * PaymentApproval
+         * @description The approval POST body: what to approve, and the version it was read at.
+         *
+         *     **`targetId` means a week *number* for `kind: week` and a row *id*
+         *     otherwise**, which is the two tables' own identities rather than an
+         *     inconsistency: a schedule week is addressed by `(claim, weekNo)` — its
+         *     unique constraint, and why `ScheduleWeekResponse` publishes no `id` — and a
+         *     line item has no natural key at all. Both are published on the payload the
+         *     caller is looking at, so neither has to be constructed.
+         *
+         *     **One route for three entities, rather than three routes.** They are one
+         *     decision ("this payment is approved for the next batch"), they take one
+         *     body, they answer with one payload and they share every refusal. Three
+         *     endpoints would be three chances for one of them to drop the status guard —
+         *     and Story 3.5's checklist would then have to know which to call.
+         */
+        PaymentApproval: {
+            /**
+             * Expectedversion
+             * @description The `version` the client read **off the row**, not off the claim. The write is compare-and-swapped on it and additionally guarded on the row's current status; either mismatch answers 409 with the fresh payload.
+             */
+            expectedVersion: number;
+            /**
+             * Kind
+             * @description Which kind of payment row to approve: an indemnity schedule `week`, a medical `bill`, or a claim `expense`.
+             * @enum {string}
+             */
+            kind: "week" | "bill" | "expense";
+            /**
+             * Targetid
+             * @description The week number (`kind: week`) or the line item's `id` (`kind: bill | expense`) — both published on the financials payload.
+             */
+            targetId: number;
+        };
         /** Persona */
         Persona: {
             /** Id */
@@ -1764,11 +1849,18 @@ export interface components {
          *     Week" and "Pending Approval" are display strings the browser owns, per the
          *     Enums convention; what travels is the token a client can branch on.
          *
-         *     **No `id` and no `version`.** A week is identified by its claim and its
-         *     number — the table's unique constraint — so a surrogate would be a second
-         *     identity for one row. Story 3.4's approval needs `version` to
-         *     compare-and-swap and will add it with the command that reads it, rather
-         *     than this story publishing a field nothing can use.
+         *     **No `id`, and a `version` that arrived with the story that reads it.** A
+         *     week is identified by its claim and its number — the table's unique
+         *     constraint — so a surrogate would be a second identity for one row. Story
+         *     3.3 deferred `version` on the grounds that it would be "a field nothing can
+         *     use"; Story 3.4 is the command that uses it, and the approval
+         *     compare-and-swaps on exactly this number.
+         *
+         *     **`approvable` is the server's answer to whether the ✓ button belongs on
+         *     this row** (AD-1). Which statuses can be approved is the rule
+         *     `services/financials/approval.py` refuses on, so a client deriving it from
+         *     `status` would be a second copy of that rule — and the first divergence
+         *     would be a button that 409s.
          *
          *     `periodStart` and `periodEnd` are **inclusive**, so a week is seven days
          *     and the table renders "Apr 26 – May 2". An exclusive end would render as
@@ -1777,6 +1869,8 @@ export interface components {
         ScheduleWeekResponse: {
             /** Amountcents */
             amountCents: number;
+            /** Approvable */
+            approvable: boolean;
             /**
              * Periodend
              * Format: date
@@ -1788,6 +1882,8 @@ export interface components {
              */
             periodStart: string;
             status: components["schemas"]["ScheduleWeekStatus"];
+            /** Version */
+            version: number;
             /** Weekno */
             weekNo: number;
         };
@@ -2111,9 +2207,45 @@ export interface components {
         };
         /**
          * UserRole
+         * @description Who an `app_user` row is, and therefore what an audit event's actor was.
+         *
+         *     The first three are the prototype's personas and the login picker's whole
+         *     vocabulary. `system` is Story 3.4's and is a different kind of member, so
+         *     the distinction is written down rather than left to be inferred:
+         *
+         *     **`system` is an actor, not a persona.** AD-4 fixes the audit schema with a
+         *     non-nullable `actor_id` and an `actor_role`, and the payment batch is a
+         *     scheduled job with no request and no human behind it. Something has to be
+         *     named in `audit_event.actor_id` for every row the batch writes, and the
+         *     three honest alternatives were all worse: attributing thousands of
+         *     disbursements to whichever handler the seed happened to list first is a
+         *     false record of who acted; making `actor_id` nullable rewrites the fixed
+         *     schema AD-4 names to accommodate one caller; and leaving the batch
+         *     unaudited fails AC 3 outright. So the batch has an identity, and its role
+         *     says what kind of identity it is.
+         *
+         *     **It can never hold a session.** `list_personas` excludes it from the login
+         *     picker and `get_persona` refuses it outright — both pinned by tests in
+         *     `tests/test_personas.py`, because `POST /auth/login` is a *public* path and
+         *     a system actor that could be selected by id would be a scope-all account
+         *     anyone could assume. That refusal is the security property; the picker
+         *     omission is only tidiness.
+         *
+         *     **Every capability gate already refuses it**, without knowing it exists:
+         *     the five commands that gate on a role spell the check `is not
+         *     UserRole.handler`, so a fourth member is refused by construction rather
+         *     than by an allowlist somebody has to remember to narrow.
+         *
+         *     Its `scope_all` is `true`, and that is the honest value rather than a
+         *     convenience: the batch disburses across the whole portfolio, so its
+         *     `employer_scope` predicate is `TRUE` because its scope genuinely is
+         *     everything — the AD-7 tautology, not a repository skipping a filter.
+         *
+         *     Epic 6's scheduled embedding refresh is the second job that will need an
+         *     actor; it inherits this one rather than minting a second convention.
          * @enum {string}
          */
-        UserRole: "handler" | "supervisor" | "analyst";
+        UserRole: "handler" | "supervisor" | "analyst" | "system";
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -2992,6 +3124,135 @@ export interface operations {
                         claim: components["schemas"]["ClaimDetailResponse"];
                         /** Detail */
                         detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description The claim's jurisdiction has no `state_rate_schedule` row, so its weekly benefit cannot be calculated and no default is substituted (RFC 9457 problem document). Unreachable against a correctly migrated database — 0023 refuses to complete otherwise. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+        };
+    };
+    approve_payment_route_claims__claim_business_id__payments_approvals_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The claim's business id, `WC-nnnn`. */
+                claim_business_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PaymentApproval"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaimFinancialsResponse"];
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The caller's role does not carry the edit capability. Answered before the claim is looked up, so it says nothing about whether the claim exists (RFC 9457 problem document). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description No such claim in the caller's scope. Deliberately the same answer for a claim that does not exist and one that belongs to another employer — see the route docstring (RFC 9457 problem document). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The payment row has moved since the caller read it — approved by somebody else, or already disbursed by the batch. The body is an RFC 9457 problem document carrying the fresh Bills & Payments payload under `financials` and the row's current status under `paymentStatus`. Re-read and redo; nothing is merged server-side. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        financials: components["schemas"]["ClaimFinancialsResponse"];
+                        /** Payment Status */
+                        payment_status: string;
                         /** Status */
                         status: number;
                         /** Title */

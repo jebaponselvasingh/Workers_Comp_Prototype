@@ -40,6 +40,21 @@ class Env(StrEnum):
     prod = "prod"
 
 
+#: Three-letter day names → `date.weekday()`, which is Monday-first. Note the
+#: offset from JavaScript's `Date.getDay()`, which the prototype uses and which
+#: is Sunday-first: its `c.getDay()===2||c.getDay()===5` is Tuesday and Friday,
+#: the same two days these defaults name, reached from a different origin.
+_WEEKDAY_NUMBERS: dict[str, int] = {
+    "mon": 0,
+    "tue": 1,
+    "wed": 2,
+    "thu": 3,
+    "fri": 4,
+    "sat": 5,
+    "sun": 6,
+}
+
+
 def _with_driver(url: str, driver: str) -> str:
     """Force the DBAPI driver on a database URL.
 
@@ -131,6 +146,62 @@ class Settings(BaseSettings):
     # A rate target of 100 is likewise unreachable (strictly above), and one
     # above 100 or below 0 is not a percentage at all.
     sla_rtw_target_pct: float = Field(default=80.0, ge=0, lt=100)
+
+    # --- The payment batch (Story 3.4) -------------------------------
+    # The prototype's `nextBatchDate` runs batches on Tuesdays and Fridays
+    # (line 808). That cadence is a *deployment* fact — which days this
+    # carrier's disbursement file goes out — so it is config rather than a
+    # JDM parameter: AD-8 puts business thresholds in the rules tier, and a
+    # bank's cut-off is not one. The conventions row is explicit that a
+    # schedule comes "from config/DB — never hardcoded".
+    #
+    # Day *names* rather than integers, because this is a value an operator
+    # reads and edits in an env file, and `[1,4]` is a value nobody can
+    # check at a glance. Parsed and validated at startup by
+    # `payment_batch_weekday_numbers` below.
+    payment_batch_weekdays: str = "tue,fri"
+    # The scheduler's poll interval, not the batch's cadence — the two are
+    # different knobs and conflating them is how a "runs twice a week" job
+    # ends up running every five minutes. A tick only *checks* whether a due
+    # day has arrived; `services/jobs.py` decides.
+    scheduler_tick_seconds: float = Field(default=300.0, gt=0)
+    # None => derive from env. Off under `e2e`, and that is a determinism
+    # property rather than a deployment preference: a suite whose stack pays
+    # invoices on a wall clock cannot assert what a claim's figures are. The
+    # e2e profile triggers the batch explicitly instead (see the admin route
+    # in `api/routers/admin.py`). `cookie_secure` derives the same way.
+    scheduler_enabled: bool | None = None
+
+    @property
+    def payment_batch_weekday_numbers(self) -> frozenset[int]:
+        """The configured cadence as `date.weekday()` values (Mon=0 … Sun=6).
+
+        **Validated here rather than by a Pydantic field type**, because the
+        useful failure is at *read* time with the offending token named: a
+        `list[int]` field would take `[9]` happily and the batch would then
+        never run, silently, for ever. An unparseable day stops the process
+        with the word the operator typed.
+        """
+        numbers = set()
+        for raw in self.payment_batch_weekdays.split(","):
+            token = raw.strip().lower()[:3]
+            if not token:
+                continue
+            if token not in _WEEKDAY_NUMBERS:
+                raise ValueError(
+                    f"PAYMENT_BATCH_WEEKDAYS contains {raw.strip()!r}; "
+                    f"expected day names from {sorted(_WEEKDAY_NUMBERS)}"
+                )
+            numbers.add(_WEEKDAY_NUMBERS[token])
+        if not numbers:
+            raise ValueError("PAYMENT_BATCH_WEEKDAYS names no days; the batch would never run")
+        return frozenset(numbers)
+
+    @property
+    def scheduler_runs(self) -> bool:
+        if self.scheduler_enabled is not None:
+            return self.scheduler_enabled
+        return self.env is not Env.e2e
 
     @property
     def cookie_secure(self) -> bool:

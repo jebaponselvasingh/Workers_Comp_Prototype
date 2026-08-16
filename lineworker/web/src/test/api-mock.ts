@@ -54,6 +54,16 @@ export interface StubRoutes {
    * differ.
    */
   claimFinancials?: StubRouteFor;
+  /**
+   * `POST /claims/{id}/payments/approvals` (Story 3.4).
+   *
+   * Matched **before** `claimFinancials` in the router below, because the
+   * approval URL contains `/payments/` and not `/financials` — the two are
+   * distinguishable by path, but only if the approval is tried first when a
+   * test stubs both. Declared as a `StubRouteFor` so a test can answer 200 for
+   * one row and 409 for another without re-rendering.
+   */
+  approvePayment?: StubRouteFor;
 }
 
 const problem = (status: number, detail: string) => ({
@@ -1232,6 +1242,8 @@ const SCHEDULE_WEEKS = [
     periodEnd: "2026-04-11",
     amountCents: 567_935,
     status: "paid" as const,
+    version: 1,
+    approvable: false,
   },
   {
     weekNo: 2,
@@ -1239,6 +1251,8 @@ const SCHEDULE_WEEKS = [
     periodEnd: "2026-04-18",
     amountCents: 567_935,
     status: "paid" as const,
+    version: 1,
+    approvable: false,
   },
   {
     weekNo: 3,
@@ -1246,6 +1260,8 @@ const SCHEDULE_WEEKS = [
     periodEnd: "2026-04-25",
     amountCents: 567_935,
     status: "due_this_week" as const,
+    version: 1,
+    approvable: true,
   },
   {
     weekNo: 4,
@@ -1253,6 +1269,8 @@ const SCHEDULE_WEEKS = [
     periodEnd: "2026-05-02",
     amountCents: 567_935,
     status: "upcoming" as const,
+    version: 1,
+    approvable: true,
   },
   {
     weekNo: 5,
@@ -1260,6 +1278,8 @@ const SCHEDULE_WEEKS = [
     periodEnd: "2026-05-09",
     amountCents: 1_728_260,
     status: "upcoming" as const,
+    version: 1,
+    approvable: true,
   },
 ];
 
@@ -1270,6 +1290,8 @@ const BILL_ITEMS = [
     label: "Emergency / Initial Treatment",
     amountCents: 127_500,
     status: "paid" as const,
+    version: 1,
+    approvable: false,
   },
   {
     id: 2,
@@ -1277,6 +1299,8 @@ const BILL_ITEMS = [
     label: "Diagnostic Imaging (MRI/CT/X-Ray)",
     amountCents: 174_000,
     status: "under_review" as const,
+    version: 1,
+    approvable: true,
   },
   {
     id: 3,
@@ -1284,6 +1308,8 @@ const BILL_ITEMS = [
     label: "Physical Therapy Session Bundle",
     amountCents: 264_000,
     status: "pending_submission" as const,
+    version: 1,
+    approvable: false,
   },
 ];
 
@@ -1294,6 +1320,8 @@ const EXPENSE_ITEMS = [
     label: "Mileage & Travel Reimbursement",
     amountCents: 10_450,
     status: "paid" as const,
+    version: 1,
+    approvable: false,
   },
   {
     id: 12,
@@ -1301,6 +1329,8 @@ const EXPENSE_ITEMS = [
     label: "Durable Medical Equipment",
     amountCents: 40_800,
     status: "under_review" as const,
+    version: 1,
+    approvable: true,
   },
 ];
 
@@ -1329,6 +1359,10 @@ export const CLAIM_FINANCIALS = {
       // row renders, from the same server block.
       scheduledIndemnityCents: 4_000_000,
       disbursedIndemnityCents: 1_135_870,
+      // Story 3.4: the batch note's date. A Friday, which is one of the two
+      // days the default cadence names — restated here rather than derived,
+      // because a fixture that recomputed the rule could not disagree with it.
+      nextBatchDate: "2026-04-24",
     },
     schedule: SCHEDULE_WEEKS,
     bills: {
@@ -1371,14 +1405,82 @@ export const CLAIM_FINANCIALS_UNPAID = {
       nextPaymentDue: null,
       disbursedIndemnityCents: 0,
     },
-    schedule: SCHEDULE_WEEKS.map((week) => ({ ...week, status: "pending_approval" as const })),
+    // `approvable` moves with the status, which is what the server does: a
+    // week awaiting approval is exactly the case the ✓ button exists for.
+    schedule: SCHEDULE_WEEKS.map((week) => ({
+      ...week,
+      status: "pending_approval" as const,
+      approvable: true,
+    })),
     bills: {
-      items: BILL_ITEMS.map((item) => ({ ...item, status: "under_review" as const })),
+      items: BILL_ITEMS.map((item) => ({
+        ...item,
+        status: "under_review" as const,
+        approvable: true,
+      })),
       count: 3,
       totalCents: 565_500,
       paidCents: 0,
     },
     expenses: { items: [], count: 0, totalCents: 0, paidCents: 0 },
+  },
+};
+
+/**
+ * What the server answers after week 3 has been approved (Story 3.4).
+ *
+ * The *whole* payload, because that is what the command returns: the week's
+ * status and version move, `approvable` goes false, and `nextPaymentDue`
+ * advances to week 4 because an approved week is no longer waiting to fall
+ * due. Restating all four here rather than patching one field is what makes
+ * the component test able to fail — a sheet that read its status from a copy
+ * it was holding would keep showing "Due This Week" against this response.
+ */
+export const CLAIM_FINANCIALS_APPROVED = {
+  status: 200,
+  body: {
+    ...CLAIM_FINANCIALS.body,
+    summary: {
+      ...CLAIM_FINANCIALS.body.summary,
+      nextPaymentDue: "2026-04-26",
+    },
+    schedule: CLAIM_FINANCIALS.body.schedule.map((week) =>
+      week.weekNo === 3
+        ? {
+            ...week,
+            status: "payment_scheduled" as const,
+            version: week.version + 1,
+            approvable: false,
+          }
+        : week,
+    ),
+  },
+};
+
+/**
+ * The 409 a stale approval gets: a problem document carrying the fresh payload
+ * *and* the row's current status.
+ *
+ * `paymentStatus` is `paid` here, which is the more interesting of the two
+ * conflicts — the batch disbursed the week while the sheet was open — because
+ * it is the one whose message must not say "someone else approved it".
+ */
+export const APPROVAL_CONFLICT_PAID = {
+  status: 409,
+  body: {
+    type: "/problems/stale-payment",
+    title: "Conflict",
+    status: 409,
+    detail: "This payment has already moved on — it was approved or disbursed while you were looking at it. The current figures are attached.",
+    paymentStatus: "paid",
+    financials: {
+      ...CLAIM_FINANCIALS.body,
+      schedule: CLAIM_FINANCIALS.body.schedule.map((week) =>
+        week.weekNo === 3
+          ? { ...week, status: "paid" as const, version: week.version + 1, approvable: false }
+          : week,
+      ),
+    },
   },
 };
 
@@ -1433,6 +1535,12 @@ export function stubApi(routes: StubRoutes): void {
       }
       // Before the case file too, and for exactly that reason:
       // `/api/claims/WC-1/financials` contains `/api/claims/`.
+      // Before the financials read, because an approval answers *with* a
+      // financials payload and a stub that matched the read first would make
+      // every approval look like it had succeeded.
+      if (url.includes("/payments/approvals")) {
+        return answerFor(routes.approvePayment ?? CLAIM_FINANCIALS_APPROVED, url);
+      }
       if (url.includes("/financials")) {
         return answerFor(routes.claimFinancials ?? CLAIM_FINANCIALS, url);
       }

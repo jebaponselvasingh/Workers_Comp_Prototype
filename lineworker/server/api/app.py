@@ -6,21 +6,69 @@ envelope without opting in. See `api/deps.py` for why that direction
 matters.
 """
 
+import asyncio
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
+from datetime import UTC, datetime
 
 import structlog
 from fastapi import Depends, FastAPI, Response
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 from api.deps import enforce_authenticated
 from api.errors import register_error_handlers
-from api.routers import auth_router, claims_router, glossary_router, stats_router
+from api.routers import admin_router, auth_router, claims_router, glossary_router, stats_router
 from config import Env, Settings, get_settings
 from logging_config import configure_logging
+from services.financials.batch import run_payment_batch, system_context
+from services.jobs import JobRunner, ScheduledJob, weekly_on
 
 log = structlog.get_logger()
+
+PAYMENT_BATCH_JOB = "payment_batch"
+
+
+def build_job_runner(
+    settings: Settings,
+    sessionmaker: async_sessionmaker[AsyncSession],
+) -> JobRunner:
+    """The api process's scheduled jobs (spine: Structural Seed).
+
+    One job today. Epic 6's embedding refresh registers a second here, which is
+    why the runner is generic and why this function exists at all rather than
+    an `asyncio.create_task` inline in the lifespan.
+
+    **The job opens and closes its own session.** A long-lived session held
+    across ticks would hold a pooled connection for the process's lifetime and
+    would carry a transaction snapshot between runs; the batch is a command
+    like any other and gets a session with the same lifetime as its work.
+
+    **The system actor is resolved per run**, inside the job, not captured
+    here — AD-7's rule that a caller context is a reference re-resolved rather
+    than a materialized scope, and here it also means a boot that precedes
+    migration 0029 fails at the first tick with a sentence rather than at
+    import time with the whole process.
+    """
+    runner = JobRunner(tick_seconds=settings.scheduler_tick_seconds)
+
+    async def payment_batch() -> None:
+        async with sessionmaker() as session:
+            await run_payment_batch(session, await system_context(session))
+
+    runner.register(
+        ScheduledJob(
+            name=PAYMENT_BATCH_JOB,
+            due=weekly_on(settings.payment_batch_weekday_numbers),
+            run=payment_batch,
+        )
+    )
+    return runner
 
 
 async def check_db(engine: AsyncEngine) -> bool:
@@ -64,8 +112,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # expire_on_commit=False: a committed ORM object stays readable
         # while the response is being serialized.
         app.state.sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
-        log.info("app.start", env=settings.env)
+
+        # The scheduled-jobs hook (spine: "the payment batch and embedding
+        # refresh run as scheduled jobs inside the api process"). Built
+        # unconditionally so `/healthz` and a test can inspect the registry,
+        # started only where a wall clock is wanted — under `e2e` it is off, so
+        # a suite's figures cannot move because a Tuesday arrived mid-run.
+        runner = build_job_runner(settings, app.state.sessionmaker)
+        app.state.jobs = runner
+        task: asyncio.Task[None] | None = None
+        if settings.scheduler_runs:
+            task = asyncio.create_task(runner.run_forever(lambda: datetime.now(UTC)))
+
+        log.info("app.start", env=settings.env, scheduler=settings.scheduler_runs)
         yield
+
+        if task is not None:
+            # Cancel and *await* it. Dropping the reference would leave the
+            # task running against an engine this line is about to dispose,
+            # which surfaces as an asyncpg error at shutdown with no obvious
+            # cause. `run_forever` re-raises `CancelledError`, so this returns
+            # as soon as the current sleep is interrupted.
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+
         await engine.dispose()
         log.info("app.stop")
 
@@ -92,6 +163,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(stats_router)
     app.include_router(glossary_router)
     app.include_router(claims_router)
+    if settings.env is Env.e2e:
+        # AD-15's deterministic batch trigger, and it is *not served* anywhere
+        # else — a 404 from the router rather than a 403 from a guard. See
+        # `api/routers/admin.py` on why the difference matters.
+        app.include_router(admin_router)
 
     @app.get("/healthz")
     async def healthz(response: Response) -> dict[str, str]:

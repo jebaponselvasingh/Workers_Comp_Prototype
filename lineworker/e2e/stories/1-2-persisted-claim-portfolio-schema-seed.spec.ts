@@ -13,11 +13,25 @@ test.describe("@story:1-2 @epic:1 persisted claim portfolio", () => {
     expect(resp.status()).toBe(200);
     expect(await resp.json()).toEqual({ status: "ok", db: "ok" });
 
+    // `app_user` counts *personas* — the rows a human can log in as. Story
+    // 3.4 added an eleventh row that is not one: the identity the payment
+    // batch audits under, which the login picker omits and `get_persona`
+    // refuses. Counting it here would have made this assertion say "ten
+    // personas" while meaning "ten of the eleven accounts", so the predicate
+    // says what it means and the extra row gets its own assertion below.
     const [row] = psqlQuery(
       "SELECT (SELECT count(*) FROM claim) || '|' || (SELECT count(*) FROM employer) || '|' || " +
-        "(SELECT count(*) FROM employee) || '|' || (SELECT count(*) FROM app_user)",
+        "(SELECT count(*) FROM employee) || '|' || " +
+        "(SELECT count(*) FROM app_user WHERE role <> 'system')",
     );
     expect(row).toBe("100|10|100|10");
+
+    // The machine actor, present and exactly one (Story 3.4). `scope_all` is
+    // the honest value: the batch disburses across the whole portfolio, so its
+    // AD-7 predicate is a tautology because its scope really is everything.
+    expect(
+      psqlQuery("SELECT name || '|' || scope_all FROM app_user WHERE role = 'system'"),
+    ).toEqual(["LINEWORKER Payment Batch|true"]);
   });
 
   test("seed encodes the AD-7 scope model", () => {

@@ -75,7 +75,7 @@ development_status:
   3-1-statutory-benefit-calculation: done
   3-2-reserve-adequacy-check: done
   3-3-bills-indemnity-payment-schedule: done
-  3-4-payment-approval-batch: ready-for-dev
+  3-4-payment-approval-batch: review
   3-5-auto-generated-action-checklist-approval: ready-for-dev
   epic-3-retrospective: optional
 

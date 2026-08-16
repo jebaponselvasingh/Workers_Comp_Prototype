@@ -28,7 +28,10 @@ Payments summary needs — `paid_to_date`, `total_claim_projected`,
 `installments_paid`, `next_payment_due` and `bills_on_file` — which is what
 makes the treatment Overview card and the Bills tab agree on a figure by
 construction rather than by two components being kept in step. Each one
-function, here, called by every consumer.
+function, here, called by every consumer. Story 3.4 adds `next_batch_date`,
+which is the first entry whose parameter is *deployment* config rather than a
+rules-tier threshold — see `batch_calendar.py` for why a disbursement calendar
+is not an AD-8 parameter.
 
 **Naming rule for the modules below** (code review, 2026-08-10): a module
 is named after the *rule* (`risk_band`, `open_duration`, `queue_flags`),
@@ -41,6 +44,10 @@ later derivation copies, so the trap is worth avoiding by convention rather
 than documenting per entry.
 """
 
+from services.derivations.batch_calendar import (
+    NextBatchDateDerivation,
+    next_batch_date,
+)
 from services.derivations.care_coordination import (
     CoordinationDerivation,
     CoordinationResult,
@@ -117,6 +124,7 @@ __all__ = [
     "IndemnityTypeDerivation",
     "InstallmentsPaidDerivation",
     "LineItem",
+    "NextBatchDateDerivation",
     "NextPaymentDueDerivation",
     "OpenDurationDerivation",
     "PaidColumns",
@@ -144,6 +152,7 @@ __all__ = [
     "hash_bucket",
     "indemnity_type",
     "installments_paid",
+    "next_batch_date",
     "next_payment_due",
     "paid_to_date",
     "paid_total",

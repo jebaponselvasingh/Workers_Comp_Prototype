@@ -30,11 +30,22 @@ import { GlossaryPanel } from "@/features/glossary/GlossaryPanel";
 import { LOGIN_ROUTE } from "./routes";
 import { SlaStrip } from "./SlaStrip";
 
-/** Badge text, verbatim from the prototype (UX notes). */
+/**
+ * Badge text, verbatim from the prototype (UX notes).
+ *
+ * **`system` is unreachable and is still spelled out** (Story 3.4). It is the
+ * payment batch's audit identity, not a persona: `list_personas` omits it and
+ * `get_persona` refuses it, so no session can carry it and this string can
+ * never render. The map is exhaustive by design — see `ROLE_LABEL` — and the
+ * honest response to a new member is an entry that says what it is, not a
+ * lookup with a fallback that would hide the next member too. If this ever
+ * appears in a top bar, something upstream is badly wrong and the words say so.
+ */
 const ROLE_BADGE: Record<UserRole, string> = {
   supervisor: "👔 Supervisor",
   handler: "📋 Handler",
   analyst: "📊 Analyst",
+  system: "⚙ System",
 };
 
 /**
@@ -51,6 +62,7 @@ const ROLE_LABEL: Record<UserRole, string> = {
   supervisor: "WC Supervisor",
   handler: "Claims Handler",
   analyst: "Data Analyst",
+  system: "Automated Process",
 };
 
 type TileTone = "neutral" | "warn" | "error";

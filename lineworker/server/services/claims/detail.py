@@ -638,6 +638,7 @@ async def claim_financial_detail(
     ctx: CallerContext,
     claim_business_id: str,
     *,
+    batch_weekdays: frozenset[int],
     as_of: date | None = None,
 ) -> ClaimFinancials:
     """The Bills & Payments read model for one claim, or `ClaimNotVisible`.
@@ -654,6 +655,13 @@ async def claim_financial_detail(
     one that does not exist, which is `select_claim_detail`'s deliberate
     conflation: two different answers would make this route an oracle for
     enumerating the portfolio (AD-7).
+
+    `batch_weekdays` is required rather than defaulted (Story 3.4). It is the
+    disbursement cadence the summary's "next batch" date is computed from, and
+    it comes from `Settings` at the route — the SLA strip's arrangement. No
+    default, because a default here would be a second place the cadence is
+    written down, and the one that answered when somebody forgot to thread the
+    real one.
     """
     today = as_of or utc_today()
     row = await claim_repo.select_claim_detail(db, ctx, claim_business_id)
@@ -671,6 +679,7 @@ async def claim_financial_detail(
         benefit=await benefit_for_claim(db, claim, thresholds, today),
         thresholds=thresholds,
         as_of=today,
+        batch_weekdays=batch_weekdays,
     )
 
 
