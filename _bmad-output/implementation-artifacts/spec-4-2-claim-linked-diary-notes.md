@@ -2,8 +2,9 @@
 title: 'Story 4.2 — Claim-Linked Diary Notes'
 type: 'feature'
 created: '2026-08-17'
-status: 'in-review'
+status: 'done'
 baseline_revision: '4c0ecd107f8345f36c91c8bd3d9dfa3059c166df'
+final_revision: 'a14109ad1ca4b19bc0d59e36df14164acd2e7782'
 review_loop_iteration: 0
 followup_review_recommended: true
 context:
