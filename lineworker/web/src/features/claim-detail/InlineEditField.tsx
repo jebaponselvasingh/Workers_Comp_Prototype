@@ -37,8 +37,19 @@ export interface EditOption {
 }
 
 export interface FieldFeedback {
-  /** `invalid` keeps the typed value; `conflict` shows the server's. */
-  kind: "invalid" | "conflict" | "failed";
+  /**
+   * `invalid` keeps the typed value; `conflict` shows the server's.
+   *
+   * `notFound` is the fourth and it is the one that is *not* about a value:
+   * the thing the command names — a claim, a note — is not in the caller's
+   * book, or is no longer readable. Distinct from `failed` because `failed`
+   * says "try again in a moment" and a 404 will say the same thing for ever;
+   * the deferred item that asked for this member (`deferred-work.md`, 4.1 code
+   * review) named exactly that. It renders like `failed` here — no
+   * `aria-invalid`, no `attempted` — and differs only in carrying the server's
+   * own sentence instead of the retry one.
+   */
+  kind: "invalid" | "conflict" | "failed" | "notFound";
   message: string;
   /** What the handler typed, for the `invalid` case. */
   attempted?: string;

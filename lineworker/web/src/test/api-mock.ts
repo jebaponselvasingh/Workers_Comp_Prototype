@@ -97,6 +97,16 @@ export interface StubRoutes {
   completeMeeting?: StubRouteFor;
   /** `DELETE /claims-diary/meetings/{id}` (Story 4.1). */
   deleteMeeting?: StubRouteFor;
+  /**
+   * `GET /claims-diary/notes` (Story 4.2) — the handler's diary.
+   *
+   * Matched **before** the generic `/api/claims/` case-file case in the router
+   * below, for the reason the meetings block spells out one route up:
+   * `/api/claims-diary/notes` contains the substring `/api/claims`.
+   */
+  diaryNotes?: StubRouteFor;
+  /** `POST /claims-diary/notes` (Story 4.2) — matched before the list. */
+  addDiaryNote?: StubRouteFor;
 }
 
 const problem = (status: number, detail: string) => ({
@@ -240,11 +250,7 @@ export const GLOSSARY_EMPTY = {
  * mistake a stub for a computation — and because a card carrying invented
  * flags would let a test pass against a component that derived them.
  */
-function stageGroup(
-  items: unknown[],
-  total = items.length,
-  nextCursor: string | null = null,
-) {
+function stageGroup(items: unknown[], total = items.length, nextCursor: string | null = null) {
   return { items, nextCursor, total };
 }
 
@@ -506,10 +512,7 @@ export const INJURY_DIAGRAM = {
  */
 export const INJURY_UNKNOWN_KEY = {
   ...INJURY_DIAGRAM,
-  markers: [
-    { ...INJURY_DIAGRAM.markers[0], bodyKey: "cervical_spine" },
-    INJURY_DIAGRAM.markers[1],
-  ],
+  markers: [{ ...INJURY_DIAGRAM.markers[0], bodyKey: "cervical_spine" }, INJURY_DIAGRAM.markers[1]],
 };
 
 /**
@@ -550,8 +553,7 @@ export const DOCUMENTS_BLOCK = {
     {
       formCode: "C-3",
       formName: "FROI — Employee Claim for Compensation (C-3)",
-      description:
-        "Employee's formal WC claim. Filed when disability exceeds waiting period.",
+      description: "Employee's formal WC claim. Filed when disability exceeds waiting period.",
       timing: "As soon as practicable; carrier within 30 days",
       downloadUrl: "https://www.wcb.ny.gov/content/main/forms/c3.pdf",
     },
@@ -816,8 +818,7 @@ export const RESERVE_CHECK = {
   // open seeded claim (code review, 2026-08-14).
   disbursedMedicalCents: 127_500,
   reserveCents: 4_500_000,
-  rationale:
-    "Reserve ($45,000) is well aligned with projected remaining exposure ($40,500).",
+  rationale: "Reserve ($45,000) is well aligned with projected remaining exposure ($40,500).",
   bandsVersion: 1,
 };
 
@@ -1511,7 +1512,8 @@ export const APPROVAL_CONFLICT_PAID = {
     type: "/problems/stale-payment",
     title: "Conflict",
     status: 409,
-    detail: "This payment has already moved on — it was approved or disbursed while you were looking at it. The current figures are attached.",
+    detail:
+      "This payment has already moved on — it was approved or disbursed while you were looking at it. The current figures are attached.",
     paymentStatus: "paid",
     financials: {
       ...CLAIM_FINANCIALS.body,
@@ -1523,7 +1525,6 @@ export const APPROVAL_CONFLICT_PAID = {
     },
   },
 };
-
 
 /**
  * The auto-generated action checklist (Story 3.5).
@@ -1612,12 +1613,17 @@ export const CLAIM_ACTIONS = {
         label: "Log the weekly diary check-in",
         urgency: "low",
         target: "diary",
-        enabled: false,
-        // Re-worded by Story 4.1: `diary` and `meetings` shared one sentence
-        // until the scheduler shipped, and "Diary & Meetings — Epic 4" then
-        // described work half of which was already on screen. The server owns
-        // this string; the fixture follows it.
-        disabledReason: "Available with diary notes — Story 4.2",
+        // **Live since Story 4.2**, which deleted the target from the server's
+        // `SEAM_REASONS` — the whole of what enabling a seam costs on that
+        // side. On this side it needed one addition to
+        // `ActionsCard.NAVIGABLE_FROM_OVERVIEW`, without which an enabled row
+        // renders no control at all.
+        //
+        // `command` stays null, and that is the story's decision rather than an
+        // omission: the *note* is the completion, so there is no fifth
+        // `ActionCommand` and no ✓ on this row.
+        enabled: true,
+        disabledReason: null,
         command: null,
         documentId: null,
         documentVersion: null,
@@ -1746,12 +1752,30 @@ export const MEETING_DONE = {
 
 export const MEETINGS = {
   status: 200,
-  body: { items: [MEETING_UPCOMING, MEETING_DONE], nextCursor: null, total: 2 },
+  body: { items: [MEETING_UPCOMING, MEETING_DONE], nextCursor: null, total: 2, upcomingCount: 1 },
 };
 
 export const MEETINGS_EMPTY = {
   status: 200,
-  body: { items: [], nextCursor: null, total: 0 },
+  body: { items: [], nextCursor: null, total: 0, upcomingCount: 0 },
+};
+
+/**
+ * One meeting on the day the Notes sub-tab asks for — Story 4.2's summary.
+ *
+ * `upcomingCount` is deliberately *larger* than `items.length`: it is the whole
+ * book's count and the list is one filtered day of it, so a component that
+ * counted the rows instead of reading the field renders 1 where the server said
+ * 3 and this fixture fails it.
+ */
+export const MEETINGS_TODAY = {
+  status: 200,
+  body: {
+    items: [{ ...MEETING_UPCOMING, id: 601, meetingDate: "2099-01-01" }],
+    nextCursor: null,
+    total: 1,
+    upcomingCount: 3,
+  },
 };
 
 /** What the ✓ answers: the row with `isDone`, `version` and `status` moved. */
@@ -1778,6 +1802,71 @@ export const MEETING_CONFLICT = {
     detail:
       "This meeting was changed by someone else while you were looking at it. The current version is attached.",
     meeting: MEETING_COMPLETED.body,
+  },
+};
+
+/**
+ * Two diary notes, newest first — Story 4.2's list fixture.
+ *
+ * One tagged and one not, because the tag is nullable and the untagged branch
+ * is the one a component is most likely to render as `📎 null`.
+ */
+export const DIARY_NOTE_TAGGED = {
+  id: 901,
+  claimId: "WC-20017",
+  workerName: "Marcus Webb",
+  noteText: "Called the plant; light duty available from Monday.",
+  notedAt: "2026-08-17T14:05:00Z",
+};
+
+export const DIARY_NOTE_UNTAGGED = {
+  id: 900,
+  claimId: null,
+  workerName: null,
+  noteText: "Team huddle: reserve review moved to Thursday.",
+  notedAt: "2026-08-16T09:00:00Z",
+};
+
+export const DIARY_NOTES = {
+  status: 200,
+  body: { items: [DIARY_NOTE_TAGGED, DIARY_NOTE_UNTAGGED], nextCursor: null, total: 2 },
+};
+
+export const DIARY_NOTES_EMPTY = {
+  status: 200,
+  body: { items: [], nextCursor: null, total: 0 },
+};
+
+export const DIARY_NOTE_CREATED = {
+  status: 201,
+  body: { ...DIARY_NOTE_TAGGED, id: 902, noteText: "A brand new note." },
+};
+
+/** The 422 an empty or unstorable note gets — inline at the input, never a dialog. */
+export const DIARY_NOTE_INVALID = {
+  status: 422,
+  body: {
+    type: "/problems/invalid-patch",
+    title: "Unprocessable Content",
+    status: 422,
+    detail: "noteText cannot be empty",
+  },
+};
+
+/**
+ * The 404 a claim tag outside the caller's book gets.
+ *
+ * A refusal that will answer the same way for ever, which is why the input must
+ * not render it as "try again in a moment" — the whole point of routing note
+ * refusals through `feedbackFromError`.
+ */
+export const DIARY_NOTE_CLAIM_NOT_FOUND = {
+  status: 404,
+  body: {
+    type: "/problems/note-claim-not-found",
+    title: "Not Found",
+    status: 404,
+    detail: "No claim WC-20017 in your caseload.",
   },
 };
 
@@ -1844,6 +1933,18 @@ export function stubApi(routes: StubRoutes): void {
           return answerFor(routes.deleteMeeting ?? { status: 204, body: null }, url);
         }
         return answerFor(routes.meetings ?? MEETINGS, url);
+      }
+      // Story 4.2's two, beside the meetings block and for its reason:
+      // `/api/claims-diary/notes` contains `/api/claims`.
+      if (url.includes("/api/claims-diary/notes")) {
+        const method =
+          typeof input === "string" || input instanceof URL
+            ? (init?.method ?? "GET")
+            : (input as Request).method;
+        if (method === "POST") {
+          return answerFor(routes.addDiaryNote ?? DIARY_NOTE_CREATED, url);
+        }
+        return answerFor(routes.diaryNotes ?? DIARY_NOTES, url);
       }
       if (url.includes("/api/claims/queue")) {
         // The whole URL, query string included, so a stub can branch on the

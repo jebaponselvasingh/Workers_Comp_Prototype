@@ -24,7 +24,7 @@ from datetime import date, datetime, time
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Path, Query, Response, status
-from pydantic import ConfigDict, Field
+from pydantic import BeforeValidator, ConfigDict, Field
 
 from api.deps import CallerContextDep, DbDep
 from api.errors import PROBLEM_CONTENT_TYPE, ProblemDocument, ProblemException
@@ -48,6 +48,29 @@ from services.claims.meetings import (
     create_meeting,
     delete_meeting,
     list_meetings,
+)
+from services.claims.notes import (
+    MAX_NOTE_LENGTH,
+    DiaryNoteClaimNotVisible,
+    DiaryNoteNotVisible,
+    DiaryNotePage,
+    DiaryNoteView,
+    create_diary_note,
+    list_diary_notes,
+)
+from services.claims.notes import (
+    MAX_PAGE_LIMIT as NOTE_MAX_PAGE_LIMIT,
+)
+from services.claims.notes import (
+    MIN_PAGE_LIMIT as NOTE_MIN_PAGE_LIMIT,
+)
+
+# Aliased because the two lists declare their own bounds and their own cursor
+# failure, and importing either unqualified would silently give one aggregate
+# the other's. They happen to hold the same numbers today; that is a
+# coincidence of two modules copying one precedent, not a shared constant.
+from services.claims.notes import (
+    InvalidCursor as NoteInvalidCursor,
 )
 from services.derivations import MeetingStatus
 
@@ -100,14 +123,26 @@ class MeetingResponse(ApiModel):
 class MeetingListResponse(ApiModel):
     """The list envelope the Lists convention fixes: `{items, nextCursor, total}`.
 
-    `total` is the size of the caller's whole diary, not of `items` — the
-    number a count beside the sub-tab shows. A total that shrank when the page
-    did would misdescribe the list, which is `StageGroupResponse`'s argument.
+    `total` is the size of the list the caller asked for, not of `items` — the
+    number a count beside the sub-tab shows, and, when `day` is set, the number
+    in "📅 Today's Meetings (N)". A total that shrank when the page did would
+    misdescribe the list, which is `StageGroupResponse`'s argument.
+
+    `upcomingCount` is the extra member Story 4.2 added, and it is deliberately
+    *not* affected by `day`. See its field description.
     """
 
     items: list[MeetingResponse]
     next_cursor: str | None = None
     total: int
+    upcoming_count: int = Field(
+        description=(
+            "Server-derived. How many of the caller's meetings are still "
+            "ahead — the whole book, **independent of `day`**, judged by the "
+            "same registered rule that decides each item's `status`. The "
+            "greeting reads it directly; do not count `items` to reproduce it."
+        ),
+    )
 
 
 def _meeting(view: MeetingView) -> MeetingResponse:
@@ -141,6 +176,7 @@ def _page(page: MeetingPage) -> MeetingListResponse:
         items=[_meeting(view) for view in page.items],
         next_cursor=page.next_cursor,
         total=page.total,
+        upcoming_count=page.upcoming_count,
     )
 
 
@@ -297,7 +333,7 @@ MEETING_ID_PATH = Annotated[
 @router.get(
     "/meetings",
     response_model=MeetingListResponse,
-    summary="The session persona's scheduled meetings, oldest date first",
+    summary="The session persona's scheduled meetings, oldest first",
     responses={**UNAUTHENTICATED_RESPONSE, **BAD_CURSOR_RESPONSE},
 )
 async def meetings(
@@ -316,13 +352,32 @@ async def meetings(
             description="Page size. Reused from the cursor when one is supplied.",
         ),
     ] = None,
+    day: Annotated[
+        date | None,
+        Query(
+            description=(
+                "Narrow to one calendar date, `YYYY-MM-DD`. The **viewer's "
+                "local** day: a server with no timezone for the reader cannot "
+                "resolve 'today', so the browser sends it, exactly as `asOf` "
+                "is supplied elsewhere. It filters `items` and `total`, and it "
+                "is also the day every `status` and `upcomingCount` on the "
+                "response is judged against — a caller asking about a day is "
+                "asking about that day's horizon, not the server's. It does "
+                "not narrow `upcomingCount`, which stays whole-book. Not a "
+                "scope parameter — it can only narrow what the caller's "
+                "session already permits. A `cursor` issued with a different "
+                "`day` (or with none) is refused as `/problems/invalid-cursor`."
+            ),
+            examples=["2026-08-17"],
+        ),
+    ] = None,
 ) -> MeetingListResponse:
-    """The caller's diary. Page it; you cannot re-scope it."""
+    """The caller's diary, optionally one day of it. You cannot re-scope it."""
     # Specific to one persona's diary, so it must never be served to another
     # from a cache upstream — the same reason `/me` and `/claims/queue` say so.
     response.headers["Cache-Control"] = "no-store"
     try:
-        page = await list_meetings(db, ctx, cursor=cursor, limit=limit)
+        page = await list_meetings(db, ctx, cursor=cursor, limit=limit, day=day)
     except InvalidCursor as exc:
         # 400 rather than 422: the cursor is syntactically a string and passed
         # validation. What failed is that it does not describe a position in
@@ -489,6 +544,305 @@ async def delete_meeting_route(
     except StaleMeeting as exc:
         raise _conflict(exc) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT, headers={"Cache-Control": "no-store"})
+
+
+# --- Story 4.2: diary notes ---------------------------------------------
+
+
+class DiaryNoteResponse(ApiModel):
+    """One diary note, as the list and the 201 both read it.
+
+    **No `version` and no `status`**, unlike `MeetingResponse`, and both
+    absences are the contract rather than an oversight: a note is create-only,
+    so there is no compare-and-swap for a version to guard, and it has no
+    lifecycle, so there is nothing for a derivation to answer about it. A
+    client that found a `version` here would reasonably build an edit control.
+
+    `claimId` and `workerName` travel together and are both nullable, because
+    `claim_id` is (the ERD's `CLAIM |o--o{ DIARY_NOTE`). The card renders
+    `📎 WC-nnnn`; the worker's name rides along for the same reason it does on a
+    meeting — a browser assembling that reference from a second request would
+    be showing a claim this list did not scope.
+
+    `notedAt` is a UTC instant. The `{date} · {time}` header is the browser's
+    formatting of it, in the reader's own locale.
+    """
+
+    id: int
+    claim_id: str | None = Field(description="The tagged claim's `WC-nnnn`, or null.")
+    worker_name: str | None = Field(description="The tagged claim's injured worker, or null.")
+    note_text: str = Field(description="The handler's note. PHI — never logged.")
+    noted_at: datetime = Field(description="When the note was written, UTC. The server's clock.")
+
+
+class DiaryNoteListResponse(ApiModel):
+    """The list envelope the Lists convention fixes: `{items, nextCursor, total}`.
+
+    Ordered **newest first** — `notedAt` descending, `id` descending — which is
+    the one thing about this payload a client must not reproduce for itself.
+    `total` is the size of the caller's whole diary, not of `items`.
+    """
+
+    items: list[DiaryNoteResponse]
+    next_cursor: str | None = None
+    total: int
+
+
+def _note(view: DiaryNoteView) -> DiaryNoteResponse:
+    """One view → one wire object.
+
+    Written out rather than `model_validate(view)` for `_meeting`'s reason: the
+    repository's `claim_business_id` is the wire's `claimId`, and an attribute
+    mapping that silently dropped it would leave every note rendering untagged.
+    """
+    return DiaryNoteResponse(
+        id=view.id,
+        claim_id=view.claim_business_id,
+        worker_name=view.worker_name,
+        note_text=view.note_text,
+        noted_at=view.noted_at,
+    )
+
+
+def _note_page(page: DiaryNotePage) -> DiaryNoteListResponse:
+    return DiaryNoteListResponse(
+        items=[_note(view) for view in page.items],
+        next_cursor=page.next_cursor,
+        total=page.total,
+    )
+
+
+NOTE_UNPROCESSABLE_RESPONSE: dict[int | str, dict[str, object]] = {
+    422: {
+        "description": (
+            "The note cannot be stored — empty or whitespace-only text, or "
+            "text carrying characters the column cannot hold. Both reach this "
+            "route as `/problems/invalid-patch`. Text *longer* than the field "
+            "allows is caught a layer earlier: `noteText` declares "
+            "`maxLength`, so an over-long value is refused by the schema with "
+            "`/problems/validation-error`. The command enforces both bounds "
+            "regardless, for a caller that is not this schema (RFC 9457 "
+            "problem document)."
+        ),
+        "content": {PROBLEM_CONTENT_TYPE: {"schema": ProblemDocument.model_json_schema()}},
+    }
+}
+
+NOTE_NOT_FOUND_RESPONSE: dict[int | str, dict[str, object]] = {
+    404: {
+        "description": (
+            "Either of two things, told apart by `type`. "
+            "`/problems/note-claim-not-found` — no such claim in the caller's "
+            "caseload, deliberately the same answer for a claim that does not "
+            "exist and one that belongs to somebody else; **nothing was "
+            "written**. `/problems/note-not-readable` — the note *was* written "
+            "and audited and then could not be read back under the caller's "
+            "scope; it exists, and re-sending it would duplicate a row in an "
+            "append-only table (RFC 9457 problem document)."
+        ),
+        "content": {PROBLEM_CONTENT_TYPE: {"schema": ProblemDocument.model_json_schema()}},
+    }
+}
+
+
+def _trimmed(value: object) -> object:
+    """Strip a string, and pass anything else through untouched.
+
+    A `BeforeValidator`, so it runs before `max_length` — see
+    `NewDiaryNoteRequest` on why the two bounds have to measure the same
+    string. Non-strings are handed on unchanged rather than coerced: a `noteText`
+    of `42` is a type error the schema should report as one, and a validator that
+    stringified it would turn a client bug into a stored note.
+    """
+    return value.strip() if isinstance(value, str) else value
+
+
+class NewDiaryNoteRequest(ApiModel):
+    """The add-note input's body — a paragraph, and optionally a claim.
+
+    `extra="forbid"` for `NewMeetingRequest`'s reason: an unknown key is a 422
+    from the contract rather than a value silently dropped on the way to a
+    command.
+
+    **`noteText` is required and `claimId` is not.** The input sits at the
+    bottom of the Notes sub-tab whether or not a claim is selected, and a note
+    written with none is legal (the column is nullable) rather than refused.
+
+    **The text is trimmed before it is measured**, which is the one piece of
+    normalisation this schema does and it is here to keep two bounds from
+    disagreeing. `max_length` counts what arrives on the wire; the command
+    (`normalise_note_text`) counts what it will store, which is the *stripped*
+    string. A 2000-character note ending in the newline a handler pressed is
+    2001 on the wire and 2000 in the column — refused by the schema as
+    `/problems/validation-error` for being over a limit it is not over. Trimming
+    first makes both layers measure the same string, so the cap means one thing.
+    It deliberately does **not** add a `min_length`: an empty note stays the
+    command's `/problems/invalid-patch` (the I/O matrix's row), not a schema
+    refusal.
+    """
+
+    model_config = ApiModel.model_config | ConfigDict(extra="forbid")
+
+    claim_id: str | None = Field(
+        default=None,
+        pattern=CLAIM_ID_PATTERN,
+        description="The claim to tag, `WC-nnnn`. Must be in the caller's caseload.",
+        examples=["WC-20017"],
+    )
+    note_text: Annotated[str, BeforeValidator(_trimmed)] = Field(
+        max_length=MAX_NOTE_LENGTH,
+        description=(
+            "The note. Required, and refused when it trims to nothing — the "
+            "prototype silently ignores an empty input; here it is an inline "
+            "422 at the control."
+        ),
+        examples=["Called the plant; light duty available from Monday."],
+    )
+
+
+@router.get(
+    "/notes",
+    response_model=DiaryNoteListResponse,
+    summary="The session persona's diary notes, newest first",
+    responses={**UNAUTHENTICATED_RESPONSE, **BAD_CURSOR_RESPONSE},
+)
+async def diary_notes(
+    ctx: CallerContextDep,
+    db: DbDep,
+    response: Response,
+    cursor: Annotated[
+        str | None,
+        Query(description="An opaque `nextCursor` from a previous response."),
+    ] = None,
+    limit: Annotated[
+        int | None,
+        Query(
+            ge=NOTE_MIN_PAGE_LIMIT,
+            le=NOTE_MAX_PAGE_LIMIT,
+            description="Page size. Reused from the cursor when one is supplied.",
+        ),
+    ] = None,
+) -> DiaryNoteListResponse:
+    """The caller's own notes. Page them; you cannot re-scope them.
+
+    **Not filtered by claim, and there is no parameter that could be.** The
+    list is the handler's diary across their whole book — the prototype's own
+    shape — and each row carries its tag. A `claimId` filter here would publish
+    a per-claim read model this story does not have and the design contract
+    does not ask for.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        page = await list_diary_notes(db, ctx, cursor=cursor, limit=limit)
+    except NoteInvalidCursor as exc:
+        # 400 rather than 422, for the meetings list's reason: the cursor is
+        # syntactically a string and passed validation; what failed is that it
+        # does not describe a position in *this* list.
+        raise ProblemException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            title="Bad Request",
+            detail=str(exc),
+            type_="/problems/invalid-cursor",
+            headers={"Cache-Control": "no-store"},
+        ) from exc
+    return _note_page(page)
+
+
+@router.post(
+    "/notes",
+    response_model=DiaryNoteResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Write a diary note (audited)",
+    responses={
+        **UNAUTHENTICATED_RESPONSE,
+        **FORBIDDEN_RESPONSE,
+        **NOTE_NOT_FOUND_RESPONSE,
+        **NOTE_UNPROCESSABLE_RESPONSE,
+    },
+)
+async def write_diary_note(
+    ctx: CallerContextDep,
+    db: DbDep,
+    response: Response,
+    body: NewDiaryNoteRequest,
+) -> DiaryNoteResponse:
+    """Write one note row, and answer with it.
+
+    **201 with no `Location` header**, `schedule_meeting`'s call: a row is
+    created, so 201 is the honest status, and there is deliberately no
+    `GET /claims-diary/notes/{id}` to point at because the diary is read as a
+    list.
+
+    The body is the created entity rather than an acknowledgement, so the SPA
+    can render the new note at the top of the list from the response it already
+    has — and, more to the point, so what it renders is what the *scoped read*
+    returns rather than an echo of what was sent.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        view = await create_diary_note(
+            db, ctx, note_text=body.note_text, claim_business_id=body.claim_id
+        )
+    except EditNotPermitted as exc:
+        raise _forbidden(exc) from exc
+    except DiaryNoteClaimNotVisible as exc:
+        raise _note_claim_not_found(exc.claim_business_id) from exc
+    except DiaryNoteNotVisible as exc:
+        # The row was written and audited, and then the post-commit re-read
+        # could not see it — a scope narrowing landing between the two
+        # statements. Its **own** problem type and its own sentence, which is a
+        # correction: mapping it onto `_note_claim_not_found(body.claim_id)`
+        # answered "No claim None in your caseload." for an untagged note, and —
+        # worse — described a write that had already committed as a failure. A
+        # handler told that re-sends, and `diary_note` is append-only with no
+        # edit and no delete, so the console's own refusal is what duplicates
+        # the row. See `_note_not_readable`.
+        raise _note_not_readable(exc.note_id) from exc
+    except InvalidPatch as exc:
+        raise _unprocessable(exc) from exc
+    return _note(view)
+
+
+def _note_claim_not_found(claim_business_id: str | None) -> ProblemException:
+    """The 404 for a claim tag outside the caller's book.
+
+    Its own `type` rather than the meetings one, because the two name different
+    resources and a client mapping problem types to inline messages should not
+    have to know which aggregate answered. The *wording* is the case file's, so
+    a caller comparing this refusal with `GET /claims/{id}`'s learns nothing.
+    """
+    return ProblemException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        title="Not Found",
+        detail=f"No claim {claim_business_id} in your caseload.",
+        type_="/problems/note-claim-not-found",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def _note_not_readable(note_id: int) -> ProblemException:
+    """The 404 for a note that was **written** and then could not be read back.
+
+    Its own `type` and its own wording, and both matter more here than anywhere
+    else in this router. The row is committed and audited by the time this is
+    raised — only the scoped re-read failed — so the one thing the answer must
+    not say is anything a caller would respond to by sending the note again:
+    `diary_note` is append-only with no edit and no delete, so a retry is a
+    duplicate nobody can remove. It is still a 404 rather than a 500 because the
+    note genuinely is not in the caller's diary *now*, which is a fact about
+    scope rather than a fault.
+    """
+    return ProblemException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        title="Not Found",
+        detail=(
+            f"Note {note_id} was saved, but it can no longer be read back from "
+            "your diary — your caseload changed while it was being written. Do "
+            "not write it again; reload the list."
+        ),
+        type_="/problems/note-not-readable",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 def _forbidden(exc: EditNotPermitted) -> ProblemException:

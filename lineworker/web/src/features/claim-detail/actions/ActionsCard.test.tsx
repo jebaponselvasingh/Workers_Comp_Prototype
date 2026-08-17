@@ -187,12 +187,34 @@ test("a seam control is disabled and cannot navigate anywhere", async () => {
   renderCard({}, (target) => navigated.push(target));
   await screen.findAllByTestId("action-row");
 
-  const diaryRow = row("diary_check_in:diary");
-  const control = within(diaryRow).getByTestId("action-goto");
+  // `fraud`, not `diary`: Story 4.2 made the diary target live, so the row
+  // this test used to point at now navigates. `fraud` waits for Epic 6.
+  const seamRow = row("siu_escalation:fraud");
+  const control = within(seamRow).getByTestId("action-goto");
 
   expect(control).toBeDisabled();
   await userEvent.click(control);
   expect(navigated).toEqual([]);
+});
+
+test("the diary target is live since Story 4.2 and navigates", async () => {
+  // The seam this file's previous version asserted disabled. It is *enabled*
+  // on the server now, and the card had to gain `"diary"` in
+  // `NAVIGABLE_FROM_OVERVIEW` — without that line the row renders no control
+  // at all, which is the trap Story 4.1 hit with `meetings`.
+  const navigated: string[] = [];
+  renderCard({}, (target) => navigated.push(target));
+  await screen.findAllByTestId("action-row");
+
+  const diaryRow = row("diary_check_in:diary");
+  const control = within(diaryRow).getByTestId("action-goto");
+
+  expect(control).toBeEnabled();
+  await userEvent.click(control);
+  expect(navigated).toEqual(["diary"]);
+  // And no completion control: the note is the completion, so there is no
+  // fifth `ActionCommand` on this row.
+  expect(within(diaryRow).queryByTestId("action-command")).not.toBeInTheDocument();
 });
 
 test("a seam control names the epic that will enable it, without a pointer", async () => {
@@ -202,24 +224,24 @@ test("a seam control names the epic that will enable it, without a pointer", asy
   renderCard();
   await screen.findAllByTestId("action-row");
 
-  const diaryRow = row("diary_check_in:diary");
+  const seamRow = row("siu_escalation:fraud");
 
-  expect(within(diaryRow).getByTestId("action-goto")).toHaveAttribute(
+  expect(within(seamRow).getByTestId("action-goto")).toHaveAttribute(
     "title",
-    "Available with diary notes — Story 4.2",
+    "Available with AI Insights — Epic 6",
   );
-  expect(diaryRow).toHaveTextContent("Available with diary notes — Story 4.2");
+  expect(seamRow).toHaveTextContent("Available with AI Insights — Epic 6");
 });
 
 test("the seam reason shown is the server's, not a map held in the browser", async () => {
-  // The property Stories 4.2 and 6.2 flip: change the sentence on the server
-  // and the card changes. A client-side epic map would fail this.
+  // The property Story 6.2 will flip, and 4.2 just did: change the sentence on
+  // the server and the card changes. A client-side epic map would fail this.
   const retuned = {
     status: 200,
     body: {
       ...CLAIM_ACTIONS.body,
       items: CLAIM_ACTIONS.body.items.map((item) =>
-        item.id === "diary_check_in:diary"
+        item.id === "siu_escalation:fraud"
           ? { ...item, disabledReason: "Available in the next release" }
           : item,
       ),
@@ -228,9 +250,7 @@ test("the seam reason shown is the server's, not a map held in the browser", asy
   renderCard({ claimActions: retuned });
   await screen.findAllByTestId("action-row");
 
-  expect(
-    row("diary_check_in:diary"),
-  ).toHaveTextContent("Available in the next release");
+  expect(row("siu_escalation:fraud")).toHaveTextContent("Available in the next release");
 });
 
 test("a disabled row offers no completion control", async () => {

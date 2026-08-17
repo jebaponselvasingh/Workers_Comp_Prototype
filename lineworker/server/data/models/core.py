@@ -756,6 +756,68 @@ class Meeting(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class DiaryNote(Base):
+    """One dated working note in a handler's diary (Story 4.2, FR-DIARY-1).
+
+    The prototype keeps these in a browser-lifetime object (`diaryNotes`, line
+    919) keyed by handler name and erased by a reload; here they are rows
+    written by the one audited command in `services/claims/notes.py`, which
+    AD-12 names as the diary aggregate's only writer.
+
+    **No `version` column, and that is the AD-4 statement for this table.**
+    Compare-and-swap arbitrates concurrent writers of a mutable row; a note is
+    written once and never updated — there is no edit and no delete in the
+    design contract, so nothing is ever read-modify-written and there is
+    nothing to arbitrate. `TimelineEvent` and `AuditEvent` set the precedent
+    for the same reason, and the write-concurrency convention names append-only
+    stores as exempt outright. A `version` here would be a column whose only
+    possible value is 1.
+
+    **`app_user_id` is the author, and it is what scopes every read.** A note
+    belongs to the handler who wrote it, not to the claim it is tagged to (the
+    ERD's `APP_USER ||--o{ DIARY_NOTE : writes`) — so the list is *caller*
+    scoped and a note is invisible to everybody else, including a supervisor
+    over the same book. The claim tag is a reference, not an owner.
+
+    **`claim_id` is nullable**, which is the ERD's `CLAIM |o--o{ DIARY_NOTE`.
+    The add-note input is always on screen, including when no claim is
+    selected, and a note somebody wrote with nothing selected is a real thing
+    to have written rather than an error to refuse.
+
+    **`noted_at` is one `timestamptz`, and that is a deliberate divergence
+    from the Excel.** `docs/WC_Feature_Element_Details.xlsx` row 91 names
+    `DiaryNotes.date` and `DiaryNotes.time` as two elements. `Meeting` keeps
+    its date and time split because the *modal captures a calendar day* and an
+    optional wall-clock time in the handler's own locale; a note has no
+    user-entered time at all — `noted_at` is the server clock at the moment of
+    the write — so one instant is the honest shape and two columns would be a
+    split nothing ever writes independently. The UI formats it as
+    `{date} · {time}`, which is the prototype's own header.
+
+    Indexed because the list is ordered by it: `noted_at DESC, id DESC` is the
+    keyset the cursor walks, and an unindexed sort key is a sequential scan of
+    every handler's diary on every page.
+
+    AD-11: `note_text` is PHI-class — a diary entry names a worker's treatment,
+    their employer's position and the handler's own read of the file. Nothing
+    about it reaches a log beyond ids and field names, and the table belongs in
+    Story 8.1's purge cascade, which does not exist yet and is not invented
+    here.
+    """
+
+    __tablename__ = "diary_note"
+
+    id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+    # Indexed: every read of this table is "my notes" — the list has no other
+    # entry point, and the author predicate is on every statement.
+    app_user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), index=True)
+    claim_id: Mapped[int | None] = mapped_column(ForeignKey("claim.id"), index=True)
+    note_text: Mapped[str] = mapped_column(Text)
+    noted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), index=True, server_default=func.now()
+    )
+
+
 class GlossaryTerm(Base):
     """WC domain reference data (Story 1.6, FR-GLOS-1) — the prototype's GLOSS.
 

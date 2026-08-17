@@ -24,6 +24,13 @@
  * derived during render rather than cleared by an effect — `LineItemDialog`'s
  * device. Without the key, "changed by someone else" would follow the handler
  * onto the next card they touched.
+ *
+ * **Story 4.2 added a `compact` variant rather than a second card.** The
+ * today's-meetings summary in the Notes sub-tab renders the same rows with a
+ * shorter action row (✓ Done · Open Claim). See the prop's own comment for why
+ * a variant and not a copy — the short version is `formatWhen` and the status
+ * treatment, which the prototype *does* duplicate and consequently formats two
+ * ways for one meeting.
  */
 import {
   Tooltip,
@@ -83,8 +90,10 @@ export function MeetingCard({
   completing,
   deleting,
   error,
+  compact = false,
   onComplete,
   onDelete,
+  onOpenClaim,
 }: {
   meeting: Meeting;
   /** Any meeting command is in flight — what *disables* the controls. */
@@ -95,10 +104,31 @@ export function MeetingCard({
   deleting: boolean;
   /** The refusal raised about this meeting, or `null`. */
   error: string | null;
+  /**
+   * The today's-meetings summary's variant (Story 4.2, AC 1).
+   *
+   * **A variant rather than a second component**, which is the story's own
+   * instruction and the right call for one reason above the others: the
+   * date/time formatting and the Upcoming/Done treatment are the two things
+   * that must not exist twice, and `formatWhen` plus `MEETING_STATUS_*` are
+   * exactly what a copy would have duplicated. The prototype does copy them —
+   * its `renderDiary` writes its own `toLocaleTimeString` call at line 2062 —
+   * and its two cards format the same meeting differently.
+   *
+   * What the variant changes is the *action row*: ✓ Done and "Open Claim",
+   * with no Delete and no email seam. Deleting from a one-day summary is a
+   * destructive action a long way from the list that shows what else is
+   * scheduled, and the ✉ seam belongs where Story 4.3 will enable it — the
+   * Meetings sub-tab — rather than being a second disabled control to explain.
+   */
+  compact?: boolean;
   onComplete: (meeting: Meeting) => void;
   onDelete: (meeting: Meeting) => void;
+  /** Drive the workspace to this meeting's claim. Compact cards only. */
+  onOpenClaim?: (claimId: string) => void;
 }) {
   const emailReasonId = `meeting-${meeting.id}-email-seam`;
+  const claimId = meeting.claimId;
 
   return (
     <article
@@ -106,6 +136,7 @@ export function MeetingCard({
       data-meeting-id={meeting.id}
       data-meeting-type={meeting.meetingType}
       data-status={meeting.status}
+      data-variant={compact ? "compact" : "full"}
       className={`rounded border border-border bg-surface p-[9px_11px] ${MEETING_STATUS_TONE[meeting.status]}`}
     >
       <h4 data-testid="meeting-title" className="text-[12px] font-semibold text-text">
@@ -124,7 +155,10 @@ export function MeetingCard({
         </p>
       )}
 
-      {meeting.notes !== null && (
+      {/* The agenda and the participant tags are the two things a one-day
+          summary drops: the card sits under a greeting in a 320px pane, and
+          the full detail is one sub-tab away on the same rows. */}
+      {!compact && meeting.notes !== null && (
         <p data-testid="meeting-notes" className="mt-[3px] text-[11px] text-faint italic">
           {meeting.notes}
         </p>
@@ -134,7 +168,7 @@ export function MeetingCard({
           comparison against a numeric literal anywhere it scans, and it is
           right to — the cheapest way to smuggle a threshold in is to write one
           next to a `.length`. */}
-      {meeting.participants.length !== 0 && (
+      {!compact && meeting.participants.length !== 0 && (
         <p className="mt-[5px] flex flex-wrap gap-[4px]">
           {meeting.participants.map((participant) => (
             <span
@@ -165,44 +199,73 @@ export function MeetingCard({
           </button>
         )}
 
-        <TooltipProvider delayDuration={0}>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span data-testid="meeting-email-seam" tabIndex={0}>
-                <button
-                  type="button"
-                  data-testid="meeting-email"
-                  disabled
-                  // Duplicated as a native tooltip so the reason survives
-                  // without a pointer — Story 3.5's note.
-                  title={EMAIL_SEAM_REASON}
-                  aria-describedby={emailReasonId}
-                  className={`${ACTION_CLASS} border-steel bg-steel-soft text-steel`}
-                >
-                  ✉ Email participants
-                </button>
-              </span>
-            </TooltipTrigger>
-            <TooltipContent data-testid="meeting-email-reason">
-              {EMAIL_SEAM_REASON}
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
+        {compact ? (
+          /* The 4.2 half of AC 1's "wired to the meeting store and queue
+             selection": the ✓ above is the meeting store, and this is the
+             selection. Present only when the meeting names a claim **and a
+             consumer supplied somewhere to send it** — the column is nullable
+             and the prop is optional, and a button that navigated nowhere
+             would be the dead click NFR-3 forbids. The two conditions are the
+             same rule: rendering on `claimId` alone while calling through
+             `onOpenClaim?.()` shipped an enabled control whose click did
+             nothing, which is precisely what the first half of this comment
+             says must not happen. */
+          claimId !== null &&
+          onOpenClaim !== undefined && (
+            <button
+              type="button"
+              data-testid="meeting-open-claim"
+              data-claim-id={claimId}
+              onClick={() => onOpenClaim(claimId)}
+              className={`${ACTION_CLASS} border-steel bg-steel-soft text-steel hover:bg-surface`}
+            >
+              Open Claim
+            </button>
+          )
+        ) : (
+          <>
+            <TooltipProvider delayDuration={0}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span data-testid="meeting-email-seam" tabIndex={0}>
+                    <button
+                      type="button"
+                      data-testid="meeting-email"
+                      disabled
+                      // Duplicated as a native tooltip so the reason survives
+                      // without a pointer — Story 3.5's note.
+                      title={EMAIL_SEAM_REASON}
+                      aria-describedby={emailReasonId}
+                      className={`${ACTION_CLASS} border-steel bg-steel-soft text-steel`}
+                    >
+                      ✉ Email participants
+                    </button>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent data-testid="meeting-email-reason">
+                  {EMAIL_SEAM_REASON}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
 
-        <button
-          type="button"
-          data-testid="meeting-delete"
-          onClick={() => onDelete(meeting)}
-          disabled={busy}
-          className={`${ACTION_CLASS} border-border bg-surface-2 text-muted-text hover:bg-surface`}
-        >
-          {deleting ? "Deleting…" : "Delete"}
-        </button>
+            <button
+              type="button"
+              data-testid="meeting-delete"
+              onClick={() => onDelete(meeting)}
+              disabled={busy}
+              className={`${ACTION_CLASS} border-border bg-surface-2 text-muted-text hover:bg-surface`}
+            >
+              {deleting ? "Deleting…" : "Delete"}
+            </button>
+          </>
+        )}
       </div>
 
-      <span id={emailReasonId} className="sr-only">
-        {EMAIL_SEAM_REASON}
-      </span>
+      {!compact && (
+        <span id={emailReasonId} className="sr-only">
+          {EMAIL_SEAM_REASON}
+        </span>
+      )}
 
       {error !== null && (
         <p

@@ -59,13 +59,32 @@ export type NewMeeting = components["schemas"]["NewMeetingRequest"];
  * two different staleness clocks would let them disagree about a claim nobody
  * touched.
  */
-export function useMeetings() {
+export function useMeetings(options?: {
+  /**
+   * Narrow to one calendar date, `YYYY-MM-DD` — the **viewer's local** day
+   * from `lib/clock.ts::todayIso`. The Notes sub-tab's today's-meetings
+   * summary passes it; the Meetings sub-tab does not.
+   *
+   * **The filtering happens on the server**, which is the whole reason this is
+   * a request parameter and not an `items.filter(…)` here: the list is
+   * paginated and sorted ascending, so today's meetings sort *after* every past
+   * one and a browser filtering a page would find none of them once a diary
+   * outgrows fifty rows. `noDerivation.test.ts` would refuse the comparison in
+   * any case.
+   */
+  day?: string;
+}) {
+  const day = options?.day;
+
   return useInfiniteQuery({
-    queryKey: queryKeys.meetings.list,
+    // Two entries under one prefix: the unfiltered diary and today's slice.
+    // See `queryKeys.meetings.day` on why the nesting is load-bearing for
+    // invalidation.
+    queryKey: day === undefined ? queryKeys.meetings.list : queryKeys.meetings.day(day),
     initialPageParam: null as string | null,
     queryFn: async ({ pageParam }): Promise<MeetingList> => {
       const { data } = await api.GET("/claims-diary/meetings", {
-        params: { query: { cursor: pageParam ?? undefined } },
+        params: { query: { cursor: pageParam ?? undefined, day } },
       });
       return data!;
     },
@@ -76,6 +95,12 @@ export function useMeetings() {
     select: (data: InfiniteData<MeetingList>) => ({
       items: data.pages.flatMap((page) => page.items),
       total: data.pages[0].total,
+      // The greeting's "📅 N upcoming meetings", server-derived by the same
+      // rule that decides each card's `status` (AD-10). Off the *first* page
+      // because it describes the whole book and every page carries the same
+      // number — and it is deliberately unaffected by `day`, so the summary's
+      // one request serves the greeting too.
+      upcomingCount: data.pages[0].upcomingCount,
     }),
     staleTime: 15_000,
   });
@@ -110,30 +135,47 @@ function freshMeetingFrom(error: unknown): Meeting | undefined {
  *   button was generated from where it used to be — and the move may have been
  *   an ordering one this cannot see (leaving that invalidation out was the
  *   defect that bit Stories 3.4 and 3.5, once each).
- * - the **200** path does not. The response body already refreshed the row, and
- *   a follow-up GET would re-open the read-after-write window that returning
- *   the entity closes (`useApprovePayment`'s rule). The key is still marked
- *   stale, so the next mount re-reads it.
+ * - the **200** path did not, through Story 4.1: the response body already
+ *   refreshed the row, and a follow-up GET would re-open the read-after-write
+ *   window that returning the entity closes (`useApprovePayment`'s rule). That
+ *   premise held while a *row* was all this cache entry contained. Story 4.2
+ *   put `upcomingCount` on the envelope — a server-derived aggregate over the
+ *   whole book — and a single meeting's response body cannot refresh it, so
+ *   `useCompleteMeeting` now refetches too. See its comment; `useScheduleMeeting`
+ *   and `useDeleteMeeting` already did.
+ *
+ * The parameter is kept rather than deleted because the *reason* the two paths
+ * differ has not gone away, and a fourth command that answers with its entity
+ * and changes no aggregate should be able to use the cheap path again.
+ *
+ * **Both the row install and the invalidation cover the whole prefix**, which
+ * changed in Story 4.2 and is the one 4.1 policy that had to relax. There are
+ * now two cache entries over the same rows — the Meetings sub-tab's full list
+ * and the Notes sub-tab's `day`-filtered summary — and ✓ Done can be pressed
+ * from either. `exact: true` would have refreshed whichever one the handler
+ * clicked in and left the other showing the meeting as still upcoming, on
+ * screen at the same time, two sub-tabs apart.
  */
 function replaceInList(
   client: ReturnType<typeof useQueryClient>,
   fresh: Meeting,
   { refetch }: { refetch: boolean },
 ): void {
-  client.setQueryData<InfiniteData<MeetingList>>(queryKeys.meetings.list, (current) =>
-    current === undefined
-      ? current
-      : {
-          ...current,
-          pages: current.pages.map((page) => ({
-            ...page,
-            items: page.items.map((item) => (item.id === fresh.id ? fresh : item)),
-          })),
-        },
+  client.setQueriesData<InfiniteData<MeetingList>>(
+    { queryKey: queryKeys.meetings.list },
+    (current) =>
+      current === undefined
+        ? current
+        : {
+            ...current,
+            pages: current.pages.map((page) => ({
+              ...page,
+              items: page.items.map((item) => (item.id === fresh.id ? fresh : item)),
+            })),
+          },
   );
   void client.invalidateQueries({
     queryKey: queryKeys.meetings.list,
-    exact: true,
     refetchType: refetch ? undefined : "none",
   });
 }
@@ -162,7 +204,9 @@ export function useScheduleMeeting() {
       return data!;
     },
     onSuccess: () => {
-      void client.invalidateQueries({ queryKey: queryKeys.meetings.list, exact: true });
+      // By prefix, not `exact`: Story 4.2 added the day-filtered summary as a
+      // sibling entry, and a meeting scheduled for today belongs in both.
+      void client.invalidateQueries({ queryKey: queryKeys.meetings.list });
     },
   });
 }
@@ -172,10 +216,17 @@ export function useScheduleMeeting() {
  *
  * The 200 body is the fresh row and it is written straight into the list, so
  * the card's chip, its ✓ and its muted styling all move together from one
- * object. The key is then marked stale **without** an immediate refetch: the
- * response already refreshed it, and a follow-up GET would re-open the
- * read-after-write window that returning the entity closes
- * (`useApprovePayment`'s rule).
+ * object — that part is unchanged and is why the card never flickers.
+ *
+ * **It refetches as well, which it did not before Story 4.2**, and the reason
+ * is `upcomingCount`. Completing a meeting that was upcoming changes a number
+ * on the envelope that the row's own response cannot carry, and the browser is
+ * forbidden from decrementing it (it is a registered derivation's answer —
+ * `noDerivation.test.ts` lists the field). Without the refetch the greeting
+ * two elements above the card keeps saying "📅 3 upcoming meetings" over a
+ * summary showing two, which is precisely the console-disagreeing-with-itself
+ * failure `meeting_horizon.py` exists to prevent, arrived at from the cache
+ * instead of from a second `>=`.
  */
 export function useCompleteMeeting() {
   const client = useQueryClient();
@@ -196,7 +247,7 @@ export function useCompleteMeeting() {
       const fresh = freshMeetingFrom(error);
       if (fresh) replaceInList(client, fresh, { refetch: true });
     },
-    onSuccess: (fresh) => replaceInList(client, fresh, { refetch: false }),
+    onSuccess: (fresh) => replaceInList(client, fresh, { refetch: true }),
   });
 }
 
@@ -233,7 +284,8 @@ export function useDeleteMeeting() {
       if (fresh) replaceInList(client, fresh, { refetch: true });
     },
     onSuccess: () => {
-      void client.invalidateQueries({ queryKey: queryKeys.meetings.list, exact: true });
+      // By prefix, for `useScheduleMeeting`'s reason.
+      void client.invalidateQueries({ queryKey: queryKeys.meetings.list });
     },
   });
 }

@@ -263,7 +263,18 @@ const DERIVED_FIELDS =
   // not one. `status` is the derivation's answer; `meetingDate`, `meetingTime`
   // and `isDone` are the three facts it was computed from, all three on the
   // same payload one line away from being recombined into a second copy of it.
-  "status|isDone|meetingDate|meetingTime";
+  "status|isDone|meetingDate|meetingTime|" +
+  // Story 4.2's. `upcomingCount` is the greeting's "📅 N upcoming meetings",
+  // and it is the single most tempting number in the diary to reconstruct: the
+  // summary right beneath it renders a list of meetings each carrying
+  // `status`, so `items.filter(m => m.status === "upcoming").length` looks like
+  // the same answer and is not — the count is over the **whole book** and the
+  // list is one filtered day of it. It is also what a component would reach for
+  // to decrement after a ✓ Done, which is the other half of the same mistake.
+  // `notedAt` joins the field list because a note's header is formatted from
+  // it and a comparison against it would be a client deciding recency — the
+  // rule that closes the diary check-in lives in `services/worklist`.
+  "upcomingCount|notedAt";
 
 const FLAGS = "siuReview|rtwBlocked|paymentDue|fraudFlag|litigationFlag|surgeryRequired";
 
@@ -350,6 +361,13 @@ test("the scan reaches the files it claims to", () => {
   // Story 4.1's card, for the same reason: it is the file that would hold the
   // date comparison if anybody re-derived Upcoming/Done.
   expect(scanned).toContain(path.join("features", "diary", "MeetingCard.tsx"));
+  // Story 4.2's sub-tab, and it is the strongest pull in the feature: the
+  // component holds a greeting count, a filtered day of meetings and a note
+  // list at once, and every one of "which of these are today", "how many are
+  // ahead" and "is this one still upcoming" is one line away from being
+  // answered here instead of read off the wire. `lib/clock.ts` is deliberately
+  // *outside* the scanned roots — see its docstring on where the line is.
+  expect(scanned).toContain(path.join("features", "diary", "NotesSubTab.tsx"));
   expect(scanned).toContain(
     path.join("features", "claim-detail", "overview", "TreatmentOverview.tsx"),
   );
@@ -460,6 +478,13 @@ test("the guard would notice a derivation if one were added", () => {
     // literal, so the threshold rule never fired.
     "const upcoming = meeting.meetingDate >= today && !meeting.isDone;",
     'const tone = m.status < "done" ? UPCOMING : DONE;',
+    // Story 4.2's: the two shapes the Notes sub-tab invites. Counting the
+    // upcoming meetings out of a list that is one filtered day of the book,
+    // and decrementing the server's count after a ✓ Done rather than letting
+    // the refetch answer.
+    "const ahead = today.items.filter((m) => m.status).length - 1;",
+    "const left = summary.upcomingCount - 1;",
+    "const stale = note.notedAt < cutoff;",
   ];
 
   for (const smell of smells) {

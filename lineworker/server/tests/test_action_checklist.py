@@ -26,7 +26,7 @@ import json
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
 import httpx
@@ -135,6 +135,7 @@ def run(
     documents: Sequence[FakeDocument] = (),
     bills: Sequence[FakeBill] = (),
     weeks: Sequence[FakeWeek] = (),
+    latest_note_at: datetime | None = None,
     flags: ClaimFlags = QUIET,
     params: WorklistActions = PARAMS,
     as_of: date = TODAY,
@@ -144,10 +145,17 @@ def run(
         documents=documents,
         bills=bills,
         weeks=weeks,
+        latest_note_at=latest_note_at,
         flags=flags,
         params=params,
         as_of=as_of,
     )
+
+
+def note_days_ago(days: int) -> datetime:
+    """A note written `days` calendar days before `TODAY`, as the column holds
+    one: a UTC-aware instant, which is what `select_latest_note_at` returns."""
+    return datetime.combine(TODAY - timedelta(days=days), time(9, 30), tzinfo=UTC)
 
 
 def keys(actions: Sequence[Action]) -> list[ActionKey]:
@@ -365,6 +373,52 @@ def test_the_diary_check_in_fires_for_a_claim_in_treatment(stage: Stage) -> None
     assert fired == (stage is Stage.treatment)
 
 
+@pytest.mark.parametrize(
+    ("days_ago", "expected"),
+    [
+        # The completion Story 4.2 delivered: a note today closes the row.
+        (0, False),
+        (1, False),
+        # The last day inside the window. `DIARY_CHECK_IN_DAYS` is 7, and the
+        # comparison is exclusive, so six days is still covered…
+        (6, False),
+        # …and the seventh is when a *weekly* check-in comes round again. A
+        # Monday note is due again the following Monday, not the Tuesday after,
+        # which is the whole difference between `<` and `<=` here.
+        (7, True),
+        (30, True),
+    ],
+)
+def test_a_recent_note_closes_the_diary_check_in_and_a_stale_one_reopens_it(
+    days_ago: int, expected: bool
+) -> None:
+    """AC 5, and the boundary is the point of the parametrisation.
+
+    The row is entity-backed: it stops firing because a `diary_note` exists,
+    not because anybody pressed a completion button. `services/worklist/
+    actions.py` says why there is no fifth `ActionCommand`.
+    """
+    fired = ActionKey.diary_check_in in keys(
+        run(FakeClaim(stage=Stage.treatment), latest_note_at=note_days_ago(days_ago))
+    )
+    assert fired is expected
+
+
+def test_a_note_does_not_summon_the_check_in_on_a_claim_that_is_not_in_treatment() -> None:
+    """The stage gate is unchanged, and the note condition can only remove rows.
+
+    Worth its own test because the rule now reads two things: a change that
+    reordered them — testing the note first and returning an `Action` — would
+    put a diary row on every settled claim in the portfolio.
+    """
+    for stage in sorted(Stage):
+        if stage is Stage.treatment:
+            continue
+        assert ActionKey.diary_check_in not in keys(
+            run(FakeClaim(stage=stage), latest_note_at=note_days_ago(0))
+        )
+
+
 # --- the seam: disabled targets and their sentences ---------------------
 
 
@@ -386,7 +440,8 @@ def test_every_seam_target_renders_disabled_with_the_epic_that_enables_it() -> N
     for key, target in (
         (ActionKey.siu_escalation, ActionTarget.fraud),
         (ActionKey.overdue_rtw, ActionTarget.rtw_letter),
-        (ActionKey.diary_check_in, ActionTarget.diary),
+        # `diary` was the third member until Story 4.2 built the Notes sub-tab
+        # — see `test_the_diary_target_is_live_since_story_4_2`.
     ):
         action = actions.get(key)
         # Not every one of the three survives the cap on this claim; the ones
@@ -425,15 +480,38 @@ def test_the_meetings_target_is_live_since_story_4_1() -> None:
     assert action.disabled_reason is None
 
 
-def test_the_diary_seam_names_the_story_that_delivers_it() -> None:
-    """The re-wording Story 4.1 forced (code review of the seam table).
+def test_the_diary_target_is_live_since_story_4_2() -> None:
+    """The seam this file's previous version asserted disabled (Story 4.2).
 
-    `diary` and `meetings` shared one sentence — "Diary & Meetings — Epic 4" —
-    and with meetings shipped that sentence describes work half of which is
-    already on screen. A handler reading it beside a working "Schedule
-    Meeting →" would reasonably conclude the console was broken.
+    `diary_check_in` points at `diary`, and until 4.2 there was no Notes
+    sub-tab so the row shipped refused with "Available with diary notes —
+    Story 4.2". Enabling it was one deletion from `SEAM_REASONS` — the property
+    `ActionTarget`'s docstring promises, and the reason `enabled` is a server
+    field rather than a client-side membership test.
+
+    Asserted rather than simply removed from the loop above, so a regression
+    that re-added the entry fails here instead of silently re-disabling a
+    shipped surface. `test_the_meetings_target_is_live_since_story_4_1` is the
+    same assertion one story earlier.
+
+    The SPA needed one change that is *not* the seam and must not be mistaken
+    for it: `ActionsCard.NAVIGABLE_FROM_OVERVIEW` gained `"diary"`, because
+    that card renders no control at all for an enabled target outside the set.
     """
-    assert SEAM_REASONS[ActionTarget.diary] == "Available with diary notes — Story 4.2"
+    assert ActionTarget.diary not in SEAM_REASONS
+
+    action = next(
+        candidate
+        for candidate in run(FakeClaim(stage=Stage.treatment))
+        if candidate.key is ActionKey.diary_check_in
+    )
+    assert action.target is ActionTarget.diary
+    assert action.enabled is True
+    assert action.disabled_reason is None
+    # Still no completion command: the note is the completion, and a fifth
+    # `ActionCommand` would be the "completed actions" store this module's
+    # docstring refuses.
+    assert action.command is None
 
 
 def test_a_disabled_row_never_carries_a_completion_command() -> None:

@@ -212,11 +212,69 @@ export const queryKeys = {
      */
     list: ["meetings", "list"] as const,
     /**
+     * One day of the caller's meetings — the Notes sub-tab's summary (4.2).
+     *
+     * **A sibling under `list`'s own prefix, and the nesting is the whole
+     * point.** The summary and the Meetings sub-tab read the same rows through
+     * the same endpoint, so ✓ Done from one has to refresh the other; making
+     * this `["meetings", "list", day]` means `["meetings", "list"]` is a prefix
+     * of it and one invalidation covers both. A flat `["meetings", "day", d]`
+     * would have needed two, and the one somebody forgot is the stale list.
+     *
+     * The `day` *is* in the key, unlike the glossary's search term and like the
+     * queue's filter: a different day is a different server answer computed
+     * under the caller's scope (AD-1 forbids re-filtering a cached superset),
+     * and the browser must not be the thing that decides which rows fall on it.
+     *
+     * It is the **viewer's local** day, from `lib/clock.ts::todayIso`. The key
+     * therefore changes on the **first render after** local midnight — not at
+     * midnight itself. `NotesSubTab` reads `new Date()` during render, so a pane
+     * left open across midnight keeps yesterday's key and yesterday's summary
+     * until something re-renders it, which may be hours. That is a real (if
+     * quiet) staleness and it is recorded here rather than papered over: an
+     * earlier version of this comment said the key "rolls over at local
+     * midnight", which described a timer nothing schedules. A midnight timer is
+     * deliberately not built — see `deferred-work.md`.
+     */
+    day: (day: string) => ["meetings", "list", day] as const,
+    /**
      * The **mutation** key every meeting command carries. Nothing is cached
      * under it; `useIsMutating` counts it so the scheduler and each card can
      * disable their controls while any write is in flight — the same guarantee
      * `claims.writes` gives the case file, over a different aggregate.
      */
     writes: ["meetings", "write"] as const,
+  },
+  /**
+   * The handler's diary notes (Story 4.2) — **a top-level group beside
+   * `meetings`, not a child of `claims`**, for the reason `meetings` records.
+   *
+   * `GET /claims-diary/notes` is scoped to the *caller*: a note belongs to the
+   * handler who wrote it and merely tags a case file, and the list is not
+   * filtered by the selected claim at all. Nesting it under a claim's segment
+   * would make an unrelated case-file edit invalidate the whole diary — and
+   * would imply a per-claim read model that does not exist.
+   *
+   * **`writes` is this group's own, and using `claims.writes` here would be a
+   * bug with a visible symptom.** That key drives `useClaimWriteInFlight`,
+   * which disables every editable control on the case file while a command is
+   * in flight, because those controls all read `expectedVersion` out of one
+   * cached case file. Saving a note touches no column of `claim` and bumps no
+   * version — there is not even a version on `diary_note` — so carrying that
+   * key would grey out the severity score and the comp-rate input while
+   * somebody typed a diary entry, for no reason anyone could see.
+   *
+   * It is not `meetings.writes` either: `useMeetingWriteInFlight` disables the
+   * ✓ Done buttons in the today's-meetings summary, and a note being saved is
+   * not a reason a handler cannot tick a meeting off.
+   */
+  diaryNotes: {
+    /** The caller's notes, newest first, one page at a time. No cursor in the
+     * key — `meetings.list`'s rule and its reason. */
+    list: ["diaryNotes", "list"] as const,
+    /** The **mutation** key the add-note command carries. Nothing is cached
+     * under it; `useIsMutating` counts it so the input and its Save disable
+     * themselves while the write is in flight. */
+    writes: ["diaryNotes", "write"] as const,
   },
 } as const;

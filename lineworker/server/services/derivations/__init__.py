@@ -94,6 +94,7 @@ from services.derivations.meeting_horizon import (
     MeetingStatusDerivation,
     ScheduledMeeting,
     meeting_status,
+    upcoming_predicate,
 )
 from services.derivations.open_duration import (
     OpenDurationDerivation,
@@ -180,6 +181,7 @@ __all__ = [
     "total_claim_projected",
     "total_paid",
     "unpaid_total",
+    "upcoming_predicate",
     "treatment_phase",
     "utc_today",
 ]

@@ -44,7 +44,10 @@ function aMeeting(overrides: Partial<Meeting> = {}): Meeting {
   };
 }
 
-function renderCard(meeting: Meeting) {
+function renderCard(
+  meeting: Meeting,
+  extra: { compact?: boolean; onOpenClaim?: (id: string) => void } = {},
+) {
   return render(
     <MeetingCard
       meeting={meeting}
@@ -54,6 +57,7 @@ function renderCard(meeting: Meeting) {
       error={null}
       onComplete={() => {}}
       onDelete={() => {}}
+      {...extra}
     />,
   );
 }
@@ -117,4 +121,90 @@ test("the card renders the status it was sent, whatever the date says", () => {
   expect(within(card).getByTestId("meeting-title")).toHaveTextContent("✓");
   // …and there is no ✓ Done control, because there is no un-complete command.
   expect(within(card).queryByTestId("meeting-done")).not.toBeInTheDocument();
+});
+
+// --- Story 4.2: the compact variant --------------------------------------
+
+test("the compact variant offers ✓ Done and Open Claim, and nothing else", async () => {
+  // A *variant* rather than a second component, because `formatWhen` and the
+  // Upcoming/Done treatment are exactly what a copy would have duplicated —
+  // the prototype does copy them, and formats one meeting two ways as a
+  // result. What differs is the action row, and this is that difference.
+  renderCard(aMeeting(), { compact: true, onOpenClaim: () => {} });
+
+  const card = screen.getByTestId("meeting-card");
+  expect(card).toHaveAttribute("data-variant", "compact");
+  expect(within(card).getByTestId("meeting-done")).toBeInTheDocument();
+  expect(within(card).getByTestId("meeting-open-claim")).toBeInTheDocument();
+  // No Delete: a destructive action a long way from the list that shows what
+  // else is scheduled. No ✉ seam: it belongs where Story 4.3 will enable it.
+  expect(within(card).queryByTestId("meeting-delete")).not.toBeInTheDocument();
+  expect(within(card).queryByTestId("meeting-email")).not.toBeInTheDocument();
+  expect(within(card).queryByTestId("meeting-email-seam")).not.toBeInTheDocument();
+});
+
+test("the compact variant drops the agenda and the participant tags", () => {
+  renderCard(aMeeting(), { compact: true });
+
+  expect(screen.queryByTestId("meeting-notes")).not.toBeInTheDocument();
+  expect(screen.queryByTestId("meeting-participant-tag")).not.toBeInTheDocument();
+  // …but keeps the two lines that identify the meeting, formatted by the one
+  // `formatWhen` both variants share.
+  expect(screen.getByTestId("meeting-when")).toHaveTextContent("10:30");
+  expect(screen.getByTestId("meeting-claim-ref")).toHaveTextContent("WC-20017");
+});
+
+test("the full variant is unchanged — Delete and the 4.3 seam are still there", () => {
+  renderCard(aMeeting());
+
+  const card = screen.getByTestId("meeting-card");
+  expect(card).toHaveAttribute("data-variant", "full");
+  expect(within(card).getByTestId("meeting-delete")).toBeInTheDocument();
+  expect(within(card).getByTestId("meeting-email")).toBeDisabled();
+  expect(within(card).queryByTestId("meeting-open-claim")).not.toBeInTheDocument();
+});
+
+test("a compact card for an untagged meeting offers no Open Claim", () => {
+  // `claimId` is nullable (the ERD's `CLAIM |o--o{ MEETING`), and a button that
+  // navigated nowhere would be the dead click NFR-3 forbids.
+  renderCard(aMeeting({ claimId: null, workerName: null }), { compact: true });
+
+  expect(screen.queryByTestId("meeting-open-claim")).not.toBeInTheDocument();
+  expect(screen.getByTestId("meeting-done")).toBeInTheDocument();
+});
+
+test("a done meeting's compact card offers Open Claim but no ✓", () => {
+  // The ✓ is hidden once done in both variants — there is no un-complete
+  // command, so the button's only outcome would be a 409.
+  renderCard(aMeeting({ isDone: true, status: "done" }), {
+    compact: true,
+    onOpenClaim: () => {},
+  });
+
+  expect(screen.queryByTestId("meeting-done")).not.toBeInTheDocument();
+  expect(screen.getByTestId("meeting-open-claim")).toBeInTheDocument();
+});
+
+test("a compact card with no `onOpenClaim` renders no Open Claim", () => {
+  // The prop is optional and the click used to go through `onOpenClaim?.()`, so
+  // a consumer that forgot it shipped an enabled control whose click did
+  // nothing — the dead click NFR-3 forbids, and the same thing this file
+  // already asserts about an untagged meeting. Both are the same rule: the
+  // button exists when there is a claim to open *and* somewhere to open it.
+  renderCard(aMeeting(), { compact: true });
+
+  expect(screen.queryByTestId("meeting-open-claim")).not.toBeInTheDocument();
+  expect(screen.getByTestId("meeting-done")).toBeInTheDocument();
+});
+
+test("Open Claim hands back the meeting's own claim id", async () => {
+  const opened: string[] = [];
+  renderCard(aMeeting({ claimId: "WC-20099" }), {
+    compact: true,
+    onOpenClaim: (id) => opened.push(id),
+  });
+
+  screen.getByTestId("meeting-open-claim").click();
+
+  expect(opened).toEqual(["WC-20099"]);
 });

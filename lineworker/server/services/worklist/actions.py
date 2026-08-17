@@ -71,7 +71,7 @@ that move those rows; this module never writes (AD-12).
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from typing import Final, Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -134,17 +134,33 @@ PAYMENT_DUE_WEEK_STATUSES: Final[frozenset[ScheduleWeekStatus]] = frozenset(
 #: is the whole of what enabling a seam costs, and it is the demonstration
 #: `ActionTarget`'s docstring promised: one deletion here, nothing in the SPA.
 #:
-#: `diary` stays, and its sentence had to be re-worded rather than left alone.
-#: Both entries said "Diary & Meetings — Epic 4"; with meetings shipped, that
-#: sentence describes work half of which is already on screen, and a handler
-#: reading it beside a working meetings link would reasonably conclude the
-#: console was broken. It now names the story that owns the surface, which is
-#: the level of precision the other two entries were already at.
+#: **`diary` was here too, and Story 4.2 deleted it.** The Notes sub-tab exists,
+#: so "Log Diary Entry →" opens it with the add-note input focused. Two
+#: deletions in two stories, and the SPA changed in neither — except for one
+#: line that is *not* about the seam and is easy to mistake for it:
+#: `ActionsCard.NAVIGABLE_FROM_OVERVIEW` has to gain the target as well, because
+#: that card's render gate is `!enabled || NAVIGABLE_FROM_OVERVIEW.has(target)`
+#: and an enabled row outside the set renders no control at all. Story 4.1 hit
+#: the same trap with `meetings`.
 SEAM_REASONS: Final[Mapping[ActionTarget, str]] = {
-    ActionTarget.diary: "Available with diary notes — Story 4.2",
     ActionTarget.fraud: "Available with AI Insights — Epic 6",
     ActionTarget.rtw_letter: "Available with the RTW letter — Epic 6",
 }
+
+#: How long one diary note holds the weekly check-in closed.
+#:
+#: **A module constant, not a JDM tunable**, and the line is the one AD-8 draws:
+#: `worklist_actions` carries the cap, the padding floor and eleven *urgencies*
+#: — numbers an operator retunes to change how loud a list is. The trigger
+#: *logic* has always been Python, because it is a condition over typed state
+#: rather than a knob. Seven days is what "weekly" means, and it sits beside the
+#: rule that reads it.
+#:
+#: The counter-argument is real and is recorded in `deferred-work.md`: a
+#: check-in *cadence* is arguably operator tuning, and promoting it is one key
+#: in the parameter block plus a line in `WorklistActions` if anybody ever wants
+#: to retune it without a deploy.
+DIARY_CHECK_IN_DAYS: Final[int] = 7
 
 
 class ActionClaim(Protocol):
@@ -289,6 +305,11 @@ class _Context:
     documents: Sequence[ActionDocument]
     bills: Sequence[ActionLineItem]
     weeks: Sequence[ActionWeek]
+    #: When the **caller** last wrote a diary note about this claim, or `None`
+    #: (Story 4.2). A read of another aggregate rather than a fourth row
+    #: sequence, because the rule needs one instant and not a list — and a read
+    #: is all it is: AD-12 governs writes, and this module never writes.
+    latest_note_at: datetime | None
     flags: ClaimFlags
     params: WorklistActions
     as_of: date
@@ -558,14 +579,51 @@ def _modified_duty(context: _Context) -> Action | None:
 
 
 def _diary_check_in(context: _Context) -> Action | None:
-    """A claim in treatment gets a weekly diary note.
+    """A claim in treatment with no recent note from the reader's own diary.
 
-    The stage rather than a date, because there is no diary yet to have a last
-    entry in: Epic 4 owns the entity, and when it lands this condition becomes
-    "no note within seven days" without the row appearing or disappearing from
-    the card in the meantime.
+    **The completion this rule reads is the note itself** (Story 4.2), which is
+    what the previous version of this docstring promised would happen: "when it
+    lands this condition becomes 'no note within seven days' without the row
+    appearing or disappearing from the card in the meantime." It has, and the
+    row does not move — the *stage* gate is unchanged and the note condition
+    only ever removes rows that had nothing to satisfy them.
+
+    **There is no completion button, and that is a decision rather than an
+    omission.** `ActionCommand` has four members, each naming a specific entity
+    write, and this module's docstring states the rule: there is no "completed
+    actions" store, because a second place a completion is written down is the
+    first place the two can disagree. A fifth command whose only job is to
+    record "I said I did it" is exactly that second place. So the deep link is
+    the completion path: following "Log Diary Entry →" opens the Notes sub-tab
+    focused on the input, and saving a note makes this row stop firing on its
+    own — the same shape `osha_log` has, one column over.
+
+    **`latest_note_at` is the *caller's* most recent note on this claim**, not
+    anybody's. A note belongs to its author (`diary_note_scope`), and counting
+    *anybody's* note would publish the existence of a handler's private working
+    record to whoever else read the claim — a diary is not a management report.
+    So "has this been checked in on?" is answered from the reader's own diary,
+    and a reader with no diary of their own sees the row.
+
+    **That is not a statement about supervisors reading case files, and an
+    earlier version of this docstring wrongly said it was.** `GET
+    /claims/{id}/actions` has no role gate, but the only surface that reads it
+    is the workspace, and `web/src/App.tsx` gates that route to `handler` — no
+    supervisor or analyst ever reaches a case file, so the "supervisor sees an
+    extra row" consequence has no path to a screen. The scope decision stands on
+    the privacy argument alone; the reachability claim was decoration, and
+    decoration that a reader could have checked and found false.
+
+    **The window is exclusive at `DIARY_CHECK_IN_DAYS`.** A note written today
+    holds the row closed for six more days and it fires again on the seventh,
+    which is what "weekly" means: a Monday note is due again the following
+    Monday, not the Tuesday after. `noted_at` is compared as a UTC calendar day
+    against the same `as_of` every other rule here uses.
     """
     if context.claim.stage is not Stage.treatment:
+        return None
+    latest = context.latest_note_at
+    if latest is not None and (context.as_of - latest.date()).days < DIARY_CHECK_IN_DAYS:
         return None
     return _action(
         context,
@@ -648,6 +706,15 @@ def generate_actions(
     documents: Sequence[ActionDocument],
     bills: Sequence[ActionLineItem],
     weeks: Sequence[ActionWeek],
+    # **Required, like every other data input**, and it was the one keyword here
+    # with a default. `None` is not "not supplied", it is the *answer* "this
+    # claim has never been checked in on" — the value that makes
+    # `_diary_check_in` fire. A caller who forgot the `select_latest_note_at`
+    # read would therefore re-open the check-in on every treatment claim in the
+    # book and no test would notice, because the checklist would still be
+    # perfectly well-formed. Making it required moves that from a silent wrong
+    # answer to a `TypeError` at the call site.
+    latest_note_at: datetime | None,
     flags: ClaimFlags,
     params: WorklistActions,
     as_of: date,
@@ -678,6 +745,7 @@ def generate_actions(
         documents=documents,
         bills=bills,
         weeks=weeks,
+        latest_note_at=latest_note_at,
         flags=flags,
         params=params,
         as_of=as_of,
@@ -734,9 +802,14 @@ async def claim_actions(
     should see the same list the handler does; capability gating belongs on the
     writes, which is where `services/claims/assessment.py` puts it.
 
-    Five reads and two rule-document loads. The claim resolve is scoped; the
-    three child reads are scoped again in the repository, which is that module's
+    Six reads and two rule-document loads. The claim resolve is scoped; the four
+    child reads are scoped again in the repository, which is that module's
     standing rule rather than redundancy.
+
+    The sixth is Story 4.2's: the caller's most recent diary note on this claim,
+    read so the check-in rule can stop firing once one exists. A read across
+    aggregates, which is fine — AD-12 governs *writes*, and this module never
+    writes.
     """
     today = as_of or derivations.utc_today()
     row = await claim_repo.select_claim_detail(db, ctx, claim_business_id)
@@ -768,6 +841,7 @@ async def claim_actions(
         documents=await claim_repo.select_documents(db, ctx, claim_business_id),
         bills=await claim_repo.select_bills(db, ctx, claim_business_id),
         weeks=await claim_repo.select_payment_schedule(db, ctx, claim_business_id),
+        latest_note_at=await claim_repo.select_latest_note_at(db, ctx, claim_business_id),
         flags=flags,
         params=params,
         as_of=today,
@@ -782,6 +856,7 @@ async def claim_actions(
 
 __all__ = [
     "BILL_REVIEW_STATUSES",
+    "DIARY_CHECK_IN_DAYS",
     "PAYMENT_DUE_WEEK_STATUSES",
     "PRE_AUTH_DOC_TYPE",
     "SEAM_REASONS",

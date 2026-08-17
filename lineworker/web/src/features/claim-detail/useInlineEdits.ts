@@ -25,7 +25,7 @@ import { useCallback, useState } from "react";
 
 import type { ClaimDetail, EditableField, FieldEdits } from "@/api/claims";
 import { useClaimWriteInFlight, useEditClaimFields } from "@/api/claims";
-import { ApiError, isConflict, isInvalidPatch } from "@/api/errors";
+import { ApiError, isConflict, isInvalidPatch, isNotFound } from "@/api/errors";
 
 import type { FieldFeedback } from "./InlineEditField";
 
@@ -62,6 +62,14 @@ function attempted(edits: FieldEdits, field: EditableField): string | undefined 
  *
  * `attempt` is what was submitted, kept only for the `invalid` case so the
  * handler can correct it rather than retype it.
+ *
+ * **The 404 branch is Story 4.2's**, and it closes a deferred item the 4.1 code
+ * review opened. Everything that was not a 409 or a 422 fell through to "Could
+ * not save. Try again in a moment." — including a claim tag outside the caller's
+ * book, which will answer 404 for ever, and (since 4.2) a note that *was* saved
+ * and could not be read back, where inviting a retry means duplicating a row in
+ * an append-only table. Both carry a server sentence written for a person and
+ * naming no PHI, so the honest answer is to show it.
  */
 export function feedbackFromError(error: unknown, attempt?: string): FieldFeedback {
   if (isConflict(error)) return { kind: "conflict", message: CONFLICT_MESSAGE };
@@ -72,6 +80,12 @@ export function feedbackFromError(error: unknown, attempt?: string): FieldFeedba
       // echo the submitted value (AD-11).
       message: error instanceof ApiError ? error.problem.detail : FAILED_MESSAGE,
       attempted: attempt,
+    };
+  }
+  if (isNotFound(error)) {
+    return {
+      kind: "notFound",
+      message: error instanceof ApiError ? error.problem.detail : FAILED_MESSAGE,
     };
   }
   return { kind: "failed", message: FAILED_MESSAGE };

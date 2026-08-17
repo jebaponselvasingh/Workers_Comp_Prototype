@@ -1,11 +1,12 @@
 /**
- * Story 4.1 AC 1 — the diary's three sub-tabs, two of which name their story.
+ * Story 4.1 AC 1 / Story 4.2 AC 1 — the diary's three sub-tabs.
  *
- * The whole value of this file is the pair of placeholders. Notes and Emails
- * are not built, and NFR-3 asks that a not-yet-built surface say so rather
- * than render blank — so what is asserted is that each one is reachable and
- * that it carries the story that fills it. A test that only checked the
- * Meetings tab would pass against a pane with one tab in it.
+ * 4.1 built Meetings and this file asserted the other two named their stories.
+ * 4.2 built Notes, so what is left to assert is the *shape of the strip*: three
+ * tabs, two of them live, one still naming Story 4.3 — and that only the
+ * selected one is mounted, which is the property the pane depends on for the
+ * add-note input's focus key (`DiaryNav`) and for not keeping two lists' worth
+ * of queries alive behind a tab nobody is looking at.
  */
 import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
@@ -14,18 +15,18 @@ import { MemoryRouter } from "react-router";
 import { afterEach, expect, test, vi } from "vitest";
 
 import { createQueryClient } from "@/api/queryClient";
-import { ME_HANDLER, MEETINGS, stubApi } from "@/test/api-mock";
+import { DIARY_NOTES, ME_HANDLER, MEETINGS, stubApi } from "@/test/api-mock";
 
 import { DiaryNavProvider } from "./DiaryNav";
 import { DiaryTab } from "./DiaryTab";
 
 function renderTab() {
-  stubApi({ me: ME_HANDLER, meetings: MEETINGS });
+  stubApi({ me: ME_HANDLER, meetings: MEETINGS, diaryNotes: DIARY_NOTES });
   return render(
     <QueryClientProvider client={createQueryClient()}>
       <MemoryRouter initialEntries={["/workspace?claim=WC-20017"]}>
         <DiaryNavProvider>
-          <DiaryTab claimId="WC-20017" workerName="Marcus Delgado" />
+          <DiaryTab claimId="WC-20017" workerName="Marcus Delgado" injuryType="Laceration" />
         </DiaryNavProvider>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -36,28 +37,38 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-test("Meetings is the sub-tab this story builds, and it opens selected", async () => {
+test("Notes opens selected — it is the first tab and the one carrying the greeting", async () => {
   renderTab();
 
-  expect(await screen.findByTestId("diary-subtab-meetings")).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  expect(screen.getByTestId("meetings-subtab")).toBeInTheDocument();
+  expect(await screen.findByTestId("diary-subtab-notes")).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByTestId("notes-subtab")).toBeInTheDocument();
 });
 
-test.each([
-  ["notes", "Story 4.2"],
-  ["emails", "Story 4.3"],
-])("the %s sub-tab names the story that delivers it", async (tab, story) => {
+test("Meetings is reachable and mounts its own list", async () => {
   renderTab();
-  await userEvent.click(screen.getByTestId(`diary-subtab-${tab}`));
+  await userEvent.click(await screen.findByTestId("diary-subtab-meetings"));
 
-  const placeholder = screen.getByTestId(`diary-empty-${tab}`);
-  expect(placeholder).toHaveAttribute("data-story", story);
-  expect(placeholder).toHaveTextContent(story);
-  // …and the built sub-tab is unmounted, not merely hidden: the meetings list
-  // holds a query and a modal, and keeping it alive behind an unselected tab
-  // is the thing `DetailTabs` avoids for the same reason.
+  expect(screen.getByTestId("meetings-subtab")).toBeInTheDocument();
+  // …and Notes is unmounted, not merely hidden. Both sub-tabs hold queries and
+  // Notes holds a draft; keeping either alive behind an unselected tab is the
+  // thing `DetailTabs` avoids for the same reason.
+  expect(screen.queryByTestId("notes-subtab")).not.toBeInTheDocument();
+});
+
+test("the emails sub-tab is the one seam left, and it names Story 4.3", async () => {
+  renderTab();
+  await userEvent.click(await screen.findByTestId("diary-subtab-emails"));
+
+  const placeholder = screen.getByTestId("diary-empty-emails");
+  expect(placeholder).toHaveAttribute("data-story", "Story 4.3");
+  expect(placeholder).toHaveTextContent("Story 4.3");
+  expect(screen.queryByTestId("notes-subtab")).not.toBeInTheDocument();
   expect(screen.queryByTestId("meetings-subtab")).not.toBeInTheDocument();
+});
+
+test("there is no notes placeholder left anywhere — Story 4.2 removed the seam", async () => {
+  renderTab();
+  await screen.findByTestId("notes-subtab");
+
+  expect(screen.queryByTestId("diary-empty-notes")).not.toBeInTheDocument();
 });

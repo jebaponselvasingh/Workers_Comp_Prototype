@@ -153,9 +153,16 @@ test.describe("@story:4-1 @epic:4 meeting scheduling and management", () => {
     await expect(actionsTab).toBeDisabled();
     await expect(actionsTab).toHaveAttribute("title", /Epic 6/);
     await expect(byTestId(page, "copilot-tab-diary")).toHaveAttribute("aria-selected", "true");
+    // Notes is the sub-tab the pane opens on since Story 4.2 built it — it is
+    // first in the strip and carries the greeting.
+    await expect(byTestId(page, "diary-subtab-notes")).toHaveAttribute("aria-selected", "true");
 
+    // Notes was a placeholder naming Story 4.2 when this spec was written; 4.2
+    // built it, so what is left to assert here is that the strip still has
+    // three tabs and that the *unbuilt* one still names its story. The Notes
+    // sub-tab's own behaviour is `4-2-claim-linked-diary-notes.spec.ts`'s.
     await byTestId(page, "diary-subtab-notes").click();
-    await expect(byTestId(page, "diary-empty-notes")).toHaveAttribute("data-story", "Story 4.2");
+    await expect(byTestId(page, "notes-subtab")).toBeVisible();
     await byTestId(page, "diary-subtab-emails").click();
     await expect(byTestId(page, "diary-empty-emails")).toHaveAttribute("data-story", "Story 4.3");
     await byTestId(page, "diary-subtab-meetings").click();
@@ -217,6 +224,12 @@ test.describe("@story:4-1 @epic:4 meeting scheduling and management", () => {
 
     // --- The claim of the whole story: it survives a reload --------------
     await page.reload();
+    // The pane comes back on **Notes** — Story 4.2 built it, and it is the
+    // first tab in the strip and the one carrying the greeting. Sub-tab
+    // selection is local UI state and deliberately not in the URL (only
+    // `?claim=` is), so a reload returns to the default rather than to
+    // wherever the handler was.
+    await byTestId(page, "diary-subtab-meetings").click();
     await expect(cardFor(page, created!.id)).toBeVisible();
 
     // --- AC 4: ✓ Done persists, and the status the server derives moves --
@@ -274,7 +287,7 @@ test.describe("@story:4-1 @epic:4 meeting scheduling and management", () => {
   }) => {
     // **Pinning what actually happens, because two comments used to claim the
     // opposite.** The copilot aside is `hidden … xl:flex` — `display: none`,
-    // but still *mounted* — `MeetingsSubTab` is its default sub-tab, and the
+    // but still *mounted* — the deep link switches it to Meetings, and the
     // Radix dialog portals to `document.body`. So the deep link below 1280px
     // is not the no-op it was documented as: the handler gets a working modal
     // over a workspace whose diary list they cannot see, and a meeting saved

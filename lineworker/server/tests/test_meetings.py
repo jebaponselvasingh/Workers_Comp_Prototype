@@ -19,6 +19,8 @@ hardcodes a version number or a row count that the seed alone decides: every
 helper reads the current state first, the way a client does.
 """
 
+import base64
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -43,6 +45,7 @@ from services.claims.meetings import (
     DELETE_ACTION,
     ENTITY,
     MAX_NOTES_LENGTH,
+    MAX_PAGE_LIMIT,
     Cursor,
     InvalidCursor,
     MeetingClaimNotVisible,
@@ -57,7 +60,7 @@ from services.claims.meetings import (
     normalise_new_meeting,
     normalise_participants,
 )
-from services.derivations import MeetingStatus, meeting_status
+from services.derivations import MeetingStatus, meeting_status, utc_today
 from tests import seed_fixture
 from tests.conftest import requires_db
 
@@ -149,9 +152,89 @@ def test_an_unknown_participant_is_refused_rather_than_dropped() -> None:
 # --- the cursor, without a database -------------------------------------
 
 
-def test_a_cursor_round_trips() -> None:
-    cursor = Cursor(last_date=TODAY, last_id=42, limit=25, issued_on=TODAY)
+NOON = time(12, 0)
+
+
+@pytest.mark.parametrize("day", [None, TODAY])
+def test_a_cursor_round_trips(day: date | None) -> None:
+    cursor = Cursor(last_date=TODAY, last_time=NOON, last_id=42, limit=25, issued_on=TODAY, day=day)
     assert decode_cursor(encode_cursor(cursor), TODAY) == cursor
+
+
+def test_a_cursor_carrying_an_offset_time_is_refused_at_the_boundary() -> None:
+    """`time.fromisoformat("12:00:00+05:00")` parses happily and passes every
+    bound — and the column is a naive `Time`, so the offset would reach the
+    row-value comparison and raise inside the driver instead of answering 400
+    here. `notes.py::decode_cursor` guards its datetime for this and tests it;
+    this is the same guard one table over (review, 2026-08-17)."""
+    forged = (
+        base64.urlsafe_b64encode(
+            json.dumps(
+                {
+                    "d": TODAY.isoformat(),
+                    "t": "12:00:00+05:00",
+                    "i": 1,
+                    "l": 25,
+                    "s": TODAY.isoformat(),
+                    "g": None,
+                }
+            ).encode()
+        )
+        .decode()
+        .rstrip("=")
+    )
+
+    with pytest.raises(InvalidCursor):
+        decode_cursor(forged, TODAY)
+
+
+def test_a_cursor_issued_before_the_day_was_recorded_is_refused() -> None:
+    """The `day` member is Story 4.2's review fix, and a cursor without it is
+    refused rather than read as "the whole diary".
+
+    Defaulting the missing key would silently turn a day-filtered walk into a
+    whole-book one at the same position, which is exactly the failure the member
+    exists to prevent — so the absence is unreadable, like the sort time's.
+    """
+    stale = (
+        base64.urlsafe_b64encode(
+            json.dumps(
+                {
+                    "d": TODAY.isoformat(),
+                    "t": NOON.isoformat(),
+                    "i": 1,
+                    "l": 25,
+                    "s": TODAY.isoformat(),
+                }
+            ).encode()
+        )
+        .decode()
+        .rstrip("=")
+    )
+
+    with pytest.raises(InvalidCursor):
+        decode_cursor(stale, TODAY)
+
+
+def test_a_cursor_issued_before_the_sort_time_existed_is_refused() -> None:
+    """Story 4.2 made the sort key `(date, time, id)`, so a two-member cursor
+    names a position in an ordering that no longer exists.
+
+    Refused rather than defaulted: substituting midnight for the missing member
+    would resume the walk at whatever row happened to sort there, silently
+    skipping or repeating the ones between. The SPA drops the cursor and
+    reloads from page one, which is what a 400 asks it to do.
+    """
+    stale = (
+        base64.urlsafe_b64encode(
+            json.dumps({"d": TODAY.isoformat(), "i": 1, "l": 25, "s": TODAY.isoformat()}).encode()
+        )
+        .decode()
+        .rstrip("=")
+    )
+
+    with pytest.raises(InvalidCursor):
+        decode_cursor(stale, TODAY)
 
 
 @pytest.mark.parametrize(
@@ -163,13 +246,13 @@ def test_a_cursor_round_trips() -> None:
         # A forged page size past the route's ceiling — the cursor is *reused*
         # when the request omits a limit, so this is the way round the
         # validator if it were not bounded here.
-        encode_cursor(Cursor(TODAY, 1, 100_000, TODAY)),
+        encode_cursor(Cursor(TODAY, NOON, 1, 100_000, TODAY, None)),
         # A position that cannot exist.
-        encode_cursor(Cursor(TODAY, 0, 25, TODAY)),
+        encode_cursor(Cursor(TODAY, NOON, 0, 25, TODAY, None)),
         # Dated in the future: no cursor this service issued can name one.
-        encode_cursor(Cursor(TODAY, 1, 25, TODAY + timedelta(days=1))),
+        encode_cursor(Cursor(TODAY, NOON, 1, 25, TODAY + timedelta(days=1), None)),
         # Older than MAX_CURSOR_AGE.
-        encode_cursor(Cursor(TODAY, 1, 25, TODAY - timedelta(days=8))),
+        encode_cursor(Cursor(TODAY, NOON, 1, 25, TODAY - timedelta(days=8), None)),
     ],
 )
 def test_a_cursor_that_does_not_describe_this_list_is_refused(raw: str) -> None:
@@ -547,27 +630,222 @@ async def test_one_handlers_diary_is_invisible_to_another(db: AsyncSession) -> N
     assert created.id not in {item.id for item in theirs.items}
 
 
-async def test_the_list_is_ordered_by_date_then_id(db: AsyncSession) -> None:
-    """Total, not merely sorted — Story 3.5's learning.
+async def test_the_list_is_ordered_by_date_then_time_then_id(db: AsyncSession) -> None:
+    """Total, not merely sorted — Story 3.5's learning, with Story 4.2's clock.
 
     Two meetings on one day is the ordinary case, so a page that ended inside
-    the tie would repeat one row and drop the other.
+    the tie would repeat one row and drop the other. The *time* is the middle
+    member: a day's meetings have to read down the clock, and the same ordering
+    then serves the whole diary and the one-day filter without a second sort.
+
+    The three below are inserted out of clock order deliberately, so an
+    ordering that fell back to insertion order would fail here.
     """
     ctx = await context_for(db, *KAYA)
     same_day = TODAY + timedelta(days=30)
-    for _ in range(3):
+    for at in (time(15, 0), time(9, 0), time(11, 30)):
         await create_meeting(
             db,
             ctx,
             claim_business_id=a_claim_of(KAYA),
             meeting_type=MeetingType.other,
             meeting_date=same_day,
+            meeting_time=at,
             as_of=TODAY,
         )
 
     page = await list_meetings(db, ctx, limit=200, as_of=TODAY)
-    keys = [(item.meeting_date, item.id) for item in page.items]
+    keys = [(item.meeting_date, item.meeting_time or time(0, 0), item.id) for item in page.items]
     assert keys == sorted(keys)
+
+    that_day = [item.meeting_time for item in page.items if item.meeting_date == same_day]
+    assert that_day == [time(9, 0), time(11, 30), time(15, 0)]
+
+
+async def test_an_all_day_meeting_sorts_at_the_head_of_its_day_and_pages(
+    db: AsyncSession,
+) -> None:
+    """`COALESCE`, not `NULLS FIRST`, and the paging half is why.
+
+    Both orderings put an untimed meeting first. Only the coalesced one keeps
+    the keyset comparison NULL-free — a NULL member makes `tuple_(…) > tuple_(…)`
+    evaluate to NULL rather than false, so the page *after* an all-day meeting
+    would come back empty and the walk would stop mid-list with no error.
+    """
+    ctx = await context_for(db, *KAYA)
+    day = TODAY + timedelta(days=45)
+    for at in (time(8, 0), None):
+        await create_meeting(
+            db,
+            ctx,
+            claim_business_id=a_claim_of(KAYA),
+            meeting_type=MeetingType.other,
+            meeting_date=day,
+            meeting_time=at,
+            as_of=TODAY,
+        )
+
+    page = await list_meetings(db, ctx, day=day, as_of=TODAY)
+    assert [item.meeting_time for item in page.items] == [None, time(8, 0)]
+
+    # And the cursor issued *at* the all-day row resumes correctly.
+    first = await list_meetings(db, ctx, day=day, limit=1, as_of=TODAY)
+    assert first.next_cursor is not None
+    second = await list_meetings(db, ctx, day=day, cursor=first.next_cursor, as_of=TODAY)
+    assert [item.id for item in second.items] == [page.items[1].id]
+
+
+async def test_the_day_filter_narrows_the_page_and_its_total_but_not_the_count(
+    db: AsyncSession,
+) -> None:
+    """AC 1's server half: one read serves the summary *and* the greeting.
+
+    `items` and `total` describe the day the caller asked for — the summary's
+    "📅 Today's Meetings (N)". `upcomingCount` describes the whole book, which
+    is what the greeting's sentence claims, so it must not move with the
+    filter.
+    """
+    ctx = await context_for(db, *KAYA)
+    day = TODAY + timedelta(days=60)
+    for _ in range(2):
+        await create_meeting(
+            db,
+            ctx,
+            claim_business_id=a_claim_of(KAYA),
+            meeting_type=MeetingType.other,
+            meeting_date=day,
+            meeting_time=time(9, 0),
+            as_of=TODAY,
+        )
+
+    whole = await list_meetings(db, ctx, limit=200, as_of=TODAY)
+    filtered = await list_meetings(db, ctx, day=day, limit=200, as_of=TODAY)
+
+    assert filtered.total == 2
+    assert {item.meeting_date for item in filtered.items} == {day}
+    assert filtered.total < whole.total
+    assert filtered.upcoming_count == whole.upcoming_count
+
+
+async def test_the_day_is_the_clock_the_page_is_judged_against(db: AsyncSession) -> None:
+    """The timezone skew, pinned (review, 2026-08-17).
+
+    `day` is the **viewer's local** calendar day and `as_of` fell back to
+    `utc_today()`, so the two could name different days — and routinely did: a
+    Pacific handler after 17:00 local is on the day *before* the server's UTC
+    date. Every meeting on the day they asked about then failed
+    `meeting_date >= as_of`, came back `done`, rendered in the done tone with no
+    ✓ control, and was left out of the greeting's count. Nothing was wrong with
+    either comparison; there were two of them, against two notions of today.
+
+    Reproduced by asking about a day *behind* the one the service would resolve
+    on its own — which is exactly the shape of the skew, without a timezone or a
+    frozen clock.
+    """
+    ctx = await context_for(db, *KAYA)
+    # A day *behind* the one the service resolves for itself — the Pacific
+    # evening, expressed without a timezone. Taken from `utc_today()` rather
+    # than from this module's `TODAY` precisely so the gap is real whatever day
+    # the suite runs on.
+    local_day = utc_today() - timedelta(days=1)
+
+    created = await create_meeting(
+        db,
+        ctx,
+        claim_business_id=a_claim_of(KAYA),
+        meeting_type=MeetingType.other,
+        meeting_date=local_day,
+        meeting_time=time(17, 30),
+        as_of=local_day,
+    )
+
+    # `as_of` deliberately omitted: this is the router's call, and the point is
+    # that `day` alone now settles the horizon.
+    page = await list_meetings(db, ctx, day=local_day, limit=MAX_PAGE_LIMIT)
+    shown = next(item for item in page.items if item.id == created.id)
+    assert shown.status is MeetingStatus.upcoming
+    assert page.upcoming_count != 0
+
+    # And the day still only *narrows*: judged against the server's own day, the
+    # same meeting is behind the horizon — which is what the unfiltered Meetings
+    # sub-tab shows, and is the answer for a caller asking about that day.
+    later = await list_meetings(db, ctx, day=local_day, as_of=utc_today(), limit=MAX_PAGE_LIMIT)
+    assert next(item for item in later.items if item.id == created.id).status is MeetingStatus.done
+
+
+async def test_a_cursor_from_one_day_cannot_page_another_list(db: AsyncSession) -> None:
+    """A day-filtered cursor replayed without the day is refused (review).
+
+    Left unchecked it answers 200 and pages the *whole book* from that position,
+    skipping everything that sorts earlier — silently, which is the failure
+    `queue.py` compares `queue_filter` and `stage` to prevent, and which the
+    route's own 400 description already promised to refuse.
+    """
+    ctx = await context_for(db, *KAYA)
+    day = TODAY + timedelta(days=75)
+    for at in (time(9, 0), time(10, 0)):
+        await create_meeting(
+            db,
+            ctx,
+            claim_business_id=a_claim_of(KAYA),
+            meeting_type=MeetingType.other,
+            meeting_date=day,
+            meeting_time=at,
+            as_of=TODAY,
+        )
+
+    first = await list_meetings(db, ctx, day=day, limit=1, as_of=TODAY)
+    assert first.next_cursor is not None
+
+    with pytest.raises(InvalidCursor):
+        await list_meetings(db, ctx, cursor=first.next_cursor, as_of=TODAY)
+
+    # …and the whole-book cursor cannot be narrowed after the fact either.
+    whole = await list_meetings(db, ctx, limit=1, as_of=TODAY)
+    assert whole.next_cursor is not None
+    with pytest.raises(InvalidCursor):
+        await list_meetings(db, ctx, cursor=whole.next_cursor, day=day, as_of=TODAY)
+
+    # The matching replay still works, so the guard refuses the wrong list
+    # rather than every continuation.
+    whole_day = await list_meetings(db, ctx, day=day, limit=MAX_PAGE_LIMIT, as_of=TODAY)
+    second = await list_meetings(db, ctx, day=day, cursor=first.next_cursor, as_of=TODAY)
+    assert [item.id for item in second.items] == [item.id for item in whole_day.items[1:]]
+
+
+async def test_the_two_renderings_of_the_upcoming_rule_agree(db: AsyncSession) -> None:
+    """The Python classifier and the SQL predicate, over the boundary matrix.
+
+    Two independent restatements of "upcoming" is how a console starts
+    disagreeing with itself — the greeting says three and the list below shows
+    two, and both look right. `meeting_horizon.py` holds them adjacent; this
+    holds them equal, across yesterday / today / tomorrow × done / not done.
+
+    Counted over the caller's *whole* book rather than over the six rows
+    inserted here, so a predicate that quietly dropped the scope or the
+    coalesce would show up as a mismatch too.
+    """
+    ctx = await context_for(db, *SARAH)
+    for offset in (-1, 0, 1):
+        for done in (False, True):
+            created = await create_meeting(
+                db,
+                ctx,
+                claim_business_id=a_claim_of(SARAH),
+                meeting_type=MeetingType.other,
+                meeting_date=TODAY + timedelta(days=offset),
+                as_of=TODAY,
+            )
+            if done:
+                await complete_meeting(
+                    db, ctx, created.id, expected_version=created.version, as_of=TODAY
+                )
+
+    page = await list_meetings(db, ctx, limit=MAX_PAGE_LIMIT, as_of=TODAY)
+    assert page.total == len(page.items), "the whole book has to fit one page for this count"
+
+    in_python = sum(1 for item in page.items if item.status is MeetingStatus.upcoming)
+    assert page.upcoming_count == in_python
 
 
 async def test_paging_visits_every_meeting_exactly_once(db: AsyncSession) -> None:

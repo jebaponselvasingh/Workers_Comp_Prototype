@@ -1,13 +1,12 @@
 /**
  * The 📓 Diary tab and its three sub-tabs (Story 4.1, AC 1, UX-DR9).
  *
- * 📓 Notes · 📅 Meetings · ✉ Emails, of which this story builds the middle
- * one. **The other two ship as explicit placeholders naming their stories**
- * rather than as missing tabs — `DetailTabs`' rule, and for its reasons: a
- * sub-tab bar that grew a third entry in Story 4.3 would hide the shape of the
- * pane from everyone reviewing it now, and NFR-3 asks for an explicit empty
- * state on every not-yet-built surface. "Diary notes arrive in Story 4.2" is a
- * more useful thing for a handler to read than a blank pane.
+ * 📓 Notes · 📅 Meetings · ✉ Emails. Story 4.1 built Meetings, Story 4.2 built
+ * Notes, and **Emails is the one placeholder left** — it names Story 4.3
+ * rather than being a missing tab, `DetailTabs`' rule and for its reasons: a
+ * sub-tab bar that grew an entry later would hide the shape of the pane from
+ * everyone reviewing it now, and NFR-3 asks for an explicit empty state on
+ * every not-yet-built surface.
  *
  * Sub-tab selection is **local UI state** (AD-9): it is not a server resource
  * and it is not shareable the way `?claim=` is. It lives in `DiaryNav`'s
@@ -19,6 +18,7 @@
 import type { DiarySubTab } from "./DiaryNav";
 import { useDiaryNav } from "./DiaryNav";
 import { MeetingsSubTab } from "./MeetingsSubTab";
+import { NotesSubTab } from "./NotesSubTab";
 
 /**
  * The panel the three sub-tabs control, named once — `DetailTabs`' shape.
@@ -45,23 +45,23 @@ const SUB_TABS: readonly { key: DiarySubTab; label: string }[] = [
  * against the epic — and so the story that fills one deletes an entry here.
  * `DetailTabs.SEAMS` is the same shape one pane over.
  */
-const SEAMS: Record<Exclude<DiarySubTab, "meetings">, { message: string; story: string }> = {
-  notes: {
-    message: "Dated diary notes arrive with the notes tab.",
-    story: "Story 4.2",
-  },
-  emails: {
-    message: "The stakeholder email composer arrives with templated emails.",
-    story: "Story 4.3",
-  },
-};
+const SEAMS: Record<Exclude<DiarySubTab, "meetings" | "notes">, { message: string; story: string }> =
+  {
+    emails: {
+      message: "The stakeholder email composer arrives with templated emails.",
+      story: "Story 4.3",
+    },
+  };
 
 export function DiaryTab({
   claimId,
   workerName,
+  injuryType,
 }: {
   claimId: string | null;
   workerName: string | null;
+  /** The selected claim's injury type, for the greeting's active-claim line. */
+  injuryType: string | null;
 }) {
   const { subTab, selectSubTab } = useDiaryNav();
 
@@ -104,7 +104,9 @@ export function DiaryTab({
         aria-labelledby={tabId(subTab)}
         className="flex min-h-0 flex-1 flex-col"
       >
-        {subTab === "meetings" ? (
+        {subTab === "notes" ? (
+          <NotesSubTab claimId={claimId} workerName={workerName} injuryType={injuryType} />
+        ) : subTab === "meetings" ? (
           <MeetingsSubTab claimId={claimId} workerName={workerName} />
         ) : (
           <div className="flex-1 overflow-y-auto p-[8px_10px]">

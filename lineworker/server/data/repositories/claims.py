@@ -29,8 +29,8 @@ with the scope filter and can only ever narrow the result.
 """
 
 from collections.abc import Mapping, Sequence
-from datetime import date
-from typing import Any, cast
+from datetime import date, datetime, time
+from typing import Any, Final, cast
 
 import sqlalchemy as sa
 from sqlalchemy.engine import CursorResult
@@ -44,6 +44,7 @@ from data.models import (
     AppUser,
     Bill,
     Claim,
+    DiaryNote,
     Document,
     Employee,
     Employer,
@@ -999,34 +1000,77 @@ def _meeting_query() -> sa.Select[Any]:
     )
 
 
+#: Midnight, the sort position an all-day meeting takes.
+#:
+#: **`COALESCE`, never `NULLS FIRST`** (Story 4.2). Both put an untimed meeting
+#: at the head of its day, and only one of them is safe in a keyset: a NULL
+#: member makes `tuple_(…) > tuple_(…)` evaluate to NULL rather than to false,
+#: which PostgreSQL treats as "not matched" — so the row-value comparison would
+#: silently drop every page that began at an all-day meeting. Substituting the
+#: value the ordering already implies keeps the comparison NULL-free.
+MEETING_ALL_DAY_SORT_TIME: Final[time] = time(0, 0)
+
+
+def _meeting_sort_time() -> ColumnElement[time]:
+    """`COALESCE(meeting_time, '00:00')` — the second member of the sort key.
+
+    Private, and `MEETING_ALL_DAY_SORT_TIME` above is not: the *expression*
+    belongs to the statements in this module, but the **value** it substitutes
+    has to be recorded in the cursor by `services/claims/meetings.py`, and a
+    service that wrote its own midnight would be a second place the
+    substitution is spelled out. `tests/test_scoped_repository.py` also
+    requires every public function here to take a `CallerContext`, which this
+    one has no use for — a helper that takes no scope must not look like a
+    read that forgot one.
+    """
+    return sa.func.coalesce(
+        Meeting.meeting_time,
+        sa.literal(MEETING_ALL_DAY_SORT_TIME, Meeting.meeting_time.type),
+    )
+
+
 async def select_meetings_page(
     db: AsyncSession,
     ctx: CallerContext,
     *,
-    after: tuple[date, int] | None,
+    after: tuple[date, time, int] | None,
     limit: int,
+    day: date | None = None,
 ) -> Sequence[sa.Row[Any]]:
-    """One page of the caller's meetings, oldest date first — scoped (4.1).
+    """One page of the caller's meetings, oldest first — scoped (4.1, 4.2).
 
-    **Ordered by `(meeting_date, id)`, and the second column is what makes the
-    order total.** A handler routinely schedules two touchpoints on one day, so
-    `meeting_date` alone is a partial order: two rows tie, the plan is free to
-    return them either way round, and a keyset page that ended inside the tie
-    would repeat one and drop the other. Story 3.5 recorded the same lesson
-    about the action checklist.
+    **Ordered by `(meeting_date, COALESCE(meeting_time, '00:00'), id)`, and
+    every member is load-bearing.** The date alone is a partial order: a handler
+    routinely schedules two touchpoints on one day, two rows tie, and a keyset
+    page that ended inside the tie would repeat one and drop the other (Story
+    3.5's lesson). The `id` closes that. The *time* was added by Story 4.2 and
+    is the one that changed behaviour: a day's meetings have to read down the
+    clock, and the same ordering serves the whole diary and the one-day filter
+    without a second sort or a second cursor shape. See
+    `MEETING_ALL_DAY_SORT_TIME` on why the null is coalesced rather than
+    ordered around.
 
     **Keyset, not offset.** `after` is the last row of the previous page as a
-    `(date, id)` pair and the predicate is the row-value comparison
-    `(meeting_date, id) > (…)`, which PostgreSQL evaluates against the same
-    ordering the sort uses. A meeting inserted or completed between two pages
-    therefore cannot shift the window: an offset would, and a handler scheduling
-    a meeting mid-scroll is exactly the case that produces one.
+    `(date, time, id)` triple and the predicate is the row-value comparison
+    against the same three expressions the sort uses. A meeting inserted or
+    completed between two pages therefore cannot shift the window: an offset
+    would, and a handler scheduling a meeting mid-scroll is exactly the case
+    that produces one.
+
+    `day` narrows to one calendar date — the viewer's local day, resolved by
+    the browser and sent as a parameter, the same class of client input as
+    `as_of`. It is a *filter on the one list*, not a second list: the Notes
+    sub-tab's today's-meetings summary is this query with the parameter set, so
+    there is no second endpoint and no second ordering to keep in step. With the
+    filter applied the sort reduces to time-then-id for free.
     """
     statement = _meeting_query().where(meeting_scope(ctx))
+    if day is not None:
+        statement = statement.where(Meeting.meeting_date == day)
     if after is not None:
-        last_date, last_id = after
+        last_date, last_time, last_id = after
         statement = statement.where(
-            sa.tuple_(Meeting.meeting_date, Meeting.id)
+            sa.tuple_(Meeting.meeting_date, _meeting_sort_time(), Meeting.id)
             > sa.tuple_(
                 # Typed literals rather than bare Python values: a row-value
                 # comparison hands both sides to the driver as parameters, and
@@ -1034,23 +1078,60 @@ async def select_meetings_page(
                 # as (`insert_additional_injury_cas`' lesson, one operator
                 # over).
                 sa.literal(last_date, Meeting.meeting_date.type),
+                sa.literal(last_time, Meeting.meeting_time.type),
                 sa.literal(last_id, Meeting.id.type),
             )
         )
-    rows = await db.execute(statement.order_by(Meeting.meeting_date, Meeting.id).limit(limit))
+    rows = await db.execute(
+        statement.order_by(Meeting.meeting_date, _meeting_sort_time(), Meeting.id).limit(limit)
+    )
     return rows.all()
 
 
-async def count_meetings(db: AsyncSession, ctx: CallerContext) -> int:
-    """How many meetings the caller has in total — scoped (4.1).
+async def count_meetings(db: AsyncSession, ctx: CallerContext, *, day: date | None = None) -> int:
+    """How many meetings the caller has in the list being paged — scoped (4.1).
 
     A second statement rather than a window function on the page above,
     because `total` is the size of the whole list and the page is a slice of
     it: a `count(*) OVER ()` would answer the size of the *page's* result set,
     which is the number the envelope must not carry.
+
+    `day` is taken for the same reason `select_meetings_page` takes it and must
+    be passed with it: `total` describes *the list the caller asked for*, so a
+    day-filtered page whose total counted the whole diary would tell the
+    summary that there are forty meetings today.
+    """
+    statement = sa.select(sa.func.count()).select_from(Meeting).where(meeting_scope(ctx))
+    if day is not None:
+        statement = statement.where(Meeting.meeting_date == day)
+    total = await db.scalar(statement)
+    return int(total or 0)
+
+
+async def count_meetings_matching(
+    db: AsyncSession,
+    ctx: CallerContext,
+    predicate: ColumnElement[bool],
+) -> int:
+    """How many of the caller's meetings satisfy a predicate — scoped (4.2).
+
+    **The predicate arrives from `services/`**, which is this module's opening
+    rule: the greeting's "📅 N upcoming meetings" is a count of the *upcoming*
+    ones, and what "upcoming" means is `services/derivations/meeting_horizon.py`'s
+    single answer (AD-10). A repository that spelled `is_done IS false AND
+    meeting_date >= :today` here would be the second copy of that rule, in the
+    layer least likely to be re-read when the first one changes.
+
+    The predicate is ANDed with the scope filter and can therefore only narrow,
+    exactly as `count_claims_matching`'s buckets can.
+
+    **Always the whole book, never a filtered day**, which is why there is no
+    `day` parameter: the greeting's sentence is a statement about the diary,
+    and a count that moved with the summary's filter would say something the
+    sentence does not.
     """
     total = await db.scalar(
-        sa.select(sa.func.count()).select_from(Meeting).where(meeting_scope(ctx))
+        sa.select(sa.func.count()).select_from(Meeting).where(meeting_scope(ctx)).where(predicate)
     )
     return int(total or 0)
 
@@ -1219,6 +1300,241 @@ async def delete_meeting_cas(
         .execution_options(synchronize_session=False)
     )
     return deleted.one_or_none()
+
+
+# --- Story 4.2: the diary aggregate's notes ------------------------------
+
+
+def diary_note_scope(ctx: CallerContext) -> ColumnElement[bool]:
+    """The AD-7 predicate for `diary_note` — author **and** employer scope.
+
+    `meeting_scope`'s two conditions, one table over, and neither is redundant
+    for the same two reasons.
+
+    **Author.** A note belongs to the handler who wrote it, not to the claim it
+    is tagged to, so `list_diary_notes` is a caller-scoped list rather than a
+    child read-model of the case file. Two handlers whose books overlap (the
+    seed puts two on John Deere) must not read each other's working notes, and
+    a supervisor over both must not either — a diary is not a management
+    report, and `employer_scope` alone would make it one.
+
+    **Employer scope, on the tagged claim.** The author predicate is already
+    sufficient for *visibility*, but scope is re-resolved per request (AD-7):
+    a handler whose book narrowed between writing a note and reading it back
+    must stop seeing the claim reference it carries. `claim_id IS NULL` passes
+    — an untagged note is scoped by its author and nothing else.
+
+    A note whose claim has left the caller's book therefore leaves the list
+    entirely rather than losing its tag. That is the same answer `meeting_scope`
+    gives, and it is the conservative one: the alternative is publishing a
+    handler's own words about a claim the console has stopped showing them.
+    """
+    return sa.and_(
+        DiaryNote.app_user_id == ctx.user_id,
+        sa.or_(
+            DiaryNote.claim_id.is_(None),
+            DiaryNote.claim_id.in_(sa.select(Claim.id).where(employer_scope(ctx))),
+        ),
+    )
+
+
+def _diary_note_query() -> sa.Select[Any]:
+    """The columns a note card renders beside the row itself.
+
+    Two joins, both **outer**, because `claim_id` is nullable — an inner join
+    would silently drop every untagged note, which is the one case the ERD's
+    `CLAIM |o--o{ DIARY_NOTE` exists to allow. `_meeting_query`'s shape and its
+    lesson.
+    """
+    return (
+        sa.select(
+            DiaryNote,
+            Claim.claim_id.label("claim_business_id"),
+            Employee.name.label("worker_name"),
+        )
+        .select_from(DiaryNote)
+        .outerjoin(Claim, DiaryNote.claim_id == Claim.id)
+        .outerjoin(Employee, Claim.employee_id == Employee.id)
+    )
+
+
+async def select_diary_notes_page(
+    db: AsyncSession,
+    ctx: CallerContext,
+    *,
+    after: tuple[datetime, int] | None,
+    limit: int,
+) -> Sequence[sa.Row[Any]]:
+    """One page of the caller's notes, **newest first** — scoped (4.2).
+
+    **Ordered by `(noted_at DESC, id DESC)`, and the descent is the whole
+    point**: a diary is read from the top, and the prototype reverses its array
+    for exactly this reason. `noted_at` alone is a partial order — two notes
+    saved inside the same clock tick tie, and a keyset page that ended inside
+    the tie would repeat one row and drop the other — so `id` closes it, and it
+    descends *with* the timestamp because a keyset comparison has to run in the
+    ordering's own direction.
+
+    **Both the comparison and the sort are flipped**, which is the mistake this
+    docstring exists to prevent: `>` with `ORDER BY … DESC` walks away from the
+    page it just served and pages forward through nothing. `after` is the last
+    row of the previous page, and the predicate is
+    `(noted_at, id) < (last_noted_at, last_id)`.
+    """
+    statement = _diary_note_query().where(diary_note_scope(ctx))
+    if after is not None:
+        last_noted_at, last_id = after
+        statement = statement.where(
+            sa.tuple_(DiaryNote.noted_at, DiaryNote.id)
+            < sa.tuple_(
+                # Typed literals rather than bare Python values, for
+                # `select_meetings_page`'s reason: a row-value comparison hands
+                # both sides to the driver as parameters, and an untyped
+                # `datetime` reaches asyncpg with nothing to encode it as.
+                sa.literal(last_noted_at, DiaryNote.noted_at.type),
+                sa.literal(last_id, DiaryNote.id.type),
+            )
+        )
+    rows = await db.execute(
+        statement.order_by(DiaryNote.noted_at.desc(), DiaryNote.id.desc()).limit(limit)
+    )
+    return rows.all()
+
+
+async def count_diary_notes(db: AsyncSession, ctx: CallerContext) -> int:
+    """How many notes the caller has in total — scoped (4.2).
+
+    A second statement rather than a window function on the page above, for
+    `count_meetings`' reason: `total` is the size of the whole list and the
+    page is a slice of it.
+    """
+    total = await db.scalar(
+        sa.select(sa.func.count()).select_from(DiaryNote).where(diary_note_scope(ctx))
+    )
+    return int(total or 0)
+
+
+async def select_diary_note(
+    db: AsyncSession,
+    ctx: CallerContext,
+    note_id: int,
+) -> sa.Row[Any] | None:
+    """One note of the caller's, or `None` — scoped (4.2).
+
+    Not a route: there is no `GET /claims-diary/notes/{id}`, because the diary
+    is read as a list and a second way to read one row would be a second place
+    its shape is decided. It exists so `create_diary_note` can re-read what it
+    just wrote through the same scoped query the list uses — the alternative,
+    building the response from the values the command was handed, is how a
+    payload starts disagreeing with what is stored.
+    """
+    rows = await db.execute(
+        _diary_note_query().where(diary_note_scope(ctx)).where(DiaryNote.id == note_id)
+    )
+    return rows.one_or_none()
+
+
+async def select_latest_note_at(
+    db: AsyncSession,
+    ctx: CallerContext,
+    claim_business_id: str,
+) -> datetime | None:
+    """When the caller last wrote a note about one claim, or `None` (4.2).
+
+    The read behind the diary check-in's completion: `services/worklist/
+    actions.py` stops firing "Log the weekly diary check-in" once a recent note
+    exists, which is the entity-backed completion the module's own docstring
+    insists on ("there is no 'completed actions' store, deliberately").
+
+    **Scoped to the caller, not to the claim.** A note is its author's, so
+    "has this been checked in on?" is answered from the reader's own diary.
+    Counting *anybody's* note would publish the existence of a handler's private
+    working record to whoever else read the claim, which is a leak rather than a
+    convenience — that is the whole of the argument, and an earlier version of
+    this docstring propped it up with a second claim ("a supervisor opening the
+    same case file still sees the row") that is simply not true: `web/src/App.tsx`
+    gates the workspace route to `handler`, so no supervisor or analyst reaches a
+    case file at all. The scope is right; the illustration was false.
+
+    **One scope predicate, not two.** `diary_note_scope` already resolves the
+    tagged claim through `employer_scope` in its own subquery, so ANDing
+    `employer_scope(ctx)` onto the inner-joined `Claim` a second time narrowed
+    nothing and read as though the helper could not be trusted — the failure
+    mode `meeting_scope`'s "written as a helper rather than spelled at five call
+    sites" warns about, in the direction of belt-and-braces rather than
+    omission.
+
+    Returns the *maximum* `noted_at` rather than a boolean, so the seven-day
+    window lives with the rule in `services/worklist` and this query knows
+    nothing about it.
+    """
+    latest: datetime | None = await db.scalar(
+        sa.select(sa.func.max(DiaryNote.noted_at))
+        .select_from(DiaryNote)
+        .join(Claim, DiaryNote.claim_id == Claim.id)
+        .where(diary_note_scope(ctx))
+        .where(Claim.claim_id == claim_business_id)
+    )
+    return latest
+
+
+async def insert_diary_note(
+    db: AsyncSession,
+    ctx: CallerContext,
+    *,
+    claim_business_id: str | None,
+    values: Mapping[str, Any],
+) -> int | None:
+    """Write one note, with the claim tag resolved under scope (4.2).
+
+    Returns the new row's id, or `None` when a `claim_business_id` was given and
+    it names no claim in the caller's book. Which of "absent" or "not yours" it
+    was is nobody's question — the command answers 404 either way,
+    `select_claim_detail`'s rule.
+
+    **`INSERT … SELECT` for the tagged case**, `insert_meeting`'s shape and for
+    its reason: an INSERT has no WHERE clause, so resolving the claim in Python
+    and then inserting would be a read-modify-write with a window in it.
+    Selecting the claim row *as the source of the insert* puts the scope
+    predicate inside the statement, so a claim that leaves the caller's book in
+    the gap inserts nothing.
+
+    **`INSERT … VALUES` for the untagged case**, and the asymmetry is the
+    absence of anything to guard: with no claim there is no scope predicate to
+    put inside a statement, and the author is `ctx.user_id`, which no caller
+    supplies.
+
+    **The literals are typed** in the tagged branch: an untyped parameter in an
+    `INSERT … SELECT` reaches asyncpg with no type to encode it as, and
+    `noted_at` is a `timestamptz`. Taking each literal's type from the column it
+    lands in also means a column that changes type needs no second edit here.
+    """
+    fields = tuple(values)
+    if claim_business_id is None:
+        inserted = await db.execute(
+            sa.insert(DiaryNote)
+            .values(app_user_id=ctx.user_id, claim_id=None, **values)
+            .returning(DiaryNote.id)
+        )
+        return inserted.scalar_one()
+
+    columns = DiaryNote.__table__.c
+    source = (
+        sa.select(
+            sa.literal(ctx.user_id, columns["app_user_id"].type).label("app_user_id"),
+            Claim.id.label("claim_id"),
+            *[sa.literal(values[field], columns[field].type).label(field) for field in fields],
+        )
+        .select_from(Claim)
+        .where(employer_scope(ctx))
+        .where(Claim.claim_id == claim_business_id)
+    )
+    inserted = await db.execute(
+        sa.insert(DiaryNote)
+        .from_select(["app_user_id", "claim_id", *fields], source)
+        .returning(DiaryNote.id)
+    )
+    return inserted.scalar_one_or_none()
 
 
 async def count_claims_matching(

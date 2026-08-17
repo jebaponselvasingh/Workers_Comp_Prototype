@@ -47,6 +47,40 @@ export function useSelectedClaimId(): string | null {
 }
 
 /**
+ * Move the selection to a claim — the write half, on its own (Story 4.2).
+ *
+ * Extracted from `useSelectedClaim` rather than copied, because the today's
+ * meetings summary's "Open Claim" is the first caller that wants to *set* the
+ * selection without knowing anything about the queue's auto-select. A second
+ * `setSearchParams` written in the right pane would be a second definition of
+ * what selecting a claim means — and it is not a one-liner: the push-versus-
+ * replace rule and the "re-selecting is not a navigation" guard both live here.
+ *
+ * The URL stays the store. Nothing about the selection moves into React state
+ * or context; this is one callback over `?claim=`, which is what makes the
+ * queue, the case file and the copilot pane read the same source.
+ */
+export function useSelectClaim(): (claimId: string) => void {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selectedClaimId = readClaimId(searchParams);
+
+  return useCallback(
+    (claimId: string) => {
+      // Re-selecting the selected claim is not a navigation. Pushing it
+      // anyway stacks identical entries, and Back then appears to do
+      // nothing — the user clicks it once per stray click they made.
+      if (claimId === selectedClaimId) return;
+      setSearchParams((previous) => {
+        const next = new URLSearchParams(previous);
+        next.set(SELECTED_CLAIM_PARAM, claimId);
+        return next;
+      });
+    },
+    [selectedClaimId, setSearchParams],
+  );
+}
+
+/**
  * @param firstClaimId the first card of the first non-empty group, or `null`
  * while the queue is loading, failed, or genuinely empty. Auto-select waits
  * for a real value, so a slow request cannot leave the URL pointing at
@@ -58,6 +92,8 @@ export function useSelectedClaim(firstClaimId: string | null): {
 } {
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedClaimId = readClaimId(searchParams);
+  // The same callback the right pane uses, not a second copy of it.
+  const select = useSelectClaim();
 
   useEffect(() => {
     if (selectedClaimId !== null || firstClaimId === null) return;
@@ -73,21 +109,6 @@ export function useSelectedClaim(firstClaimId: string | null): {
     // reads the current value itself, and depending on the object would
     // re-run this effect on every unrelated query-string change.
   }, [selectedClaimId, firstClaimId, setSearchParams]);
-
-  const select = useCallback(
-    (claimId: string) => {
-      // Re-selecting the selected claim is not a navigation. Pushing it
-      // anyway stacks identical entries, and Back then appears to do
-      // nothing — the user clicks it once per stray click they made.
-      if (claimId === selectedClaimId) return;
-      setSearchParams((previous) => {
-        const next = new URLSearchParams(previous);
-        next.set(SELECTED_CLAIM_PARAM, claimId);
-        return next;
-      });
-    },
-    [selectedClaimId, setSearchParams],
-  );
 
   return { selectedClaimId, select };
 }

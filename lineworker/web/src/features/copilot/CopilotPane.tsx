@@ -65,6 +65,10 @@ export function CopilotPane() {
   const claimId = useSelectedClaimId();
   const detail = useClaimDetail(claimId);
   const workerName = detail.data?.header.workerName ?? null;
+  // Read here for the same reason `workerName` is: the case file is already in
+  // the cache under the detail pane's key, so the diary's greeting line costs
+  // no extra request.
+  const injuryType = detail.data?.header.injuryType ?? null;
 
   return (
     <div data-testid="copilot" className="flex h-full min-h-0 flex-col">
@@ -157,7 +161,7 @@ export function CopilotPane() {
         aria-labelledby={DIARY_TAB_ID}
         className="flex min-h-0 flex-1 flex-col"
       >
-        <DiaryTab claimId={claimId} workerName={workerName} />
+        <DiaryTab claimId={claimId} workerName={workerName} injuryType={injuryType} />
       </div>
     </div>
   );

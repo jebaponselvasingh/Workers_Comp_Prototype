@@ -37,6 +37,9 @@ from datetime import date
 from enum import StrEnum
 from typing import Protocol
 
+import sqlalchemy as sa
+from sqlalchemy import ColumnElement, SQLColumnExpression
+
 from services.derivations.registry import Derivation, register
 
 
@@ -85,6 +88,40 @@ class MeetingStatusDerivation:
         if meeting.is_done:
             return MeetingStatus.done
         return MeetingStatus.upcoming if meeting.meeting_date >= as_of else MeetingStatus.done
+
+
+def upcoming_predicate(
+    meeting_date: SQLColumnExpression[date],
+    is_done: SQLColumnExpression[bool],
+    *,
+    as_of: date,
+) -> ColumnElement[bool]:
+    """`MeetingStatusDerivation.of` rendered in SQL — the same rule, counted.
+
+    **One rule, two renderings, and they live in one file so they cannot drift
+    apart** (Story 4.2). The Notes sub-tab's greeting shows "📅 N upcoming
+    meetings", and N is a count over the caller's whole book — far more rows
+    than a page, so it has to be a `COUNT(*)` rather than a length the browser
+    works out. That means the horizon rule needs a SQL form, and the failure
+    worth designing against is not that the SQL is wrong today: it is that a
+    later change to `>=` here, or to the meaning of `is_done`, moves one
+    rendering and not the other. Then the greeting says three and the list
+    below it shows two, and both look right.
+
+    So the two are adjacent, they read the same, and
+    `tests/test_meetings.py::test_the_two_renderings_of_the_upcoming_rule_agree`
+    holds them together across the boundary matrix (yesterday / today /
+    tomorrow × done / not done).
+
+    The columns arrive as parameters rather than being named here, so this
+    module stays free of `data.models` — a derivation is a rule, not a query,
+    and the repository is where the table is known.
+
+    `as_of` is a plain Python `date` bound as a parameter: the comparison is
+    against the day the *request* resolved, exactly as the Python classifier's
+    is, so a page and its count are judged against one day.
+    """
+    return sa.and_(is_done.is_(False), meeting_date >= as_of)
 
 
 meeting_status = register(

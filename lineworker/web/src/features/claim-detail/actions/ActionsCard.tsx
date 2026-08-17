@@ -107,6 +107,13 @@ const NAVIGABLE_FROM_OVERVIEW: ReadonlySet<ActionTarget> = new Set<ActionTarget>
   // in this set for the same reason the two tabs do: the control goes
   // somewhere, so rendering it is not a dead click.
   "meetings",
+  // Story 4.2, and adding it here is **half** of enabling that seam — the
+  // other half is one deletion from `SEAM_REASONS` on the server. Without this
+  // line the row would render *no control at all*: the gate below is
+  // `!enabled || NAVIGABLE_FROM_OVERVIEW.has(target)`, so a target that became
+  // enabled and was not added here loses its disabled link and gains nothing.
+  // Story 4.1 hit exactly this with `meetings`.
+  "diary",
 ]);
 
 /**

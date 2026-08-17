@@ -59,6 +59,7 @@ import type { MeetingParticipant, MeetingType, NewMeeting } from "@/api/meetings
 import { useMeetingWriteInFlight, useScheduleMeeting } from "@/api/meetings";
 import { feedbackFromError } from "@/features/claim-detail/useInlineEdits";
 import type { FieldFeedback } from "@/features/claim-detail/InlineEditField";
+import { todayIso } from "@/lib/clock";
 
 import {
   MEETING_TYPE_LABEL,
@@ -105,17 +106,13 @@ interface Refusal {
 /**
  * Today, as an `<input type="date">` wants it — the **handler's** today.
  *
- * Built from the local calendar parts rather than `toISOString().slice(0, 10)`,
- * which is UTC: for anyone far enough east or west that is a different day, and
- * a modal that pre-filled tomorrow's date would be wrong in exactly the way
- * `MeetingCard.formatWhen` goes out of its way not to be. The two are one
- * feature and they have to agree about what day it is.
+ * `lib/clock.ts` owns the definition since Story 4.2, because the Notes
+ * sub-tab needs the identical string to send as `day` and two local
+ * definitions of "what day is it" would be one bug away from a modal that
+ * pre-fills a date the summary above it does not consider today.
  */
 function today(): string {
-  const now = new Date();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${now.getFullYear()}-${month}-${day}`;
+  return todayIso(new Date());
 }
 
 /**

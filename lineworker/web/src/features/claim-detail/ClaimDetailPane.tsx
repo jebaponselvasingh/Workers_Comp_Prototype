@@ -77,7 +77,7 @@ function DetailSkeleton() {
 function CaseFile({ claimId }: { claimId: string }) {
   const detail = useClaimDetail(claimId);
   const [activeTab, setActiveTab] = useDetailTab();
-  const { requestMeetings } = useDiaryNav();
+  const { requestMeetings, requestNotes } = useDiaryNav();
 
   if (detail.isPending) return <DetailSkeleton />;
 
@@ -133,6 +133,14 @@ function CaseFile({ claimId }: { claimId: string }) {
     }
     if (target === "meetings") {
       requestMeetings();
+      return;
+    }
+    if (target === "diary") {
+      // Story 4.2's half of the same seam: Diary → Notes with the add-note
+      // input focused, which is the control Story 3.5 shipped disabled. Same
+      // context, same one-call shape — see `DiaryNav` on why focus is a
+      // session counter rather than an effect.
+      requestNotes();
     }
   };
 

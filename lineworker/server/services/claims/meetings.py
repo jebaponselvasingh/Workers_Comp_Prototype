@@ -63,12 +63,19 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from data.context import CallerContext
+from data.models import Meeting
 from data.models.enums import MeetingParticipant, MeetingType, UserRole
 from data.repositories import claims as claim_repo
+from data.repositories.claims import MEETING_ALL_DAY_SORT_TIME
 from rules.parameters import thresholds_for
 from services import audit, derivations
 from services.claims.edit import EditNotPermitted, InvalidPatch
-from services.derivations import MeetingStatus, MeetingStatusDerivation, utc_today
+from services.derivations import (
+    MeetingStatus,
+    MeetingStatusDerivation,
+    upcoming_predicate,
+    utc_today,
+)
 
 CREATE_ACTION: Final[str] = "create_meeting"
 COMPLETE_ACTION: Final[str] = "complete_meeting"
@@ -176,23 +183,45 @@ class MeetingPage:
     `total` is the size of the whole scoped list rather than of `items`, the
     Lists convention's rule and `StageGroup`'s: it is what a count beside the
     sub-tab shows, and a number that shrank when the page did would misdescribe
-    the diary.
+    the diary. When the read is narrowed to one `day`, `total` describes *that*
+    list — the summary's "📅 Today's Meetings (N)" — because a total that
+    counted rows the caller did not ask for would be a number about a different
+    question.
+
+    `upcoming_count` is the opposite: **always the whole book, never the
+    filtered day** (Story 4.2). It is the greeting's "📅 N upcoming meetings —
+    see below / Meetings tab", which is a statement about the diary, and it
+    rides this envelope so that the Notes sub-tab makes *one* request rather
+    than a second one purely to count.
     """
 
     items: tuple[MeetingView, ...]
     next_cursor: str | None
     total: int
+    upcoming_count: int
 
 
 @dataclass(frozen=True)
 class Cursor:
     """Where a page ended, and the page size that cut it.
 
-    **Keyset, not offset**, which is why the position is a `(date, id)` pair
-    rather than a row count: a meeting scheduled or completed between two
-    pages shifts every offset after it, and a handler scheduling one mid-scroll
-    is the ordinary case rather than the exotic one. The pair is the sort key
-    itself, so the row it names is unambiguous.
+    **Keyset, not offset**, which is why the position is a
+    `(date, time, id)` triple rather than a row count: a meeting scheduled or
+    completed between two pages shifts every offset after it, and a handler
+    scheduling one mid-scroll is the ordinary case rather than the exotic one.
+    The triple is the sort key itself, so the row it names is unambiguous.
+
+    **`last_time` is the *coalesced* sort time, not the stored column.** An
+    all-day meeting sorts at midnight (`data/repositories/claims.py::
+    MEETING_ALL_DAY_SORT_TIME`), and a cursor carrying `None` for one would put
+    a NULL inside a row-value comparison — which evaluates to NULL rather than
+    to false, so every page beginning at an all-day meeting would silently
+    return nothing.
+
+    Story 4.2 added that member, so **cursors issued before it are refused** as
+    `/problems/invalid-cursor` rather than misread: `decode_cursor` requires the
+    key, and the alternative — defaulting a missing time — would resume a walk
+    at the wrong row without saying so.
 
     `limit` is *reused* when a request omits one, `queue.py`'s division: it
     describes the window rather than the ordering, and re-deriving it mid-list
@@ -201,16 +230,31 @@ class Cursor:
     refused with a sentence instead of silently re-paging a list that has
     moved on.
 
+    **`day` is *compared*, not reused**, which is the other half of
+    `queue.py`'s division and the reason it is on the cursor at all. A cursor
+    issued by `?day=2026-08-17` names a position in *that day's* list; replayed
+    without the parameter it would name a position in the whole book and page
+    forward from there, silently skipping every meeting that sorts earlier. The
+    route's own 400 already promises to refuse "a cursor that belongs to a
+    different filter", so `list_meetings` compares this member against the
+    request's `day` and answers `/problems/invalid-cursor` on a mismatch —
+    `queue.py` compares `queue_filter` and `stage` for exactly this reason.
+
+    `None` is a value like any other here: it means "the whole diary", and a
+    whole-diary cursor replayed *with* a day is refused just as loudly.
+
     Nothing about the ordering can change underneath a caller the way the
-    queue's can: this list is sorted in SQL by two stored columns, not by
-    Python arithmetic over a rule document, so there is no rules version to
-    record and no re-ranking to detect.
+    queue's can: this list is sorted in SQL by stored columns, not by Python
+    arithmetic over a rule document, so there is no rules version to record and
+    no re-ranking to detect.
     """
 
     last_date: date
+    last_time: time
     last_id: int
     limit: int
     issued_on: date
+    day: date | None
 
 
 def encode_cursor(cursor: Cursor) -> str:
@@ -224,9 +268,11 @@ def encode_cursor(cursor: Cursor) -> str:
     payload = json.dumps(
         {
             "d": cursor.last_date.isoformat(),
+            "t": cursor.last_time.isoformat(),
             "i": cursor.last_id,
             "l": cursor.limit,
             "s": cursor.issued_on.isoformat(),
+            "g": None if cursor.day is None else cursor.day.isoformat(),
         },
         separators=(",", ":"),
     )
@@ -248,15 +294,30 @@ def decode_cursor(raw: str, as_of: date | None = None) -> Cursor:
       way around the route's ceiling: it is *reused* when the request omits
       one, so a forged page size would never pass FastAPI's validator.
     - `issued_on` is bounded by `MAX_CURSOR_AGE` in both directions.
+
+    **A tz-aware `last_time` is refused**, `notes.py::decode_cursor`'s guard for
+    its reason one table over: `time.fromisoformat("12:00:00+05:00")` parses
+    happily and passes every bound below, and the column is a naive `Time` — so
+    the offset would reach the row-value comparison and raise deep inside the
+    driver instead of answering 400 at the boundary.
     """
     try:
         padded = raw + "=" * (-len(raw) % 4)
         data = json.loads(base64.urlsafe_b64decode(padded.encode()))
+        raw_day = data["g"]
         cursor = Cursor(
             last_date=date.fromisoformat(data["d"]),
+            # `KeyError` for a cursor issued before Story 4.2 added the sort
+            # time, which is the intended answer: it is refused as unreadable
+            # rather than resumed at a row it does not name. See `Cursor`.
+            last_time=time.fromisoformat(data["t"]),
             last_id=int(data["i"]),
             limit=int(data["l"]),
             issued_on=date.fromisoformat(data["s"]),
+            # Read above rather than inline so the `KeyError` is the same
+            # refusal the sort time's is: a cursor issued before the day was
+            # recorded names a position in a list this decoder cannot identify.
+            day=None if raw_day is None else date.fromisoformat(raw_day),
         )
     except (
         KeyError,
@@ -267,6 +328,8 @@ def decode_cursor(raw: str, as_of: date | None = None) -> Cursor:
         UnicodeDecodeError,
     ) as exc:
         raise InvalidCursor("The pagination cursor is not readable.") from exc
+    if cursor.last_time.tzinfo is not None:
+        raise InvalidCursor("The pagination cursor names a position that cannot exist.")
     if cursor.last_id < 1:
         raise InvalidCursor("The pagination cursor names a position that cannot exist.")
     if not MIN_PAGE_LIMIT <= cursor.limit <= MAX_PAGE_LIMIT:
@@ -469,37 +532,83 @@ async def list_meetings(
     *,
     cursor: str | None = None,
     limit: int | None = None,
+    day: date | None = None,
     as_of: date | None = None,
 ) -> MeetingPage:
-    """The caller's meetings, oldest date first, one page at a time (AC 3).
+    """The caller's meetings, oldest first, one page at a time (AC 3).
 
     Scoped to the caller and nothing else (AD-7) — there is no parameter here
     that could name a user, an employer or a role, so "whose meetings?" has one
     answer and it comes from the session.
 
-    **The ordering is total.** `(meeting_date, id)`, never the date alone: a
-    handler routinely schedules two touchpoints on one day, and a keyset page
-    that ended inside that tie would repeat one row and drop the other (Story
-    3.5's learning, restated in `select_meetings_page`).
+    **The ordering is total.** `(meeting_date, COALESCE(meeting_time, '00:00'),
+    id)`, never the date alone: a handler routinely schedules two touchpoints on
+    one day, and a keyset page that ended inside that tie would repeat one row
+    and drop the other (Story 3.5's learning, restated in
+    `select_meetings_page`). The time member is Story 4.2's, and it is what lets
+    one ordering serve both the whole diary and a single day.
+
+    **`day` narrows the same list rather than opening a second one.** The Notes
+    sub-tab's today's-meetings summary is this read with the parameter set, so
+    there is no new endpoint, no second writer and no second sort. Filtering a
+    *page* of the unfiltered list in the browser was the alternative and it is
+    the fifty-row truncation bug Story 4.1's review already caught once: today's
+    meetings sort after every past one.
+
+    The day is the **viewer's local calendar day**, resolved by the browser and
+    sent as a parameter — the same class of client input as `as_of`, and the
+    only kind of "today" a server without the reader's timezone can honour.
+
+    **`day` and `as_of` are one clock, not two**, and that is the correction a
+    review forced. A caller who names a `day` is asking about *that* day, so it
+    is also the day this read judges against: `status` and `upcoming_count` are
+    resolved at `as_of or day or utc_today()`. Before, `day` came from the
+    browser's local calendar and `as_of` fell back to `utc_today()`, so a
+    Pacific handler after 17:00 local asked about a day the server had already
+    left — every one of today's meetings evaluated `meeting_date >= as_of` as
+    false, came back `done`, rendered in the done tone with no ✓ control, and
+    was excluded from the greeting's count. The two comparisons were against two
+    notions of today, which is the exact drift `meeting_horizon.py` exists to
+    prevent, reached through a parameter instead of through a second `>=`.
+
+    `upcoming_count` is still the **whole book** rather than the filtered day —
+    only the day it is judged against moved. See `MeetingPage`.
 
     Raises `InvalidCursor` for a cursor that does not describe a position in
     this list; the router answers 400. Never a silent page one.
     """
-    today = as_of or utc_today()
+    today = as_of if as_of is not None else (day if day is not None else utc_today())
     decoded = decode_cursor(cursor, today) if cursor is not None else None
+    if decoded is not None and decoded.day != day:
+        # `queue.py`'s refusal, one aggregate over: a cursor names a position in
+        # the list it was cut from, and replaying a day-filtered one without the
+        # day would page the whole diary from that position — skipping every
+        # meeting that sorts earlier, silently and with a 200.
+        raise InvalidCursor(
+            f"That page belongs to {decoded.day.isoformat() if decoded.day else 'the whole diary'}"
+            f", not {day.isoformat() if day else 'the whole diary'}."
+        )
     page_size = decoded.limit if decoded is not None else (limit or DEFAULT_PAGE_LIMIT)
 
     rows = await claim_repo.select_meetings_page(
         db,
         ctx,
-        after=None if decoded is None else (decoded.last_date, decoded.last_id),
+        after=(
+            None if decoded is None else (decoded.last_date, decoded.last_time, decoded.last_id)
+        ),
         # One more than the page, so "is there another page?" is answered by
         # what came back rather than by comparing against `total` — which would
         # be wrong the moment somebody else's write changed the count between
         # the two statements.
         limit=page_size + 1,
+        day=day,
     )
-    total = await claim_repo.count_meetings(db, ctx)
+    total = await claim_repo.count_meetings(db, ctx, day=day)
+    # The rule, in SQL, from the one module that owns it (AD-10) — never a
+    # second `>=` written here beside the Python classifier three lines down.
+    upcoming = await claim_repo.count_meetings_matching(
+        db, ctx, upcoming_predicate(Meeting.meeting_date, Meeting.is_done, as_of=today)
+    )
 
     status = await _status_computer(db, today)
     has_more = len(rows) > page_size
@@ -508,15 +617,23 @@ async def list_meetings(
         encode_cursor(
             Cursor(
                 last_date=items[-1].meeting_date,
+                # The coalesced sort position, not the stored column: an
+                # all-day meeting sorts at midnight and a NULL in the cursor
+                # would make the next page's row-value comparison evaluate to
+                # NULL. See `Cursor`.
+                last_time=items[-1].meeting_time or MEETING_ALL_DAY_SORT_TIME,
                 last_id=items[-1].id,
                 limit=page_size,
                 issued_on=today,
+                # Recorded so the next page can be refused if it arrives asking
+                # about a different list. See `Cursor`.
+                day=day,
             )
         )
         if has_more and items
         else None
     )
-    return MeetingPage(items=items, next_cursor=next_cursor, total=total)
+    return MeetingPage(items=items, next_cursor=next_cursor, total=total, upcoming_count=upcoming)
 
 
 async def get_meeting(

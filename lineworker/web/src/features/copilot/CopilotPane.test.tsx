@@ -16,12 +16,25 @@ import { afterEach, expect, test, vi } from "vitest";
 
 import { createQueryClient } from "@/api/queryClient";
 import { DiaryNavProvider } from "@/features/diary/DiaryNav";
-import { CLAIM_DETAIL_TREATMENT, ME_HANDLER, MEETINGS, stubApi } from "@/test/api-mock";
+import {
+  CLAIM_DETAIL_TREATMENT,
+  DIARY_NOTES,
+  ME_HANDLER,
+  MEETINGS,
+  stubApi,
+} from "@/test/api-mock";
 
 import { ACTIONS_SEAM_REASON, CopilotPane } from "./CopilotPane";
 
 function renderPane(path = "/workspace?claim=WC-20017") {
-  stubApi({ me: ME_HANDLER, claimDetail: CLAIM_DETAIL_TREATMENT, meetings: MEETINGS });
+  stubApi({
+    me: ME_HANDLER,
+    claimDetail: CLAIM_DETAIL_TREATMENT,
+    meetings: MEETINGS,
+    // Story 4.2 put the Notes sub-tab behind the Diary tab and made it the
+    // one that opens, so the pane now issues this request on mount.
+    diaryNotes: DIARY_NOTES,
+  });
   return render(
     <QueryClientProvider client={createQueryClient()}>
       <MemoryRouter initialEntries={[path]}>
@@ -65,13 +78,18 @@ test("the Diary tab is the selected one and the diary is mounted behind it", asy
 test("the sub-line names the claim the URL selected, with its worker", async () => {
   renderPane();
 
-  // Found by its text rather than by testid, because the element is mounted
-  // from the first frame with only the claim id in it — a `findByTestId`
-  // resolves against the loading state and passes vacuously.
-  expect(await screen.findByText("WC-20017 — Marcus Delgado")).toHaveAttribute(
-    "data-testid",
-    "copilot-context",
-  );
+  // Waited for by text rather than asserted straight off the testid, because
+  // the element is mounted from the first frame with only the claim id in it —
+  // a `findByTestId` resolves against the loading state and passes vacuously.
+  //
+  // `findAllByText`, not `findByText`: since Story 4.2 the Notes sub-tab's
+  // greeting renders the same `WC-nnnn — Worker` string one element below, so
+  // the singular query now throws "found multiple". The assertion that matters
+  // is that the *sub-line* is one of them, which is what the filter says.
+  const matches = await screen.findAllByText("WC-20017 — Marcus Delgado");
+  expect(
+    matches.filter((node) => node.getAttribute("data-testid") === "copilot-context"),
+  ).toHaveLength(1);
 });
 
 test("with no claim selected the sub-line says so rather than rendering blank", async () => {
