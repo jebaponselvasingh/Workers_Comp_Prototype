@@ -19,6 +19,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 
 import { createQueryClient } from "@/api/queryClient";
+import { todayIso } from "@/lib/clock";
 import {
   ME_HANDLER,
   MEETINGS,
@@ -201,7 +202,13 @@ test("the count beside the list is the server's total, not the page's length", a
   // said "2" over a diary of sixty would be a list quietly lying about what it
   // holds — which is what rendering `items.length` here would do.
   renderSubTab({
-    meetings: { status: 200, body: { items: [MEETING_UPCOMING], nextCursor: "cur", total: 60 } },
+    // `upcomingCount` is on every envelope the server can produce, so a fixture
+    // without it is a response no server sends — and the greeting one sub-tab
+    // over reads it. Two inline fixtures in this file omitted it.
+    meetings: {
+      status: 200,
+      body: { items: [MEETING_UPCOMING], nextCursor: "cur", total: 60, upcomingCount: 41 },
+    },
   });
 
   expect(await screen.findByTestId("meetings-count")).toHaveTextContent("60 meetings");
@@ -215,8 +222,11 @@ test("Show more appends the next page and then takes itself away", async () => {
   renderSubTab({
     meetings: (url) =>
       url.includes("cursor=")
-        ? { status: 200, body: { items: [MEETING_DONE], nextCursor: null, total: 2 } }
-        : { status: 200, body: { items: [MEETING_UPCOMING], nextCursor: "cur", total: 2 } },
+        ? { status: 200, body: { items: [MEETING_DONE], nextCursor: null, total: 2, upcomingCount: 1 } }
+        : {
+            status: 200,
+            body: { items: [MEETING_UPCOMING], nextCursor: "cur", total: 2, upcomingCount: 1 },
+          },
   });
 
   await screen.findAllByTestId("meeting-card");
@@ -294,4 +304,104 @@ test("the ＋ button opens the scheduler with the workspace's claim already in i
 
   expect(await screen.findByTestId("meeting-scheduler")).toBeInTheDocument();
   expect(screen.getByTestId("scheduler-claim")).toHaveValue("WC-20017 — Marcus Delgado");
+});
+
+// --- the clock this list is judged at ------------------------------------
+
+test("the list asks the server to judge it at the viewer's own day", async () => {
+  // The unfiltered read had no clock at all: the server fell back to its own
+  // UTC date while the Notes summary one sub-tab away sent the viewer's local
+  // day, so the same meeting rendered `upcoming` with a ✓ Done control there
+  // and greyed-out here for any handler whose date differs from UTC's. Nothing
+  // asserted the parameter, and the stub ignored the query string, so deleting
+  // it again would be silent.
+  renderSubTab();
+  await screen.findAllByTestId("meeting-card");
+
+  const today = todayIso(new Date());
+  const urls = requested().map((request) => request.url);
+  expect(urls).not.toHaveLength(0);
+  for (const url of urls) {
+    expect(url).toContain(`asOf=${today}`);
+    // …and **not** a `day`: this sub-tab reads the whole book.
+    expect(url).not.toContain("day=");
+  }
+});
+
+// --- errored with rows in hand -------------------------------------------
+
+test("a failed refresh keeps the meetings already on screen", async () => {
+  // TanStack keeps `data` when a refetch fails, and 4.2 made ✓ Done refetch on
+  // 200 — so testing `isError` before the cache wiped the list the handler had
+  // just ticked a row in, a fraction of a second after the tick succeeded.
+  let calls = 0;
+  renderSubTab({
+    meetings: () => {
+      calls += 1;
+      // A 4xx rather than a 5xx: `createQueryClient` retries 5xx twice with
+      // backoff, which pushes the failed state past the default `findBy`
+      // timeout — this file's own note, one test up.
+      return calls === 1
+        ? MEETINGS
+        : {
+            status: 400,
+            body: {
+              type: "/problems/invalid-cursor",
+              title: "Bad Request",
+              status: 400,
+              detail: "The pagination cursor is not readable.",
+            },
+          };
+    },
+  });
+  await screen.findAllByTestId("meeting-card");
+
+  await userEvent.click(within(card(501)).getByTestId("meeting-done"));
+
+  expect(await screen.findByTestId("meetings-stale")).toBeInTheDocument();
+  expect(screen.getAllByTestId("meeting-card")).not.toHaveLength(0);
+  expect(screen.queryByTestId("meetings-error")).not.toBeInTheDocument();
+});
+
+// --- a row somebody else removed -----------------------------------------
+
+test("a 404 on ✓ Done re-reads the list and does not invite a retry", async () => {
+  // Fresh state was installed only when the error carried a `meeting`
+  // extension, which only a 409 does — so a meeting deleted in another session
+  // left a phantom card that 404s on every click, for ever, because
+  // `refetchOnWindowFocus` is off and nothing else was going to ask.
+  let calls = 0;
+  renderSubTab({
+    meetings: () => {
+      calls += 1;
+      // The row is gone from the server's second answer.
+      return calls === 1
+        ? MEETINGS
+        : {
+            status: 200,
+            body: { items: [MEETING_DONE], nextCursor: null, total: 1, upcomingCount: 0 },
+          };
+    },
+    completeMeeting: {
+      status: 404,
+      body: {
+        type: "/problems/meeting-not-found",
+        title: "Not Found",
+        status: 404,
+        detail: "No meeting 501 in your diary.",
+      },
+    },
+  });
+  await screen.findAllByTestId("meeting-card");
+
+  await userEvent.click(within(card(501)).getByTestId("meeting-done"));
+
+  // The card goes, because the refusal made the list re-read…
+  await waitFor(() =>
+    expect(
+      screen.queryAllByTestId("meeting-card").some((node) => node.dataset.meetingId === "501"),
+    ).toBe(false),
+  );
+  // …and while it was still there, what it said was not "try again".
+  expect(screen.queryByText(/Try again in a moment/)).not.toBeInTheDocument();
 });

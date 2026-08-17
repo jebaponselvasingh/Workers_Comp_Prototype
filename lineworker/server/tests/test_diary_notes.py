@@ -12,6 +12,12 @@ Driven through the app for the contract tests and through the command for the
 atomicity ones, because a rollback is not observable over HTTP —
 `test_meetings.py`'s division, one table over.
 
+**`requires_db` is a per-test decorator, not a `pytestmark`.** It was the module
+marker, which skipped the whole validator and the whole cursor decoder on any
+machine without a Postgres — every one of them a pure function with an oracle
+beside it, and a laptop with no database is exactly where somebody would most
+like them to run. `test_meetings.py` carries the same correction.
+
 **These tests mutate the seeded portfolio**, and unlike meetings they start from
 nothing: `diary_note` has no seed, deliberately (a seeded note would be words
 nobody wrote attributed to a named handler). The module-scoped `seeded_db_url`
@@ -54,8 +60,6 @@ from services.claims.notes import (
 )
 from tests import seed_fixture
 from tests.conftest import requires_db
-
-pytestmark = requires_db
 
 KAYA = ("Kaya Johnson", "handler")
 SARAH = ("Sarah Williams", "handler")
@@ -119,6 +123,10 @@ def test_a_newline_is_allowed_because_a_diary_note_is_prose() -> None:
         ("line one\rline two", "line one\rline two"),
         # An indented list pasted out of a spreadsheet.
         ("visit 1\tMonday", "visit 1\tMonday"),
+        # Word writes U+000B for Shift+Enter and U+000C for a page break, and
+        # both arrive in prose pasted out of it.
+        ("line one\vline two", "line one\vline two"),
+        ("page one\fpage two", "page one\fpage two"),
     ],
 )
 def test_a_tab_or_a_carriage_return_is_prose_too(raw: str, kept: str) -> None:
@@ -135,10 +143,16 @@ def test_a_tab_or_a_carriage_return_is_prose_too(raw: str, kept: str) -> None:
     assert normalise_note_text(raw) == kept
 
 
-@pytest.mark.parametrize("control", ["\x00", "\x01", "\x08", "\x0b", "\x1f", "\x7f"])
+@pytest.mark.parametrize("control", ["\x00", "\x01", "\x08", "\x0e", "\x1f", "\x7f"])
 def test_every_other_control_character_is_still_refused(control: str) -> None:
-    """The other half of the exemption above: three whitespace characters were
-    let through, not the C0 range. None of these is anything a person typed."""
+    """The other half of the exemption above: the prose whitespace in
+    `edit.WHITESPACE_KEPT` is let through, not the C0 range.
+
+    The reason the rest are refused is the *downstream* one — a NUL PostgreSQL
+    cannot store, and the others corrupt a log line or a CSV export — rather
+    than "nobody typed them", which is a claim U+000B falsifies on its own and
+    which is why it moved to the kept side above.
+    """
     with pytest.raises(InvalidPatch):
         normalise_note_text(f"before{control}after")
 
@@ -271,6 +285,7 @@ async def audit_rows(db: AsyncSession, action: str, entity_id: str) -> list[Audi
 # --- create -------------------------------------------------------------
 
 
+@requires_db
 async def test_a_handler_writes_a_note_and_it_comes_back_tagged(seeded_db_url: str) -> None:
     """The happy path (AC 2): 201, the row, and the claim tag the card renders."""
     claim_id = a_claim_of(KAYA)
@@ -285,14 +300,18 @@ async def test_a_handler_writes_a_note_and_it_comes_back_tagged(seeded_db_url: s
     body = response.json()
     assert body["claimId"] == claim_id
     assert body["noteText"] == "Called the plant; light duty from Monday."
-    assert body["workerName"]
     assert body["notedAt"]
     # No lifecycle and no compare-and-swap: a client that found either here
     # would reasonably build an edit control the command does not have.
     assert "version" not in body
     assert "status" not in body
+    # And no `workerName`. A note card renders `📎 WC-nnnn` and never the name,
+    # so shipping it was the injured worker's name on every row of every
+    # handler's diary with nothing at the other end reading it (AD-11).
+    assert "workerName" not in body
 
 
+@requires_db
 async def test_a_note_with_no_claim_selected_is_written_untagged(seeded_db_url: str) -> None:
     """AC 2's second row: the add-note input is on screen whether or not a
     claim is selected, and the column is nullable so that is legal."""
@@ -302,9 +321,9 @@ async def test_a_note_with_no_claim_selected_is_written_untagged(seeded_db_url: 
 
     assert response.status_code == 201, response.text
     assert response.json()["claimId"] is None
-    assert response.json()["workerName"] is None
 
 
+@requires_db
 async def test_an_empty_note_is_a_422_naming_the_field_and_writes_nothing(
     seeded_db_url: str,
 ) -> None:
@@ -322,6 +341,7 @@ async def test_an_empty_note_is_a_422_naming_the_field_and_writes_nothing(
     assert after == before
 
 
+@requires_db
 async def test_a_note_past_the_cap_is_refused_by_the_schema(seeded_db_url: str) -> None:
     """`maxLength` on the request model refuses first, so the type is
     `/problems/validation-error` rather than the command's `/problems/
@@ -337,6 +357,7 @@ async def test_a_note_past_the_cap_is_refused_by_the_schema(seeded_db_url: str) 
     assert response.json()["type"] == "/problems/validation-error"
 
 
+@requires_db
 async def test_a_note_at_the_cap_with_a_trailing_newline_is_accepted(seeded_db_url: str) -> None:
     """The two bounds measure the same string (review, 2026-08-17).
 
@@ -357,6 +378,7 @@ async def test_a_note_at_the_cap_with_a_trailing_newline_is_accepted(seeded_db_u
     assert len(response.json()["noteText"]) == MAX_NOTE_LENGTH
 
 
+@requires_db
 async def test_a_note_that_was_written_but_cannot_be_read_back_says_so(
     seeded_db_url: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -392,6 +414,7 @@ async def test_a_note_that_was_written_but_cannot_be_read_back_says_so(
     assert "saved" in body["detail"]
 
 
+@requires_db
 async def test_a_claim_outside_the_book_is_the_same_404_as_one_that_does_not_exist(
     seeded_db_url: str,
 ) -> None:
@@ -412,6 +435,7 @@ async def test_a_claim_outside_the_book_is_the_same_404_as_one_that_does_not_exi
     assert absent.json()["detail"].startswith("No claim ")
 
 
+@requires_db
 @pytest.mark.parametrize("persona", [JENNIFER, ANALYST])
 async def test_only_a_handler_may_write_a_note(
     seeded_db_url: str, persona: tuple[str, str]
@@ -424,6 +448,7 @@ async def test_only_a_handler_may_write_a_note(
     assert response.json()["type"] == "/problems/edit-not-permitted"
 
 
+@requires_db
 async def test_the_command_refuses_a_supervisor_before_it_reads_anything(
     db: AsyncSession,
 ) -> None:
@@ -435,12 +460,14 @@ async def test_the_command_refuses_a_supervisor_before_it_reads_anything(
         await create_diary_note(db, ctx, note_text="n", claim_business_id=a_claim_of(KAYA))
 
 
+@requires_db
 async def test_the_command_raises_for_a_claim_outside_the_book(db: AsyncSession) -> None:
     ctx = await context_for(db, *KAYA)
     with pytest.raises(DiaryNoteClaimNotVisible):
         await create_diary_note(db, ctx, note_text="n", claim_business_id=a_claim_outside(KAYA))
 
 
+@requires_db
 async def test_a_refused_claim_tag_writes_neither_a_row_nor_an_audit_event(
     db: AsyncSession,
 ) -> None:
@@ -465,6 +492,7 @@ async def test_a_refused_claim_tag_writes_neither_a_row_nor_an_audit_event(
     )
 
 
+@requires_db
 async def test_writing_a_note_emits_one_audit_event_in_the_same_transaction(
     db: AsyncSession,
 ) -> None:
@@ -492,6 +520,7 @@ async def test_writing_a_note_emits_one_audit_event_in_the_same_transaction(
     assert event.at == note.noted_at
 
 
+@requires_db
 async def test_writing_a_note_emits_no_timeline_event(db: AsyncSession) -> None:
     """AD-12 scopes `timeline_event` to *claim-mutating* commands, and a note
     changes no column of `claim`. The prototype does not surface notes on the
@@ -505,6 +534,7 @@ async def test_writing_a_note_emits_no_timeline_event(db: AsyncSession) -> None:
     assert await db.scalar(sa.select(sa.func.count()).select_from(TimelineEvent)) == before
 
 
+@requires_db
 async def test_the_command_stamps_one_instant_it_was_given(db: AsyncSession) -> None:
     """`now` is a parameter with a UTC default, `audit.record`'s shape: the
     note happened when the command decided it happened."""
@@ -516,6 +546,7 @@ async def test_the_command_stamps_one_instant_it_was_given(db: AsyncSession) -> 
 # --- list ---------------------------------------------------------------
 
 
+@requires_db
 async def test_the_list_is_newest_first_and_the_order_is_total(db: AsyncSession) -> None:
     """AC 3. `noted_at DESC, id DESC` — the timestamp alone is a partial order,
     because two saves inside one clock tick tie, and a keyset page that ended
@@ -533,6 +564,7 @@ async def test_the_list_is_newest_first_and_the_order_is_total(db: AsyncSession)
     assert keys == sorted(keys, reverse=True)
 
 
+@requires_db
 async def test_paging_visits_every_note_exactly_once(db: AsyncSession) -> None:
     """The keyset cursor, walked to exhaustion at a page size of one.
 
@@ -555,6 +587,7 @@ async def test_paging_visits_every_note_exactly_once(db: AsyncSession) -> None:
     assert len(seen) == len(set(seen)) == first.total
 
 
+@requires_db
 async def test_one_handlers_diary_is_invisible_to_another(db: AsyncSession) -> None:
     """A note belongs to its author, not to the claim — so two handlers whose
     books overlap read their own working notes and not each other's."""
@@ -569,6 +602,7 @@ async def test_one_handlers_diary_is_invisible_to_another(db: AsyncSession) -> N
     assert mine.id not in {item.id for item in theirs.items}
 
 
+@requires_db
 async def test_a_supervisor_over_the_book_still_sees_none_of_it(db: AsyncSession) -> None:
     """Scope is author, not employer. A diary is a handler's working record and
     not a management report — `employer_scope` alone would make it one."""
@@ -582,6 +616,7 @@ async def test_a_supervisor_over_the_book_still_sees_none_of_it(db: AsyncSession
     assert page.items == ()
 
 
+@requires_db
 async def test_the_list_answers_for_whoever_holds_the_cookie(seeded_db_url: str) -> None:
     """AD-7: there is no parameter on this route that could name a user, an
     employer or a role, so "whose notes?" has exactly one answer."""
@@ -594,6 +629,7 @@ async def test_the_list_answers_for_whoever_holds_the_cookie(seeded_db_url: str)
     assert {item["id"] for item in kaya["items"]} & {item["id"] for item in sarah["items"]} == set()
 
 
+@requires_db
 async def test_a_bad_cursor_is_a_400_and_never_a_silent_page_one(seeded_db_url: str) -> None:
     async with make_client(seeded_db_url) as client:
         await login_as(client, *KAYA)
@@ -603,6 +639,7 @@ async def test_a_bad_cursor_is_a_400_and_never_a_silent_page_one(seeded_db_url: 
     assert response.json()["type"] == "/problems/invalid-cursor"
 
 
+@requires_db
 async def test_the_list_and_the_write_are_never_cached(seeded_db_url: str) -> None:
     """Specific to one persona's diary, so it must never be served to another
     from a cache upstream — `/me` and `/claims/queue`'s rule."""
@@ -615,13 +652,24 @@ async def test_the_list_and_the_write_are_never_cached(seeded_db_url: str) -> No
     assert written.headers["Cache-Control"] == "no-store"
 
 
-async def test_a_note_whose_claim_leaves_the_book_leaves_the_list(db: AsyncSession) -> None:
-    """Scope is re-resolved per request (AD-7), so a handler whose book
-    narrowed stops seeing the claim reference the note carries.
+@requires_db
+async def test_a_note_whose_claim_leaves_the_book_stays_in_the_authors_list(
+    db: AsyncSession,
+) -> None:
+    """The I/O matrix's List-isolation row, which the code contradicted.
 
-    The whole row goes rather than the tag, which is `meeting_scope`'s answer
-    and the conservative one: the alternative is publishing a handler's own
-    words about a claim the console has stopped showing them.
+    "A note tagged to a claim now outside A's scope is still A's own note and
+    is still returned." `diary_note_scope` used to AND `employer_scope` onto
+    the tag — `meeting_scope`'s shape, copied — so a re-scoping silently
+    deleted entries from a handler's own diary, in a table with no edit, no
+    delete and no other copy of what was written. This test asserted the
+    deletion as intended; the contract is explicit and wins.
+
+    The two tables answer differently because they are different records: a
+    meeting is a plan against a case file (and its card republishes the
+    worker's name), a note is the handler's own account of work they did.
+    Employer scope still gates *accepting* a tag on write —
+    `test_the_command_raises_for_a_claim_outside_the_book` is that half.
     """
     ctx = await context_for(db, *KAYA)
     tagged = await create_diary_note(
@@ -631,17 +679,22 @@ async def test_a_note_whose_claim_leaves_the_book_leaves_the_list(db: AsyncSessi
     narrowed = CallerContext(user_id=ctx.user_id, role=ctx.role, employer_ids=frozenset())
     page = await list_diary_notes(db, narrowed, limit=200, as_of=TODAY)
 
-    assert tagged.id not in {item.id for item in page.items}
-    # An *untagged* note survives the same narrowing: it is scoped by its
-    # author and nothing else.
+    assert tagged.id in {item.id for item in page.items}
+    # `total` is the same list's size, so it has to agree with the predicate —
+    # a count that still applied employer scope would disagree with the page it
+    # describes, which is the shape of every "N notes" lie.
+    assert page.total == len(page.items)
+    # An untagged note survives the same narrowing, as it always did.
     untagged = await create_diary_note(db, ctx, note_text="About nothing in particular.")
     after = await list_diary_notes(db, narrowed, limit=200, as_of=TODAY)
     assert untagged.id in {item.id for item in after.items}
+    assert after.total == len(after.items)
 
 
 # --- the checklist seam -------------------------------------------------
 
 
+@requires_db
 async def test_a_note_closes_the_diary_check_in_for_that_claim(seeded_db_url: str) -> None:
     """AC 5, end to end — the completion Story 3.5 left with nowhere to write.
 
@@ -683,6 +736,7 @@ async def test_a_note_closes_the_diary_check_in_for_that_claim(seeded_db_url: st
 # --- persistence --------------------------------------------------------
 
 
+@requires_db
 async def test_a_note_is_a_row_and_survives_a_new_session(seeded_db_url: str) -> None:
     """The point of FR-DIARY-1, asserted where it is cheapest: the prototype's
     `diaryNotes` is a browser-lifetime object, and this reads the note back
@@ -702,6 +756,7 @@ async def test_a_note_is_a_row_and_survives_a_new_session(seeded_db_url: str) ->
     assert found[0]["noteText"] == "Survives a restart."
 
 
+@requires_db
 async def test_the_row_carries_no_version_column(db: AsyncSession) -> None:
     """The AD-4 statement for this table, asserted structurally rather than in
     prose: append-only rows are exempt from compare-and-swap, and a `version`
@@ -711,6 +766,7 @@ async def test_the_row_carries_no_version_column(db: AsyncSession) -> None:
     assert columns == {"id", "app_user_id", "claim_id", "note_text", "noted_at"}
 
 
+@requires_db
 async def test_the_app_role_can_delete_so_story_8_1_can_purge(seeded_db_url: str) -> None:
     """`diary_note` is PHI and belongs in Epic 8's cascade, which does not
     exist yet. The grant is the handle it will need — asserted here so a later
@@ -732,6 +788,7 @@ async def test_the_app_role_can_delete_so_story_8_1_can_purge(seeded_db_url: str
     assert {"SELECT", "INSERT", "DELETE"} <= granted
 
 
+@requires_db
 async def test_the_table_starts_empty_because_there_is_no_seed(seeded_db_url: str) -> None:
     """No seed migration follows 0034, deliberately: a seeded note would be
     words nobody wrote attributed to a named handler.
@@ -783,3 +840,47 @@ def test_the_module_that_owns_this_table_is_the_only_writer() -> None:
         "data/repositories/claims.py",
         "services/claims/notes.py",
     ], writers
+
+
+@requires_db
+async def test_the_row_and_its_audit_event_are_one_transaction(
+    db: AsyncSession, seeded_db_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AD-4's "same transaction", proved by breaking the commit.
+
+    Reading the event back *after* the commit looks identical whether the two
+    statements shared a transaction or ran in two — which is what
+    `test_writing_a_note_emits_one_audit_event_in_the_same_transaction` was
+    doing, under a name that claimed otherwise. Failing between `audit.record`
+    and `db.commit()` tells them apart: with one transaction neither the note
+    nor its event survives, and with two the note would already be on disk with
+    no record that it was written.
+    """
+    ctx = await context_for(db, *KAYA)
+    marker = "One transaction or none."
+
+    async def refuse_to_commit() -> None:
+        raise RuntimeError("the commit failed")
+
+    monkeypatch.setattr(db, "commit", refuse_to_commit)
+    with pytest.raises(RuntimeError):
+        await create_diary_note(
+            db, ctx, note_text=marker, claim_business_id=a_claim_of(KAYA), now=NOW
+        )
+    await db.rollback()
+
+    # A **separate** session, because the one above still holds the aborted
+    # transaction and would see its own uncommitted rows.
+    engine = create_async_engine(seeded_db_url.replace("postgresql://", "postgresql+asyncpg://", 1))
+    try:
+        async with async_sessionmaker(engine, expire_on_commit=False)() as other:
+            notes = await other.scalars(sa.select(DiaryNote).where(DiaryNote.note_text == marker))
+            assert list(notes.all()) == []
+            events = await other.scalars(
+                sa.select(AuditEvent).where(
+                    AuditEvent.entity == ENTITY, AuditEvent.action == CREATE_ACTION
+                )
+            )
+            assert all((event.after or {}).get("note_text") != marker for event in events.all())
+    finally:
+        await engine.dispose()

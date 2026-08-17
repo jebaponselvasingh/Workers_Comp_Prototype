@@ -174,6 +174,26 @@ class EditableClaim(Protocol):
     recovery: RecoveryWindow
 
 
+#: The control characters a *prose* field may carry: newline, carriage return,
+#: tab, and the two form-feed-family separators a word processor emits.
+#:
+#: Named here rather than in either caller because both `services/claims/
+#: notes.py` (a diary note) and `services/claims/meetings.py` (an agenda) hold
+#: pasted prose, and two copies of this set is how one of them ends up refusing
+#: a tab that the other stores. `require_text` below does **not** use it: the
+#: fields it guards are single-line clinical values (an injury type, an ICD
+#: code), where a newline is a paste accident rather than a paragraph.
+#:
+#: What stays refused is the rest of C0 and DEL. The real constraint is NUL —
+#: PostgreSQL `text` cannot hold one and asyncpg raises rather than truncating —
+#: and the rest go with it because they corrupt a log line or a CSV export
+#: downstream. That is a *downstream* argument, not "nobody typed them":
+#: U+000B is what Word writes for Shift+Enter and U+000C is a page break, so
+#: both arrive in pasted prose routinely, which is why they are on this side of
+#: the line rather than refused with a sentence that would not be true.
+WHITESPACE_KEPT: Final[frozenset[str]] = frozenset({"\n", "\r", "\t", "\v", "\f"})
+
+
 def require_text(field: str, raw: object) -> str:
     """A trimmed, non-empty, control-character-free, length-capped string.
 

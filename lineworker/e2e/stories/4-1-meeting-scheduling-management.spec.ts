@@ -71,21 +71,89 @@ interface Meeting {
   workerName: string | null;
   meetingType: string;
   meetingDate: string;
+  meetingTime: string | null;
   isDone: boolean;
   version: number;
   status: "upcoming" | "done";
+}
+
+/** A stable comparison for the `(claim, type)` pairs the seed oracle names. */
+function byPair(
+  left: { claimId: string | null; meetingType: string },
+  right: { claimId: string | null; meetingType: string },
+): number {
+  return `${left.claimId}|${left.meetingType}`.localeCompare(
+    `${right.claimId}|${right.meetingType}`,
+  );
+}
+
+/**
+ * The server's ordering rule, restated: `(meetingDate, COALESCE(time,'00:00'), id)`.
+ *
+ * The order assertion used to be "the list equals the seed fixture's array",
+ * which is the migration's *insertion* order — and it agreed only because both
+ * demo rows carry the same date and happen to have been inserted down the
+ * clock. Restating the rule is what makes the assertion about the sort.
+ */
+function byServerOrder(left: Meeting, right: Meeting): number {
+  const key = (meeting: Meeting) =>
+    `${meeting.meetingDate}|${meeting.meetingTime ?? "00:00:00"}|${String(meeting.id).padStart(12, "0")}`;
+  return key(left).localeCompare(key(right));
 }
 
 interface MeetingList {
   items: Meeting[];
   nextCursor: string | null;
   total: number;
+  upcomingCount: number;
 }
 
+/**
+ * The viewer's local calendar day, as `web/src/lib/clock.ts::todayIso` builds it.
+ *
+ * Restated here rather than imported: a spec that used the app's own helper
+ * would be asserting that the helper equals itself. Playwright runs on the same
+ * host as the browser, so "local" means the same thing on both sides.
+ */
+function todayIso(now = new Date()): string {
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${now.getFullYear()}-${month}-${day}`;
+}
+
+/**
+ * The caller's whole diary, **judged at the same clock the DOM was judged at**.
+ *
+ * `asOf` is not decoration here. The Meetings sub-tab sends the viewer's local
+ * day since the follow-up review, so a fetch that omitted it would come back
+ * judged at the server's UTC date and every `status` in it could disagree with
+ * the card beside it — which is the very skew the parameter exists to close,
+ * reintroduced by the oracle rather than by the code.
+ */
 async function diaryOf(page: Page): Promise<MeetingList> {
-  const response = await page.request.get("/api/claims-diary/meetings");
+  const response = await page.request.get(
+    `/api/claims-diary/meetings?asOf=${todayIso()}&limit=200`,
+  );
   expect(response.status(), await response.text()).toBe(200);
-  return (await response.json()) as MeetingList;
+  const list = (await response.json()) as MeetingList;
+  expect(list.nextCursor, "the diary outgrew one page; walk the cursor").toBeNull();
+  return list;
+}
+
+/**
+ * Upcoming or done, **restated** — the spec's own copy of the horizon rule.
+ *
+ * The status assertions used to compare the DOM against the `status` field of
+ * the response the test had just fetched, which is the same server answering
+ * twice: flipping `>=` to `>` in `meeting_horizon.py` moved both sides together
+ * and the whole spec passed. An e2e spec is allowed to restate a rule in order
+ * to disagree with it — that is what an oracle is — and this is the one place
+ * the restatement is worth having, because the seeded meetings are dated the
+ * migration-run day and are therefore *on* the boundary the `>=` decides.
+ */
+function expectedStatus(meeting: Meeting, day: string): "upcoming" | "done" {
+  if (meeting.isDone) return "done";
+  return meeting.meetingDate >= day ? "upcoming" : "done";
 }
 
 /** Open the workspace on a claim with the copilot pane on screen. */
@@ -141,10 +209,21 @@ test.describe("@story:4-1 @epic:4 meeting scheduling and management", () => {
     const claimId = expected[0].claimId;
 
     // --- AC 6: the two seeded demo meetings, and only those --------------
+    // Compared as a *set* of `(claim, type)` pairs plus an explicit ordering
+    // assertion below, rather than as a list in the seed fixture's order: that
+    // order is the migration's insertion order, and the two happen to agree only
+    // because both rows carry the same date and the fixture happens to list them
+    // by time. A change to the sort key would have gone unnoticed.
     expect(seeded.total).toBe(expected.length);
-    expect(
-      seeded.items.map((item) => ({ claimId: item.claimId, meetingType: item.meetingType })),
-    ).toEqual(expected);
+    const seededPairs = seeded.items.map((item) => ({
+      claimId: item.claimId,
+      meetingType: item.meetingType,
+    }));
+    expect([...seededPairs].sort(byPair)).toEqual([...expected].sort(byPair));
+    // The server's ordering rule, restated: `(meetingDate, time or midnight, id)`.
+    expect(seeded.items.map((item) => item.id)).toEqual(
+      [...seeded.items].sort(byServerOrder).map((item) => item.id),
+    );
 
     await openWorkspace(page, claimId);
 
@@ -167,10 +246,20 @@ test.describe("@story:4-1 @epic:4 meeting scheduling and management", () => {
     await expect(byTestId(page, "diary-empty-emails")).toHaveAttribute("data-story", "Story 4.3");
     await byTestId(page, "diary-subtab-meetings").click();
 
-    // The list renders the seeded rows, in the server's order.
+    // The list renders the seeded rows, in the server's order — and each one's
+    // status is checked against the rule *restated here*, not against the field
+    // the same request just delivered. Migration 0033 dates its demo meetings to
+    // the migration-run day, so these two rows sit exactly on the boundary the
+    // `>=` decides: flipping it to `>` renders both as done, which this notices
+    // and a self-comparison did not.
+    const today = todayIso();
     await expect(byTestId(page, "meeting-card")).toHaveCount(seeded.total);
     for (const item of seeded.items) {
-      await expect(cardFor(page, item.id)).toHaveAttribute("data-status", item.status);
+      await expect(cardFor(page, item.id)).toHaveAttribute(
+        "data-status",
+        expectedStatus(item, today),
+      );
+      expect(item.status).toBe(expectedStatus(item, today));
     }
 
     // --- AC 5: the email control is disabled and names Story 4.3 ---------

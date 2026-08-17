@@ -799,10 +799,20 @@ class DiaryNote(Base):
     every handler's diary on every page.
 
     AD-11: `note_text` is PHI-class — a diary entry names a worker's treatment,
-    their employer's position and the handler's own read of the file. Nothing
-    about it reaches a log beyond ids and field names, and the table belongs in
-    Story 8.1's purge cascade, which does not exist yet and is not invented
-    here.
+    their employer's position and the handler's own read of the file.
+
+    **The text is written into `audit_event.after` in full**, and that is worth
+    stating plainly because an earlier version of this docstring said the
+    opposite ("nothing about it reaches a log beyond ids and field names"),
+    which was true of the structlog line `services.audit` emits and false of the
+    JSONB diff it stores. `services/claims/notes.py::_diff` carries the whole
+    note for `injuries.py::_diff`'s reason — the row *is* the change, and a log
+    that recorded a field name could not say what was written — and `Meeting`
+    sets the same precedent for an agenda one table over. The consequence is a
+    retention one: the note exists in two places, so Story 8.1's purge cascade
+    has to reach `audit_event` as well as this table. That cascade does not
+    exist yet and is not invented here; the deferral is recorded rather than
+    described as an absence.
     """
 
     __tablename__ = "diary_note"

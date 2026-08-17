@@ -87,6 +87,9 @@ function Probe() {
       <button type="button" data-testid="request-notes" onClick={nav.requestNotes}>
         diary deep link
       </button>
+      <button type="button" data-testid="lower-focus" onClick={nav.lowerNoteFocus}>
+        caret taken
+      </button>
     </div>
   );
 }
@@ -248,4 +251,48 @@ test("the scheduler session and the note session move independently", async () =
   const scheduler = screen.getByTestId("session").textContent;
   await userEvent.click(screen.getByTestId("request-notes"));
   expect(screen.getByTestId("session")).toHaveTextContent(scheduler!);
+});
+
+test("the meetings deep link lowers the focus intent, as the tab strip does", async () => {
+  // `noteFocusPending` was raised by `requestNotes` and lowered only by
+  // `selectSubTab` — and `requestMeetings` set the sub-tab with the raw setter,
+  // so leaving Notes by *that* route left the intent raised. Come back later
+  // and the input takes the caret for a request nobody made. Unreachable while
+  // the strip is the only other two-way switch; Epic 6 makes the copilot tabs
+  // one, and it returns with them.
+  render(
+    <DiaryNavProvider>
+      <Probe />
+    </DiaryNavProvider>,
+  );
+
+  await userEvent.click(screen.getByTestId("request-notes"));
+  expect(screen.getByTestId("note-pending")).toHaveTextContent("true");
+
+  await userEvent.click(screen.getByTestId("request"));
+
+  expect(screen.getByTestId("sub-tab")).toHaveTextContent("meetings");
+  expect(screen.getByTestId("note-pending")).toHaveTextContent("false");
+});
+
+test("the intent is lowered where it is consumed, not only by the strip", async () => {
+  // `NotesSubTab` calls this from the input's `onFocus` — the moment the intent
+  // is actually satisfied. An event handler, not an effect, which is the rule
+  // this whole feature keeps.
+  render(
+    <DiaryNavProvider>
+      <Probe />
+    </DiaryNavProvider>,
+  );
+
+  await userEvent.click(screen.getByTestId("request-notes"));
+  expect(screen.getByTestId("note-pending")).toHaveTextContent("true");
+  // The session stays where it is: the counter is the remount, the flag is the
+  // intent, and only one of them is spent by taking the caret.
+  const session = screen.getByTestId("note-session").textContent;
+
+  await userEvent.click(screen.getByTestId("lower-focus"));
+
+  expect(screen.getByTestId("note-pending")).toHaveTextContent("false");
+  expect(screen.getByTestId("note-session")).toHaveTextContent(String(session));
 });

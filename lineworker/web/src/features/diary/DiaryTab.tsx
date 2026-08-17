@@ -15,6 +15,8 @@
  * owned would need an effect to hear about that. See `DiaryNav` on why the
  * context holds the state rather than an intent.
  */
+import { tabKeyHandler } from "@/lib/tabKeys";
+
 import type { DiarySubTab } from "./DiaryNav";
 import { useDiaryNav } from "./DiaryNav";
 import { MeetingsSubTab } from "./MeetingsSubTab";
@@ -64,6 +66,17 @@ export function DiaryTab({
   injuryType: string | null;
 }) {
   const { subTab, selectSubTab } = useDiaryNav();
+  // **The keyboard half of the roles this strip declares.** It shipped with
+  // `role="tablist"`, `role="tab"`, `aria-selected` and `aria-controls` and no
+  // key handler and no roving `tabIndex` — which `DetailTabs` records as a
+  // defect caught in an earlier review, in a docstring this file's strip was
+  // written next to. Same helper, so there is one answer rather than three.
+  const onKeyDown = tabKeyHandler({
+    tabs: SUB_TABS.map((tab) => tab.key),
+    active: subTab,
+    onSelect: selectSubTab,
+    testId: (tab) => `diary-subtab-${tab}`,
+  });
 
   return (
     <div data-testid="diary-tab" className="flex min-h-0 flex-1 flex-col">
@@ -82,7 +95,12 @@ export function DiaryTab({
             data-testid={`diary-subtab-${tab.key}`}
             aria-selected={subTab === tab.key}
             aria-controls={PANEL_ID}
+            // Only the selected tab is in the tab order; the other two are
+            // reached with the arrow keys — `DetailTabs`' arrangement, and the
+            // half of it that has to travel with the roles.
+            tabIndex={subTab === tab.key ? 0 : -1}
             onClick={() => selectSubTab(tab.key)}
+            onKeyDown={onKeyDown}
             className={`-mb-px flex-1 border-b-2 py-[6px] text-[11px] font-semibold ${
               subTab === tab.key
                 ? "border-brand text-brand"

@@ -32,13 +32,24 @@ AD-12 scopes `timeline_event` to claim-mutating commands, so
 `services/claims/timeline.py::append` is not imported here — the same ruling
 `meetings.py` makes for the same reason.
 
-## Two scopes, one predicate
+## One scope on the read, two on the write
 
 Every function takes `CallerContext` and applies it in the repository only
-(AD-7). `diary_note_scope` is author **and** employer scope: a note is visible
-to the handler who wrote it and to nobody else, and its claim tag additionally
-has to survive that handler's current employer scope. Out of scope and absent
-are the same 404.
+(AD-7). `diary_note_scope` is **author** scope and nothing else: a note is
+visible to the handler who wrote it and to nobody else, including a supervisor
+over the same book.
+
+Employer scope still gates *accepting* a claim tag — `insert_diary_note`
+resolves the claim through `employer_scope` inside the statement, so a tag
+naming a claim outside the caller's book is a 404 and no row is written. What
+it does **not** do is un-publish a note that was legitimately written: the
+story's I/O matrix says a note tagged to a claim now outside the caller's scope
+"is still A's own note and is still returned", and it is right. The row is the
+handler's own words about work they did; a re-scoping is a fact about which
+claims they may open, not a reason to make their diary lose entries. `meeting`
+answers the other way because a meeting is a plan against a case file rather
+than a record of one, and because its card publishes the worker's name — which
+is exactly the field this table's projection drops.
 
 ## AD-11
 
@@ -65,7 +76,7 @@ from data.context import CallerContext
 from data.models.enums import UserRole
 from data.repositories import claims as claim_repo
 from services import audit
-from services.claims.edit import EditNotPermitted, InvalidPatch
+from services.claims.edit import WHITESPACE_KEPT, EditNotPermitted, InvalidPatch
 from services.derivations import utc_today
 
 CREATE_ACTION: Final[str] = "create_diary_note"
@@ -82,14 +93,6 @@ MAX_NOTE_LENGTH: Final[int] = 2000
 #: The field name as the refusal messages spell it, so a 422 names the control
 #: the handler is looking at rather than a column.
 NOTE_TEXT_FIELD: Final[str] = "noteText"
-
-#: The three control characters a note may carry: newline, carriage return and
-#: tab. Named rather than spelled inline in the comprehension because the set is
-#: the *rule* — everything else below `0x20`, plus DEL, is refused — and a
-#: reader checking "why is a tab allowed?" should find the answer beside the
-#: constant rather than inside a generator expression. See
-#: `normalise_note_text`.
-WHITESPACE_KEPT: Final[frozenset[str]] = frozenset({"\n", "\r", "\t"})
 
 #: Page-size bounds, declared once and enforced twice — `meetings.py`'s rule
 #: and its reason: FastAPI refuses a `limit` outside them before this module is
@@ -139,20 +142,27 @@ class InvalidCursor(ValueError):
 class DiaryNoteView:
     """One note as every surface reads it — the row, and its claim.
 
-    `claim_business_id` and `worker_name` are on the view rather than looked up
-    by the card for `MeetingView`'s reason: the tag renders `📎 WC-nnnn`, and a
-    browser that assembled that from a second request would be showing a claim
-    reference the list read did not scope.
+    `claim_business_id` is on the view rather than looked up by the card
+    because the tag renders `📎 WC-nnnn` and a browser that assembled that from
+    a second request would be showing a claim reference the list read did not
+    scope.
 
-    **There is no `status` and no derived field of any kind**, unlike
-    `MeetingView`. A note has no lifecycle: it is written, and that is the whole
-    of it. `noted_at` is a stored instant, and the `{date} · {time}` header the
-    card draws is formatting rather than a rule.
+    **There is no `worker_name`, unlike `MeetingView`**, and the asymmetry is
+    deliberate rather than an omission. A meeting card renders
+    `WC-nnnn — Worker Name`, so the name is the thing on screen; a note card
+    renders `📎 WC-nnnn` and nothing else. Shipping the injured worker's name on
+    every row of the diary was therefore PHI on the wire with no consumer —
+    AD-11's rule is that the payload carries what the surface renders, and a
+    field nothing renders is a field nothing justifies.
+
+    **There is no `status` and no derived field of any kind** either. A note has
+    no lifecycle: it is written, and that is the whole of it. `noted_at` is a
+    stored instant, and the `{date} · {time}` header the card draws is
+    formatting rather than a rule.
     """
 
     id: int
     claim_business_id: str | None
-    worker_name: str | None
     note_text: str
     noted_at: datetime
 
@@ -291,15 +301,23 @@ def normalise_note_text(raw: object) -> str:
     `text` cannot hold a NUL and asyncpg raises rather than truncating, which
     reached the request as a 500 rather than a 422.
 
-    **`\\n`, `\\r` and `\\t` are exempt, and the exemption is the fix to a
-    refusal that was both wrong and dishonest.** A diary note is prose: a
-    handler presses Enter, pastes a Windows-authored paragraph (CRLF) or pastes
-    an indented list out of a spreadsheet (tabs). PostgreSQL `text` stores all
-    three without complaint — NUL is the constraint the paragraph above cites,
-    and it is the only one — so refusing a carriage return with "contains
-    characters that cannot be stored" told the handler something untrue about
-    their own words and gave them nothing to correct. The rest of C0 and DEL
-    are still refused, because none of them is anything a person typed.
+    **The prose whitespace in `edit.WHITESPACE_KEPT` is exempt, and the
+    exemption is the fix to a refusal that was both wrong and dishonest.** A
+    diary note is prose: a handler presses Enter, pastes a Windows-authored
+    paragraph (CRLF), pastes an indented list out of a spreadsheet (tabs), or
+    pastes out of Word, which writes U+000B for a Shift+Enter line break and
+    U+000C for a page break. PostgreSQL `text` stores all five without
+    complaint — NUL is the constraint the paragraph above cites, and it is the
+    only one — so refusing any of them with "contains characters that cannot be
+    stored" told the handler something untrue about their own words and gave
+    them nothing to correct. The rest of C0 and DEL are still refused, and the
+    reason is the *downstream* one above (a corrupted log line or CSV export)
+    rather than "nobody typed them", which is a claim an earlier version of
+    this docstring made and which U+000B falsifies on its own.
+
+    The set lives in `edit.py` because `meetings.py::_optional_text` guards the
+    same class of pasted prose and two copies of it is how one of the two ends
+    up refusing a tab the other stores — which is exactly what happened.
 
     Messages name the field and the rule and **never echo the value** (AD-11):
     this is the one field in the console whose content is the most sensitive
@@ -327,7 +345,6 @@ def _view(row: sa.Row[Any]) -> DiaryNoteView:
     return DiaryNoteView(
         id=note.id,
         claim_business_id=row.claim_business_id,
-        worker_name=row.worker_name,
         note_text=note.note_text,
         noted_at=note.noted_at,
     )

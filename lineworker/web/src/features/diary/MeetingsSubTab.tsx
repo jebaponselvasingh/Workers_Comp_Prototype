@@ -40,14 +40,23 @@ import {
   useMeetingWriteInFlight,
   useMeetings,
 } from "@/api/meetings";
-import { isConflict } from "@/api/errors";
+import { isConflict, isNotFound } from "@/api/errors";
 import { useDiaryNav } from "@/features/diary/DiaryNav";
+import { todayIso } from "@/lib/clock";
 
 import { MeetingCard } from "./MeetingCard";
 import { MeetingSchedulerDialog } from "./MeetingSchedulerDialog";
 
 const CONFLICT_MESSAGE = "Changed by someone else — showing the latest.";
 const FAILED_MESSAGE = "Could not save. Try again in a moment.";
+/**
+ * A 404 is not a retry, so it must not be worded as one.
+ *
+ * The meeting was deleted in another session; the list refetches on this path
+ * (`afterFailedWrite`) so the card is about to leave the screen on its own.
+ * "Try again in a moment" would invite a click that answers 404 for ever.
+ */
+const GONE_MESSAGE = "This meeting is no longer in your diary — the list has been refreshed.";
 
 export function MeetingsSubTab({
   claimId,
@@ -57,7 +66,13 @@ export function MeetingsSubTab({
   claimId: string | null;
   workerName: string | null;
 }) {
-  const meetings = useMeetings();
+  // **The viewer's day, sent so the server judges this list at the reader's
+  // clock rather than its own.** Without it the unfiltered read had no clock —
+  // the Notes summary one sub-tab away passes `day`, which does double duty —
+  // and the same meeting came back `upcoming` there and `done` here for any
+  // handler whose local date differs from UTC's. Read during render exactly as
+  // the summary reads it, so the two cannot disagree inside one paint.
+  const meetings = useMeetings({ asOf: todayIso(new Date()) });
   const complete = useCompleteMeeting();
   const remove = useDeleteMeeting();
   const busy = useMeetingWriteInFlight();
@@ -77,7 +92,11 @@ export function MeetingsSubTab({
   function refusalFor(error: unknown, meetingId: number): void {
     setRefusal({
       meetingId,
-      message: isConflict(error) ? CONFLICT_MESSAGE : FAILED_MESSAGE,
+      message: isConflict(error)
+        ? CONFLICT_MESSAGE
+        : isNotFound(error)
+          ? GONE_MESSAGE
+          : FAILED_MESSAGE,
     });
   }
 
@@ -118,15 +137,25 @@ export function MeetingsSubTab({
   return (
     <div data-testid="meetings-subtab" className="flex min-h-0 flex-1 flex-col">
       <div className="flex-1 overflow-y-auto p-[8px_10px]">
+        {/* **Four branches, and `isError` is not the second of them.** TanStack
+            keeps `data` when a *refetch* or a later infinite page fails, so
+            testing `isError` before `data` blanked a populated list on a
+            transient failure: sixty loaded meetings vanished behind "could not
+            be loaded" when "Show more" timed out, and — because Story 4.2 made
+            ✓ Done refetch on 200 — a blip in the moment after a successful tick
+            wiped the list the handler had just acted in. With rows in hand the
+            list stays and the failure is a strip above it, which is the honest
+            report: this is what we have, and the last attempt to refresh it did
+            not work. */}
         {meetings.isPending ? (
           <p data-testid="meetings-loading" className="text-[11.5px] text-faint">
             Loading meetings…
           </p>
-        ) : meetings.isError ? (
+        ) : meetings.isError && meetings.data === undefined ? (
           <p role="alert" data-testid="meetings-error" className="text-[11.5px] text-error">
             ⚠ Your meetings could not be loaded. Try again in a moment.
           </p>
-        ) : meetings.data.items.length === 0 ? (
+        ) : meetings.data === undefined ? null : meetings.data.items.length === 0 ? (
           /* The prototype's own sentence. A pane that rendered an empty list
              would read as "we have not checked", which is a different fact. */
           <p data-testid="meetings-empty" className="text-[11.5px] text-faint">
@@ -134,6 +163,12 @@ export function MeetingsSubTab({
           </p>
         ) : (
           <>
+            {/* The stale strip: rows in hand, and the last refresh failed. */}
+            {meetings.isError && (
+              <p role="alert" data-testid="meetings-stale" className="mb-[6px] text-[11px] text-error">
+                ⚠ Could not refresh — showing the meetings last loaded.
+              </p>
+            )}
             {/* The server's `total`, not `items.length`: what is on screen is
                 one page, and the two numbers differ exactly when the "Show
                 more" below matters. */}

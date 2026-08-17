@@ -26,6 +26,8 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 
+import { todayIso } from "@/lib/clock";
+
 import { api } from "./client";
 import { problemExtension } from "./errors";
 import { queryKeys } from "./queryKeys";
@@ -71,10 +73,33 @@ export function useMeetings(options?: {
    * one and a browser filtering a page would find none of them once a diary
    * outgrows fifty rows. `noDerivation.test.ts` would refuse the comparison in
    * any case.
+   *
+   * It also sets the **horizon** the server judges `status` and
+   * `upcomingCount` against, which is why a caller passing `day` needs no
+   * `asOf` beside it.
    */
   day?: string;
+  /**
+   * The day the server judges `status` and `upcomingCount` against — the same
+   * local `todayIso(...)`, for a caller that wants the **whole book**.
+   *
+   * **Every surface that renders a status has to send one of these two**, and
+   * that is what this option is for. The Meetings sub-tab reads the unfiltered
+   * list, so it had no `day` — and the server fell back to its own UTC date
+   * while the Notes summary one sub-tab away judged the identical rows at the
+   * viewer's local day. For a Pacific handler on a weekday evening the two
+   * disagreed: the same meeting rendered `upcoming` with a ✓ Done control in
+   * Notes and greyed-out in Meetings, one click apart.
+   *
+   * It is deliberately **not** in the query key. It is the viewer's clock
+   * resolved per render, exactly as `day` is, so the same midnight-rollover
+   * deferral applies and nothing else varies it — putting it in the key would
+   * also collide with `meetings.day(day)`, which is `["meetings","list",day]`.
+   */
+  asOf?: string;
 }) {
   const day = options?.day;
+  const asOf = options?.asOf;
 
   return useInfiniteQuery({
     // Two entries under one prefix: the unfiltered diary and today's slice.
@@ -84,7 +109,7 @@ export function useMeetings(options?: {
     initialPageParam: null as string | null,
     queryFn: async ({ pageParam }): Promise<MeetingList> => {
       const { data } = await api.GET("/claims-diary/meetings", {
-        params: { query: { cursor: pageParam ?? undefined, day } },
+        params: { query: { cursor: pageParam ?? undefined, day, asOf } },
       });
       return data!;
     },
@@ -117,6 +142,26 @@ export function useMeetings(options?: {
 function freshMeetingFrom(error: unknown): Meeting | undefined {
   const fresh = problemExtension<Meeting>(error, "meeting");
   return fresh && typeof fresh.id === "number" && fresh.meetingType ? fresh : undefined;
+}
+
+/**
+ * What a failed ✓ or ✕ does to the cache — install, or at least re-read.
+ *
+ * **The refetch is unconditional and that is the fix.** Fresh state was
+ * installed only when the error carried a `meeting` extension, which only a 409
+ * does; a 404 or a 403 left the cache exactly as it was. A meeting deleted in
+ * another session therefore left a phantom card on screen that 404s on every
+ * retry, for ever — `refetchOnWindowFocus` is off, so nothing else was ever
+ * going to ask. The list is the only thing that can tell the handler the row is
+ * gone, so a write that failed against it has to make it re-read.
+ */
+function afterFailedWrite(client: ReturnType<typeof useQueryClient>, error: unknown): void {
+  const fresh = freshMeetingFrom(error);
+  if (fresh) {
+    replaceInList(client, fresh, { refetch: true });
+    return;
+  }
+  void client.invalidateQueries({ queryKey: queryKeys.meetings.list });
 }
 
 /**
@@ -200,7 +245,14 @@ export function useScheduleMeeting() {
   return useMutation({
     mutationKey: queryKeys.meetings.writes,
     mutationFn: async (body: NewMeeting): Promise<Meeting> => {
-      const { data } = await api.POST("/claims-diary/meetings", { body });
+      const { data } = await api.POST("/claims-diary/meetings", {
+        body,
+        // The viewer's day, so the 201's `status` is judged where the handler
+        // is sitting. The scheduler pre-fills *their* today, so without this a
+        // meeting scheduled for this afternoon came back `done` the instant it
+        // was created for anybody whose local date is behind UTC's.
+        params: { query: { asOf: todayIso(new Date()) } },
+      });
       return data!;
     },
     onSuccess: () => {
@@ -243,10 +295,7 @@ export function useCompleteMeeting() {
       });
       return data!;
     },
-    onError: (error) => {
-      const fresh = freshMeetingFrom(error);
-      if (fresh) replaceInList(client, fresh, { refetch: true });
-    },
+    onError: (error) => afterFailedWrite(client, error),
     onSuccess: (fresh) => replaceInList(client, fresh, { refetch: true }),
   });
 }
@@ -279,10 +328,7 @@ export function useDeleteMeeting() {
         },
       });
     },
-    onError: (error) => {
-      const fresh = freshMeetingFrom(error);
-      if (fresh) replaceInList(client, fresh, { refetch: true });
-    },
+    onError: (error) => afterFailedWrite(client, error),
     onSuccess: () => {
       // By prefix, for `useScheduleMeeting`'s reason.
       void client.invalidateQueries({ queryKey: queryKeys.meetings.list });
@@ -300,5 +346,10 @@ export function useDeleteMeeting() {
  * message about somebody else — about the handler's own click.
  */
 export function useMeetingWriteInFlight(): boolean {
-  return useIsMutating({ mutationKey: queryKeys.meetings.writes }) > 0;
+  // `!== 0` rather than `> 0`, `MeetingCard`'s rule: `noDerivation.test.ts`
+  // scans this file since the 4.2 follow-up review and refuses a comparison
+  // against a numeric literal anywhere it reads — bluntly, and on purpose,
+  // because the cheapest way to smuggle a threshold in is to write one next to
+  // a count. There is no threshold here and this says so without arguing.
+  return useIsMutating({ mutationKey: queryKeys.meetings.writes }) !== 0;
 }

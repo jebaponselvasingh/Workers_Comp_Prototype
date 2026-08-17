@@ -11,6 +11,7 @@
  */
 import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { afterEach, expect, test, vi } from "vitest";
 
@@ -98,4 +99,24 @@ test("with no claim selected the sub-line says so rather than rendering blank", 
   // NFR-3: an empty sub-line and "we have not loaded it yet" would look the
   // same, and the prototype's own wording is a sentence.
   expect(await screen.findByTestId("copilot-context")).toHaveTextContent("Select a case");
+});
+
+test("the strip's one enabled tab is a tab stop, and the arrows do not throw", async () => {
+  // The strip ships `role="tablist"`, `role="tab"` and `aria-selected`, so it
+  // owes the keyboard pattern that goes with them — `DetailTabs` records that
+  // as a defect from an earlier review and this strip shipped with the same
+  // gap. With one enabled tab the arrows are a well-formed no-op, which is the
+  // correct behaviour and not the absence of one: Epic 6 adds `"actions"` to
+  // `KEYBOARD_TABS` and the pattern is already right. The disabled tab is
+  // deliberately not a stop — a `<button disabled>` cannot take focus.
+  renderPane();
+
+  const diary = await screen.findByTestId("copilot-tab-diary");
+  expect(diary).toHaveAttribute("tabindex", "0");
+
+  diary.focus();
+  await userEvent.keyboard("{ArrowRight}{ArrowLeft}{Home}{End}");
+
+  expect(diary).toHaveFocus();
+  expect(diary).toHaveAttribute("aria-selected", "true");
 });

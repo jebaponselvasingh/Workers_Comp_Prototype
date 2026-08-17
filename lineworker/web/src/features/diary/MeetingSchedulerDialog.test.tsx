@@ -14,11 +14,20 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 
+import {
+  MEETING_LOCATION_LENGTH_CAP,
+  MEETING_NOTES_LENGTH_CAP,
+} from "@/api/fieldLimits";
 import { createQueryClient } from "@/api/queryClient";
+import { todayIso } from "@/lib/clock";
 import { ME_HANDLER, MEETING_CREATED, stubApi } from "@/test/api-mock";
 
 import { MEETING_TYPE_ORDER, PARTICIPANT_ORDER } from "./labels";
-import { MISSING_DATE_MESSAGE, MeetingSchedulerDialog } from "./MeetingSchedulerDialog";
+import {
+  MISSING_CLAIM_MESSAGE,
+  MISSING_DATE_MESSAGE,
+  MeetingSchedulerDialog,
+} from "./MeetingSchedulerDialog";
 
 /** Every URL the stub was asked for — `ActionsCard.test.tsx`'s unwrap. */
 function requested(): Request[] {
@@ -228,4 +237,100 @@ test("a claim whose worker has not loaded shows the id, not a dangling em dash",
   renderDialog({}, { workerName: null });
 
   expect(await screen.findByTestId("scheduler-claim")).toHaveValue("WC-20017");
+});
+
+// --- the claim, captured rather than read at submit ----------------------
+
+test("the linked claim is the one the modal opened on, not the one selected now", async () => {
+  // The file's own docstring says the claim "cannot be retargeted", and the
+  // submit read the live `?claim=` prop. Open the modal before auto-select
+  // lands, or press Back while it is open, and the read-only field changes
+  // under the handler — into a table with no `update_meeting`.
+  const { rerender } = renderDialog();
+  await screen.findByTestId("meeting-scheduler");
+  expect(screen.getByTestId("scheduler-claim")).toHaveAttribute("data-claim-id", "WC-20017");
+
+  // The workspace moves underneath the open modal.
+  rerender(
+    <QueryClientProvider client={createQueryClient()}>
+      <MeetingSchedulerDialog
+        open
+        claimId="WC-20099"
+        workerName="Someone Else"
+        onClose={() => {}}
+        onScheduled={() => {}}
+      />
+    </QueryClientProvider>,
+  );
+
+  // The field still names the claim it opened on, and so does the request.
+  expect(screen.getByTestId("scheduler-claim")).toHaveAttribute("data-claim-id", "WC-20017");
+  await userEvent.click(screen.getByTestId("scheduler-save"));
+
+  await waitFor(() => expect(requested().some((r) => r.method === "POST")).toBe(true));
+  const post = requested().find((r) => r.method === "POST")!;
+  expect(await post.clone().json()).toMatchObject({ claimId: "WC-20017" });
+});
+
+test("saving with no claim selected is refused inline, and nothing is sent", async () => {
+  // A 201 with `claimId: null` is an orphan meeting that can never be attached
+  // to anything — there is no `update_meeting`, so the only correction is
+  // delete-and-recreate.
+  const alerted = vi.fn();
+  vi.stubGlobal("alert", alerted);
+  renderDialog({}, { claimId: null, workerName: null });
+  await screen.findByTestId("meeting-scheduler");
+
+  await userEvent.click(screen.getByTestId("scheduler-save"));
+
+  expect(await screen.findByTestId("scheduler-error")).toHaveTextContent(MISSING_CLAIM_MESSAGE);
+  expect(screen.getByTestId("scheduler-claim")).toHaveAttribute("aria-invalid", "true");
+  expect(requested().some((request) => request.method === "POST")).toBe(false);
+  expect(alerted).not.toHaveBeenCalled();
+});
+
+// --- the caps, on the controls -------------------------------------------
+
+test("the agenda and the location declare the server's caps and show them", async () => {
+  // Neither had one, so a pasted agenda past the cap was refused by Pydantic
+  // with "The request body or parameters failed validation." — no field named,
+  // no limit shown, nothing marked invalid.
+  renderDialog();
+  await screen.findByTestId("meeting-scheduler");
+
+  expect(screen.getByTestId("scheduler-notes")).toHaveAttribute(
+    "maxlength",
+    String(MEETING_NOTES_LENGTH_CAP),
+  );
+  expect(screen.getByTestId("scheduler-location")).toHaveAttribute(
+    "maxlength",
+    String(MEETING_LOCATION_LENGTH_CAP),
+  );
+  expect(screen.getByTestId("scheduler-notes-length")).toHaveTextContent(
+    `0 of ${MEETING_NOTES_LENGTH_CAP} characters`,
+  );
+  expect(screen.getByTestId("scheduler-location-length")).toHaveTextContent(
+    `0 of ${MEETING_LOCATION_LENGTH_CAP} characters`,
+  );
+
+  await userEvent.type(screen.getByTestId("scheduler-location"), "Plant 3");
+  expect(screen.getByTestId("scheduler-location-length")).toHaveTextContent(
+    `7 of ${MEETING_LOCATION_LENGTH_CAP} characters`,
+  );
+});
+
+// --- the created meeting is judged at the viewer's day -------------------
+
+test("the create request carries the viewer's day so the 201's status is right", async () => {
+  // The scheduler pre-fills the handler's *local* today, and the server judged
+  // the created row at its own — so a meeting scheduled for this afternoon came
+  // back marked `done` for anybody behind UTC.
+  renderDialog({ scheduleMeeting: MEETING_CREATED });
+  await screen.findByTestId("meeting-scheduler");
+
+  await userEvent.click(screen.getByTestId("scheduler-save"));
+
+  await waitFor(() => expect(requested().some((r) => r.method === "POST")).toBe(true));
+  const post = requested().find((request) => request.method === "POST")!;
+  expect(post.url).toContain(`asOf=${todayIso(new Date())}`);
 });

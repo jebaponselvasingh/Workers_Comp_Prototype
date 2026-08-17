@@ -72,3 +72,41 @@ test("there is no notes placeholder left anywhere — Story 4.2 removed the seam
 
   expect(screen.queryByTestId("diary-empty-notes")).not.toBeInTheDocument();
 });
+
+// --- the keyboard the ARIA roles promise ---------------------------------
+
+test("the sub-tab strip is a roving tab stop, and the arrows move it", async () => {
+  // The strip shipped `role="tablist"`, `role="tab"`, `aria-selected` and
+  // `aria-controls` with no key handler and no roving `tabIndex` — which is not
+  // an omission but a keyboard *trap*: tab into the strip, land on the selected
+  // tab, and the other two are unreachable without a mouse (WCAG 2.1.1).
+  // `DetailTabs` records this exact defect from an earlier review, in the file
+  // this strip was copied from.
+  renderTab();
+  await screen.findByTestId("notes-subtab");
+
+  const notes = screen.getByTestId("diary-subtab-notes");
+  expect(notes).toHaveAttribute("tabindex", "0");
+  expect(screen.getByTestId("diary-subtab-meetings")).toHaveAttribute("tabindex", "-1");
+
+  notes.focus();
+  await userEvent.keyboard("{ArrowRight}");
+
+  expect(screen.getByTestId("diary-subtab-meetings")).toHaveAttribute("aria-selected", "true");
+  // Focus follows selection, or the caret is left on a tab that has just
+  // dropped out of the tab order.
+  expect(screen.getByTestId("diary-subtab-meetings")).toHaveFocus();
+
+  await userEvent.keyboard("{End}");
+  expect(screen.getByTestId("diary-subtab-emails")).toHaveAttribute("aria-selected", "true");
+
+  // …and it wraps, rather than stopping at the end.
+  await userEvent.keyboard("{ArrowRight}");
+  expect(screen.getByTestId("diary-subtab-notes")).toHaveAttribute("aria-selected", "true");
+
+  await userEvent.keyboard("{ArrowLeft}");
+  expect(screen.getByTestId("diary-subtab-emails")).toHaveAttribute("aria-selected", "true");
+
+  await userEvent.keyboard("{Home}");
+  expect(screen.getByTestId("diary-subtab-notes")).toHaveAttribute("aria-selected", "true");
+});

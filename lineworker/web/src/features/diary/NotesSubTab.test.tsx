@@ -12,11 +12,13 @@
  * that the card is wired to it.
  */
 import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, expect, test, vi } from "vitest";
 
+import { NOTE_LENGTH_CAP } from "@/api/fieldLimits";
+import { todayIso } from "@/lib/clock";
 import { createQueryClient } from "@/api/queryClient";
 import { queryKeys } from "@/api/queryKeys";
 import type { StubRoutes } from "@/test/api-mock";
@@ -26,6 +28,7 @@ import {
   DIARY_NOTE_CLAIM_NOT_FOUND,
   DIARY_NOTE_INVALID,
   ME_HANDLER,
+  DIARY_NOTE_WRITTEN_NOT_READABLE,
   MEETINGS_EMPTY,
   MEETINGS_TODAY,
   stubApi,
@@ -136,9 +139,13 @@ test("the upcoming count is the server's field, not the length of the list below
   // component that counted rows renders 1 and fails here.
   renderNotes();
 
-  expect(await screen.findByTestId("diary-upcoming-count")).toHaveTextContent(
-    "📅 3 upcoming meetings — see below / Meetings tab",
-  );
+  // Waited for by *state*, not by testid: the line is mounted from the first
+  // frame carrying "Counting upcoming meetings…" — the loading state — so a
+  // bare `findByTestId` resolves against that and asserts against a card that
+  // has not been told anything yet.
+  const line = await screen.findByTestId("diary-upcoming-count");
+  await waitFor(() => expect(line).toHaveAttribute("data-state", "known"));
+  expect(line).toHaveTextContent("📅 3 upcoming meetings — see below / Meetings tab");
   expect(screen.getAllByTestId("meeting-card")).toHaveLength(1);
 });
 
@@ -502,17 +509,40 @@ test("a 404 about the claim tag is not announced as a retry", async () => {
 
 // --- AC 3: the cap is on the control -------------------------------------
 
-test("the input declares the server's cap and shows it", async () => {
+test("the input caps the draft at the server's limit and shows the count", async () => {
   // Pasting a 2400-character summary used to fail with nothing on screen saying
   // what the limit was or which end to trim.
   renderNotes();
   await screen.findAllByTestId("diary-note");
 
-  expect(screen.getByTestId("note-input")).toHaveAttribute("maxlength", "2000");
   expect(screen.getByTestId("note-length")).toHaveTextContent("0 of 2000 characters");
 
   await userEvent.type(screen.getByTestId("note-input"), "abc");
   expect(screen.getByTestId("note-length")).toHaveTextContent("3 of 2000 characters");
+
+  const input = screen.getByTestId("note-input") as HTMLTextAreaElement;
+  await userEvent.clear(input);
+  await userEvent.paste("x".repeat(NOTE_LENGTH_CAP + 40));
+  expect(input.value).toHaveLength(NOTE_LENGTH_CAP);
+  expect(screen.getByTestId("note-length")).toHaveTextContent("2000 of 2000 characters");
+});
+
+test("the cap counts code points, as the server does — not UTF-16 units", async () => {
+  // `maxLength` counts UTF-16 code units and `len()` on the other side counts
+  // code points, so a note of emoji hit the browser's cap at half the number
+  // the counter was displaying: "2000 of 2000" for a thousand characters the
+  // server would happily have taken. The attribute cannot express a code-point
+  // cap, so it is gone and the clamp is in `onChange`.
+  renderNotes();
+  await screen.findAllByTestId("diary-note");
+
+  const input = screen.getByTestId("note-input") as HTMLTextAreaElement;
+  await userEvent.click(input);
+  // Two code points, four UTF-16 units.
+  await userEvent.paste("👷🏭");
+
+  expect(screen.getByTestId("note-length")).toHaveTextContent("2 of 2000 characters");
+  expect(input.value).toBe("👷🏭");
 });
 
 // --- the greeting's third state ------------------------------------------
@@ -524,8 +554,19 @@ test("a failed day request says the count is unknown rather than dropping the li
   renderNotes({ meetings: BAD_REQUEST });
 
   const line = await screen.findByTestId("diary-upcoming-count");
-  expect(line).toHaveAttribute("data-state", "unknown");
+  await waitFor(() => expect(line).toHaveAttribute("data-state", "unknown"));
   expect(line).toHaveTextContent("could not be counted");
+});
+
+test("the count line says it is loading rather than rendering nothing", async () => {
+  // The state this card is in on *every* mount, and it used to look exactly
+  // like "nothing is ahead" — the same absence-versus-zero conflation the
+  // unknown state above exists to fix, in the branch a handler sees first.
+  renderNotes({ meetings: "pending" });
+
+  const line = await screen.findByTestId("diary-upcoming-count");
+  expect(line).toHaveAttribute("data-state", "loading");
+  expect(line).toHaveTextContent("Counting upcoming meetings…");
 });
 
 // --- feedback is scoped to the control it belongs to ----------------------
@@ -658,4 +699,213 @@ test("the live region is mounted from the first frame and starts empty", async (
   const region = await screen.findByTestId("notes-status");
   expect(region).toBeInTheDocument();
   expect(region).toHaveTextContent("");
+});
+
+// --- the request itself, which nothing used to assert --------------------
+
+/** Every URL the stub was asked for, in order. */
+function requestedUrls(): string[] {
+  return vi
+    .mocked(fetch)
+    .mock.calls.map(([input]) =>
+      typeof input === "string" ? input : input instanceof URL ? input.href : input.url,
+    );
+}
+
+test("the summary asks the server for the viewer's own day", async () => {
+  // The one parameter that makes this a *summary* rather than a page of the
+  // whole book — and nothing asserted it: the stub ignored the query string, so
+  // deleting `{ day: today }` from the component left every test here green
+  // while the pane rendered fifty past meetings under "Today's Meetings".
+  renderNotes();
+  await screen.findAllByTestId("diary-note");
+
+  const today = todayIso(new Date());
+  const meetingRequests = requestedUrls().filter((url) => url.includes("/claims-diary/meetings"));
+  expect(meetingRequests).not.toHaveLength(0);
+  for (const url of meetingRequests) {
+    expect(url).toContain(`day=${today}`);
+  }
+});
+
+// --- the errored-with-data branch ----------------------------------------
+
+test("a failed refresh keeps the notes already on screen", async () => {
+  // TanStack keeps `data` when a *refetch* fails, so testing `isError` before
+  // the cache blanked a populated list: a "Show more" that timed out took the
+  // fifty notes above it with it, and — because 4.2 made ✓ Done refetch on 200
+  // — so did a blip in the second after a successful tick.
+  let calls = 0;
+  renderNotes({
+    diaryNotes: () => {
+      calls += 1;
+      return calls === 1 ? DIARY_NOTES : BAD_REQUEST;
+    },
+  });
+  await screen.findAllByTestId("diary-note");
+
+  await userEvent.type(screen.getByTestId("note-input"), "Weekly check-in.");
+  await userEvent.click(screen.getByTestId("note-save"));
+
+  // The save invalidates the list, the refetch fails — and the notes stay.
+  expect(await screen.findByTestId("notes-stale")).toBeInTheDocument();
+  expect(screen.getAllByTestId("diary-note")).not.toHaveLength(0);
+  expect(screen.queryByTestId("notes-error")).not.toBeInTheDocument();
+});
+
+test("a failed refresh keeps today's summary and its count", async () => {
+  let calls = 0;
+  renderNotes({
+    meetings: () => {
+      calls += 1;
+      return calls === 1 ? MEETINGS_TODAY : BAD_REQUEST;
+    },
+  });
+  await screen.findByTestId("meeting-card");
+
+  // ✓ Done refetches on 200 (`upcomingCount` is a whole-book aggregate), and
+  // this is the refetch that fails.
+  await userEvent.click(screen.getByTestId("meeting-done"));
+
+  expect(await screen.findByTestId("diary-today-stale")).toBeInTheDocument();
+  expect(screen.getByTestId("meeting-card")).toBeInTheDocument();
+  // …and the greeting keeps the number it was told rather than claiming the
+  // count is unknown.
+  const line = screen.getByTestId("diary-upcoming-count");
+  expect(line).toHaveAttribute("data-state", "known");
+});
+
+// --- the note refusals that are not failures ------------------------------
+
+test("a committed-but-unreadable note clears the draft instead of inviting a retry", async () => {
+  // `/problems/note-not-readable` is answered *after* the row is committed and
+  // audited, and it says "Do not write it again." — while the draft stayed in
+  // the box under an enabled Save, the list went unrefreshed and the checklist
+  // row stayed put. Every affordance pointed at the duplicate the wording
+  // forbids, into a table with no edit and no delete.
+  const client = createQueryClient();
+  client.setQueryData(queryKeys.claims.actions("WC-20017"), { items: [] });
+  stubApi({
+    me: ME_HANDLER,
+    meetings: MEETINGS_TODAY,
+    diaryNotes: DIARY_NOTES,
+    addDiaryNote: DIARY_NOTE_WRITTEN_NOT_READABLE,
+  });
+  render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={["/workspace?claim=WC-20017"]}>
+        <DiaryNavProvider>
+          <NotesSubTab claimId="WC-20017" workerName="Marcus Webb" injuryType="Laceration" />
+        </DiaryNavProvider>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+  await screen.findAllByTestId("diary-note");
+
+  await userEvent.type(screen.getByTestId("note-input"), "Weekly check-in: spoke to the NCM.");
+  await userEvent.click(screen.getByTestId("note-save"));
+
+  const error = await screen.findByTestId("note-error");
+  expect(error).toHaveTextContent("Do not write it again");
+  // The box is empty, so nothing is one click from being sent twice…
+  expect(screen.getByTestId("note-input")).toHaveValue("");
+  // …and the two lists the row belongs to are told to re-read.
+  expect(client.getQueryState(queryKeys.claims.actions("WC-20017"))?.isInvalidated).toBe(true);
+});
+
+test("a 404 with no problem type is a failure, not a permanent refusal", async () => {
+  // A proxy 404 or a deploy-skew 404 carries no envelope, so `api/client.ts`
+  // synthesises `detail = "The server answered 404."` — a machine sentence that
+  // was being rendered at the input as an answer that will never succeed.
+  renderNotes({ addDiaryNote: { status: 404, body: {} } });
+  await screen.findAllByTestId("diary-note");
+
+  await userEvent.type(screen.getByTestId("note-input"), "Something.");
+  await userEvent.click(screen.getByTestId("note-save"));
+
+  const error = await screen.findByTestId("note-error");
+  expect(error).toHaveTextContent("Could not save. Try again in a moment.");
+  expect(error).not.toHaveTextContent("The server answered 404.");
+});
+
+// --- feedback scoping, the other direction --------------------------------
+
+test("✓ Done does not wipe a note refusal the handler is mid-read", async () => {
+  // The mirror of the narrowing pass one made. `clearFeedback` called
+  // `add.reset()` and was wired to ✓ Done and to Open Claim, so either erased
+  // the 404 or 422 explaining why the note in the box had not been saved.
+  renderNotes({ addDiaryNote: DIARY_NOTE_CLAIM_NOT_FOUND });
+  await screen.findByTestId("meeting-card");
+
+  await userEvent.type(screen.getByTestId("note-input"), "Words worth keeping.");
+  await userEvent.click(screen.getByTestId("note-save"));
+  await screen.findByTestId("note-error");
+
+  await userEvent.click(screen.getByTestId("meeting-done"));
+
+  expect(screen.getByTestId("note-error")).toBeInTheDocument();
+  expect(screen.getByTestId("note-input")).toHaveValue("Words worth keeping.");
+});
+
+test("Open Claim does not wipe a note refusal either", async () => {
+  renderNotes({ addDiaryNote: DIARY_NOTE_CLAIM_NOT_FOUND });
+  await screen.findByTestId("meeting-card");
+
+  await userEvent.type(screen.getByTestId("note-input"), "Words worth keeping.");
+  await userEvent.click(screen.getByTestId("note-save"));
+  await screen.findByTestId("note-error");
+
+  await userEvent.click(screen.getByTestId("meeting-open-claim"));
+
+  expect(screen.getByTestId("note-error")).toBeInTheDocument();
+});
+
+// --- the pinned tag's null corner ----------------------------------------
+
+test("a draft started with no claim says the tag is pinned, not that none exists", async () => {
+  // The corner the tag message could not describe: start typing with nothing
+  // selected, then select a claim — from the queue or from this pane's own Open
+  // Claim — and the capture stays `null` for ever. The note really is written
+  // untagged, which is correct; what was wrong is that the form said "No claim
+  // selected" while the greeting directly above it named the active claim and
+  // `data-pinned` was already true. The one sentence explaining a pinned tag was
+  // unreachable in exactly the case where the divergence is hardest to see.
+  stubApi({
+    me: ME_HANDLER,
+    diaryNotes: DIARY_NOTES,
+    meetings: {
+      status: 200,
+      body: {
+        ...MEETINGS_TODAY.body,
+        items: [{ ...MEETINGS_TODAY.body.items[0], claimId: "WC-20099" }],
+      },
+    },
+  });
+  render(
+    <QueryClientProvider client={createQueryClient()}>
+      <MemoryRouter initialEntries={["/workspace"]}>
+        <DiaryNavProvider>
+          <SelectionBoundNotes />
+          <LocationProbe />
+        </DiaryNavProvider>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+  await screen.findByTestId("meeting-card");
+
+  // Nothing selected, nothing typed: the ordinary untagged sentence.
+  expect(screen.getByTestId("note-claim-tag")).toHaveTextContent("without a tag");
+
+  await userEvent.type(screen.getByTestId("note-input"), "A general note.");
+  await userEvent.click(screen.getByTestId("meeting-open-claim"));
+
+  // The workspace moved…
+  expect(screen.getByTestId("location-search")).toHaveTextContent("claim=WC-20099");
+  const tag = screen.getByTestId("note-claim-tag");
+  // …the note did not, and the form says *that* rather than the sentence for a
+  // console with no claim open at all.
+  expect(tag).toHaveAttribute("data-claim-id", "");
+  expect(tag).toHaveAttribute("data-pinned", "true");
+  expect(tag).toHaveTextContent("started against no claim");
+  expect(tag).not.toHaveTextContent("No claim selected —");
 });

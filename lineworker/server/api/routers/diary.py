@@ -24,7 +24,7 @@ from datetime import date, datetime, time
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Path, Query, Response, status
-from pydantic import BeforeValidator, ConfigDict, Field
+from pydantic import AfterValidator, BeforeValidator, ConfigDict, Field
 
 from api.deps import CallerContextDep, DbDep
 from api.errors import PROBLEM_CONTENT_TYPE, ProblemDocument, ProblemException
@@ -44,6 +44,7 @@ from services.claims.meetings import (
     MeetingPage,
     MeetingView,
     StaleMeeting,
+    check_viewer_day,
     complete_meeting,
     create_meeting,
     delete_meeting,
@@ -246,6 +247,75 @@ MEETING_NOT_FOUND_RESPONSE: dict[int | str, dict[str, object]] = {
     }
 }
 
+MEETING_CREATE_NOT_FOUND_RESPONSE: dict[int | str, dict[str, object]] = {
+    404: {
+        "description": (
+            "Either of two things, told apart by `type`. "
+            "`/problems/meeting-claim-not-found` — no such claim in the "
+            "caller's caseload, deliberately the same answer for a claim that "
+            "does not exist and one that belongs to somebody else; **nothing "
+            "was written**. `/problems/meeting-not-readable` — the meeting "
+            "*was* written and audited and then could not be read back under "
+            "the caller's scope; it exists, and re-sending it would create a "
+            "second row and a second audit event (RFC 9457 problem document)."
+        ),
+        "content": {PROBLEM_CONTENT_TYPE: {"schema": ProblemDocument.model_json_schema()}},
+    }
+}
+
+CLOCK_UNPROCESSABLE_RESPONSE: dict[int | str, dict[str, object]] = {
+    422: {
+        "description": (
+            "A caller-supplied viewer clock names a calendar date more than a "
+            "day from the server's own, which is further than any timezone can "
+            "explain. `asOf` answers `/problems/validation-error` (the schema "
+            "refuses it, naming the parameter in `errors[].loc`); a `day` sent "
+            "*without* `asOf` — where it is the horizon rather than only a "
+            "filter — answers `/problems/invalid-patch` naming `day`. Both "
+            "decide the `status` and `upcomingCount` on the response since "
+            "Story 4.2, so an unbounded value is a request for a horizon "
+            "rather than for a page (RFC 9457 problem document)."
+        ),
+        "content": {PROBLEM_CONTENT_TYPE: {"schema": ProblemDocument.model_json_schema()}},
+    }
+}
+
+
+def _viewer_day(value: date | None) -> date | None:
+    """Bound `asOf` where it arrives from a client — see `check_viewer_day`.
+
+    An `AfterValidator` rather than a check inside the handler, so the refusal
+    is FastAPI's own `/problems/validation-error` naming `asOf` in `loc` —
+    which is what every other out-of-range parameter on this router answers,
+    and what a generated client already knows how to read. The service's own
+    `as_of` stays unbounded: it is the seam a test or an Epic 6 tool resolves a
+    day through, and every calendar-dependent service in this codebase takes
+    one. What must be bounded is the value a *browser* sends, because since
+    Story 4.2 it decides the horizon `status` and `upcomingCount` are judged
+    at, and an unbounded one answers that the caller's whole book is ahead.
+    """
+    check_viewer_day("asOf", value)
+    return value
+
+
+AS_OF_QUERY = Annotated[
+    date | None,
+    AfterValidator(_viewer_day),
+    Query(
+        alias="asOf",
+        description=(
+            "The day this response's `status` and `upcomingCount` are judged "
+            "against, `YYYY-MM-DD`. The **viewer's local** day: a server with "
+            "no timezone for the reader cannot resolve 'today'. It narrows "
+            "nothing — it is the horizon only. Omit it and `day` answers; omit "
+            "both and the server's own date does, which is what left the "
+            "unfiltered read disagreeing with the day-filtered one about the "
+            "same meeting. Bounded to within a day of the server's date."
+        ),
+        examples=["2026-08-17"],
+    ),
+]
+
 
 class NewMeetingRequest(ApiModel):
     """The scheduler modal's body — the ten types, six participants and a date.
@@ -334,7 +404,11 @@ MEETING_ID_PATH = Annotated[
     "/meetings",
     response_model=MeetingListResponse,
     summary="The session persona's scheduled meetings, oldest first",
-    responses={**UNAUTHENTICATED_RESPONSE, **BAD_CURSOR_RESPONSE},
+    responses={
+        **UNAUTHENTICATED_RESPONSE,
+        **BAD_CURSOR_RESPONSE,
+        **CLOCK_UNPROCESSABLE_RESPONSE,
+    },
 )
 async def meetings(
     ctx: CallerContextDep,
@@ -359,25 +433,31 @@ async def meetings(
                 "Narrow to one calendar date, `YYYY-MM-DD`. The **viewer's "
                 "local** day: a server with no timezone for the reader cannot "
                 "resolve 'today', so the browser sends it, exactly as `asOf` "
-                "is supplied elsewhere. It filters `items` and `total`, and it "
-                "is also the day every `status` and `upcomingCount` on the "
-                "response is judged against — a caller asking about a day is "
-                "asking about that day's horizon, not the server's. It does "
-                "not narrow `upcomingCount`, which stays whole-book. Not a "
-                "scope parameter — it can only narrow what the caller's "
-                "session already permits. A `cursor` issued with a different "
-                "`day` (or with none) is refused as `/problems/invalid-cursor`."
+                "is. It filters `items` and `total`, and — when `asOf` is "
+                "absent — it is also the day every `status` on the response "
+                "and `upcomingCount` itself are judged against. So it does not "
+                "narrow the **membership** of `upcomingCount`, which stays "
+                "whole-book, but it does set the **horizon** that count is "
+                "taken at; those are different things and an earlier version "
+                "of this description ran them together. Not a scope parameter "
+                "— it can only narrow what the caller's session already "
+                "permits — and it is bounded to within a day of the server's "
+                "own date. A `cursor` issued with a different `day` (or with "
+                "none) is refused as `/problems/invalid-cursor`."
             ),
             examples=["2026-08-17"],
         ),
     ] = None,
+    as_of: AS_OF_QUERY = None,
 ) -> MeetingListResponse:
     """The caller's diary, optionally one day of it. You cannot re-scope it."""
     # Specific to one persona's diary, so it must never be served to another
     # from a cache upstream — the same reason `/me` and `/claims/queue` say so.
     response.headers["Cache-Control"] = "no-store"
     try:
-        page = await list_meetings(db, ctx, cursor=cursor, limit=limit, day=day)
+        page = await list_meetings(db, ctx, cursor=cursor, limit=limit, day=day, as_of=as_of)
+    except InvalidPatch as exc:
+        raise _unprocessable(exc) from exc
     except InvalidCursor as exc:
         # 400 rather than 422: the cursor is syntactically a string and passed
         # validation. What failed is that it does not describe a position in
@@ -401,7 +481,7 @@ async def meetings(
     responses={
         **UNAUTHENTICATED_RESPONSE,
         **FORBIDDEN_RESPONSE,
-        **MEETING_NOT_FOUND_RESPONSE,
+        **MEETING_CREATE_NOT_FOUND_RESPONSE,
         **MEETING_UNPROCESSABLE_RESPONSE,
     },
 )
@@ -410,6 +490,7 @@ async def schedule_meeting(
     db: DbDep,
     response: Response,
     body: NewMeetingRequest,
+    as_of: AS_OF_QUERY = None,
 ) -> MeetingResponse:
     """Write one meeting row, and answer with it.
 
@@ -425,6 +506,9 @@ async def schedule_meeting(
     **No calendar invitation is sent, and none is queued.** Scheduling here is
     a log of intent — see `services/claims/meetings.py` on why egress is a
     Deferred decision rather than an omission.
+
+    `asOf` is the viewer's local day and decides only the `status` the body
+    comes back carrying — see `AS_OF_QUERY`.
     """
     response.headers["Cache-Control"] = "no-store"
     try:
@@ -438,6 +522,7 @@ async def schedule_meeting(
             location=body.location,
             notes=body.notes,
             participants=body.participants,
+            as_of=as_of,
         )
     except EditNotPermitted as exc:
         raise _forbidden(exc) from exc
@@ -446,12 +531,15 @@ async def schedule_meeting(
     except MeetingNotVisible as exc:
         # The row was written and audited, and then the post-commit re-read
         # (`create_meeting` ends with `get_meeting`) could not see it — which
-        # takes a scope narrowing landing between the two statements. Rare, and
-        # the 404 this router already documents is still the honest answer: the
-        # meeting is not in the caller's diary *now*. What it must not do is
-        # escape as an undocumented 500, which is what it did. The PATCH and
-        # DELETE routes catch it for the same reason, one statement earlier.
-        raise _meeting_not_found(exc.meeting_id) from exc
+        # takes a scope narrowing landing between the two statements. Its own
+        # problem type and its own sentence, which is a correction: mapping it
+        # onto `_meeting_not_found` answered "No meeting 47 in your diary."
+        # *inside a create dialog*, about a row that had already committed and
+        # already emitted its audit event. A handler told that re-submits, and
+        # the second attempt is a duplicate meeting with a second audit event
+        # behind it. `_note_not_readable` solved exactly this one table over;
+        # this is that shape back-ported.
+        raise _meeting_not_readable(exc.meeting_id) from exc
     except InvalidPatch as exc:
         raise _unprocessable(exc) from exc
     return _meeting(view)
@@ -558,11 +646,16 @@ class DiaryNoteResponse(ApiModel):
     lifecycle, so there is nothing for a derivation to answer about it. A
     client that found a `version` here would reasonably build an edit control.
 
-    `claimId` and `workerName` travel together and are both nullable, because
-    `claim_id` is (the ERD's `CLAIM |o--o{ DIARY_NOTE`). The card renders
-    `📎 WC-nnnn`; the worker's name rides along for the same reason it does on a
-    meeting — a browser assembling that reference from a second request would
-    be showing a claim this list did not scope.
+    `claimId` is nullable because `claim_id` is (the ERD's
+    `CLAIM |o--o{ DIARY_NOTE`), and the card renders it as `📎 WC-nnnn`.
+
+    **There is no `workerName`, and `MeetingResponse` has one.** The meeting
+    card renders `WC-nnnn — Worker Name`, so the name is the thing on screen
+    there; a note card renders the claim reference alone and never the name. It
+    was shipped on every row anyway — the injured worker's name, on every entry
+    of every handler's diary, for no consumer — which is PHI on the wire that
+    AD-11's "carry what the surface renders" rule does not permit. Removed
+    rather than left as a field a later client might start reading.
 
     `notedAt` is a UTC instant. The `{date} · {time}` header is the browser's
     formatting of it, in the reader's own locale.
@@ -570,7 +663,6 @@ class DiaryNoteResponse(ApiModel):
 
     id: int
     claim_id: str | None = Field(description="The tagged claim's `WC-nnnn`, or null.")
-    worker_name: str | None = Field(description="The tagged claim's injured worker, or null.")
     note_text: str = Field(description="The handler's note. PHI — never logged.")
     noted_at: datetime = Field(description="When the note was written, UTC. The server's clock.")
 
@@ -598,7 +690,6 @@ def _note(view: DiaryNoteView) -> DiaryNoteResponse:
     return DiaryNoteResponse(
         id=view.id,
         claim_id=view.claim_business_id,
-        worker_name=view.worker_name,
         note_text=view.note_text,
         noted_at=view.noted_at,
     )
@@ -877,6 +968,32 @@ def _meeting_not_found(meeting_id: int) -> ProblemException:
         # handler builds a fresh `JSONResponse`. A 404 that depends on who is
         # asking must not be cached and replayed to somebody whose diary
         # *does* contain the meeting.
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def _meeting_not_readable(meeting_id: int) -> ProblemException:
+    """The 404 for a meeting that was **written** and then could not be read back.
+
+    `_note_not_readable`'s shape, and it matters here for the same reason: the
+    row is committed and audited by the time this is raised — only the scoped
+    re-read failed — so the answer must not say anything a caller would respond
+    to by sending the meeting again. `meeting` does have a delete, so a
+    duplicate is recoverable in a way a duplicate note is not; what is not
+    recoverable is the second `create_meeting` audit event for a decision taken
+    once. It is still a 404 rather than a 500 because the meeting genuinely is
+    not in the caller's diary *now*, which is a fact about scope rather than a
+    fault.
+    """
+    return ProblemException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        title="Not Found",
+        detail=(
+            f"Meeting {meeting_id} was scheduled, but it can no longer be read "
+            "back from your diary — your caseload changed while it was being "
+            "written. Do not schedule it again; reload the list."
+        ),
+        type_="/problems/meeting-not-readable",
         headers={"Cache-Control": "no-store"},
     )
 

@@ -27,31 +27,29 @@ import {
 } from "@tanstack/react-query";
 
 import { api } from "./client";
+import { problemType } from "./errors";
 import { queryKeys } from "./queryKeys";
 import type { components } from "./schema";
+
+/**
+ * The 404 that means **the note was written** — see `_note_not_readable`.
+ *
+ * It is the one refusal in this module that is not a failure: the row is
+ * committed and audited, and only the scoped re-read failed. Named here because
+ * two things have to agree about it — the cache, which must stop describing a
+ * list that no longer matches the database, and the form, which must stop
+ * offering to send the note again into a table with no edit and no delete.
+ */
+export const NOTE_WRITTEN_BUT_UNREADABLE = "/problems/note-not-readable";
+
+/** Whether a failed save actually landed a row. See the constant above. */
+export function isNoteWrittenButUnreadable(error: unknown): boolean {
+  return problemType(error) === NOTE_WRITTEN_BUT_UNREADABLE;
+}
 
 export type DiaryNote = components["schemas"]["DiaryNoteResponse"];
 export type DiaryNoteList = components["schemas"]["DiaryNoteListResponse"];
 export type NewDiaryNote = components["schemas"]["NewDiaryNoteRequest"];
-
-/**
- * The longest a note may be — `services/claims/notes.py::MAX_NOTE_LENGTH`.
- *
- * Restated here rather than read off the generated client because
- * `schema.d.ts` carries types, not bounds: `maxLength` is in the OpenAPI
- * document and nowhere in the TypeScript it produces. The textarea declares it
- * so that a 2400-character summary pasted into the box is stopped at the
- * control with the cap on screen, instead of being sent and refused with a
- * message that says neither what the limit is nor which end to trim.
- *
- * Declared in this module rather than in `NotesSubTab` for a second reason:
- * `features/diary` is scanned by `noDerivation.test.ts`, and a
- * `const MAX_… = 2000` there is exactly the shape its "names a threshold
- * constant" rule refuses. This is not a threshold — it is a column's width —
- * but the guard is blunt on purpose, and the honest home for a server constant
- * is beside the client that talks to that server.
- */
-export const MAX_NOTE_LENGTH = 2000;
 
 /**
  * The caller's notes, page by page, newest first.
@@ -135,23 +133,37 @@ export function useAddDiaryNote() {
       const { data } = await api.POST("/claims-diary/notes", { body });
       return data!;
     },
-    onSuccess: (note) => {
-      void client.invalidateQueries({
-        queryKey: queryKeys.diaryNotes.list,
-        exact: true,
-      });
-      if (note.claimId !== null) {
-        // `exact`, for `afterChecklistWrite`'s reason: the checklist key is
-        // nested under the claim's own segment, and a prefix invalidation here
-        // would drag the whole case file and its financials along for a write
-        // that changed neither.
-        void client.invalidateQueries({
-          queryKey: queryKeys.claims.actions(note.claimId),
-          exact: true,
-        });
-      }
+    onSuccess: (note) => refreshAfterNote(client, note.claimId),
+    // **The one error path that has to touch the cache**, and leaving it out
+    // was a console whose every affordance contradicted its own message.
+    // `/problems/note-not-readable` is answered *after* the row is committed
+    // and audited, and it says "Do not write it again; reload the list." —
+    // while the list went unrefreshed (so the note never appeared), the
+    // checklist row the note satisfies stayed on screen, and the draft stayed
+    // in the box under an enabled Save. Every one of those points at the
+    // duplicate the wording forbids. The claim comes off the *request* here
+    // rather than off a response there is none of; it is the tag the server
+    // accepted, because the write got past `insert_diary_note`'s scope check
+    // to have committed at all.
+    onError: (error, variables) => {
+      if (!isNoteWrittenButUnreadable(error)) return;
+      refreshAfterNote(client, variables.claimId ?? null);
     },
   });
+}
+
+/** The two keys a written note invalidates — success and the 404 that lands one. */
+function refreshAfterNote(
+  client: ReturnType<typeof useQueryClient>,
+  claimId: string | null,
+): void {
+  void client.invalidateQueries({ queryKey: queryKeys.diaryNotes.list, exact: true });
+  if (claimId === null) return;
+  // `exact`, for `afterChecklistWrite`'s reason: the checklist key is nested
+  // under the claim's own segment, and a prefix invalidation here would drag
+  // the whole case file and its financials along for a write that changed
+  // neither.
+  void client.invalidateQueries({ queryKey: queryKeys.claims.actions(claimId), exact: true });
 }
 
 /**
@@ -164,5 +176,6 @@ export function useAddDiaryNote() {
  * version to refuse the second one with.
  */
 export function useDiaryNoteWriteInFlight(): boolean {
-  return useIsMutating({ mutationKey: queryKeys.diaryNotes.writes }) > 0;
+  // `!== 0`, for `useMeetingWriteInFlight`'s reason and to match it.
+  return useIsMutating({ mutationKey: queryKeys.diaryNotes.writes }) !== 0;
 }

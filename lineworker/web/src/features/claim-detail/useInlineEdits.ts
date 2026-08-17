@@ -25,7 +25,7 @@ import { useCallback, useState } from "react";
 
 import type { ClaimDetail, EditableField, FieldEdits } from "@/api/claims";
 import { useClaimWriteInFlight, useEditClaimFields } from "@/api/claims";
-import { ApiError, isConflict, isInvalidPatch, isNotFound } from "@/api/errors";
+import { ApiError, isConflict, isInvalidPatch, isNotFound, problemType } from "@/api/errors";
 
 import type { FieldFeedback } from "./InlineEditField";
 
@@ -70,7 +70,27 @@ function attempted(edits: FieldEdits, field: EditableField): string | undefined 
  * and could not be read back, where inviting a retry means duplicating a row in
  * an append-only table. Both carry a server sentence written for a person and
  * naming no PHI, so the honest answer is to show it.
+ *
+ * **It is gated on the problem `type`, not on the status**, which is the
+ * correction. `isNotFound` is a bare `status === 404`, and `api/client.ts`
+ * synthesises `detail = "The server answered 404."` for a response with no
+ * problem envelope — so a proxy 404, a deploy-skew 404 against a route this
+ * build knows and that build does not, or an offline fetch resolved by a
+ * captive portal, all rendered that machine sentence under a severity-score
+ * input as a refusal that will never succeed. The set below is the 404s this
+ * console actually authors and whose `detail` is written for a person to read;
+ * everything else is a failure, which is what `failed` means and what "try
+ * again in a moment" is honest about.
  */
+const READABLE_NOT_FOUND: ReadonlySet<string> = new Set([
+  "/problems/claim-not-found",
+  "/problems/note-claim-not-found",
+  "/problems/note-not-readable",
+  "/problems/meeting-claim-not-found",
+  "/problems/meeting-not-found",
+  "/problems/meeting-not-readable",
+]);
+
 export function feedbackFromError(error: unknown, attempt?: string): FieldFeedback {
   if (isConflict(error)) return { kind: "conflict", message: CONFLICT_MESSAGE };
   if (isInvalidPatch(error)) {
@@ -82,7 +102,7 @@ export function feedbackFromError(error: unknown, attempt?: string): FieldFeedba
       attempted: attempt,
     };
   }
-  if (isNotFound(error)) {
+  if (isNotFound(error) && READABLE_NOT_FOUND.has(problemType(error) ?? "")) {
     return {
       kind: "notFound",
       message: error instanceof ApiError ? error.problem.detail : FAILED_MESSAGE,

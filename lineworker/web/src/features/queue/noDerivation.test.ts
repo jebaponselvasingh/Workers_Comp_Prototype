@@ -62,6 +62,28 @@ const ROOTS = [
 ];
 
 /**
+ * Individual files outside those directories that own a derived payload.
+ *
+ * **`src/api/` is not a root, and `src/api/meetings.ts` is.** The whole
+ * directory cannot be scanned: `api/queryClient.ts` legitimately compares an
+ * HTTP status to 500 and `api/fieldLimits.ts` legitimately names three column
+ * widths — a guard that had to grow an allowlist for those is a guard the next
+ * person turns off, which is the reason recorded above.
+ *
+ * But "components only" was a hole with a name on it. `useMeetings` owns the
+ * meetings payload *and already has a `select`*, which makes it the single most
+ * plausible home for a re-derived `status`: planting the prototype's
+ * `meetingDate >= today && !isDone` inside that `select` left all five guards
+ * below green, because the file the rule would live in was not read. The rule
+ * would then be one function away from every diary surface at once, and the
+ * components this guard does scan would look innocent.
+ *
+ * A file joins this list when it holds a `select`, a transform or an
+ * accumulation over a payload carrying a `DERIVED_FIELDS` member.
+ */
+const ROOT_FILES = ["api/meetings.ts"];
+
+/**
  * Source with comments and literal text removed, so the patterns below see
  * code and only code.
  *
@@ -301,8 +323,15 @@ const FORBIDDEN: readonly Forbidden[] = [
     // `>` as its right-hand side, so excluding those two characters costs
     // the check nothing — `phase > 2` and `daysOpen >= 30` still match, as
     // the smell test below asserts.
+    // `(?<!=)` before the right-hand form is the second exclusion of the same
+    // kind, and the scan of `api/meetings.ts` is what needed it: a fat arrow
+    // returning a payload field — `(last) => last.nextCursor ?? undefined` —
+    // reads as `> last.nextCursor` to a pattern that cannot see the `=`. That
+    // is not a comparison and never was; a real one never has `=` immediately
+    // before its operator, so excluding it costs the check nothing, as the
+    // smell list below asserts.
     pattern: new RegExp(
-      `\\b(?:${DERIVED_FIELDS})\\s*(?:[-+*/%]|[<>]=?(?![/>]))|(?:[-+*/%]|[<>]=?)\\s*\\w*\\.(?:${DERIVED_FIELDS})\\b`,
+      `\\b(?:${DERIVED_FIELDS})\\s*(?:[-+*/%]|[<>]=?(?![/>]))|(?:[-+*/%]|(?<!=)[<>]=?)\\s*\\w*\\.(?:${DERIVED_FIELDS})\\b`,
     ),
   },
   {
@@ -316,6 +345,19 @@ const FORBIDDEN: readonly Forbidden[] = [
   {
     why: "sums a list the server already counted — the totals are on the wire (AD-1)",
     pattern: /\.reduce\s*\(/,
+  },
+  {
+    // The rule that had to be written down when `(?<!=)` removed the arrow's
+    // false positive: `items.filter((m) => m.status).length` was being caught
+    // *only* because `=>` read as `>`, which is to say by accident, in a place
+    // it happened to point at a real defect. Partitioning a list by a derived
+    // field is its own mistake — the greeting's count is over the whole book
+    // and the summary beneath it is one filtered day, so counting the rows on
+    // screen answers a different question that looks like the same one — and it
+    // deserves a rule rather than a coincidence. A `.filter` over anything else
+    // is ordinary presentation and is left alone (`ClaimCard`'s badge list).
+    why: "filters or partitions a list by a derived payload value — the server already answered that question, over data the client does not hold in full (AD-1, AD-10)",
+    pattern: new RegExp(`\\.filter\\s*\\([^\\n]{0,80}\\b(?:${DERIVED_FIELDS})\\b`),
   },
   {
     why: "names a threshold constant — the numbers live in the rule documents, not in the client",
@@ -340,6 +382,9 @@ function scannedSources(): [string, string][] {
   }
 
   for (const root of ROOTS) walk(path.join(SRC_DIR, root));
+  for (const file of ROOT_FILES) {
+    found.push([file, code(readFileSync(path.join(SRC_DIR, file), "utf8"))]);
+  }
   return found;
 }
 
@@ -368,6 +413,11 @@ test("the scan reaches the files it claims to", () => {
   // answered here instead of read off the wire. `lib/clock.ts` is deliberately
   // *outside* the scanned roots — see its docstring on where the line is.
   expect(scanned).toContain(path.join("features", "diary", "NotesSubTab.tsx"));
+  // Story 4.2's follow-up review: the hook that owns the meetings payload. It
+  // has a `select` already, so a re-derived `status` there is one line and
+  // reaches every diary surface at once — and none of the component roots would
+  // see it. `ROOT_FILES` explains why the directory around it is not scanned.
+  expect(scanned).toContain("api/meetings.ts");
   expect(scanned).toContain(
     path.join("features", "claim-detail", "overview", "TreatmentOverview.tsx"),
   );
@@ -485,6 +535,9 @@ test("the guard would notice a derivation if one were added", () => {
     "const ahead = today.items.filter((m) => m.status).length - 1;",
     "const left = summary.upcomingCount - 1;",
     "const stale = note.notedAt < cutoff;",
+    // The `(?<!=)` exclusion must not have opened a hole: a genuine comparison
+    // whose right-hand side is a payload field is still caught.
+    "if (shown < page.total) return true;",
   ];
 
   for (const smell of smells) {
@@ -513,6 +566,10 @@ test("the guard does not fire on rendering the server's answers", () => {
     "<span>Claim risk</span>",
     "<h3>Current treatment phase</h3>",
     "<p>{overview.daysOpen} days open</p>",
+    // A fat arrow returning a payload field is not a comparison — the shape
+    // `api/meetings.ts` is full of, and the false positive `(?<!=)` removes.
+    "getNextPageParam: (last) => last.nextCursor ?? undefined,",
+    "const pick = (page) => page.total;",
   ];
 
   for (const line of innocent) {

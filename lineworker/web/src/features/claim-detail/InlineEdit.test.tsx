@@ -547,3 +547,52 @@ test("any other failure says so at the field without claiming a reason", async (
   // after a failed write is a claim the handler has no reason to doubt.
   expect((cause as HTMLInputElement).value).toBe(OVERVIEW.cause);
 });
+
+test("a 404 with no problem envelope is a failure, not a permanent refusal", async () => {
+  // `isNotFound` is a bare `status === 404` and `api/client.ts` synthesises
+  // `detail = "The server answered 404."` for a response that carried no
+  // envelope — a proxy 404, a deploy-skew 404, an offline fetch answered by a
+  // captive portal. Story 4.2's `notFound` branch rendered that machine
+  // sentence under the input as an answer that will never succeed, and it did
+  // so on every inline-edit surface at once.
+  const user = userEvent.setup();
+  renderInvestigation([{ status: 404, body: {} }]);
+
+  const cause = await screen.findByTestId("edit-cause");
+  await user.clear(cause);
+  await user.type(cause, "Anything");
+  await user.tab();
+
+  const message = await screen.findByTestId("edit-cause-failed");
+  expect(message).toHaveTextContent("Could not save");
+  expect(message).not.toHaveTextContent("The server answered 404.");
+});
+
+test("a 404 this console authors keeps the server's own sentence", async () => {
+  // The other half: `/problems/claim-not-found` carries prose written for a
+  // person and naming no PHI, and it will answer the same way for ever — so
+  // "try again in a moment" would be the wrong advice. The test id moves with
+  // the kind, which is the change Story 4.2 made silently across every inline
+  // edit and nothing re-tested.
+  const user = userEvent.setup();
+  renderInvestigation([
+    {
+      status: 404,
+      body: {
+        type: "/problems/claim-not-found",
+        title: "Not Found",
+        status: 404,
+        detail: "No claim WC-20051 in your caseload.",
+      },
+    },
+  ]);
+
+  const cause = await screen.findByTestId("edit-cause");
+  await user.clear(cause);
+  await user.type(cause, "Anything");
+  await user.tab();
+
+  expect(await screen.findByTestId("edit-cause-notFound")).toHaveTextContent(
+    "No claim WC-20051 in your caseload.",
+  );
+});

@@ -56,6 +56,26 @@ export function problemExtension<T>(error: unknown, member: string): T | undefin
   return value === undefined || value === null ? undefined : (value as T);
 }
 
+/**
+ * The problem document's `type`, or `null` for anything that is not one.
+ *
+ * The contract's own rule is that the SPA switches on `status` and, *where it
+ * needs to distinguish causes within a status*, on `type` — and this is what
+ * makes the second half possible without every caller reaching into
+ * `error.problem`. It answers `null` rather than `"about:blank"` for a
+ * non-`ApiError`, so "the server did not say" and "the server said nothing
+ * specific" are the same absence to a caller narrowing on a known set.
+ *
+ * Note that `api/client.ts` **synthesises** the four members for a response
+ * that carried no envelope — a proxy 404, an offline fetch — so `type` is
+ * `"about:blank"` there and `detail` is the machine sentence "The server
+ * answered 404.". A caller that renders `detail` has to check this first, or a
+ * gateway's 404 becomes a permanent-looking refusal in a form field.
+ */
+export function problemType(error: unknown): string | null {
+  return error instanceof ApiError ? error.problem.type : null;
+}
+
 /** "Not signed in" — the one error the whole app handles the same way. */
 export function isUnauthenticated(error: unknown): boolean {
   return error instanceof ApiError && error.status === 401;

@@ -69,7 +69,7 @@ from data.repositories import claims as claim_repo
 from data.repositories.claims import MEETING_ALL_DAY_SORT_TIME
 from rules.parameters import thresholds_for
 from services import audit, derivations
-from services.claims.edit import EditNotPermitted, InvalidPatch
+from services.claims.edit import WHITESPACE_KEPT, EditNotPermitted, InvalidPatch
 from services.derivations import (
     MeetingStatus,
     MeetingStatusDerivation,
@@ -95,6 +95,27 @@ DEFAULT_PAGE_LIMIT: Final[int] = 50
 #: worth continuing — `queue.py`'s bound, for its reason. A day in the future
 #: is refused outright: no cursor this service issued can name one.
 MAX_CURSOR_AGE: Final[timedelta] = timedelta(days=7)
+
+#: How far a caller-supplied calendar day may sit from the server's own before
+#: it stops being a timezone and starts being a request about a different list.
+#:
+#: `day` and `as_of` are the viewer's local calendar day, sent by a browser
+#: because a server with no timezone for the reader cannot resolve "today". The
+#: widest real offset is UTC+14 to UTC−12, so one day either side covers every
+#: reader on earth with room to spare — and refuses `?day=1970-01-01`, which
+#: since these two parameters became the *horizon* would answer "every meeting
+#: you have ever had is upcoming" for the whole book. Before that they only
+#: narrowed membership and an absurd value was merely an empty page.
+#:
+#: Enforced here rather than only on the route for AD-16's reason: an Epic 6
+#: agent tool calling `list_meetings` directly is untrusted input too.
+MAX_CLOCK_SKEW: Final[timedelta] = timedelta(days=1)
+
+#: The field name the refusal spells, for the clock parameter this module
+#: bounds. `day` is a query parameter rather than a body field, and a 422 still
+#: has to name the one that was wrong. (`asOf` is bounded at the route, which
+#: spells its own alias — see `api/routers/diary.py::_viewer_day`.)
+DAY_FIELD: Final[str] = "day"
 
 
 class MeetingNotVisible(Exception):
@@ -228,7 +249,10 @@ class Cursor:
     is what skips a row. `issued_on` is *validated* and never used to select
     anything — it exists so a cursor found in a bookmark a year later is
     refused with a sentence instead of silently re-paging a list that has
-    moved on.
+    moved on. It is stamped from `utc_today()` and checked against it, never
+    against the caller's `day`: taking the caller's day for both made the two
+    bounds compare a value with itself, so the expiry could not fire on any
+    day-filtered page.
 
     **`day` is *compared*, not reused**, which is the other half of
     `queue.py`'s division and the reason it is on the cursor at all. A cursor
@@ -280,7 +304,20 @@ def encode_cursor(cursor: Cursor) -> str:
 
 
 def decode_cursor(raw: str, as_of: date | None = None) -> Cursor:
-    """Parse a cursor, or refuse it. Never a silent fallback to page one.
+    """Parse a cursor and bound its age, or refuse it (never a silent page one).
+
+    The two halves are separate functions because `list_meetings` needs them in
+    the other order — see `_check_cursor_age`. This is the whole check, in the
+    order a caller with no filter to compare wants it, and it is what the tests
+    exercise.
+    """
+    cursor = _parse_cursor(raw)
+    _check_cursor_age(cursor, as_of or utc_today())
+    return cursor
+
+
+def _parse_cursor(raw: str) -> Cursor:
+    """The structural half: decode it, and refuse a position that cannot exist.
 
     Answering page one for an undecodable cursor turns a client bug into an
     infinite "Show more" that re-appends the same meetings for ever — the
@@ -293,7 +330,6 @@ def decode_cursor(raw: str, as_of: date | None = None) -> Cursor:
     - `limit` is held to the same range the route declares, or the cursor is a
       way around the route's ceiling: it is *reused* when the request omits
       one, so a forged page size would never pass FastAPI's validator.
-    - `issued_on` is bounded by `MAX_CURSOR_AGE` in both directions.
 
     **A tz-aware `last_time` is refused**, `notes.py::decode_cursor`'s guard for
     its reason one table over: `time.fromisoformat("12:00:00+05:00")` parses
@@ -337,7 +373,24 @@ def decode_cursor(raw: str, as_of: date | None = None) -> Cursor:
             f"The pagination cursor names a page size of {cursor.limit}; "
             f"it must be between {MIN_PAGE_LIMIT} and {MAX_PAGE_LIMIT}."
         )
-    today = as_of or utc_today()
+    return cursor
+
+
+def _check_cursor_age(cursor: Cursor, today: date) -> None:
+    """The clock half: `issued_on` is bounded by `MAX_CURSOR_AGE` both ways.
+
+    **Judged against the server's own day, never the caller's**, which is the
+    other half of the fix that made `issued_on` a server stamp. The parameter
+    stays a parameter so a test can name a day, and `decode_cursor` defaults it
+    to `utc_today()`; nothing passes the viewer's `day` in.
+
+    **Run after the filter comparison, not before it.** `list_meetings` decodes
+    with `_parse_cursor`, compares the cursor's `day` against the request's, and
+    only then calls this — because a cursor from another day that is *also* old
+    was being refused with "…is in the future" or "…has expired", a sentence
+    about the clock for a failure about the filter. Order the checks so the
+    message names what actually went wrong.
+    """
     if cursor.issued_on > today:
         raise InvalidCursor(
             f"The pagination cursor is dated {cursor.issued_on}, which is in the future; "
@@ -348,7 +401,35 @@ def decode_cursor(raw: str, as_of: date | None = None) -> Cursor:
             f"The pagination cursor is dated {cursor.issued_on} and has expired; "
             "reload the list from the first page."
         )
-    return cursor
+
+
+def check_viewer_day(field: str, value: date | None, today: date | None = None) -> None:
+    """Refuse a caller-supplied *viewer clock* too far from the server's own.
+
+    See `MAX_CLOCK_SKEW`. `InvalidPatch` rather than a type of its own, so the
+    route answers the 422 it already answers for every other unusable parameter
+    value, naming the field the way the request spells it.
+
+    **What this bounds is a clock, not a filter**, and the distinction is the
+    whole of why `day` is only checked when `as_of` is absent. A caller who
+    sends `day` alone is saying "this is the day I am in", and a value a
+    timezone cannot explain is then a request for a horizon rather than for a
+    page — `?day=1970-01-01` answering that every meeting the caller has ever
+    had is still ahead. A caller who sends both has named the horizon
+    separately, so `day` is doing nothing but narrowing membership, and
+    narrowing to an arbitrary date is a legitimate (if unused) read. `as_of`
+    itself is bounded at the route, where it arrives from a client;
+    `list_meetings`' own parameter stays open for the reason every derivation
+    in this codebase takes an `as_of` — a test has to be able to name a day.
+    """
+    if value is None:
+        return
+    reference = today if today is not None else utc_today()
+    if abs(value - reference) > MAX_CLOCK_SKEW:
+        raise InvalidPatch(
+            f"{field} must be within {MAX_CLOCK_SKEW.days} day of the server's "
+            f"current date ({reference.isoformat()})"
+        )
 
 
 #: The longest a meeting's free text may be. Two different caps because the
@@ -365,6 +446,7 @@ MAX_NOTES_LENGTH: Final[int] = 2000
 LOCATION_FIELD: Final[str] = "location"
 NOTES_FIELD: Final[str] = "notes"
 PARTICIPANTS_FIELD: Final[str] = "participants"
+MEETING_TIME_FIELD: Final[str] = "meetingTime"
 
 
 @dataclass(frozen=True)
@@ -384,7 +466,13 @@ class NewMeeting:
     participants: tuple[MeetingParticipant, ...]
 
 
-def _optional_text(field: str, raw: object, limit: int) -> str | None:
+#: The characters that end a line, and therefore the ones a single-line control
+#: cannot carry. `\v` and `\f` are in `edit.WHITESPACE_KEPT` because a word
+#: processor writes them into prose; they still break a one-line render.
+_LINE_BREAKS: Final[frozenset[str]] = frozenset({"\n", "\r", "\v", "\f"})
+
+
+def _optional_text(field: str, raw: object, limit: int, *, multiline: bool) -> str | None:
     """A trimmed, capped, control-character-free string — or `None` if empty.
 
     `edit.require_text`'s rules with the requirement removed, because these two
@@ -393,9 +481,21 @@ def _optional_text(field: str, raw: object, limit: int) -> str | None:
     `None` rather than being stored, so "not set" has one representation and
     the card's `notes && …` branch cannot be fooled by whitespace.
 
-    The C0 range and DEL go with it for `require_text`'s reason: PostgreSQL
+    The C0 range and DEL are refused for `require_text`'s reason: PostgreSQL
     `text` cannot hold a NUL and asyncpg raises rather than truncating, which
     reached the request as a 500 rather than a 422.
+
+    **`multiline` decides which whitespace survives that rule, and the two
+    answers are different because the two controls are.** An agenda is a
+    `<textarea>` holding pasted prose, so it keeps `edit.WHITESPACE_KEPT` —
+    Story 4.2 made that fix for a diary note and did not back-port it here,
+    which left a tab-indented agenda pasted out of Word or Outlook refused as
+    "contains characters that cannot be stored", a sentence that is not true of
+    a tab and that names nothing the handler can act on. A location is a
+    single-line `<input>` and the card renders it after a middot on the
+    when-line, so a newline in it breaks that line into two: it keeps the tab
+    (a paste artefact with no layout consequence) and refuses the two line
+    breaks with a message that says which.
     """
     if raw is None:
         return None
@@ -404,7 +504,10 @@ def _optional_text(field: str, raw: object, limit: int) -> str | None:
     value = raw.strip()
     if not value:
         return None
-    if any(character < " " or character == "\x7f" for character in value if character != "\n"):
+    kept = WHITESPACE_KEPT if multiline else WHITESPACE_KEPT - _LINE_BREAKS
+    if not multiline and any(character in _LINE_BREAKS for character in value):
+        raise InvalidPatch(f"{field} must be a single line")
+    if any(character < " " or character == "\x7f" for character in value if character not in kept):
         raise InvalidPatch(f"{field} contains characters that cannot be stored")
     if len(value) > limit:
         raise InvalidPatch(f"{field} must be {limit} characters or fewer")
@@ -466,17 +569,28 @@ def normalise_new_meeting(
     half, and the reason there is no "date is required" check here to
     duplicate it.
 
-    What is left is the free text and the participant vocabulary, which is
-    re-checked here rather than trusted because this command has a caller that
-    is not the route (AD-16). Messages name the field and the rule and never
-    echo the value (AD-11).
+    What is left is the free text, the participant vocabulary and the time's
+    shape, all re-checked here rather than trusted because this command has a
+    caller that is not the route (AD-16). Messages name the field and the rule
+    and never echo the value (AD-11).
+
+    **A `meeting_time` carrying a UTC offset is refused**, `decode_cursor`'s
+    guard for its reason at the other end of the same column.
+    `time.fromisoformat("10:00+05:00")` parses happily and Pydantic hands it
+    straight through, and the column is a naive `Time` — so the offset reaches
+    asyncpg and raises inside the driver instead of answering 422 at the
+    boundary. There is nowhere to put an offset even if it survived: the card
+    renders the wall clock the handler typed, and this console collects no
+    timezone to interpret one against.
     """
+    if meeting_time is not None and meeting_time.tzinfo is not None:
+        raise InvalidPatch(f"{MEETING_TIME_FIELD} must be a wall-clock time with no UTC offset")
     return NewMeeting(
         meeting_type=meeting_type,
         meeting_date=meeting_date,
         meeting_time=meeting_time,
-        location=_optional_text(LOCATION_FIELD, location, MAX_LOCATION_LENGTH),
-        notes=_optional_text(NOTES_FIELD, notes, MAX_NOTES_LENGTH),
+        location=_optional_text(LOCATION_FIELD, location, MAX_LOCATION_LENGTH, multiline=False),
+        notes=_optional_text(NOTES_FIELD, notes, MAX_NOTES_LENGTH, multiline=True),
         participants=normalise_participants(participants),
     )
 
@@ -571,14 +685,39 @@ async def list_meetings(
     notions of today, which is the exact drift `meeting_horizon.py` exists to
     prevent, reached through a parameter instead of through a second `>=`.
 
+    **`as_of` without `day` is the *unfiltered* caller's half of that same
+    fix**, and it is why the parameter is on the wire rather than only in tests.
+    The Meetings sub-tab reads the whole book and had no day to judge against,
+    so it fell back to `utc_today()` while the Notes summary judged at the
+    viewer's — and the same meeting rendered `upcoming` with a ✓ Done control in
+    one sub-tab and greyed-out in the other, one click apart. Both surfaces now
+    send the reader's local day: one as `day` (which filters *and* judges), one
+    as `as_of` (which only judges).
+
+    **Both are bounded** — see `MAX_CLOCK_SKEW`. They were free-form before,
+    which was survivable while `day` merely narrowed membership and is not now
+    that it sets the horizon: `?day=1970-01-01` would answer that every meeting
+    the caller has ever had is still ahead.
+
     `upcoming_count` is still the **whole book** rather than the filtered day —
     only the day it is judged against moved. See `MeetingPage`.
 
     Raises `InvalidCursor` for a cursor that does not describe a position in
-    this list; the router answers 400. Never a silent page one.
+    this list (the router answers 400) and `InvalidPatch` for a clock outside
+    the window (422). Never a silent page one.
     """
-    today = as_of if as_of is not None else (day if day is not None else utc_today())
-    decoded = decode_cursor(cursor, today) if cursor is not None else None
+    server_today = utc_today()
+    if as_of is None:
+        # `day` is the horizon on this call, so it is a clock and is bounded.
+        # With `as_of` supplied it is only a filter — see `check_viewer_day`.
+        check_viewer_day(DAY_FIELD, day, server_today)
+    today = as_of if as_of is not None else (day if day is not None else server_today)
+
+    # Parsed, then compared against the filter, then aged — in that order.
+    # Aging first meant a cursor cut from another day *and* a week old was
+    # refused with "…has expired", a sentence about the clock for a failure
+    # about the filter. See `_check_cursor_age`.
+    decoded = _parse_cursor(cursor) if cursor is not None else None
     if decoded is not None and decoded.day != day:
         # `queue.py`'s refusal, one aggregate over: a cursor names a position in
         # the list it was cut from, and replaying a day-filtered one without the
@@ -588,6 +727,13 @@ async def list_meetings(
             f"That page belongs to {decoded.day.isoformat() if decoded.day else 'the whole diary'}"
             f", not {day.isoformat() if day else 'the whole diary'}."
         )
+    if decoded is not None:
+        # Against the **server's** day, because that is what stamped
+        # `issued_on`. Judging it against the caller's `day` made both bounds
+        # `day > day` and `day - day > 7 days` on every day-filtered page —
+        # structurally unreachable, so the expiry was dead code on the one read
+        # that uses it most.
+        _check_cursor_age(decoded, server_today)
     page_size = decoded.limit if decoded is not None else (limit or DEFAULT_PAGE_LIMIT)
 
     rows = await claim_repo.select_meetings_page(
@@ -624,7 +770,11 @@ async def list_meetings(
                 last_time=items[-1].meeting_time or MEETING_ALL_DAY_SORT_TIME,
                 last_id=items[-1].id,
                 limit=page_size,
-                issued_on=today,
+                # The **server's** day, never the resolved clock: `issued_on`
+                # exists so a cursor found in a bookmark a year later is refused,
+                # and a value the caller supplied is not evidence of when this
+                # service issued anything.
+                issued_on=server_today,
                 # Recorded so the next page can be refused if it arrives asking
                 # about a different list. See `Cursor`.
                 day=day,
@@ -683,6 +833,13 @@ async def create_meeting(
     reading; a meeting is a note in the handler's own diary that happens to
     reference a claim, so a concurrent edit to that claim is not a conflict
     with it.
+
+    **`as_of` is the viewer's day here too**, and it is what the 201 body's
+    `status` is judged against. Without it the create path fell back to
+    `utc_today()` while the scheduler pre-fills the handler's *local* today, so
+    a Pacific handler scheduling a meeting for this afternoon received it back
+    marked `done` — the same one-clock defect the list had, on the one response
+    a handler sees immediately after acting. Bounded like the list's.
 
     Raises `EditNotPermitted` (403), `MeetingClaimNotVisible` (404) or
     `InvalidPatch` (422).

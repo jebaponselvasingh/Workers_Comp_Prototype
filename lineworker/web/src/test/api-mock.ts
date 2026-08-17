@@ -83,12 +83,21 @@ export interface StubRoutes {
   /**
    * `GET /claims-diary/meetings` (Story 4.1) — the handler's diary.
    *
-   * Matched **before** the generic `/api/claims/` case-file case in the router
-   * below, and this is the third time that ordering has had to be spelled out:
-   * `/api/claims-diary/meetings` contains the substring `/api/claims`, so a
-   * stub that reached the case file first would answer the diary's request
-   * with a case file and the pane would render an empty list with nothing
-   * anywhere saying why.
+   * Matched before the case file below, which is the right ordering for a
+   * different reason than the one this comment used to give. It claimed
+   * `/api/claims-diary/meetings` "contains the substring `/api/claims`" and
+   * would therefore be swallowed — but the catch-all tests `/api/claims/`
+   * **with a trailing slash**, and `/api/claims-diary/…` never contains that.
+   * The rationale was repeated five times and was misinformation in all five:
+   * anyone who acted on it — by tightening the catch-all, say, on the belief
+   * that these routes depended on ordering to escape it — would have found the
+   * ordering suddenly load-bearing where it had not been.
+   *
+   * The order still matters, and here is why: the two diary routes are matched
+   * by *prefix* and `/api/claims-diary/meetings` is a prefix of nothing else,
+   * while `/actions`, `/financials` and the rest below really are substrings of
+   * case-file URLs. Keeping the diary first costs nothing and keeps every
+   * `/api/claims…` branch in one block a reader can check in order.
    */
   meetings?: StubRouteFor;
   /** `POST /claims-diary/meetings` (Story 4.1) — matched before the list. */
@@ -100,9 +109,9 @@ export interface StubRoutes {
   /**
    * `GET /claims-diary/notes` (Story 4.2) — the handler's diary.
    *
-   * Matched **before** the generic `/api/claims/` case-file case in the router
-   * below, for the reason the meetings block spells out one route up:
-   * `/api/claims-diary/notes` contains the substring `/api/claims`.
+   * Matched beside the meetings block, and *not* because it would otherwise be
+   * swallowed by the case file — see that block on why the collision this used
+   * to claim does not exist.
    */
   diaryNotes?: StubRouteFor;
   /** `POST /claims-diary/notes` (Story 4.2) — matched before the list. */
@@ -1755,6 +1764,24 @@ export const MEETINGS = {
   body: { items: [MEETING_UPCOMING, MEETING_DONE], nextCursor: null, total: 2, upcomingCount: 1 },
 };
 
+/**
+ * The default meetings route — **and it answers `?day=` differently**.
+ *
+ * The stub used to ignore every query parameter, which made a whole class of
+ * request wrong-but-green: deleting `{ day: today }` from `NotesSubTab` (or
+ * `{ asOf }` from `MeetingsSubTab`) left all eighty-two diary tests passing,
+ * because the stub answered the same body either way and the components render
+ * whatever they are handed. Branching on the parameter is what gives those
+ * requests something to be wrong about — a day-filtered read that came back
+ * with the whole book would now render two cards under "Today's Meetings" and
+ * fail on the count.
+ *
+ * A test that wants one specific body still passes `meetings:` explicitly; this
+ * is only the default.
+ */
+export const MEETINGS_BY_DAY = (url: string) =>
+  url.includes("day=") ? MEETINGS_TODAY : MEETINGS;
+
 export const MEETINGS_EMPTY = {
   status: 200,
   body: { items: [], nextCursor: null, total: 0, upcomingCount: 0 },
@@ -1870,6 +1897,26 @@ export const DIARY_NOTE_CLAIM_NOT_FOUND = {
   },
 };
 
+/**
+ * The 404 a note that **was written** gets — `/problems/note-not-readable`.
+ *
+ * The one refusal on this route that is not a failure: the row is committed and
+ * audited and only the scoped re-read failed, so the console must clear the
+ * draft and re-read the list rather than leave a Save button pointed at a
+ * duplicate in a table with no delete.
+ */
+export const DIARY_NOTE_WRITTEN_NOT_READABLE = {
+  status: 404,
+  body: {
+    type: "/problems/note-not-readable",
+    title: "Not Found",
+    status: 404,
+    detail:
+      "Note 902 was saved, but it can no longer be read back from your diary — " +
+      "your caseload changed while it was being written. Do not write it again; reload the list.",
+  },
+};
+
 /** Never settles — the request stays in flight for the life of the test. */
 const pending = (): Promise<Response> => new Promise<Response>(() => {});
 
@@ -1913,11 +1960,13 @@ export function stubApi(routes: StubRoutes): void {
       if (url.includes("/api/glossary")) {
         return answer(routes.glossary ?? GLOSSARY_TERMS);
       }
-      // Story 4.1's four, **before** every `/api/claims` case below:
-      // `/api/claims-diary/meetings` contains `/api/claims`, so the case file
-      // would swallow the diary's request and the pane would render an empty
-      // list with nothing anywhere saying why. Method is read as well as path,
-      // because all four routes share two URLs.
+      // Story 4.1's four, before every `/api/claims` case below. **Not because
+      // the case file would swallow them**: the catch-all tests `/api/claims/`
+      // with a trailing slash and `/api/claims-diary/meetings` does not contain
+      // that — a rationale this file asserted five times and which was never
+      // true. They are first because they are the most specific prefixes and
+      // the block reads in order. Method is read as well as path, because all
+      // four routes share two URLs.
       if (url.includes("/api/claims-diary/meetings")) {
         const method =
           typeof input === "string" || input instanceof URL
@@ -1932,10 +1981,9 @@ export function stubApi(routes: StubRoutes): void {
         if (method === "DELETE") {
           return answerFor(routes.deleteMeeting ?? { status: 204, body: null }, url);
         }
-        return answerFor(routes.meetings ?? MEETINGS, url);
+        return answerFor(routes.meetings ?? MEETINGS_BY_DAY, url);
       }
-      // Story 4.2's two, beside the meetings block and for its reason:
-      // `/api/claims-diary/notes` contains `/api/claims`.
+      // Story 4.2's two, beside the meetings block and for its reason.
       if (url.includes("/api/claims-diary/notes")) {
         const method =
           typeof input === "string" || input instanceof URL

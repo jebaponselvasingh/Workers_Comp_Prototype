@@ -137,6 +137,34 @@ Tests:
 
 ## Review Triage Log
 
+### 2026-08-17 — Review pass (follow-up)
+
+- intent_gap: 0
+- bad_spec: 0
+- patch: 19: (high 2, medium 7, low 10)
+- defer: 1: (high 0, medium 0, low 1)
+- reject: 0
+- addressed_findings:
+  - `[high]` `[patch]` The claim-tag capture the first pass added had a null corner that lied: a draft started with no claim selected pinned `null` forever, so selecting a claim afterwards — including via this pane's own Open Claim — still wrote the note permanently untagged, while the form rendered "No claim selected" with a case visibly open and `data-pinned` set to true. The pinned-null case now has its own sentence, and a test starts a draft with nothing selected and then moves the selection.
+  - `[high]` `[patch]` The list-scope predicate contradicted this spec's own I/O matrix. The matrix says a note tagged to a claim now outside the caller's scope "is still A's own note and is still returned"; `diary_note_scope` filtered it out and a test asserted the disappearance, so a reassigned handler lost every note they had ever written about that employer, with no tombstone and no other read path. The predicate is author-only now — employer scope still gates *accepting* a tag on write — and the test was flipped. The privacy argument for the old behaviour is real and is recorded in `deferred-work.md` rather than silently kept.
+  - `[medium]` `[patch]` The one-clock fix made `issued_on` equal the day being asked about, so on every day-filtered page the future-check and the seven-day `MAX_CURSOR_AGE` became `day > day` and `day - day > 7d` — both structurally unreachable, silently voiding the expiry the cursor's docstring promises. `issued_on` is a server stamp from `utc_today()` again, checked against the same clock.
+  - `[medium]` `[patch]` `day` was unvalidated and, after the one-clock fix, also set the horizon for `status` and the whole-book `upcomingCount` — so `?day=1970-01-01` returned every open meeting as upcoming, and a pane left open past local midnight silently re-counted yesterday's horizon. Bounded where it acts as the clock, with the route description corrected to separate `upcomingCount`'s membership from its horizon.
+  - `[medium]` `[patch]` Both sub-tabs tested `isError` before checking for cached data, so a failed *refetch* discarded a correct list that was already in hand — and because this story made ✓ Done always refetch on 200, a transient blip right after a successful completion blanked the summary the handler had just acted in. Both ladders now branch on "errored with data in hand".
+  - `[medium]` `[patch]` `/problems/note-not-readable` — the type the first pass created precisely to stop a duplicate write — left every affordance pointing at that duplicate: the draft stayed, Save stayed enabled, and neither the notes list nor the checklist was invalidated, so the committed note never appeared to prove it existed. Handled in `onError`.
+  - `[medium]` `[patch]` The first pass narrowed typing-clears-a-meeting-refusal but left the mirror: ✓ Done and Open Claim still called `add.reset()`, erasing a note refusal mid-read with the unsent draft still in the box. Split into a meeting-only reset.
+  - `[medium]` `[patch]` The `notFound` member added to the shared `FieldFeedback` matched any bare 404, so a proxy or deploy-skew 404 rendered the synthesised "The server answered 404." as a permanent refusal under a severity-score input — and because `InlineEditField` derives its test id from the feedback kind, every inline-edit surface in the app silently changed its 404 test id while only the diary paths were re-tested. Now gated on known problem types with a fallback.
+  - `[medium]` `[patch]` The `DiaryNote` docstring claimed "nothing about it reaches a log beyond ids and field names" while `_diff` writes the full note text into `audit_event.after`. The docstring now says what the code does; the retention consequence is deferred to Story 8.1.
+  - `[low]` `[patch]` The cursor's day-mismatch check ran after the age check, so a cursor from another day was refused with a clock sentence rather than the filter sentence written for it.
+  - `[low]` `[patch]` `noteFocusPending` was raised on intent but only ever lowered by `selectSubTab`, and `requestMeetings` bypassed it — unreachable today, but Epic 6 makes the copilot strip a real two-way switch and the caret theft returns. Lowered where it is consumed.
+  - `[low]` `[patch]` The greeting's loading state was invisible: pending and a legitimate zero both rendered nothing, which is the same absence/zero conflation the error state was added to fix, and it is the state on every mount.
+  - `[low]` `[patch]` The compact card's Open Claim was the only action without a busy gate, so clicking it mid-completion reset the in-flight mutation's local state and the label reverted from "Completing…" while the write was outstanding.
+  - `[low]` `[patch]` `workerName` shipped on every note row and was never rendered — PHI on the wire for no consumer; dropped from the projection.
+  - `[low]` `[patch]` Smaller: the note form's `onSubmit` did not check the in-flight flag though its hook's docstring says all three controls must agree; `maxLength` counted UTF-16 units while the server counts code points, cutting emoji off at half the displayed cap; and disabling the textarea on save blurred the caret out of the pinned input.
+  - `[low]` `[patch]` The vitest mock ignored `day` entirely, so deleting the parameter from `NotesSubTab` left all 82 diary tests green; the stub now branches on it and both sub-tab suites assert the URL. Two inline fixtures that omitted `upcomingCount` — responses the server cannot produce — were corrected.
+  - `[low]` `[patch]` No test sent `?day=` over HTTP, and the route silently ignores unknown query parameters, so dropping `day` from the signature passed every Python and e2e test. Four HTTP tests added, reading `upcomingCount` and `nextCursor` off the body and paging the cursor.
+  - `[low]` `[patch]` The e2e "Open Claim drives the queue selection" test clicked the control on a card whose claim was already selected, and the selector early-returns on re-selection — so both assertions were true before the click. It now uses a different claim.
+  - `[low]` `[patch]` The e2e greeting-count oracle fetched the unfiltered list (UTC-judged) and compared it to a number judged at the browser's local day, assuming away the exact skew the high-severity patch fixed. Both oracles now send the viewer's day.
+
 ### 2026-08-17 — Review pass
 
 - intent_gap: 0
@@ -371,3 +399,33 @@ numbers, all at or above the Story 4.1 baselines:
 - **The copilot pane is `xl`-only**, so a diary deep link below 1280px focuses an invisible input —
   worse than 4.1's scheduler, which at least portals into view. Pinned by a test; reopening the
   breakpoint belongs to whoever owns the layout.
+
+### Follow-up review pass (2026-08-17)
+
+A second, independent adversarial review was run because the first pass set
+`followup_review_recommended: true`. Both reviewers were given the first pass's triage log, told not
+to repeat it, and pointed specifically at the first pass's own patches — the least-reviewed code in
+the tree, written quickly against a fix-list.
+
+**19 findings patched (2 high, 7 medium, 10 low), 1 deferred, 0 rejected.** No intent gaps and no
+spec defects, so `review_loop_iteration` stays 0.
+
+Both high findings vindicate that aim. The claim-tag capture — pass one's answer to a high-severity
+mis-attribution — had a null corner: a draft begun before any claim was selected pinned `null`
+permanently, so the note was still written untagged while the form insisted "No claim selected" with
+a case visibly open. The fix was correct and incomplete, which is harder to see than a plain bug.
+The second is a contract violation that had gone unnoticed through planning, implementation and a
+full review: this spec's own I/O matrix says a note stays visible to its author when the tagged
+claim leaves their scope, and the code dropped it — with a test asserting the drop. The matrix has
+exactly one reading, so the code was brought to it, and the privacy argument for the old behaviour
+was recorded rather than silently kept.
+
+Two more patches were defects the first pass *introduced*: the one-clock fix made the cursor's
+`issued_on` equal the day being asked about, quietly voiding seven-day expiry on every day-filtered
+page; and the `notFound` member added to the shared `FieldFeedback` matched any bare 404, changing
+the rendered copy and the `data-testid` on every inline-edit surface in the app while only the diary
+paths were re-tested.
+
+**Gates after the follow-up:** ruff and mypy clean (185 files) · pytest **1805** (was 1772) ·
+vitest **439** / 28 files (was 415) · eslint 0 errors · Playwright `@story:4-2` **9/9**, full suite
+**136/136** against a stack rebuilt from patched source.

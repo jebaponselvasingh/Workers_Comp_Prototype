@@ -37,6 +37,8 @@
  */
 import { useState } from "react";
 
+import { tabKeyHandler } from "@/lib/tabKeys";
+
 const TABS = [
   { key: "overview", label: "Overview" },
   { key: "injury", label: "Injury Diagram" },
@@ -75,50 +77,6 @@ function SeamPanel({ tab }: { tab: Exclude<TabKey, BuiltTab> }) {
       {seam.message}
     </div>
   );
-}
-
-/**
- * Arrow / Home / End across the tab strip — the other half of roving tabindex.
- *
- * Without this, `tabIndex={-1}` on the unselected tabs is not a keyboard
- * *pattern*, it is a keyboard *trap*: a handler tabs into the strip, lands on
- * the selected tab, and the remaining five are unreachable without a mouse
- * (WCAG 2.1.1). That is exactly the state this component shipped in, under a
- * comment promising the behaviour — found in the 2026-08-12 code review.
- *
- * Focus follows selection, which is the simple half of the WAI-ARIA tabs
- * pattern and the right one here: every panel is already rendered from data
- * the client holds, so activating on arrow costs nothing and saves a second
- * keystroke on every move.
- */
-function useTabKeys(activeTab: TabKey, onTabChange: (tab: TabKey) => void) {
-  return (event: React.KeyboardEvent<HTMLButtonElement>) => {
-    const index = TABS.findIndex((tab) => tab.key === activeTab);
-    const last = TABS.length - 1;
-
-    const next =
-      event.key === "ArrowRight"
-        ? TABS[index === last ? 0 : index + 1]
-        : event.key === "ArrowLeft"
-          ? TABS[index === 0 ? last : index - 1]
-          : event.key === "Home"
-            ? TABS[0]
-            : event.key === "End"
-              ? TABS[last]
-              : undefined;
-
-    if (!next) return;
-    // Left/Right own the strip once focus is inside it; without this the
-    // arrow also scrolls the pane behind the tabs.
-    event.preventDefault();
-    onTabChange(next.key);
-    // Selection moved, so the newly selected tab is the one with
-    // `tabIndex={0}` — put the caret on it or focus is left on a tab that
-    // has just dropped out of the tab order.
-    event.currentTarget.parentElement
-      ?.querySelector<HTMLButtonElement>(`[data-testid="tab-${next.key}"]`)
-      ?.focus();
-  };
 }
 
 export function DetailTabs({
@@ -178,7 +136,15 @@ export function DetailTabs({
    */
   photoCount: number;
 }) {
-  const onKeyDown = useTabKeys(activeTab, onTabChange);
+  // The shared strip helper — see `lib/tabKeys.ts`. It was this file's private
+  // `useTabKeys` until the copilot and diary strips turned out to need the same
+  // thing and to have shipped without it.
+  const onKeyDown = tabKeyHandler({
+    tabs: TABS.map((tab) => tab.key),
+    active: activeTab,
+    onSelect: onTabChange,
+    testId: (tab) => `tab-${tab}`,
+  });
 
   return (
     <>
@@ -198,7 +164,7 @@ export function DetailTabs({
             aria-selected={activeTab === tab.key}
             aria-controls="tab-panel"
             // Only the selected tab is in the tab order; the rest are
-            // reached with the arrow keys `useTabKeys` implements. A row of
+            // reached with the arrow keys `tabKeyHandler` implements. A row of
             // six tab stops in front of the case file is the
             // accessible-looking version of the same markup, and it is worse
             // to use — but it is strictly better than this pattern with the

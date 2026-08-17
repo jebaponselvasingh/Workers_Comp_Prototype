@@ -134,6 +134,17 @@ export interface DiaryNav {
    * mount grabs the caret.
    */
   noteFocusPending: boolean;
+  /**
+   * Lower the intent — called by the control that **takes** the caret.
+   *
+   * `selectSubTab` clearing it was the whole lifetime, and it is not the whole
+   * lifetime: any route out of Notes that is not the strip left the flag raised,
+   * so the next arrival stole focus again. Unreachable while the strip is the
+   * only two-way switch; Epic 6 makes the copilot tabs one, and the theft comes
+   * back with it. `NotesSubTab` calls this from the input's `onFocus`, which is
+   * the moment the intent is actually satisfied — an event, not an effect.
+   */
+  lowerNoteFocus: () => void;
   /** The centre pane's other deep link: Diary → Notes, input focused. */
   requestNotes: () => void;
   /** The half-written note, kept across sub-tab switches. See `NoteDraft`. */
@@ -175,6 +186,7 @@ const NO_DIARY_PANE: DiaryNav = {
   requestMeetings: () => {},
   noteFocusSession: 0,
   noteFocusPending: false,
+  lowerNoteFocus: () => {},
   requestNotes: () => {},
   noteDraft: EMPTY_NOTE_DRAFT,
   typeNoteDraft: () => {},
@@ -210,6 +222,7 @@ export function DiaryNavProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const clearNoteDraft = useCallback(() => setNoteDraft(EMPTY_NOTE_DRAFT), []);
+  const lowerNoteFocus = useCallback(() => setNoteFocusPending(false), []);
 
   const openScheduler = useCallback(() => {
     setSchedulerSession((session) => session + 1);
@@ -221,9 +234,16 @@ export function DiaryNavProvider({ children }: { children: React.ReactNode }) {
     // opening it while Notes is showing would set a flag nothing is mounted to
     // read. Both calls are in one event handler, so React batches them into a
     // single render.
-    setSubTab("meetings");
+    //
+    // **Through `selectSubTab`, not `setSubTab`.** It was the direct setter,
+    // which meant this path left `noteFocusPending` raised — leave Notes by the
+    // meetings deep link and come back, and the input took the caret again for
+    // an intent nobody had expressed. One of the two sub-tab movers clearing the
+    // flag and the other not is exactly the asymmetry that makes a state
+    // machine wrong in one place only.
+    selectSubTab("meetings");
     openScheduler();
-  }, [openScheduler]);
+  }, [openScheduler, selectSubTab]);
   const requestNotes = useCallback(() => {
     // The sub-tab first, for `requestMeetings`' reason exactly: the add-note
     // input is rendered by `NotesSubTab`, so bumping the session while
@@ -254,6 +274,7 @@ export function DiaryNavProvider({ children }: { children: React.ReactNode }) {
       requestMeetings,
       noteFocusSession,
       noteFocusPending,
+      lowerNoteFocus,
       requestNotes,
       noteDraft,
       typeNoteDraft,
@@ -269,6 +290,7 @@ export function DiaryNavProvider({ children }: { children: React.ReactNode }) {
       requestMeetings,
       noteFocusSession,
       noteFocusPending,
+      lowerNoteFocus,
       requestNotes,
       noteDraft,
       typeNoteDraft,

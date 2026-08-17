@@ -42,6 +42,7 @@ import {
 } from "@/components/ui/tooltip";
 
 import { useClaimDetail } from "@/api/claims";
+import { tabKeyHandler } from "@/lib/tabKeys";
 import { DiaryTab } from "@/features/diary/DiaryTab";
 import { useSelectedClaimId } from "@/features/queue/useSelectedClaim";
 
@@ -60,6 +61,20 @@ const ACTIONS_TAB_ID = "copilot-actions-reason";
  */
 const PANEL_ID = "copilot-panel";
 const DIARY_TAB_ID = "copilot-tab-diary";
+
+/**
+ * The tabs a keyboard may reach — one, until Epic 6 enables ⚡ Actions.
+ *
+ * The strip ships the ARIA roles, so it owes the arrow keys and the roving
+ * `tabIndex` that go with them (`DetailTabs` records that defect from an
+ * earlier review; this strip and the diary's shipped with the same gap). The
+ * disabled tab is deliberately not in this list: a `<button disabled>` is not
+ * focusable and cannot be selected, so an arrow that "moved" to it would be a
+ * key that does nothing. With one enabled tab the handler is a well-formed
+ * no-op — which is the point. Epic 6 adds `"actions"` here and the pattern is
+ * already correct.
+ */
+const KEYBOARD_TABS = ["diary"] as const;
 
 export function CopilotPane() {
   const claimId = useSelectedClaimId();
@@ -141,6 +156,16 @@ export function CopilotPane() {
           data-testid="copilot-tab-diary"
           aria-selected
           aria-controls={PANEL_ID}
+          // The selected tab is the strip's single tab stop, and the arrows are
+          // wired even though there is currently nowhere for them to go — see
+          // `KEYBOARD_TABS`.
+          tabIndex={0}
+          onKeyDown={tabKeyHandler({
+            tabs: KEYBOARD_TABS,
+            active: "diary",
+            onSelect: () => {},
+            testId: (tab) => `copilot-tab-${tab}`,
+          })}
           // The only tab there is. It is still a `<button>` with
           // `aria-selected` rather than a heading, because Epic 6 makes the
           // strip a real two-way switch and a tab that had to be re-typed then

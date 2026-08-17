@@ -217,6 +217,15 @@ export function MeetingCard({
               data-testid="meeting-open-claim"
               data-claim-id={claimId}
               onClick={() => onOpenClaim(claimId)}
+              // **Disabled while a meeting command is in flight**, with the ✓
+              // and the Delete beside it. It was the one action on any card
+              // without this, and it is not merely an inconsistency: the
+              // consumer's `onOpenClaim` calls `clearFeedback()`, which resets
+              // the in-flight mutation — so clicking it mid-✓ turned "Saving…"
+              // back into "✓ Done" while the request was still outstanding, and
+              // the handler had a button that looked ready and a write they
+              // could no longer see the outcome of.
+              disabled={busy}
               className={`${ACTION_CLASS} border-steel bg-steel-soft text-steel hover:bg-surface`}
             >
               Open Claim

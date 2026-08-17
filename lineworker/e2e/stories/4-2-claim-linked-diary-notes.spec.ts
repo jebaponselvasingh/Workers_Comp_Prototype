@@ -59,9 +59,21 @@ type Page = Parameters<typeof byTestId>[0];
 interface DiaryNote {
   id: number;
   claimId: string | null;
-  workerName: string | null;
   noteText: string;
   notedAt: string;
+}
+
+/**
+ * The viewer's local calendar day, as `web/src/lib/clock.ts::todayIso` builds it.
+ *
+ * Restated rather than imported, so the spec is an oracle rather than an echo.
+ * Playwright runs on the same host as the browser, so "local" agrees on both
+ * sides.
+ */
+function todayIso(now = new Date()): string {
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${now.getFullYear()}-${month}-${day}`;
 }
 
 interface DiaryNoteList {
@@ -128,7 +140,16 @@ function actionRow(page: Page, actionId: string) {
  * and this spec did not. Bounded here, once, so every caller inherits it.
  */
 async function diaryOf(page: Page): Promise<MeetingList> {
-  const response = await page.request.get("/api/claims-diary/meetings");
+  // **`asOf` is the whole point of the oracle.** This used to fetch the
+  // unfiltered list with no clock, so `upcomingCount` came back judged at the
+  // server's UTC date — and it was then compared against a number on screen
+  // that the greeting had asked for at the *browser's* local day. The two agree
+  // for most of the day and disagree exactly when the timezone skew the
+  // high-severity patch closed is real, so the oracle assumed away the thing it
+  // was checking. Both sides now name the same day.
+  const response = await page.request.get(
+    `/api/claims-diary/meetings?asOf=${todayIso()}&limit=200`,
+  );
   expect(response.status(), await response.text()).toBe(200);
   const list = (await response.json()) as MeetingList;
   expect(list.nextCursor, "the diary outgrew one page; walk the cursor").toBeNull();
@@ -438,8 +459,21 @@ test.describe("@story:4-2 @epic:4 claim-linked diary notes", () => {
     expect(persisted!.isDone).toBe(true);
 
     // --- Open Claim drives the queue selection and the case file ---------
+    // **From a different claim**, which this test used to skip. It opened the
+    // workspace on `claimId`, scheduled the meeting against `claimId`, and then
+    // clicked Open Claim on that same claim — and `useSelectClaim` early-returns
+    // when the id it is handed is already selected, so both assertions below
+    // were true *before* the click. The navigation was never exercised.
+    const other = claimIdsInStage(KAYA.name, KAYA.role, "treatment").find((id) => id !== claimId);
+    expect(other, "the seed should give this handler a second treatment claim").toBeDefined();
+
+    await openWorkspace(page, other!);
+    await expect(page).toHaveURL(new RegExp(`claim=${other!}`));
     await byTestId(page, "diary-subtab-notes").click();
-    const open = card.getByTestId("meeting-open-claim");
+
+    // The summary is the caller's whole day and not the selected claim's, so
+    // the card is still here — pointing at the claim the workspace has left.
+    const open = meetingCard(page, scheduled!.id).getByTestId("meeting-open-claim");
     expect(await open.getAttribute("data-claim-id")).toBe(claimId);
     await open.click();
 

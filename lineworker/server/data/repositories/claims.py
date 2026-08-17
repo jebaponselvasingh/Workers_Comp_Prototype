@@ -1306,10 +1306,7 @@ async def delete_meeting_cas(
 
 
 def diary_note_scope(ctx: CallerContext) -> ColumnElement[bool]:
-    """The AD-7 predicate for `diary_note` — author **and** employer scope.
-
-    `meeting_scope`'s two conditions, one table over, and neither is redundant
-    for the same two reasons.
+    """The AD-7 predicate for `diary_note` — **author scope, and only that**.
 
     **Author.** A note belongs to the handler who wrote it, not to the claim it
     is tagged to, so `list_diary_notes` is a caller-scoped list rather than a
@@ -1318,43 +1315,49 @@ def diary_note_scope(ctx: CallerContext) -> ColumnElement[bool]:
     a supervisor over both must not either — a diary is not a management
     report, and `employer_scope` alone would make it one.
 
-    **Employer scope, on the tagged claim.** The author predicate is already
-    sufficient for *visibility*, but scope is re-resolved per request (AD-7):
-    a handler whose book narrowed between writing a note and reading it back
-    must stop seeing the claim reference it carries. `claim_id IS NULL` passes
-    — an untagged note is scoped by its author and nothing else.
+    **Employer scope is deliberately *not* here, unlike `meeting_scope`**, and
+    the divergence is the story's own contract rather than an oversight. The
+    I/O matrix's List-isolation row states that a note tagged to a claim now
+    outside the caller's scope "is still A's own note and is still returned".
+    This predicate used to AND in `employer_scope` on the tag, so a re-scoping
+    silently deleted entries from a handler's own diary — a table with no edit,
+    no delete and no other copy of what was written.
 
-    A note whose claim has left the caller's book therefore leaves the list
-    entirely rather than losing its tag. That is the same answer `meeting_scope`
-    gives, and it is the conservative one: the alternative is publishing a
-    handler's own words about a claim the console has stopped showing them.
+    The two tables answer differently because they are different kinds of
+    record. A meeting is a *plan against a case file*, and its card republishes
+    the worker's name, so a handler who has lost the file should lose the plan.
+    A note is a handler's own account of work they did, and its card renders
+    `📎 WC-nnnn` and nothing else — the claim reference it carries is the one
+    the author typed it against, not a fact the read discovered for them (which
+    is also why `_diary_note_query` no longer projects the worker's name).
+
+    Scope still gates the **write**: `insert_diary_note` resolves the tag
+    through `employer_scope` inside its statement, so a claim outside the
+    caller's book is a 404 and no row is written. Accepting a tag and keeping a
+    note are different questions, and only the first is about current scope.
     """
-    return sa.and_(
-        DiaryNote.app_user_id == ctx.user_id,
-        sa.or_(
-            DiaryNote.claim_id.is_(None),
-            DiaryNote.claim_id.in_(sa.select(Claim.id).where(employer_scope(ctx))),
-        ),
-    )
+    return DiaryNote.app_user_id == ctx.user_id
 
 
 def _diary_note_query() -> sa.Select[Any]:
-    """The columns a note card renders beside the row itself.
+    """The row, plus the one column a note card renders beside it.
 
-    Two joins, both **outer**, because `claim_id` is nullable — an inner join
-    would silently drop every untagged note, which is the one case the ERD's
+    The join is **outer**, because `claim_id` is nullable — an inner join would
+    silently drop every untagged note, which is the one case the ERD's
     `CLAIM |o--o{ DIARY_NOTE` exists to allow. `_meeting_query`'s shape and its
     lesson.
+
+    **One join, where `_meeting_query` has two.** The second one there reaches
+    `employee.name` for the meeting card's `WC-nnnn — Worker Name`; a note card
+    renders `📎 WC-nnnn` and never the name, so joining for it shipped the
+    injured worker's name on every row of every handler's diary with no
+    consumer at the other end. AD-11's rule is that the payload carries what
+    the surface renders.
     """
     return (
-        sa.select(
-            DiaryNote,
-            Claim.claim_id.label("claim_business_id"),
-            Employee.name.label("worker_name"),
-        )
+        sa.select(DiaryNote, Claim.claim_id.label("claim_business_id"))
         .select_from(DiaryNote)
         .outerjoin(Claim, DiaryNote.claim_id == Claim.id)
-        .outerjoin(Employee, Claim.employee_id == Employee.id)
     )
 
 
@@ -1456,13 +1459,13 @@ async def select_latest_note_at(
     gates the workspace route to `handler`, so no supervisor or analyst reaches a
     case file at all. The scope is right; the illustration was false.
 
-    **One scope predicate, not two.** `diary_note_scope` already resolves the
-    tagged claim through `employer_scope` in its own subquery, so ANDing
-    `employer_scope(ctx)` onto the inner-joined `Claim` a second time narrowed
-    nothing and read as though the helper could not be trusted — the failure
-    mode `meeting_scope`'s "written as a helper rather than spelled at five call
-    sites" warns about, in the direction of belt-and-braces rather than
-    omission.
+    **The join to `Claim` is the whole of the claim predicate**, and since
+    `diary_note_scope` narrowed to the author alone it is also the only one.
+    That is not a hole: this is called from `generate_actions`, which is
+    already answering about a claim the caller can open, and the row it finds
+    is the caller's own note either way. What the caller could learn from an
+    out-of-scope argument is that *they themselves* once wrote a note about it,
+    which is not a fact about anybody else's data.
 
     Returns the *maximum* `noted_at` rather than a boolean, so the seven-day
     window lives with the rule in `services/worklist` and this query knows

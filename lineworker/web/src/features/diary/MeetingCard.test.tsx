@@ -17,7 +17,7 @@
  * pin, and it is why they can name a weekday at all: a UTC parse would make the
  * answer depend on where the suite runs.
  */
-import { render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { expect, test } from "vitest";
 
 import type { Meeting } from "@/api/meetings";
@@ -207,4 +207,31 @@ test("Open Claim hands back the meeting's own claim id", async () => {
   screen.getByTestId("meeting-open-claim").click();
 
   expect(opened).toEqual(["WC-20099"]);
+});
+
+test("the compact Open Claim disables itself with the other actions", () => {
+  // It was the only action on any card without `disabled={busy}`, and it is not
+  // a cosmetic inconsistency: the consumer's `onOpenClaim` resets the meeting
+  // mutation, so a click mid-✓ turned "Saving…" back into "✓ Done" while the
+  // request was still outstanding — a control that looked ready over a write
+  // whose outcome the handler could no longer see.
+  renderCard(aMeeting(), { compact: true, onOpenClaim: () => {} });
+  expect(screen.getByTestId("meeting-open-claim")).toBeEnabled();
+
+  cleanup();
+  render(
+    <MeetingCard
+      meeting={aMeeting()}
+      busy
+      completing
+      deleting={false}
+      error={null}
+      compact
+      onComplete={() => {}}
+      onDelete={() => {}}
+      onOpenClaim={() => {}}
+    />,
+  );
+  expect(screen.getByTestId("meeting-open-claim")).toBeDisabled();
+  expect(screen.getByTestId("meeting-done")).toBeDisabled();
 });

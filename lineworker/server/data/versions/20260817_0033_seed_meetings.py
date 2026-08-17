@@ -94,11 +94,14 @@ DEMO_MEETINGS: tuple[dict[str, Any], ...] = (
 
 
 def _seeded_links(bind: sa.Connection) -> list[tuple[int, int, dict[str, Any]]]:
-    """`(app_user_id, claim_id, demo)` for every row this revision owns.
+    """`(app_user_id, claim_id, demo)` for every row this revision inserts.
 
-    Shared by `upgrade` and `downgrade` so that the two cannot drift: the
-    downgrade removes exactly the tuples the upgrade inserted, which is only
-    true while one function decides what those tuples are.
+    **`upgrade` only.** It was shared with `downgrade` on the argument that one
+    function deciding the tuples keeps the two from drifting — which is true of
+    the *code* and false of the *data*: this resolves employer scope from the
+    assignment table as it stands when it runs, so re-running it at downgrade
+    time answers about the assignments of that moment rather than about the
+    rows that were written. See `downgrade` for what replaced it.
     """
     meta = sa.MetaData()
     app_user = sa.Table("app_user", meta, autoload_with=bind)
@@ -173,22 +176,32 @@ def downgrade() -> None:
     every handler had ever scheduled — PHI, per `Meeting`'s own AD-11 note —
     to undo twelve seeded rows.
 
-    So the predicate is the `(app_user_id, claim_id, meeting_type, notes)`
-    tuple set `upgrade` built, recomputed from the same helper. `meeting_date`
-    is deliberately not part of it: it is the migration's *run* date, which a
-    downgrade cannot know. Nothing else is: a handler is free to schedule their
-    own `rtw_conference` against the same claim, and it survives, because the
-    seeded `notes` are the two sentences only this revision writes.
+    **The predicate is the constants this file froze, not a re-derivation of
+    who was assigned to what.** It used to call `_seeded_links` again, which
+    re-resolves each handler's employer scope *at downgrade time*, and that had
+    two failure modes with the same cause. If assignments had changed — the one
+    thing a long-lived database does between an upgrade and a downgrade — the
+    helper computed a different `(handler, claim)` set and silently left the
+    real seeded rows behind. And if any persona had since dropped below two
+    scoped claims, the helper's own tripwire raised `ValueError` and the
+    downgrade *refused to run at all*, which is a migration that cannot be
+    rolled back because of a fact about data it is not deleting.
+
+    `(meeting_type, notes)` is what `upgrade` actually wrote and is knowable
+    from this file alone. The two `notes` sentences are the discriminator: they
+    are written by this revision and by nothing else, so a handler's own
+    `rtw_conference` against the same claim survives. `meeting_date` is
+    deliberately not part of it — it is the migration's *run* date, which a
+    downgrade cannot know — and neither is `is_done` or `version`, because a
+    seeded meeting somebody ticked off is still a seeded meeting.
     """
     bind = op.get_bind()
     meta = sa.MetaData()
     meeting = sa.Table("meeting", meta, autoload_with=bind)
 
-    for handler_id, claim_pk, demo in _seeded_links(bind):
+    for demo in DEMO_MEETINGS:
         bind.execute(
             meeting.delete().where(
-                meeting.c.app_user_id == handler_id,
-                meeting.c.claim_id == claim_pk,
                 meeting.c.meeting_type == demo["meeting_type"],
                 meeting.c.notes == demo["notes"],
             )

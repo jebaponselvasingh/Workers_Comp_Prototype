@@ -51,13 +51,14 @@ import { useState } from "react";
 import { useMe } from "@/api/auth";
 import type { Meeting } from "@/api/meetings";
 import { useCompleteMeeting, useMeetingWriteInFlight, useMeetings } from "@/api/meetings";
+import { NOTE_LENGTH_CAP } from "@/api/fieldLimits";
 import {
-  MAX_NOTE_LENGTH,
+  isNoteWrittenButUnreadable,
   useAddDiaryNote,
   useDiaryNoteWriteInFlight,
   useDiaryNotes,
 } from "@/api/diaryNotes";
-import { isConflict } from "@/api/errors";
+import { isConflict, isNotFound } from "@/api/errors";
 import { feedbackFromError } from "@/features/claim-detail/useInlineEdits";
 import { useDiaryNav } from "@/features/diary/DiaryNav";
 import { useSelectClaim } from "@/features/queue/useSelectedClaim";
@@ -68,9 +69,27 @@ import { MeetingCard } from "./MeetingCard";
 const CONFLICT_MESSAGE = "Changed by someone else — showing the latest.";
 const FAILED_MESSAGE = "Could not save. Try again in a moment.";
 const EMPTY_NOTE_MESSAGE = "Write something before saving.";
+/** A 404 on ✓ Done is a row somebody else removed, not a retry — see `MeetingsSubTab`. */
+const GONE_MESSAGE = "This meeting is no longer in your diary — the list has been refreshed.";
 
 /** The prototype's hint line, verbatim. [Source: prototype line 2078] */
 const HINT = "Log notes below · Schedule meetings · Email stakeholders via tabs above.";
+
+/**
+ * The draft, cut to the column's width in **code points**.
+ *
+ * `String.length` and the `maxLength` attribute both count UTF-16 code units;
+ * `services/claims/notes.py` counts what Python's `len()` counts, which is code
+ * points. Spreading the string is the one-line way to agree with the server, and
+ * it also keeps a surrogate pair from being cut in half — a `slice` on units can
+ * leave half an emoji, which is a lone surrogate the column would then store.
+ */
+function clamped(text: string): string {
+  const characters = [...text];
+  return characters.length <= NOTE_LENGTH_CAP
+    ? text
+    : characters.slice(0, NOTE_LENGTH_CAP).join("");
+}
 
 /**
  * The greeting card — `.dgreet` in the prototype.
@@ -86,6 +105,7 @@ function GreetingCard({
   workerName,
   injuryType,
   upcomingCount,
+  upcomingPending,
   upcomingUnknown,
 }: {
   now: Date;
@@ -95,8 +115,10 @@ function GreetingCard({
   injuryType: string | null;
   /** The server's count of meetings still ahead, or `null` while it loads. */
   upcomingCount: number | null;
+  /** The request that carries the count has not answered yet. */
+  upcomingPending: boolean;
   /**
-   * The request that carries the count failed.
+   * The request that carries the count failed **and left nothing behind**.
    *
    * A third state rather than a second reason to render nothing.
    * `upcomingCount` is a whole-book fact delivered on the day-filtered
@@ -141,14 +163,26 @@ function GreetingCard({
           </>
         )}
       </p>
-      {/* Three states, not two. Rendered with a number only when the server's
-          count is above zero — the prototype's own rule; rendered as an
-          explicit unknown when the request that carries it failed; and absent
-          only when the answer really is "nothing ahead". The comparisons are
-          against `null` (still loading) and zero, and the count is *rendered*,
-          never combined with anything: `upcomingCount` is on `noDerivation`'s
-          list, and pluralising is presentation. */}
-      {upcomingUnknown ? (
+      {/* **Four states, not three, and the fourth is the one on every mount.**
+          Loading and "nothing ahead" both rendered nothing, which is the same
+          absence-versus-zero conflation the error state was added to fix — and
+          it is the state this card is in every single time it appears, for as
+          long as the request takes. Now: a loading line while the count is
+          `null` and the request is in flight, an explicit unknown when it
+          failed with nothing cached, the number when there is one, and nothing
+          at all only when the server really said zero. The comparisons are
+          against `null` and zero, and the count is *rendered*, never combined
+          with anything: `upcomingCount` is on `noDerivation`'s list, and
+          pluralising is presentation. */}
+      {upcomingPending ? (
+        <p
+          data-testid="diary-upcoming-count"
+          data-state="loading"
+          className="text-[11.5px] leading-[1.6] text-faint"
+        >
+          📅 Counting upcoming meetings…
+        </p>
+      ) : upcomingUnknown ? (
         <p
           data-testid="diary-upcoming-count"
           data-state="unknown"
@@ -205,8 +239,14 @@ export function NotesSubTab({
   const complete = useCompleteMeeting();
   const meetingBusy = useMeetingWriteInFlight();
 
-  const { noteFocusSession, noteFocusPending, noteDraft, typeNoteDraft, clearNoteDraft } =
-    useDiaryNav();
+  const {
+    noteFocusSession,
+    noteFocusPending,
+    lowerNoteFocus,
+    noteDraft,
+    typeNoteDraft,
+    clearNoteDraft,
+  } = useDiaryNav();
   const selectClaim = useSelectClaim();
 
   const [refusal, setRefusal] = useState<{
@@ -236,33 +276,36 @@ export function NotesSubTab({
   const tagIsPinned = noteDraft.text !== "" && tagClaimId !== claimId;
 
   /**
-   * Empty the live region and every refusal, before anything new starts.
+   * The meeting controls' reset — the meeting feedback, and nothing else.
    *
-   * **Both mutations and the local flag**, which is what makes it a function:
-   * TanStack keeps `error` and `isSuccess` until that same mutation runs again,
-   * so resetting only a subset leaves the region sticky in a way nobody
-   * clicking can clear. `MeetingsSubTab` learned this as a defect (code review,
-   * 2026-08-17) and this is the same reset with one more member.
+   * **Narrowed in both directions now.** `clearNoteFeedback` stopped a
+   * keystroke from wiping a meeting's 409; this is the mirror, which pass one
+   * left open. `clearFeedback` called `add.reset()` and is wired to ✓ Done
+   * *and* to the compact card's Open Claim, so either of those erased a note
+   * refusal the handler was mid-read — the 404 naming a claim tag, or the 422
+   * naming the text — with their unsent draft still in the box and nothing on
+   * screen saying why the message had gone.
    *
-   * **Used by the meeting paths only.** The note form has
-   * `clearNoteFeedback` below — see it.
+   * It still resets the sibling mutation *within* its own half, which is the
+   * part that has to stay a function: TanStack keeps `error` and `isSuccess`
+   * until that same mutation runs again, so a partial reset leaves the live
+   * region sticky in a way nobody clicking can clear (`MeetingsSubTab`'s logged
+   * defect).
    */
-  function clearFeedback(): void {
-    add.reset();
+  function clearMeetingFeedback(): void {
     complete.reset();
     setRefusal(null);
-    setEmptyNote(false);
   }
 
   /**
    * The note form's own reset — this control's feedback and nothing else.
    *
-   * Scoped, because the full `clearFeedback` on every keystroke wiped a
-   * *meeting's* refusal the handler was still reading. "Changed by someone else
-   * — showing the latest." is rendered on a today card a few lines above the
-   * textarea, and it is the one message on this pane that reports somebody
-   * else's write; typing a sentence about a phone call is not a reason to
-   * decide it has been read.
+   * Scoped, because the full reset on every keystroke wiped a *meeting's*
+   * refusal the handler was still reading. "Changed by someone else — showing
+   * the latest." is rendered on a today card a few lines above the textarea,
+   * and it is the one message on this pane that reports somebody else's write;
+   * typing a sentence about a phone call is not a reason to decide it has been
+   * read.
    */
   function clearNoteFeedback(): void {
     add.reset();
@@ -270,14 +313,18 @@ export function NotesSubTab({
   }
 
   function onComplete(meeting: Meeting): void {
-    clearFeedback();
+    clearMeetingFeedback();
     complete.mutate(
       { meetingId: meeting.id, expectedVersion: meeting.version },
       {
         onError: (error) =>
           setRefusal({
             meetingId: meeting.id,
-            message: isConflict(error) ? CONFLICT_MESSAGE : FAILED_MESSAGE,
+            message: isConflict(error)
+              ? CONFLICT_MESSAGE
+              : isNotFound(error)
+                ? GONE_MESSAGE
+                : FAILED_MESSAGE,
           }),
       },
     );
@@ -285,6 +332,12 @@ export function NotesSubTab({
 
   function onSubmit(event: React.FormEvent<HTMLFormElement>): void {
     event.preventDefault();
+    // The third of the three the hook's docstring says must agree about being
+    // busy — the input and the Save button already did, and `onSubmit` did not.
+    // A form submits on Enter as well as on the button, so a second Enter while
+    // the first save was in flight sent the note twice into a table with no
+    // version to refuse the duplicate with.
+    if (savingNote) return;
     clearNoteFeedback();
     const text = noteDraft.text.trim();
     if (text === "") {
@@ -299,10 +352,18 @@ export function NotesSubTab({
       // `tagClaimId`, never the live `claimId`: the note goes to the claim it
       // was started against, which is also the one the form has been showing.
       { noteText: text, claimId: tagClaimId },
-      // Cleared on success only. A note the server refused stays in the box —
-      // it is the handler's words, and losing them to a 404 about a claim tag
-      // would be the worst thing this surface could do.
-      { onSuccess: () => clearNoteDraft() },
+      {
+        // Cleared on success — and on the one refusal that is not a failure.
+        // `/problems/note-not-readable` says the row *was* written and tells the
+        // handler not to send it again; leaving their text in the box under an
+        // enabled Save is the console arguing with its own sentence. The list
+        // and the checklist are re-read by `useAddDiaryNote`'s `onError` for the
+        // same reason.
+        onSuccess: () => clearNoteDraft(),
+        onError: (error) => {
+          if (isNoteWrittenButUnreadable(error)) clearNoteDraft();
+        },
+      },
     );
   }
 
@@ -336,25 +397,45 @@ export function NotesSubTab({
           workerName={workerName}
           injuryType={injuryType}
           upcomingCount={todaysMeetings.data?.upcomingCount ?? null}
-          upcomingUnknown={todaysMeetings.isError}
+          upcomingPending={todaysMeetings.isPending}
+          // **"Errored with nothing in hand", not "errored".** A refetch that
+          // failed after a successful load — which the ✓ Done refetch makes
+          // routine — kept `data`, so replacing a real count with "could not be
+          // counted" would be throwing away an answer the console still has.
+          upcomingUnknown={todaysMeetings.isError && todaysMeetings.data === undefined}
         />
 
         {/* --- today's meetings ------------------------------------------ */}
         <section data-testid="diary-today-meetings" className="mb-[14px]">
+          {/* `isError` is tested **after** the cache, not before it. TanStack
+              keeps `data` when a refetch fails, and 4.2 made ✓ Done refetch on
+              200 — so a transient blip in the second after a successful tick
+              replaced the summary the handler had just acted in with an error.
+              With rows in hand the summary stays and the failure is a strip
+              above it. */}
           {todaysMeetings.isPending ? (
             <p data-testid="diary-today-loading" className="text-[11.5px] text-faint">
               Loading today's meetings…
             </p>
-          ) : todaysMeetings.isError ? (
+          ) : todaysMeetings.isError && todaysMeetings.data === undefined ? (
             <p role="alert" data-testid="diary-today-error" className="text-[11.5px] text-error">
               ⚠ Today's meetings could not be loaded. Try again in a moment.
             </p>
-          ) : todaysMeetings.data.items.length === 0 ? (
+          ) : todaysMeetings.data === undefined ? null : todaysMeetings.data.items.length === 0 ? (
             <p data-testid="diary-today-empty" className="text-[11.5px] text-faint">
               📅 No meetings scheduled for today.
             </p>
           ) : (
             <>
+              {todaysMeetings.isError && (
+                <p
+                  role="alert"
+                  data-testid="diary-today-stale"
+                  className="mb-[6px] text-[11px] text-error"
+                >
+                  ⚠ Could not refresh — showing today's meetings as last loaded.
+                </p>
+              )}
               {/* The server's `total` for the filtered day, not `items.length`
                   — the two differ exactly when the day has more than one page,
                   and the heading must describe the day rather than the page. */}
@@ -380,7 +461,8 @@ export function NotesSubTab({
                        is honest about there being nothing to do. */
                     onDelete={() => {}}
                     onOpenClaim={(id) => {
-                      clearFeedback();
+                      // The *meeting* half only — see `clearMeetingFeedback`.
+                      clearMeetingFeedback();
                       selectClaim(id);
                     }}
                   />
@@ -406,11 +488,14 @@ export function NotesSubTab({
           <p data-testid="notes-loading" className="text-[12px] text-faint">
             Loading notes…
           </p>
-        ) : notes.isError ? (
+        ) : /* Errored **with nothing in hand** — see the summary above. A
+              failed "Show more" on a fifty-note diary must not take the fifty
+              already on screen down with it. */
+        notes.isError && notes.data === undefined ? (
           <p role="alert" data-testid="notes-error" className="text-[12px] text-error">
             ⚠ Your notes could not be loaded. Try again in a moment.
           </p>
-        ) : notes.data.items.length === 0 ? (
+        ) : notes.data === undefined ? null : notes.data.items.length === 0 ? (
           /* The prototype's own sentence. A pane that rendered an empty list
              would read as "we have not checked", which is a different fact. */
           <p data-testid="notes-empty" className="py-[8px] text-[12px] text-faint">
@@ -418,6 +503,11 @@ export function NotesSubTab({
           </p>
         ) : (
           <>
+            {notes.isError && (
+              <p role="alert" data-testid="notes-stale" className="mb-[6px] text-[11px] text-error">
+                ⚠ Could not refresh — showing the notes last loaded.
+              </p>
+            )}
             <div className="flex flex-col gap-[6px]">
               {notes.data.items.map((note) => (
                 <article
@@ -481,7 +571,20 @@ export function NotesSubTab({
           className={`text-[10.5px] ${tagIsPinned ? "text-steel" : "text-faint"}`}
         >
           {tagClaimId === null ? (
-            "No claim selected — this note will be saved without a tag."
+            // **Two sentences for one null, because they describe two different
+            // situations.** The pinned one was unreachable: `tagIsPinned` is
+            // true whenever the capture differs from the live selection, and
+            // `null` differing from a selected claim is exactly that case —
+            // start a draft with nothing open, then select a claim, and the
+            // note is written permanently untagged while the form said "No
+            // claim selected" over a greeting naming the active claim and a
+            // `data-pinned` of true. The divergence was hardest to see in the
+            // one case the explanation did not cover.
+            tagIsPinned ? (
+              "📎 This note was started against no claim and will be saved without a tag, even though a case is now open."
+            ) : (
+              "No claim selected — this note will be saved without a tag."
+            )
           ) : (
             <>
               📎 Tagging <strong>{tagClaimId}</strong>
@@ -506,32 +609,48 @@ export function NotesSubTab({
           aria-label="Add a diary note"
           aria-invalid={saveRefusal !== null}
           aria-describedby="note-length"
-          // The column's width, declared on the control (AC 3's quiet half): a
-          // 2400-character summary pasted in is stopped here with the cap on
-          // screen, rather than sent and refused by a message that names
-          // neither the limit nor which end to trim.
-          maxLength={MAX_NOTE_LENGTH}
           value={noteDraft.text}
           onChange={(event) => {
             // The current selection travels with the keystroke: the provider
             // captures it on the *first* one and keeps it after that, which is
             // what freezes the tag. See `DiaryNav.NoteDraft`.
-            typeNoteDraft(event.target.value, claimId);
+            typeNoteDraft(clamped(event.target.value), claimId);
             // Typing clears this control's refusal — a message about an empty
             // box must not survive the box stopping being empty — and nothing
             // else's. See `clearNoteFeedback`.
             if (saveRefusal !== null) clearNoteFeedback();
           }}
-          disabled={savingNote}
+          // **Lowered where it is consumed.** The flag is raised by
+          // `requestNotes` and was only ever cleared by `selectSubTab`, so any
+          // other way out of Notes left it raised and the next arrival stole the
+          // caret again. Unreachable today; Epic 6 makes the copilot strip a
+          // real two-way switch and it comes back. Focus arriving *is* the
+          // consumption, and an event handler is not an effect.
+          onFocus={() => {
+            if (noteFocusPending) lowerNoteFocus();
+          }}
+          // **`readOnly`, not `disabled`.** A disabled control cannot hold
+          // focus, so every save blurred the caret out of the pinned input and
+          // the handler had to click back into it to write the next note. The
+          // Save button is still disabled — it is the control that must not be
+          // pressed twice — and `onSubmit` refuses a second Enter.
+          readOnly={savingNote}
           rows={2}
           placeholder="Add a diary note for today…"
-          className="w-full resize-none rounded-[3px] border border-border bg-surface px-[6px] py-[4px] text-[11.5px] text-text outline-none focus:border-brand focus:ring-1 focus:ring-brand disabled:opacity-60"
+          className={`w-full resize-none rounded-[3px] border border-border bg-surface px-[6px] py-[4px] text-[11.5px] text-text outline-none focus:border-brand focus:ring-1 focus:ring-brand ${savingNote ? "opacity-60" : ""}`}
         />
         {/* The cap, visible before it is reached rather than only when it
-            bites. A count of the local draft, which is nothing the server
-            decided. */}
+            bites — and **measured the way the server measures it**. The control
+            used to declare `maxLength`, which counts UTF-16 code units while
+            `len()` on the other side counts code points: an emoji is two units
+            and one character, so a note of emoji hit the browser's cap at half
+            the number this line was displaying, with the counter reading
+            "2000 of 2000" for a thousand characters the server would have
+            taken. There is no attribute that expresses a code-point cap, so the
+            clamp is in `onChange` and both the clamp and the count spread the
+            string. */}
         <p id="note-length" data-testid="note-length" className="text-right text-[10px] text-faint">
-          {noteDraft.text.length} of {MAX_NOTE_LENGTH} characters
+          {[...noteDraft.text].length} of {NOTE_LENGTH_CAP} characters
         </p>
         {saveRefusal !== null && (
           <p role="alert" data-testid="note-error" className="text-[11px] font-semibold text-error">

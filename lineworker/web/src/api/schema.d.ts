@@ -74,6 +74,9 @@ export interface paths {
          *     **No calendar invitation is sent, and none is queued.** Scheduling here is
          *     a log of intent — see `services/claims/meetings.py` on why egress is a
          *     Deferred decision rather than an omission.
+         *
+         *     `asOf` is the viewer's local day and decides only the `status` the body
+         *     comes back carrying — see `AS_OF_QUERY`.
          */
         post: operations["schedule_meeting_claims_diary_meetings_post"];
         delete?: never;
@@ -1405,11 +1408,16 @@ export interface components {
          *     lifecycle, so there is nothing for a derivation to answer about it. A
          *     client that found a `version` here would reasonably build an edit control.
          *
-         *     `claimId` and `workerName` travel together and are both nullable, because
-         *     `claim_id` is (the ERD's `CLAIM |o--o{ DIARY_NOTE`). The card renders
-         *     `📎 WC-nnnn`; the worker's name rides along for the same reason it does on a
-         *     meeting — a browser assembling that reference from a second request would
-         *     be showing a claim this list did not scope.
+         *     `claimId` is nullable because `claim_id` is (the ERD's
+         *     `CLAIM |o--o{ DIARY_NOTE`), and the card renders it as `📎 WC-nnnn`.
+         *
+         *     **There is no `workerName`, and `MeetingResponse` has one.** The meeting
+         *     card renders `WC-nnnn — Worker Name`, so the name is the thing on screen
+         *     there; a note card renders the claim reference alone and never the name. It
+         *     was shipped on every row anyway — the injured worker's name, on every entry
+         *     of every handler's diary, for no consumer — which is PHI on the wire that
+         *     AD-11's "carry what the surface renders" rule does not permit. Removed
+         *     rather than left as a field a later client might start reading.
          *
          *     `notedAt` is a UTC instant. The `{date} · {time}` header is the browser's
          *     formatting of it, in the reader's own locale.
@@ -1433,11 +1441,6 @@ export interface components {
              * @description When the note was written, UTC. The server's clock.
              */
             notedAt: string;
-            /**
-             * Workername
-             * @description The tagged claim's injured worker, or null.
-             */
-            workerName: string | null;
         };
         /**
          * Disability
@@ -3145,8 +3148,10 @@ export interface operations {
                 cursor?: string | null;
                 /** @description Page size. Reused from the cursor when one is supplied. */
                 limit?: number | null;
-                /** @description Narrow to one calendar date, `YYYY-MM-DD`. The **viewer's local** day: a server with no timezone for the reader cannot resolve 'today', so the browser sends it, exactly as `asOf` is supplied elsewhere. It filters `items` and `total`, and it is also the day every `status` and `upcomingCount` on the response is judged against — a caller asking about a day is asking about that day's horizon, not the server's. It does not narrow `upcomingCount`, which stays whole-book. Not a scope parameter — it can only narrow what the caller's session already permits. A `cursor` issued with a different `day` (or with none) is refused as `/problems/invalid-cursor`. */
+                /** @description Narrow to one calendar date, `YYYY-MM-DD`. The **viewer's local** day: a server with no timezone for the reader cannot resolve 'today', so the browser sends it, exactly as `asOf` is. It filters `items` and `total`, and — when `asOf` is absent — it is also the day every `status` on the response and `upcomingCount` itself are judged against. So it does not narrow the **membership** of `upcomingCount`, which stays whole-book, but it does set the **horizon** that count is taken at; those are different things and an earlier version of this description ran them together. Not a scope parameter — it can only narrow what the caller's session already permits — and it is bounded to within a day of the server's own date. A `cursor` issued with a different `day` (or with none) is refused as `/problems/invalid-cursor`. */
                 day?: string | null;
+                /** @description The day this response's `status` and `upcomingCount` are judged against, `YYYY-MM-DD`. The **viewer's local** day: a server with no timezone for the reader cannot resolve 'today'. It narrows nothing — it is the horizon only. Omit it and `day` answers; omit both and the server's own date does, which is what left the unfiltered read disagreeing with the day-filtered one about the same meeting. Bounded to within a day of the server's date. */
+                asOf?: string | null;
             };
             header?: never;
             path?: never;
@@ -3199,20 +3204,32 @@ export interface operations {
                     };
                 };
             };
-            /** @description Validation Error */
+            /** @description A caller-supplied viewer clock names a calendar date more than a day from the server's own, which is further than any timezone can explain. `asOf` answers `/problems/validation-error` (the schema refuses it, naming the parameter in `errors[].loc`); a `day` sent *without* `asOf` — where it is the horizon rather than only a filter — answers `/problems/invalid-patch` naming `day`. Both decide the `status` and `upcomingCount` on the response since Story 4.2, so an unbounded value is a request for a horizon rather than for a page (RFC 9457 problem document). */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
                 };
             };
         };
     };
     schedule_meeting_claims_diary_meetings_post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The day this response's `status` and `upcomingCount` are judged against, `YYYY-MM-DD`. The **viewer's local** day: a server with no timezone for the reader cannot resolve 'today'. It narrows nothing — it is the horizon only. Omit it and `day` answers; omit both and the server's own date does, which is what left the unfiltered read disagreeing with the day-filtered one about the same meeting. Bounded to within a day of the server's date. */
+                asOf?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -3268,7 +3285,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description No such meeting in the caller's diary, or no such claim in their caseload. Deliberately the same answer for a row that does not exist and one that belongs to somebody else (RFC 9457 problem document). */
+            /** @description Either of two things, told apart by `type`. `/problems/meeting-claim-not-found` — no such claim in the caller's caseload, deliberately the same answer for a claim that does not exist and one that belongs to somebody else; **nothing was written**. `/problems/meeting-not-readable` — the meeting *was* written and audited and then could not be read back under the caller's scope; it exists, and re-sending it would create a second row and a second audit event (RFC 9457 problem document). */
             404: {
                 headers: {
                     [name: string]: unknown;

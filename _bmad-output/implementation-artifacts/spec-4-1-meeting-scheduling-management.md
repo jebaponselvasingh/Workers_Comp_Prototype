@@ -128,6 +128,34 @@ Tests:
 
 ## Review Triage Log
 
+### 2026-08-17 — Review pass (follow-up)
+
+- intent_gap: 0
+- bad_spec: 0
+- patch: 19: (high 1, medium 10, low 8)
+- defer: 3: (high 0, medium 0, low 3)
+- reject: 0
+- addressed_findings:
+  - `[high]` `[patch]` The Meetings sub-tab asked the server for meetings without a day, so it was judged at `utc_today()`, while the Notes summary one click away sent the viewer's local day — the same meeting rendered `upcoming` with a live ✓ Done in one sub-tab and greyed `done` in the other, for any handler west of UTC on a weekday evening. `GET`/`POST /claims-diary/meetings` gained an `asOf` horizon parameter (never a filter), both surfaces now send the viewer's day, and the server test that had asserted the divergence *as intended* was corrected to assert the two reads agree.
+  - `[medium]` `[patch]` A 404 or 403 on ✓ Done / Delete installed nothing and invalidated nothing, so a meeting deleted in another session left a phantom card that 404'd on every retry under a message calling the failure transient. `afterFailedWrite` now invalidates when there is no fresh entity, and 404 has its own non-retriable sentence.
+  - `[medium]` `[patch]` The scheduler read the live `?claim=` at submit rather than at open, so auto-select landing (or Back/Forward) silently retargeted the read-only "Linked Claim" — while the component's own docstring asserted it could not be retargeted. The claim is now captured on mount.
+  - `[medium]` `[patch]` The scheduler was submittable with no claim at all, producing a 201 with `claimId: null` — an orphan meeting that can never be attached, because there is no `update_meeting`. Refused inline.
+  - `[medium]` `[patch]` The agenda and location fields had no client-side cap, so an over-long agenda came back as the generic "The request body or parameters failed validation." naming no field and marking no input. Caps and a live count added, and the refusal now marks the field it belongs to.
+  - `[medium]` `[patch]` `_optional_text` refused tab characters as "characters that cannot be stored" — untrue, and it rejects any agenda pasted from Word or Outlook. The whitelist moved to `services/claims/edit.py` and is now shared with the note validator, which had been fixed in isolation.
+  - `[medium]` `[patch]` A committed, audited meeting create could answer "No meeting 47 in your diary." from its post-commit re-read — nonsense inside a create dialog, and an invitation to write a second row. Back-ported the `/problems/…-not-readable` shape Story 4.2 had written for notes.
+  - `[medium]` `[patch]` Both new tab strips shipped `role="tablist"`/`role="tab"` without any keyboard pattern, though `DetailTabs` already implements one and its docstring records that shipping the role without the keys was a defect caught in an earlier review. `useTabKeys` extracted to `lib/tabKeys.ts` and reused.
+  - `[medium]` `[patch]` `noDerivation.test.ts` did not scan `src/api/`, so planting the prototype's `meetingDate >= today && !isDone` rule inside `useMeetings`'s `select` left all five guard tests green — in the file that already owns the payload and already has a `select`. Added as a scan root, which then exposed a fat-arrow false positive and the absence of any rule for filtering by a derived field; both fixed.
+  - `[medium]` `[patch]` `pytestmark = requires_db` at module level skipped 19 tests that never touch a database when no Postgres is present — including the only guard against migration 0032's frozen `MEETING_TYPES` drifting from the enum. The marker is now per-test.
+  - `[medium]` `[patch]` The e2e status assertion compared the DOM against the response it had just fetched, so flipping `>=` to `>` in the upcoming rule passed the entire spec; it now restates the horizon rule independently, and the order assertion restates `(date, time, id)` instead of relying on insertion order.
+  - `[low]` `[patch]` `meetingTime` carrying a UTC offset was accepted on create and bound into a naive `TIME` column, though the cursor decoder guards exactly this; refused at the boundary.
+  - `[low]` `[patch]` `location` is a single-line control validated by the multi-line rule, so a newline from a non-SPA caller broke the card's when-line; newlines refused.
+  - `[low]` `[patch]` Migration 0033's `downgrade()` re-resolved claim scope at downgrade time, so it silently missed rows if assignments had changed and raised — refusing to roll back — if a persona now had fewer than two claims. It now deletes by the frozen tuples it seeded.
+  - `[low]` `[patch]` `test/api-mock.ts` repeated a prefix-collision rationale five times and it was false — the catch-all tests `/api/claims/` *with* a trailing slash, which the diary paths never contain. Corrected, with the real reason for the ordering written down.
+  - `[low]` `[patch]` "Audit event in the same transaction" was never proven — the row was read back after the commit, which looks identical whether it was one transaction or two. Now proven by making the commit raise and reading through a second session.
+  - `[low]` `[patch]` Both CAS-race branches were unreachable to the suite (every 409 was caught by the pre-check) and `complete_meeting_cas`'s `is_done IS false` guard never refused anything — deleting it left the suite green. Three tests added.
+  - `[low]` `[patch]` `assert page.upcoming_count != 0` was tautological and it was the guard on the one-clock fix; replaced by a comparison that fails if the horizon regresses.
+  - `[low]` `[patch]` Smaller test weaknesses closed: an eight-month seed-date window that widened daily, a participant check that asserted non-emptiness rather than content, a `downgrade()` never exercised where its bug could show, 403 tests that asserted status without confirming no row was written, an untested `MAX_LOCATION_LENGTH`, and a helper that held only by accident of test ordering.
+
 ### 2026-08-17 — Review pass
 
 - intent_gap: 0
@@ -277,3 +305,34 @@ patches. Final numbers, all above the Epic 3 baselines:
   `notes` — a documented mapping, not verbatim fidelity.
 - **No `update_meeting`.** Correcting a date means delete-and-recreate, which loses the audit thread;
   deferred with the reasoning in `deferred-work.md`.
+
+### Follow-up review pass (2026-08-17)
+
+A second, independent adversarial review was run because the first pass set
+`followup_review_recommended: true`. Both reviewers were given the first pass's triage log and told
+not to repeat it, and — because Story 4.2 had since rewritten much of `meetings.py` and the
+repository under it — to verify every candidate against current HEAD rather than against the diff.
+That calibration paid: a dozen candidates were checked and dropped as already fixed by 4.2,
+including the partial `(meeting_date, id)` sort order, the whole-book `total` on a filtered page,
+and the `exact: true` invalidation.
+
+**19 findings patched (1 high, 10 medium, 8 low), 3 deferred, 0 rejected.** No intent gaps and no
+spec defects, so `review_loop_iteration` stays 0.
+
+The high one is a genuine cross-story defect neither first pass could have caught alone: Story 4.2
+taught the Notes summary to ask the server about the viewer's local day, but the Meetings sub-tab
+kept asking in UTC — so the same meeting rendered `upcoming` with a live ✓ Done in one sub-tab and
+greyed `done` in the other, one click apart, for any handler west of UTC on a weekday evening. A
+server test had been written asserting that divergence *as intended*, which is how it survived.
+
+The most consequential cluster, though, was tests that cannot fail — found by mutation rather than
+inspection. Planting the prototype's client-side date rule back into `useMeetings` left every
+`noDerivation` guard green, because the guard scans `features/` but not `src/api/`. Flipping `>=` to
+`>` in the upcoming rule passed the whole 4.1 e2e spec, because its status assertion compared the
+DOM against the response it had just fetched. Nineteen tests skipped without a database despite
+never touching one, including the only guard on the migration's frozen enum tuple. Those greens were
+weaker evidence than their numbers suggested, and are now real.
+
+**Gates after the follow-up:** ruff and mypy clean (185 files) · pytest **1805** (was 1772) ·
+vitest **439** / 28 files (was 415) · eslint 0 errors · Playwright `@story:4-1` **6/6**, full suite
+**136/136** against a stack rebuilt from patched source.

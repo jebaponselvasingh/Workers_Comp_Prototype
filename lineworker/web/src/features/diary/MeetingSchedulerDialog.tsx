@@ -37,11 +37,19 @@
  * clears only `notes` and `location` (line 1878) and pre-fills the next
  * meeting from the last one.
  *
- * **The linked claim cannot be retargeted.** It is a `readonly` input showing
- * `WC-nnnn — Worker Name`, exactly as the prototype has it, because the modal
- * opens *from* a claim: a select here would publish "schedule against any
- * claim in my book" as an interaction nothing in the story asks for, and the
- * server would then have to refuse choices the UI had offered.
+ * **The linked claim cannot be retargeted, and since the 4.2 follow-up review
+ * that is true of the *value* as well as of the control.** It is a `readonly`
+ * input showing `WC-nnnn — Worker Name`, exactly as the prototype has it,
+ * because the modal opens *from* a claim: a select here would publish "schedule
+ * against any claim in my book" as an interaction nothing in the story asks
+ * for, and the server would then have to refuse choices the UI had offered. But
+ * the submit used to read the live `?claim=` prop rather than what the field had
+ * been showing, so the workspace moving underneath an open modal — auto-select
+ * landing, a Back or a Forward — retargeted it silently. The claim is captured
+ * into the draft at mount; see `Draft.claimId`.
+ *
+ * **And a save with no claim is refused here** rather than written as an orphan
+ * row — see `MISSING_CLAIM_MESSAGE`.
  */
 import { useState } from "react";
 
@@ -55,6 +63,10 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 
+import {
+  MEETING_LOCATION_LENGTH_CAP,
+  MEETING_NOTES_LENGTH_CAP,
+} from "@/api/fieldLimits";
 import type { MeetingParticipant, MeetingType, NewMeeting } from "@/api/meetings";
 import { useMeetingWriteInFlight, useScheduleMeeting } from "@/api/meetings";
 import { feedbackFromError } from "@/features/claim-detail/useInlineEdits";
@@ -84,6 +96,21 @@ const LABEL_CLASS =
  */
 export const MISSING_DATE_MESSAGE = "Pick a date for this meeting.";
 
+/**
+ * The refusal for a save with no claim behind it.
+ *
+ * The only client check used to be the empty date, so saving while the
+ * read-only Linked Claim field said "No claim selected" answered 201 with
+ * `claimId: null` — an orphan meeting that can never be attached to anything,
+ * because there is no `update_meeting` and the only correction is
+ * delete-and-recreate. The column is nullable so the *server* accepts one
+ * (a touchpoint genuinely about no case file is a real thing to record), but
+ * this modal has no control for choosing a claim, so from here an untagged
+ * meeting is never a decision — it is the selection not having arrived.
+ */
+export const MISSING_CLAIM_MESSAGE =
+  "Select a case before scheduling — this meeting has no claim to attach to.";
+
 /** The id the alert carries, and the only thing that ever points at it. */
 const ERROR_ID = "meeting-scheduler-error";
 
@@ -99,7 +126,7 @@ const ERROR_ID = "meeting-scheduler-error";
  * claims it.
  */
 interface Refusal {
-  field: "meetingDate" | null;
+  field: "meetingDate" | "meetingClaim" | "meetingNotes" | "meetingLocation" | null;
   feedback: FieldFeedback;
 }
 
@@ -131,10 +158,24 @@ interface Draft {
   location: string;
   notes: string;
   participants: ReadonlySet<MeetingParticipant>;
+  /**
+   * The claim this meeting will be linked to — **captured at mount**.
+   *
+   * The docstring above says the linked claim "cannot be retargeted", and it
+   * was not true: the submit read the `claimId` prop, which is `?claim=` as it
+   * stands *then*. Open the scheduler before the queue's auto-select lands, or
+   * press Back or Forward while it is open, and the read-only field silently
+   * changes under the handler — and the meeting is written against a claim they
+   * never chose, into a table with no `update_meeting`. Story 4.2 made exactly
+   * this capture for the note draft and for the same reason; this is the modal's
+   * version, and the capture is what makes the read-only field honest.
+   */
+  claimId: string | null;
 }
 
-function emptyDraft(): Draft {
+function emptyDraft(claimId: string | null): Draft {
   return {
+    claimId,
     // The prototype's first option is the default because it is first, not
     // because it is a sensible default; kept, so the modal opens the way the
     // one this replaces did.
@@ -166,7 +207,10 @@ export function MeetingSchedulerDialog({
 }) {
   const schedule = useScheduleMeeting();
   const busy = useMeetingWriteInFlight();
-  const [draft, setDraft] = useState<Draft>(emptyDraft);
+  // The lazy initialiser runs once per mount, and `MeetingsSubTab` keys this
+  // component on `schedulerSession` so every *open* is a mount — which is what
+  // makes "captured at mount" the same thing as "captured when it opened".
+  const [draft, setDraft] = useState<Draft>(() => emptyDraft(claimId));
   const [refusal, setRefusal] = useState<Refusal | null>(null);
 
   /**
@@ -202,10 +246,21 @@ export function MeetingSchedulerDialog({
       });
       return;
     }
+    if (draft.claimId === null) {
+      // The second client check, and the second thing this modal cannot
+      // produce a usable row without. See `MISSING_CLAIM_MESSAGE`.
+      setRefusal({
+        field: "meetingClaim",
+        feedback: { kind: "invalid", message: MISSING_CLAIM_MESSAGE },
+      });
+      return;
+    }
     setRefusal(null);
 
     const body: NewMeeting = {
-      claimId,
+      // The claim the modal *opened* against and has been showing, never the
+      // live selection — see `Draft.claimId`.
+      claimId: draft.claimId,
       meetingType: draft.meetingType,
       meetingDate: draft.meetingDate,
       meetingTime: draft.meetingTime === "" ? null : draft.meetingTime,
@@ -288,18 +343,25 @@ export function MeetingSchedulerDialog({
             <input
               id="meeting-claim"
               data-testid="scheduler-claim"
+              data-claim-id={draft.claimId ?? ""}
               readOnly
+              aria-invalid={refusal?.field === "meetingClaim"}
+              aria-describedby={refusal?.field === "meetingClaim" ? ERROR_ID : undefined}
               // Three states, not two, mirroring `CopilotPane`'s sub-line: the
               // case file is a separate request, so between opening the modal
               // and its arrival — or if it fails outright — `workerName` is
               // null, and `${claimId} — ` with nothing after it reads as a
               // truncated field rather than as a claim reference.
+              //
+              // The **captured** id, so what is displayed is what will be sent.
+              // The worker's name still comes from the live prop: it is a lookup
+              // of the same claim arriving a moment later, not a second claim.
               value={
-                claimId === null
+                draft.claimId === null
                   ? "No claim selected"
-                  : workerName === null
-                    ? claimId
-                    : `${claimId} — ${workerName}`
+                  : workerName === null || draft.claimId !== claimId
+                    ? draft.claimId
+                    : `${draft.claimId} — ${workerName}`
               }
               className={`${FIELD_CLASS} bg-steel-soft font-semibold text-steel`}
             />
@@ -375,12 +437,28 @@ export function MeetingSchedulerDialog({
               data-testid="scheduler-notes"
               value={draft.notes}
               disabled={busy}
+              // **The column's width, declared on the control.** Neither free
+              // text field had a cap, so a pasted agenda past 2,000 characters
+              // was refused by Pydantic with the generic "The request body or
+              // parameters failed validation." — no field named, no limit
+              // shown, and nothing on screen marked invalid. 4.2's note
+              // textarea already declares its cap; this is that, back-ported to
+              // the two controls that needed it.
+              maxLength={MEETING_NOTES_LENGTH_CAP}
+              aria-invalid={refusal?.field === "meetingNotes"}
+              aria-describedby={refusal?.field === "meetingNotes" ? ERROR_ID : undefined}
               placeholder="Meeting agenda, topics to cover, documents needed…"
               onChange={(event) =>
                 setDraft((current) => ({ ...current, notes: event.target.value }))
               }
               className={`${FIELD_CLASS} min-h-[70px]`}
             />
+            <p
+              data-testid="scheduler-notes-length"
+              className="mt-[2px] text-right text-[9.5px] text-faint"
+            >
+              {draft.notes.length} of {MEETING_NOTES_LENGTH_CAP} characters
+            </p>
           </div>
 
           <div className="col-span-2">
@@ -392,12 +470,21 @@ export function MeetingSchedulerDialog({
               data-testid="scheduler-location"
               value={draft.location}
               disabled={busy}
+              maxLength={MEETING_LOCATION_LENGTH_CAP}
+              aria-invalid={refusal?.field === "meetingLocation"}
+              aria-describedby={refusal?.field === "meetingLocation" ? ERROR_ID : undefined}
               placeholder="e.g. Teams call, plant office, adjuster office…"
               onChange={(event) =>
                 setDraft((current) => ({ ...current, location: event.target.value }))
               }
               className={FIELD_CLASS}
             />
+            <p
+              data-testid="scheduler-location-length"
+              className="mt-[2px] text-right text-[9.5px] text-faint"
+            >
+              {draft.location.length} of {MEETING_LOCATION_LENGTH_CAP} characters
+            </p>
           </div>
 
           {refusal !== null && (
