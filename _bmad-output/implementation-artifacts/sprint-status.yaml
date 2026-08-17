@@ -76,7 +76,7 @@ development_status:
   3-2-reserve-adequacy-check: done
   3-3-bills-indemnity-payment-schedule: done
   3-4-payment-approval-batch: done
-  3-5-auto-generated-action-checklist-approval: ready-for-dev
+  3-5-auto-generated-action-checklist-approval: review
   epic-3-retrospective: optional
 
   # Epic 4: Diary, Meetings & Stakeholder Emails

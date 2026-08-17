@@ -112,6 +112,73 @@ export interface paths {
         patch: operations["edit_fields_claims__claim_business_id__patch"];
         trace?: never;
     };
+    "/claims/{claim_business_id}/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The claim's auto-generated action checklist, ranked and capped
+         * @description What this claim needs next, in the order the server ranked it.
+         *
+         *     Thin by AD-1: one service call and a shape. Eleven trigger rules, their
+         *     urgencies, the cap and the padding floor are all decided in
+         *     `services/worklist` over the `worklist_actions` rule document — this route
+         *     does not filter, sort, count or compare anything, and the client must not
+         *     either (`web/src/features/queue/noDerivation.test.ts` holds that half).
+         *
+         *     **No `RATE_SCHEDULE_RESPONSE`**, unlike every other case-file route: this
+         *     payload carries no benefit block, so a jurisdiction with no statutory rate
+         *     schedule does not take it down. The checklist is exactly the surface that
+         *     should still answer when a money figure cannot be computed.
+         *
+         *     404 for out of scope, in the case file's exact wording and for its reason
+         *     (AD-7).
+         */
+        get: operations["actions_claims__claim_business_id__actions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/claims/{claim_business_id}/assessment/approval": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve the claim's assessment (audited, versioned, status-guarded)
+         * @description Move a claim from assessment to `ch_approved`, and answer with the file.
+         *
+         *     **POST to a resource rather than PATCH of a field**, exactly as the payment
+         *     approval is: the client is not proposing a status, it is requesting a
+         *     transition, and the server decides both the target status and whether the
+         *     transition is available. `PATCH {status: "ch_approved"}` would publish the
+         *     whole status vocabulary as something a caller may ask for — including
+         *     `denied` and `settled_closed`, which no story has given anybody a command
+         *     for.
+         *
+         *     The success body is the whole case file, so the header's chip, the stepper
+         *     and the timeline arrive together (AC 4). The SPA invalidates the queue and
+         *     the top-bar counts beside it, because a claim leaving `ch_assessment_process`
+         *     changes a number two panes away that nothing in the browser could compute.
+         */
+        post: operations["approve_assessment_route_claims__claim_business_id__assessment_approval_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/claims/{claim_business_id}/comp-rate": {
         parameters: {
             query?: never;
@@ -170,6 +237,32 @@ export interface paths {
         get: operations["document_sheet_claims__claim_business_id__documents__document_id__content_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/claims/{claim_business_id}/documents/{document_id}/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark a document reviewed, or confirm one already reviewed (audited)
+         * @description Record one step of a document's review, and answer with the case file.
+         *
+         *     **404 for a document that is not on this claim**, in the claim's own
+         *     wording: `select_document` conflates "no such document", "another claim's
+         *     document" and "not your claim" for the reason the claim route conflates its
+         *     own two, and a distinct "no such document" would confirm that the *claim*
+         *     exists (AD-7).
+         */
+        post: operations["review_document_claims__claim_business_id__documents__document_id__review_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -259,6 +352,31 @@ export interface paths {
          *     the entity it changed.
          */
         delete: operations["remove_injury_claims__claim_business_id__injuries__injury_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/claims/{claim_business_id}/osha-log": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record the injury on the OSHA 300 log (audited, versioned)
+         * @description Set `osha_logged`, and answer with the case file.
+         *
+         *     A claim whose injury is not recordable is **422, not 409**: there is
+         *     nothing to re-read and trying again will never work, because recordability
+         *     is a property of the injury rather than a state a claim passes through.
+         *     Every other refusal on this route is one of `_answer`'s four.
+         */
+        post: operations["mark_osha_logged_route_claims__claim_business_id__osha_log_post"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -455,6 +573,170 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * ActionCommand
+         * @description The completion an action offers, when it offers one (Story 3.5, AC 5).
+         *
+         *     A checklist row can carry a second control beside its "go to": the audited
+         *     write that makes the row stop firing. Which write — and whether there is one
+         *     at all — is the **server's** answer, published on the action, for
+         *     `ScheduleWeekView.approvable`'s reason: a browser deciding that a document
+         *     is ready to confirm would offer a button the command refuses, and a 409 a
+         *     handler cannot act on is worse than no button.
+         *
+         *     The two document members are one command with two states rather than a
+         *     toggle. `mark_document_reviewed` is offered while the document is unread;
+         *     `confirm_document` replaces it once it has been reviewed, which is the
+         *     prototype's own sequencing (`confirmDocument` returns early when
+         *     `!st.reviewed`) and is enforced server-side as a status guard rather than
+         *     only as a disabled button.
+         *
+         *     There is deliberately no member for a payment confirmation: Story 3.4 owns
+         *     that command and its ✓ lives in the Bills tab's sheet, so the payment action
+         *     deep-links there rather than growing a second approval surface with its own
+         *     version handling.
+         * @enum {string}
+         */
+        ActionCommand: "approve_assessment" | "mark_document_reviewed" | "confirm_document" | "mark_osha_logged";
+        /**
+         * ActionKey
+         * @description The eleven trigger rules of the action checklist (Story 3.5, AC 1).
+         *
+         *     **In the data layer although no column holds one**, and the reason is
+         *     neither `BodyRegion`'s nor `ScheduleWeekStatus`'s. Those two are here
+         *     because a native enum column needs its members below `services/`; these
+         *     three action enums are here because the **rules tier** needs them and
+         *     `rules/` must not import from `services/` (the direction
+         *     `rules/parameters.py` states and `_COMP_RATE_MIN_BP` restates the hard way
+         *     by copying a bound rather than importing it). `worklist_actions` carries one
+         *     urgency per rule, and `WorklistActions.of` resolves each member by name at
+         *     load time — the `_status_set` discipline, which turns a typo in a rule
+         *     document into one refusal naming the value instead of a chip that silently
+         *     stops rendering. `data/models/enums.py` is the only vocabulary module below
+         *     both tiers, so it is where a vocabulary two tiers share has to live.
+         *
+         *     `RiskBand` and `TreatmentPhase` stay in `services/derivations` precisely
+         *     because nothing *outside* that package needs to name their members.
+         *
+         *     **Member order is the rules' declaration order, and it is a contract.**
+         *     `services/worklist/actions.py` evaluates the rules in this order and ranks
+         *     on `(urgency, this index)`, so the list a claim produces is totally ordered
+         *     rather than merely sorted — Story 5.4 reads element 0 as the claim's "next
+         *     best action", and a tie broken by dict iteration is a top action that moves
+         *     between releases with nothing anywhere saying so.
+         *
+         *     `routine_review` is the eleventh and is the padding rule: it is what brings
+         *     a quiet claim's list up to the floor, and it is a rule rather than a
+         *     filler string because it too can decline to fire (a settled claim with no
+         *     documents and no schedule produces the empty state instead).
+         * @enum {string}
+         */
+        ActionKey: "assessment_approval" | "siu_escalation" | "overdue_rtw" | "surgical_pre_auth" | "bill_review" | "payment_confirmation" | "osha_log" | "defense_counsel" | "modified_duty" | "diary_check_in" | "routine_review";
+        /**
+         * ActionResponse
+         * @description One row of the "⏰ Upcoming actions required" card.
+         *
+         *     **Everything on this object was decided by the server**, which is the whole
+         *     of AC 1: the urgency, the ordering, the cap and whether the row is even
+         *     here are `services/worklist/actions.py`'s answers over a rule document's
+         *     parameters. The SPA maps `urgency` to a chip colour and `target` to a
+         *     button label — the enum convention's UI half — and computes nothing.
+         *
+         *     `enabled` and `disabledReason` are the cross-epic seam (AC 3). A `false`
+         *     here is not a failure: it says the surface this points at belongs to Epic
+         *     4 or Epic 6, and the sentence beside it names which. Stories 4.2 and 6.2
+         *     flip these by deleting a row from the generator's seam table, with no
+         *     change to the client — which is only true because the client never decides
+         *     what has shipped.
+         *
+         *     `command`, `documentId` and `documentVersion` are the completion control
+         *     (AC 5). The version travels for `ScheduleWeekResponse.version`'s reason: a
+         *     control that compare-and-swaps has to be holding the number it will send,
+         *     or a handler's first click 409s against a payload they never saw.
+         */
+        ActionResponse: {
+            /** @description The audited completion this row offers beside its go-to control, or null when it offers none. Never set on a disabled row. */
+            command: components["schemas"]["ActionCommand"] | null;
+            /**
+             * Disabledreason
+             * @description Why the go-to control is disabled, naming the epic that enables it. Null exactly when `enabled` is true.
+             */
+            disabledReason: string | null;
+            /**
+             * Documentid
+             * @description The document `command` acts on, when it acts on one.
+             */
+            documentId: number | null;
+            /**
+             * Documentversion
+             * @description The **document's** `version`, to be sent back as `expectedVersion` — not the claim's.
+             */
+            documentVersion: number | null;
+            /** Enabled */
+            enabled: boolean;
+            /**
+             * Id
+             * @description The row's stable identity, `{key}:{target}` — unique within the list by construction. Keys a client-side list; not a database id.
+             */
+            id: string;
+            key: components["schemas"]["ActionKey"];
+            /** Label */
+            label: string;
+            target: components["schemas"]["ActionTarget"];
+            urgency: components["schemas"]["ActionUrgency"];
+        };
+        /**
+         * ActionTarget
+         * @description Where a checklist row's "go to" control takes a handler (Story 3.5, AC 3).
+         *
+         *     The prototype's `handleActionGoto` kinds (lines 904-912), as a closed type.
+         *     Three of them are tabs this console already has, four are surfaces later
+         *     epics own, and one is not a place at all:
+         *
+         *     - `overview`, `bills`, `documents` — tabs Epic 2 and Story 3.3 built. The
+         *       control switches tabs within the detail pane; there is no bespoke routing
+         *       and no second notion of "where am I" (Story 2.2's tab state is local UI
+         *       state, and this reuses it).
+         *     - `diary`, `meetings` — Epic 4. `fraud` — Epic 6's AI Insights.
+         *       `rtw_letter` — Epic 6's RTW-letter modal (FR-H-11).
+         *     - `approve` — the assessment approval, which is a *command* rather than a
+         *       destination. The prototype models it the same way, and keeping it in this
+         *       enum is what lets the card render one control per row.
+         *
+         *     **This enum is the cross-epic seam, and it is why `enabled` is a server
+         *     field rather than a client-side membership test.** Story 4.2 enables the
+         *     diary link and Story 6.2 the fraud one; both are a change to
+         *     `services/worklist/actions.py`'s target table and to nothing in the SPA. A
+         *     browser that decided which targets exist would be a second copy of that
+         *     table, and it would go stale in the release where one of them shipped.
+         * @enum {string}
+         */
+        ActionTarget: "overview" | "bills" | "documents" | "diary" | "meetings" | "fraud" | "rtw_letter" | "approve";
+        /**
+         * ActionUrgency
+         * @description How loudly one checklist row speaks (Story 3.5, AC 1).
+         *
+         *     The prototype's `acti-tag` chips are two-tone — `high` and `med` — and this
+         *     is that scheme with a third value, because the padding rows are a different
+         *     kind of thing from the rules: "read the case file when you have a moment"
+         *     and "this claim's OSHA 300 entry is unfiled" rendering at one volume is a
+         *     worklist that has stopped distinguishing.
+         *
+         *     Read as: `high` — a statutory or lifecycle clock is running; `medium` —
+         *     somebody is waiting on this handler; `low` — routine.
+         *
+         *     **Member order is rank order**, most urgent first, which is what
+         *     `services/worklist/actions.py` sorts on and what PostgreSQL would sort the
+         *     type in if a column ever held one. The *values* per rule are a rule
+         *     document's answer (`worklist_actions`), never a Python literal — AD-8.
+         *
+         *     `medium`, not the prototype's `med`, although `RiskBand` uses the short
+         *     form. These are different vocabularies with different consumers and the
+         *     long form is the one a reader of a JSON payload does not have to expand;
+         *     `RiskBand`'s abbreviation exists because it is drawn inside a 68px gauge.
+         * @enum {string}
+         */
+        ActionUrgency: "high" | "medium" | "low";
+        /**
          * BenefitResponse
          * @description The statutory weekly indemnity benefit, decided server-side (Story 3.1).
          *
@@ -628,6 +910,8 @@ export interface components {
             injuryType: string;
             /** Litigationflag */
             litigationFlag: boolean;
+            /** Oshalogged */
+            oshaLogged: boolean;
             /** Osharecordable */
             oshaRecordable: boolean;
             risk: components["schemas"]["RiskBand"];
@@ -636,6 +920,7 @@ export interface components {
             stage: components["schemas"]["Stage"];
             /** State */
             state: string;
+            status: components["schemas"]["ClaimStatus"];
             /** Surgeryrequired */
             surgeryRequired: boolean;
             /** Workername */
@@ -651,6 +936,30 @@ export interface components {
             docType: components["schemas"]["DocType"];
             /** Received */
             received: boolean;
+        };
+        /**
+         * ClaimActionsResponse
+         * @description The claim's checklist, and the rule document that shaped it.
+         *
+         *     `cap` and `paddingFloor` ride along for `thresholdsVersion`'s reason: the
+         *     length of this list is a rule document's answer, and "why are there six of
+         *     these?" should be answerable from the response rather than reconstructed.
+         *     `rulesVersion` names the document that answered, exactly as the queue
+         *     payload names both of its own.
+         *
+         *     No `count`: `items` is the list and its length is already the answer —
+         *     publishing a second one would be a number a client could find disagreeing
+         *     with what it is rendering.
+         */
+        ClaimActionsResponse: {
+            /** Cap */
+            cap: number;
+            /** Items */
+            items: components["schemas"]["ActionResponse"][];
+            /** Paddingfloor */
+            paddingFloor: number;
+            /** Rulesversion */
+            rulesVersion: number;
         };
         /**
          * ClaimCardResponse
@@ -881,6 +1190,11 @@ export interface components {
             unfilteredTotal: number;
         };
         /**
+         * ClaimStatus
+         * @enum {string}
+         */
+        ClaimStatus: "initial" | "ch_assessment_process" | "ch_approved" | "denied" | "settled" | "settled_closed";
+        /**
          * CommStatus
          * @enum {string}
          */
@@ -967,6 +1281,26 @@ export interface components {
          * @enum {string}
          */
         DocType: "froi" | "incident" | "medauth" | "wage" | "rtw" | "legal";
+        /**
+         * DocumentReviewCommand
+         * @description The document review body: which completion, and the document's version.
+         *
+         *     **`step` is one of the two document members of `ActionCommand`**, which is
+         *     the same value the checklist published on the row the handler clicked — so
+         *     the control and the command name one thing rather than two that have to be
+         *     kept in agreement. A caller sending `approve_assessment` here gets a 422
+         *     from the enum before the command sees it, and the command refuses it again
+         *     for the AD-13 agent tools that never pass through this model.
+         */
+        DocumentReviewCommand: {
+            /**
+             * Expectedversion
+             * @description The **document's** `version`, published on the checklist row as `documentVersion` — not the claim's.
+             */
+            expectedVersion: number;
+            /** @description `mark_document_reviewed` for a first read, `confirm_document` to accept one already reviewed. Confirming an unreviewed document is refused with 409, which is the prototype's own sequencing enforced server-side. */
+            step: components["schemas"]["ActionCommand"];
+        };
         /**
          * DocumentRowResponse
          * @description One row of the claim documents list.
@@ -2259,6 +2593,26 @@ export interface components {
             /** Error Type */
             type: string;
         };
+        /**
+         * VersionedCommand
+         * @description The body every checklist completion sends: the version it was read at.
+         *
+         *     One model for the assessment approval and the OSHA entry, because they are
+         *     one body — a compare-and-swap and nothing else. The document review adds a
+         *     `step` and so has a model of its own rather than an optional field here: an
+         *     optional discriminator is a body that can be valid and mean nothing.
+         *
+         *     `extra="forbid"` for `ClaimFieldPatch`'s reason — an unknown key is a 422
+         *     from the contract rather than a value silently dropped on the way to a
+         *     command.
+         */
+        VersionedCommand: {
+            /**
+             * Expectedversion
+             * @description The `version` the client read off the **claim**. The write is compare-and-swapped on it *and* guarded on the claim's current state; either mismatch answers 409 with the fresh case file.
+             */
+            expectedVersion: number;
+        };
     };
     responses: never;
     parameters: never;
@@ -2624,6 +2978,201 @@ export interface operations {
             };
         };
     };
+    actions_claims__claim_business_id__actions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The claim's business id, `WC-nnnn`. */
+                claim_business_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaimActionsResponse"];
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description No such claim in the caller's scope. Deliberately the same answer for a claim that does not exist and one that belongs to another employer — see the route docstring (RFC 9457 problem document). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    approve_assessment_route_claims__claim_business_id__assessment_approval_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The claim's business id, `WC-nnnn`. */
+                claim_business_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VersionedCommand"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaimDetailResponse"];
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The caller's role does not carry the edit capability. Answered before the claim is looked up, so it says nothing about whether the claim exists (RFC 9457 problem document). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description No such claim in the caller's scope. Deliberately the same answer for a claim that does not exist and one that belongs to another employer — see the route docstring (RFC 9457 problem document). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The claim has changed since the caller read it. The body is an RFC 9457 problem document carrying the fresh entity under `claim` — re-read and redo; nothing is merged server-side. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        claim: components["schemas"]["ClaimDetailResponse"];
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description The claim's jurisdiction has no `state_rate_schedule` row, so its weekly benefit cannot be calculated and no default is substituted (RFC 9457 problem document). Unreachable against a correctly migrated database — 0023 refuses to complete otherwise. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+        };
+    };
     edit_comp_rate_claims__claim_business_id__comp_rate_patch: {
         parameters: {
             query?: never;
@@ -2817,6 +3366,144 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    review_document_claims__claim_business_id__documents__document_id__review_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The claim's business id, `WC-nnnn`. */
+                claim_business_id: string;
+                /** @description The document's surrogate id, as the payload publishes it. */
+                document_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DocumentReviewCommand"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaimDetailResponse"];
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The caller's role does not carry the edit capability. Answered before the claim is looked up, so it says nothing about whether the claim exists (RFC 9457 problem document). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description No such claim in the caller's scope. Deliberately the same answer for a claim that does not exist and one that belongs to another employer — see the route docstring (RFC 9457 problem document). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The claim has changed since the caller read it. The body is an RFC 9457 problem document carrying the fresh entity under `claim` — re-read and redo; nothing is merged server-side. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        claim: components["schemas"]["ClaimDetailResponse"];
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The request names something this command cannot apply — a claim whose injury is not OSHA recordable, or a document review step that is not one of the two (RFC 9457 problem document). */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The claim's jurisdiction has no `state_rate_schedule` row, so its weekly benefit cannot be calculated and no default is substituted (RFC 9457 problem document). Unreachable against a correctly migrated database — 0023 refuses to complete otherwise. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
                 };
             };
         };
@@ -3140,6 +3827,142 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description The claim's jurisdiction has no `state_rate_schedule` row, so its weekly benefit cannot be calculated and no default is substituted (RFC 9457 problem document). Unreachable against a correctly migrated database — 0023 refuses to complete otherwise. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+        };
+    };
+    mark_osha_logged_route_claims__claim_business_id__osha_log_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The claim's business id, `WC-nnnn`. */
+                claim_business_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VersionedCommand"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaimDetailResponse"];
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The caller's role does not carry the edit capability. Answered before the claim is looked up, so it says nothing about whether the claim exists (RFC 9457 problem document). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description No such claim in the caller's scope. Deliberately the same answer for a claim that does not exist and one that belongs to another employer — see the route docstring (RFC 9457 problem document). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The claim has changed since the caller read it. The body is an RFC 9457 problem document carrying the fresh entity under `claim` — re-read and redo; nothing is merged server-side. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        claim: components["schemas"]["ClaimDetailResponse"];
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The request names something this command cannot apply — a claim whose injury is not OSHA recordable, or a document review step that is not one of the two (RFC 9457 problem document). */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
                 };
             };
             /** @description The claim's jurisdiction has no `state_rate_schedule` row, so its weekly benefit cannot be calculated and no default is substituted (RFC 9457 problem document). Unreachable against a correctly migrated database — 0023 refuses to complete otherwise. */

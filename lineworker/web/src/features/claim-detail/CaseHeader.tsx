@@ -20,7 +20,7 @@
 import type { CaseHeaderData } from "@/api/claims";
 
 import { RiskGauge } from "./RiskGauge";
-import { SEVERITY_WORD, STAGE_LABEL } from "./labels";
+import { CLAIM_STATUS_LABEL, SEVERITY_WORD, STAGE_LABEL } from "./labels";
 
 /** The prototype's `.stag` palette, shared with the queue card's stage pill. */
 const STAGE_PILL: Record<CaseHeaderData["stage"], string> = {
@@ -28,6 +28,24 @@ const STAGE_PILL: Record<CaseHeaderData["stage"], string> = {
   investigation: "bg-warn-soft text-warn",
   treatment: "bg-ok-soft text-ok",
   settled: "bg-surface-2 text-faint",
+};
+
+/**
+ * The assessment status pill (Story 3.5).
+ *
+ * Colour here means "where is this claim in its own lifecycle", not "is this
+ * good": the two statuses a handler can still act on are the warm ones, an
+ * approved claim is the calm one, and the three terminal states are muted
+ * because nothing on this card is going to move them. `denied` is the one
+ * error tone, because it is the only status that is a *refusal*.
+ */
+const STATUS_PILL: Record<CaseHeaderData["status"], string> = {
+  initial: "bg-warn-soft text-warn",
+  ch_assessment_process: "bg-warn-soft text-warn",
+  ch_approved: "bg-ok-soft text-ok",
+  denied: "bg-error-soft text-error",
+  settled: "bg-surface-2 text-muted-text",
+  settled_closed: "bg-surface-2 text-faint",
 };
 
 function Badge({
@@ -87,6 +105,14 @@ export function CaseHeader({ header }: { header: CaseHeaderData }) {
         <div data-testid="case-header-badges" className="mt-2 flex flex-wrap items-center gap-[6px]">
           <Badge testId="badge-stage" className={STAGE_PILL[header.stage]}>
             {STAGE_LABEL[header.stage]}
+          </Badge>
+          {/* **The assessment status, beside the stage and not instead of it**
+              (Story 3.5). They are two facts: a treatment-stage claim can be
+              `initial` or `ch_approved`, and the stepper above shows only the
+              first. This chip is what AC 4 asks to change without a manual
+              refresh when the checklist's Approve control commits. */}
+          <Badge testId="badge-status" className={STATUS_PILL[header.status]}>
+            {CLAIM_STATUS_LABEL[header.status]}
           </Badge>
           {header.fraudFlag && (
             <Badge testId="badge-fraud" className="bg-warn-soft text-warn">

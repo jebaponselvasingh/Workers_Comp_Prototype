@@ -115,6 +115,7 @@ export type DocType = components["schemas"]["DocType"];
 export type CommStatus = components["schemas"]["CommStatus"];
 export type ReturnStatus = components["schemas"]["ReturnStatus"];
 export type Disability = components["schemas"]["Disability"];
+export type ClaimStatus = components["schemas"]["ClaimStatus"];
 export type RecoveryWindow = components["schemas"]["RecoveryWindow"];
 
 /**
@@ -811,6 +812,234 @@ export function applyOptimisticCompRate(
       isOverridden: compRateBp !== null,
     },
   };
+}
+
+/** The auto-generated action checklist (Story 3.5). */
+export type ClaimActions = components["schemas"]["ClaimActionsResponse"];
+export type ClaimAction = components["schemas"]["ActionResponse"];
+export type ActionKey = components["schemas"]["ActionKey"];
+export type ActionTarget = components["schemas"]["ActionTarget"];
+export type ActionUrgency = components["schemas"]["ActionUrgency"];
+export type ActionCommand = components["schemas"]["ActionCommand"];
+
+/**
+ * One claim's checklist — the list, in the order the server ranked it.
+ *
+ * **A query of its own rather than a block on the case file**, which is the
+ * same call `useClaimFinancials` makes and for the same two reasons: the
+ * payload costs the server three child reads and two rule-document loads, and
+ * the case file is the console's most-fetched response. The two cannot
+ * disagree despite being two entries, because the checklist is generated from
+ * the very rows the case file is assembled from and the three completion
+ * mutations invalidate both.
+ *
+ * Nothing here sorts, filters, counts or thresholds — `items` is rendered in
+ * the order it arrives (AD-1, and `noDerivation.test.ts` holds the guard).
+ */
+export function useClaimActions(claimId: string | null) {
+  return useQuery({
+    queryKey: queryKeys.claims.actions(claimId ?? ""),
+    queryFn: async (): Promise<ClaimActions> => {
+      const { data } = await api.GET("/claims/{claim_business_id}/actions", {
+        params: { path: { claim_business_id: claimId! } },
+      });
+      return data!;
+    },
+    enabled: claimId !== null,
+    // The case file's 15s. The checklist is cut from the same rows, so two
+    // staleness clocks would let the card and the header behind it drift apart
+    // on screen even though the server cannot compute them differently.
+    staleTime: 15_000,
+  });
+}
+
+/**
+ * What every Story 3.5 completion does once the server has answered.
+ *
+ * Four invalidations, and the second is the whole of AC 5:
+ *
+ * - **The case file** is installed directly from the response — the body *is*
+ *   the fresh entity — and then marked stale without a refetch, exactly as
+ *   `useEditClaimFields` does, because a follow-up GET would re-open the
+ *   read-after-write window that returning it closes.
+ * - **The checklist** genuinely must re-fetch, and that is AC 5's "the action
+ *   list re-renders": the row the handler just completed is gone because the
+ *   server re-evaluated the trigger, not because anything here removed it from
+ *   a list. `exact: true` for `useApprovePayment`'s reason — the key is nested
+ *   under the case file's, and a prefix invalidation would also re-fetch the
+ *   payload this mutation has just installed.
+ * - **The queue** must re-fetch: approving an assessment drops the claim's
+ *   `pendingApproval` term, which moves its priority score and can move its
+ *   card. Nothing in the browser can compute that — the weight is in a rule
+ *   document the SPA has never seen.
+ * - **The top-bar tiles** are counts over the caller's whole book, so a status
+ *   change is a number two panes away with no local answer.
+ */
+function afterChecklistWrite(
+  client: ReturnType<typeof useQueryClient>,
+  claimId: string,
+  fresh: ClaimDetail,
+): void {
+  const key = queryKeys.claims.detail(claimId);
+  client.setQueryData(key, fresh);
+  void client.invalidateQueries({ queryKey: key, exact: true, refetchType: "none" });
+  void client.invalidateQueries({ queryKey: queryKeys.claims.actions(claimId), exact: true });
+  void client.invalidateQueries({ queryKey: queryKeys.claims.queues });
+  void client.invalidateQueries({ queryKey: queryKeys.stats.topbar });
+}
+
+/**
+ * Approve the claim's assessment (AC 4).
+ *
+ * **Nothing optimistic**, `useApprovePayment`'s rule for `useEditSeverity`'s
+ * reason: the status is a server decision guarded on the claim's *current*
+ * status, which the browser cannot evaluate — and every visible consequence of
+ * it (the header chip, the queue card's position, the checklist row
+ * disappearing) is derived. Flipping the chip and rolling it back would show a
+ * handler an approval that did not happen.
+ *
+ * A 409 installs the fresh case file the problem document carries and lets the
+ * card render the refusal inline (NFR-3, UX-DR11: never a blocking dialog).
+ */
+export function useApproveAssessment(claimId: string) {
+  const client = useQueryClient();
+
+  return useMutation({
+    // The claim's shared write key, so `useClaimWriteInFlight` counts this like
+    // any other command: every control on the case file reads `expectedVersion`
+    // out of a cached payload, and two overlapping writes send a version the
+    // first has already consumed.
+    mutationKey: queryKeys.claims.writes(claimId),
+    mutationFn: async (variables: { expectedVersion: number }): Promise<ClaimDetail> => {
+      const { data } = await api.POST("/claims/{claim_business_id}/assessment/approval", {
+        params: { path: { claim_business_id: claimId } },
+        body: { expectedVersion: variables.expectedVersion },
+      });
+      return data!;
+    },
+    onError: (error) => {
+      const fresh = freshClaimFrom(error);
+      if (!fresh) return;
+      client.setQueryData(queryKeys.claims.detail(claimId), fresh);
+      // **The checklist is invalidated on the refusal too**, and leaving it out
+      // was the defect this pattern exists to prevent — the same one
+      // `useApprovePayment.onError` was fixed for on 2026-08-17. A 409 means
+      // the entity moved, and the row that offered the button was generated
+      // from where it used to be. Without this, the header chip flips to the
+      // new status while the row that caused the refusal is still on screen;
+      // for a document row it is worse, because the row keeps a
+      // `documentVersion` the server has already superseded and every
+      // subsequent click refuses again until `staleTime` happens to lapse.
+      void client.invalidateQueries({ queryKey: queryKeys.claims.actions(claimId), exact: true });
+    },
+    onSuccess: (fresh) => afterChecklistWrite(client, claimId, fresh),
+    onSettled: () => {
+      void client.invalidateQueries({
+        queryKey: queryKeys.claims.detail(claimId),
+        exact: true,
+        refetchType: "none",
+      });
+    },
+  });
+}
+
+/**
+ * Mark a document reviewed, or confirm one already reviewed (AC 5).
+ *
+ * `expectedVersion` is the **document's**, published on the checklist row as
+ * `documentVersion` — the write compare-and-swaps on the row it changes, so
+ * accepting a medical authorization is not refused because somebody corrected
+ * an unrelated field on the same claim.
+ *
+ * `step` is the value the server put on the row. The browser does not decide
+ * whether a document is ready to confirm: that rule is
+ * `services/claims/assessment.py`'s, and a client that guessed it would offer a
+ * button the command refuses.
+ */
+export function useSetDocumentReview(claimId: string) {
+  const client = useQueryClient();
+
+  return useMutation({
+    mutationKey: queryKeys.claims.writes(claimId),
+    mutationFn: async (variables: {
+      documentId: number;
+      step: ActionCommand;
+      expectedVersion: number;
+    }): Promise<ClaimDetail> => {
+      const { data } = await api.POST(
+        "/claims/{claim_business_id}/documents/{document_id}/review",
+        {
+          params: {
+            path: { claim_business_id: claimId, document_id: variables.documentId },
+          },
+          body: { expectedVersion: variables.expectedVersion, step: variables.step },
+        },
+      );
+      return data!;
+    },
+    onError: (error) => {
+      const fresh = freshClaimFrom(error);
+      if (!fresh) return;
+      client.setQueryData(queryKeys.claims.detail(claimId), fresh);
+      // **The checklist is invalidated on the refusal too**, and leaving it out
+      // was the defect this pattern exists to prevent — the same one
+      // `useApprovePayment.onError` was fixed for on 2026-08-17. A 409 means
+      // the entity moved, and the row that offered the button was generated
+      // from where it used to be. Without this, the header chip flips to the
+      // new status while the row that caused the refusal is still on screen;
+      // for a document row it is worse, because the row keeps a
+      // `documentVersion` the server has already superseded and every
+      // subsequent click refuses again until `staleTime` happens to lapse.
+      void client.invalidateQueries({ queryKey: queryKeys.claims.actions(claimId), exact: true });
+    },
+    onSuccess: (fresh) => afterChecklistWrite(client, claimId, fresh),
+    onSettled: () => {
+      void client.invalidateQueries({
+        queryKey: queryKeys.claims.detail(claimId),
+        exact: true,
+        refetchType: "none",
+      });
+    },
+  });
+}
+
+/** Record the injury on the OSHA 300 log (AC 5) — `useApproveAssessment`'s shape. */
+export function useMarkOshaLogged(claimId: string) {
+  const client = useQueryClient();
+
+  return useMutation({
+    mutationKey: queryKeys.claims.writes(claimId),
+    mutationFn: async (variables: { expectedVersion: number }): Promise<ClaimDetail> => {
+      const { data } = await api.POST("/claims/{claim_business_id}/osha-log", {
+        params: { path: { claim_business_id: claimId } },
+        body: { expectedVersion: variables.expectedVersion },
+      });
+      return data!;
+    },
+    onError: (error) => {
+      const fresh = freshClaimFrom(error);
+      if (!fresh) return;
+      client.setQueryData(queryKeys.claims.detail(claimId), fresh);
+      // **The checklist is invalidated on the refusal too**, and leaving it out
+      // was the defect this pattern exists to prevent — the same one
+      // `useApprovePayment.onError` was fixed for on 2026-08-17. A 409 means
+      // the entity moved, and the row that offered the button was generated
+      // from where it used to be. Without this, the header chip flips to the
+      // new status while the row that caused the refusal is still on screen;
+      // for a document row it is worse, because the row keeps a
+      // `documentVersion` the server has already superseded and every
+      // subsequent click refuses again until `staleTime` happens to lapse.
+      void client.invalidateQueries({ queryKey: queryKeys.claims.actions(claimId), exact: true });
+    },
+    onSuccess: (fresh) => afterChecklistWrite(client, claimId, fresh),
+    onSettled: () => {
+      void client.invalidateQueries({
+        queryKey: queryKeys.claims.detail(claimId),
+        exact: true,
+        refetchType: "none",
+      });
+    },
+  });
 }
 
 /** The Documents & ID tab (Story 2.5). */

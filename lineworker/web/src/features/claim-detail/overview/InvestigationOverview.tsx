@@ -21,6 +21,7 @@
  * story cannot make. The benefit card beside it arrived with Story 3.1.
  */
 import type {
+  ActionTarget,
   ClaimDetail,
   Disability,
   InvestigationOverviewData,
@@ -39,16 +40,20 @@ import {
   TimelineCard,
 } from "../Cards";
 import { EditableRow } from "../EditableRow";
+import { ActionsCard } from "../actions/ActionsCard";
 import { DISABILITY_LABEL, RECOVERY_LABEL } from "../labels";
 import { useInlineEdits } from "../useInlineEdits";
 
 export function InvestigationOverview({
   claim,
   overview,
+  onNavigate,
 }: {
-  /** The whole case file: the edit needs its `version` and its vocabularies. */
+  /** The whole case file: the edit needs its `version` and its vocabularies,
+      and Story 3.5's actions card needs both. */
   claim: ClaimDetail;
   overview: InvestigationOverviewData;
+  onNavigate: (target: ActionTarget) => void;
 }) {
   const edits = useInlineEdits(claim);
 
@@ -197,6 +202,8 @@ export function InvestigationOverview({
       <div className="mb-[10px]">
         <BenefitCard claim={claim} />
       </div>
+
+      <ActionsCard claim={claim} onNavigate={onNavigate} />
 
       <TimelineCard title="Case timeline" entries={overview.timeline} />
     </>

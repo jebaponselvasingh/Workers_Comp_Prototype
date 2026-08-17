@@ -21,7 +21,7 @@ are pure, so each case is one dict.
 
 import pytest
 
-from data.models.enums import ClaimStatus, DocType
+from data.models.enums import ActionKey, ActionUrgency, ClaimStatus, DocType
 from rules.engine import LoadedDocument
 from rules.parameters import (
     BenefitParams,
@@ -29,6 +29,8 @@ from rules.parameters import (
     IntakeRequirements,
     PriorityWeights,
     RuleParameterError,
+    WorklistActions,
+    urgency_parameter_name,
 )
 from services.financials import COMP_RATE_MAX_BP, COMP_RATE_MIN_BP
 
@@ -36,6 +38,7 @@ THRESHOLDS_DOC = LoadedDocument(key="derivation_thresholds", version=4, content=
 WEIGHTS_DOC = LoadedDocument(key="priority_weights", version=7, content={})
 REQUIREMENTS_DOC = LoadedDocument(key="intake_required_documents", version=3, content={})
 BENEFIT_DOC = LoadedDocument(key="benefit_params", version=2, content={})
+ACTIONS_DOC = LoadedDocument(key="worklist_actions", version=5, content={})
 
 VALID_THRESHOLDS = {
     "riskHighMin": 65,
@@ -82,6 +85,22 @@ VALID_WEIGHTS = {
 }
 
 
+VALID_WORKLIST_ACTIONS: dict[str, object] = {
+    "cap": 6,
+    "paddingFloor": 3,
+    # Built rather than written out, so this fixture cannot be the place a
+    # twelfth rule is silently left untuned: `ActionKey` grows and this dict
+    # grows with it. The *values* are deliberately uniform — the cases below
+    # are about refusals, and a rule's own urgency is asserted against the
+    # committed document in `tests/test_rules_engine.py`.
+    **{urgency_parameter_name(key): "medium" for key in ActionKey},
+}
+
+
+def actions(**changes: object) -> WorklistActions:
+    return WorklistActions.of(ACTIONS_DOC, {**VALID_WORKLIST_ACTIONS, **changes})
+
+
 def thresholds(**changes: object) -> DerivationThresholds:
     return DerivationThresholds.of(THRESHOLDS_DOC, {**VALID_THRESHOLDS, **changes})
 
@@ -105,6 +124,7 @@ def test_the_valid_blocks_are_valid() -> None:
     assert weights().version == 7
     assert requirements().version == 3
     assert benefit().version == 2
+    assert actions().version == 5
 
 
 # --- types --------------------------------------------------------------
@@ -437,3 +457,109 @@ def test_a_negative_waiting_period_is_refused_but_zero_is_not() -> None:
     assert benefit(waitingPeriodDays=0).waiting_period_days == 0
     with pytest.raises(RuleParameterError, match="waitingPeriodDays"):
         benefit(waitingPeriodDays=-1)
+
+
+# --- the action checklist's parameters (Story 3.5) ----------------------
+
+
+def test_every_rule_gets_its_urgency_from_the_document() -> None:
+    """The mapping is total, and it is keyed by the enum rather than by a string.
+
+    Total because a rule with no rank has no place in the order, and a
+    generator that defaulted one would have put a rule element back in Python —
+    the tier AD-8 takes it out of. Keyed by the enum because the generator ranks
+    on members: a string comparison downstream is how a typo becomes a rule that
+    silently stops firing.
+    """
+    block = actions()
+
+    assert set(block.urgencies) == set(ActionKey)
+    for key in ActionKey:
+        assert block.urgency_of(key) is ActionUrgency.medium
+
+
+def test_the_urgency_parameter_names_are_the_documents_camel_case() -> None:
+    """The one place the two spellings of a rule are asserted against each other.
+
+    Derived rather than mapped by hand (see `urgency_parameter_name`), so the
+    check is that the derivation matches the convention the committed document
+    actually uses — `tests/test_rules_engine.py` holds the other half, that
+    every derived name is present in that document.
+    """
+    assert urgency_parameter_name(ActionKey.bill_review) == "urgencyBillReview"
+    assert urgency_parameter_name(ActionKey.assessment_approval) == "urgencyAssessmentApproval"
+    assert urgency_parameter_name(ActionKey.osha_log) == "urgencyOshaLog"
+
+
+@pytest.mark.parametrize("value", [None, "urgent", 3, ["high"], True])
+def test_an_urgency_the_enum_does_not_know_is_refused_naming_the_value(value: object) -> None:
+    """A rule that quietly loses its rank is the failure this prevents.
+
+    Without the resolution, `"urgent"` would travel to the browser as an
+    urgency no chip has a colour for — on a card that still renders, in a list
+    that is still ordered, with nothing anywhere saying the rule was retuned
+    into nonsense. `None` is in the parameter list because a *missing* key must
+    be the same refusal as a wrong one; it is the likelier of the two.
+    """
+    with pytest.raises(RuleParameterError, match="worklist_actions v5"):
+        actions(urgencyBillReview=value)
+
+
+def test_a_missing_urgency_names_the_rule_it_belongs_to() -> None:
+    """The message has to say which of the eleven, or it is a hunt."""
+    incomplete = {
+        key: value
+        for key, value in VALID_WORKLIST_ACTIONS.items()
+        if key != urgency_parameter_name(ActionKey.osha_log)
+    }
+    with pytest.raises(RuleParameterError, match="urgencyOshaLog"):
+        WorklistActions.of(ACTIONS_DOC, incomplete)
+
+
+@pytest.mark.parametrize("cap", [0, -1])
+def test_a_cap_below_one_is_refused(cap: int) -> None:
+    """A cap of zero renders an empty card on every claim in the portfolio,
+    silently, with the heading still there — `pageLimit: 0`'s failure, one
+    surface over. One is strange and is a policy, so it is allowed."""
+    assert actions(cap=1, paddingFloor=1).cap == 1
+    with pytest.raises(RuleParameterError, match="cap"):
+        actions(cap=cap)
+
+
+def test_a_padding_floor_of_zero_switches_padding_off_rather_than_failing() -> None:
+    """`_status_set`'s empty-list argument, over a number: "never pad" is a
+    defensible reading of a worklist and is the way an operator turns the
+    routine review rows off from the document."""
+    assert actions(paddingFloor=0).padding_floor == 0
+    with pytest.raises(RuleParameterError, match="paddingFloor"):
+        actions(paddingFloor=-1)
+
+
+def test_a_padding_floor_above_the_cap_is_refused() -> None:
+    """Not a silently-unreachable band but a directly contradictory instruction:
+    pad up to eight rows, then cut to six. Whichever the generator obeyed would
+    make the other parameter a lie. Equal is fine — it means every list is
+    exactly full."""
+    assert actions(cap=3, paddingFloor=3).padding_floor == 3
+    with pytest.raises(RuleParameterError, match="paddingFloor"):
+        actions(cap=3, paddingFloor=4)
+
+
+@pytest.mark.parametrize("value", [None, "6", 6.5, [6]])
+def test_a_non_integer_cap_is_refused(value: object) -> None:
+    with pytest.raises(RuleParameterError, match="worklist_actions v5"):
+        actions(cap=value)
+
+
+def test_the_urgency_mapping_cannot_be_edited_by_a_consumer() -> None:
+    """The block is frozen, and a frozen dataclass holding a mutable dict is
+    frozen about the wrong thing.
+
+    These blocks are loaded once per request and handed to a pure generator; a
+    caller able to write into the mapping could retune a rule for every claim
+    scored after it, from anywhere, with the dataclass still reporting itself
+    immutable.
+    """
+    block = actions()
+    with pytest.raises(TypeError):
+        block.urgencies[ActionKey.bill_review] = ActionUrgency.high  # type: ignore[index]

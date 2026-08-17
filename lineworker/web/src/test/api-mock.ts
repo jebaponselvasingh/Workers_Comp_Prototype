@@ -64,6 +64,22 @@ export interface StubRoutes {
    * one row and 409 for another without re-rendering.
    */
   approvePayment?: StubRouteFor;
+  /**
+   * `GET /claims/{id}/actions` (Story 3.5) — the auto-generated checklist.
+   *
+   * A `StubRouteFor` for `claimDetail`'s reason, and matched **before** the
+   * case file in the router below because `/api/claims/WC-1/actions` contains
+   * `/api/claims/`: a stub that matched the case file first would answer the
+   * card's request with a case file, and the card would render an empty list
+   * with nothing anywhere saying why.
+   */
+  claimActions?: StubRouteFor;
+  /** `POST /claims/{id}/assessment/approval` (Story 3.5). */
+  approveAssessment?: StubRouteFor;
+  /** `POST /claims/{id}/documents/{id}/review` (Story 3.5). */
+  documentReview?: StubRouteFor;
+  /** `POST /claims/{id}/osha-log` (Story 3.5). */
+  oshaLog?: StubRouteFor;
 }
 
 const problem = (status: number, detail: string) => ({
@@ -945,11 +961,17 @@ const HEADER = {
   severityScore: 78,
   risk: "high",
   stage: "treatment",
+  // Story 3.5's two. `status` and `stage` are genuinely different facts — a
+  // treatment-stage claim can still be awaiting its assessment — and the
+  // fixture keeps them different so a component that read one for the other
+  // would fail here rather than in a browser.
+  status: "ch_assessment_process",
   fraudFlag: true,
   fraudScore: 62,
   litigationFlag: true,
   surgeryRequired: true,
   oshaRecordable: true,
+  oshaLogged: false,
 };
 
 /** Treatment: both derived states, and every header badge switched on. */
@@ -1015,6 +1037,7 @@ export const CLAIM_DETAIL_INTAKE = {
       litigationFlag: false,
       surgeryRequired: false,
       oshaRecordable: false,
+      status: "initial",
     },
     stepper: stepper("intake"),
     overview: {
@@ -1484,6 +1507,153 @@ export const APPROVAL_CONFLICT_PAID = {
   },
 };
 
+
+/**
+ * The auto-generated action checklist (Story 3.5).
+ *
+ * Six rows, which is the cap — deliberately, so a component test that lost the
+ * cap would have to lose it against a payload that is already at it. The
+ * contents are chosen to cover every branch the card draws in one render: a
+ * command-only row (`approve`), a document row whose command advances with its
+ * state, an OSHA row, two enabled deep links, and a disabled seam row with its
+ * sentence.
+ *
+ * **In the server's order, high first.** The card renders `items` as it
+ * arrives; a fixture in a different order is how a component that re-sorted
+ * would go unnoticed.
+ */
+export const CLAIM_ACTIONS = {
+  status: 200,
+  body: {
+    cap: 6,
+    paddingFloor: 3,
+    rulesVersion: 1,
+    items: [
+      {
+        id: "assessment_approval:approve",
+        key: "assessment_approval",
+        label: "Approve the claim assessment",
+        urgency: "high",
+        target: "approve",
+        enabled: true,
+        disabledReason: null,
+        command: "approve_assessment",
+        documentId: null,
+        documentVersion: null,
+      },
+      {
+        id: "siu_escalation:fraud",
+        key: "siu_escalation",
+        label: "Escalate to SIU — fraud indicators on file",
+        urgency: "high",
+        target: "fraud",
+        enabled: false,
+        disabledReason: "Available with AI Insights — Epic 6",
+        command: null,
+        documentId: null,
+        documentVersion: null,
+      },
+      {
+        id: "surgical_pre_auth:documents",
+        key: "surgical_pre_auth",
+        label: "Authorize the surgical pre-approval",
+        urgency: "high",
+        target: "documents",
+        enabled: true,
+        disabledReason: null,
+        command: "mark_document_reviewed",
+        documentId: 41,
+        documentVersion: 2,
+      },
+      {
+        id: "bill_review:bills",
+        key: "bill_review",
+        label: "Review medical bills awaiting approval",
+        urgency: "medium",
+        target: "bills",
+        enabled: true,
+        disabledReason: null,
+        command: null,
+        documentId: null,
+        documentVersion: null,
+      },
+      {
+        id: "osha_log:overview",
+        key: "osha_log",
+        label: "Record the injury on the OSHA 300 log",
+        urgency: "medium",
+        target: "overview",
+        enabled: true,
+        disabledReason: null,
+        command: "mark_osha_logged",
+        documentId: null,
+        documentVersion: null,
+      },
+      {
+        id: "diary_check_in:diary",
+        key: "diary_check_in",
+        label: "Log the weekly diary check-in",
+        urgency: "low",
+        target: "diary",
+        enabled: false,
+        disabledReason: "Available with Diary & Meetings — Epic 4",
+        command: null,
+        documentId: null,
+        documentVersion: null,
+      },
+    ],
+  },
+};
+
+/** A claim with nothing outstanding — the card's empty state (NFR-3). */
+export const CLAIM_ACTIONS_EMPTY = {
+  status: 200,
+  body: { ...CLAIM_ACTIONS.body, items: [] },
+};
+
+/**
+ * What the server answers after the assessment is approved.
+ *
+ * The whole case file, because that is what the command returns: the status
+ * chip moves and the version increments. Restating both is what makes the
+ * component test able to fail — a header rendering a copy it was holding would
+ * keep saying "CH Assessment Process".
+ */
+export const CLAIM_DETAIL_APPROVED = {
+  status: 200,
+  body: {
+    ...CLAIM_DETAIL_TREATMENT.body,
+    version: CLAIM_DETAIL_TREATMENT.body.version + 1,
+    header: { ...CLAIM_DETAIL_TREATMENT.body.header, status: "ch_approved" },
+  },
+};
+
+/** The same, for the OSHA entry: the flag moves and the version increments. */
+export const CLAIM_DETAIL_OSHA_LOGGED = {
+  status: 200,
+  body: {
+    ...CLAIM_DETAIL_TREATMENT.body,
+    version: CLAIM_DETAIL_TREATMENT.body.version + 1,
+    header: { ...CLAIM_DETAIL_TREATMENT.body.header, oshaLogged: true },
+  },
+};
+
+/**
+ * The 409 a stale completion gets — a problem document carrying the fresh
+ * case file, exactly as Story 2.3's inline edit does.
+ */
+export const ASSESSMENT_CONFLICT = {
+  status: 409,
+  body: {
+    type: "/problems/stale-write",
+    title: "Conflict",
+    status: 409,
+    detail:
+      "This claim was changed by someone else while you were editing. The current values are attached.",
+    claim: CLAIM_DETAIL_APPROVED.body,
+  },
+};
+
 /** Never settles — the request stays in flight for the life of the test. */
 const pending = (): Promise<Response> => new Promise<Response>(() => {});
 
@@ -1543,6 +1713,21 @@ export function stubApi(routes: StubRoutes): void {
       }
       if (url.includes("/financials")) {
         return answerFor(routes.claimFinancials ?? CLAIM_FINANCIALS, url);
+      }
+      // Story 3.5's four, all before the case file and all for the same
+      // reason the financials read is: every one of their URLs contains
+      // `/api/claims/`, so the case file would swallow them.
+      if (url.includes("/assessment/approval")) {
+        return answerFor(routes.approveAssessment ?? CLAIM_DETAIL_APPROVED, url);
+      }
+      if (url.includes("/osha-log")) {
+        return answerFor(routes.oshaLog ?? CLAIM_DETAIL_OSHA_LOGGED, url);
+      }
+      if (url.includes("/documents/") && url.includes("/review")) {
+        return answerFor(routes.documentReview ?? CLAIM_DETAIL_TREATMENT, url);
+      }
+      if (url.includes("/actions")) {
+        return answerFor(routes.claimActions ?? CLAIM_ACTIONS, url);
       }
       // After the queue, deliberately: the two share a prefix, and the
       // server resolves the same ambiguity the same way (the queue route is

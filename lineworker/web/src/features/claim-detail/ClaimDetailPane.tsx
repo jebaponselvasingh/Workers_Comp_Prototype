@@ -25,6 +25,7 @@
  * 404 spelled out separately, because "not in your caseload" is a fact and
  * "could not be loaded" is a failure — and the case file itself.
  */
+import type { ActionTarget } from "@/api/claims";
 import { useClaimDetail } from "@/api/claims";
 import { isNotFound } from "@/api/errors";
 import { useSelectedClaimId } from "@/features/queue/useSelectedClaim";
@@ -96,6 +97,23 @@ function CaseFile({ claimId }: { claimId: string }) {
 
   const { header, stepper, overview } = detail.data;
 
+  /**
+   * Story 3.5's deep links, and they are the tab state this pane already owns
+   * (AC 3: "real navigation … reuse Epic 2's tab state, no bespoke routing").
+   *
+   * The four targets that are not tabs never reach here: the server sends them
+   * with `enabled: false` and the card renders a disabled control with the
+   * sentence naming the epic that will enable it. The fallthrough is a no-op
+   * rather than a throw, because the seam is a *contract* between two versions
+   * of the app — an SPA held open across a deploy that added a target must not
+   * blank the pane over it.
+   */
+  const navigate = (target: ActionTarget): void => {
+    if (target === "overview" || target === "bills" || target === "documents") {
+      setActiveTab(target);
+    }
+  };
+
   return (
     <>
       <CaseHeader header={header} />
@@ -117,21 +135,26 @@ function CaseFile({ claimId }: { claimId: string }) {
         {/* AC 2: the stepper is always the first element of Overview. */}
         <StageStepper steps={stepper} />
         {overview.stageVariant === "intake" ? (
-          <IntakeOverview overview={overview} />
+          <IntakeOverview claim={detail.data} overview={overview} onNavigate={navigate} />
         ) : overview.stageVariant === "investigation" ? (
           // The whole case file, not just its variant: the inline edits
           // (Story 2.3) send `version` as `expectedVersion` and build their
           // selects from the server's vocabularies, and both live one level
           // up from the block being rendered.
-          <InvestigationOverview claim={detail.data} overview={overview} />
+          <InvestigationOverview
+            claim={detail.data}
+            overview={overview}
+            onNavigate={navigate}
+          />
         ) : overview.stageVariant === "treatment" ? (
           <TreatmentOverview
             claim={detail.data}
             overview={overview}
             onOpenBills={() => setActiveTab("bills")}
+            onNavigate={navigate}
           />
         ) : (
-          <SettledOverview overview={overview} />
+          <SettledOverview claim={detail.data} overview={overview} onNavigate={navigate} />
         )}
       </DetailTabs>
     </>

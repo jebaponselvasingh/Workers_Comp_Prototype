@@ -8,13 +8,24 @@
  * for it, and the required set is a JDM parameter the server compares the
  * claim's documents against. This component renders rows.
  */
-import type { IntakeOverviewData } from "@/api/claims";
+import type { ActionTarget, ClaimDetail, IntakeOverviewData } from "@/api/claims";
 import { formatCents } from "@/lib/money";
 
 import { CardGrid, CaseCard, Kv, RISK_TEXT, TimelineCard, formatDate } from "../Cards";
+import { ActionsCard } from "../actions/ActionsCard";
 import { COMM_STATUS_LABEL, DOC_TYPE_LABEL, SEVERITY_WORD } from "../labels";
 
-export function IntakeOverview({ overview }: { overview: IntakeOverviewData }) {
+export function IntakeOverview({
+  claim,
+  overview,
+  onNavigate,
+}: {
+  /** The whole case file: the actions card's two claim-level commands send
+      its `version`, and its `claimId` is what the checklist is fetched by. */
+  claim: ClaimDetail;
+  overview: IntakeOverviewData;
+  onNavigate: (target: ActionTarget) => void;
+}) {
   return (
     <>
       <CardGrid>
@@ -83,6 +94,11 @@ export function IntakeOverview({ overview }: { overview: IntakeOverviewData }) {
           )}
         </CaseCard>
       </div>
+
+      {/* Story 3.5's card, in the full-width slot between the grid and the
+          timeline — the same position on all four variants, because "what do I
+          do next" is not a stage-specific question. */}
+      <ActionsCard claim={claim} onNavigate={onNavigate} />
 
       <TimelineCard title="Case timeline" entries={overview.timeline} />
     </>

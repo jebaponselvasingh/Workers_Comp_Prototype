@@ -59,6 +59,9 @@ interface SeedClaim {
   recovery: string;
   reserve: number;
   surgery_required: boolean;
+  // Story 3.5's: the OSHA trigger fires on the gap between "must be logged"
+  // and "has been logged", and only the first is in the seed.
+  osha_recordable: boolean;
   litigation_flag: boolean;
   fraud_flag: boolean;
   fraud_score: number;
@@ -561,6 +564,32 @@ export function lastClaimInStage(name: string, role: string, stage: SeedStage): 
     .sort();
   if (claims.length === 0) throw new Error(`no seeded ${stage} claim for ${name}/${role}`);
   return claims[claims.length - 1];
+}
+
+/**
+ * Every claim of a persona's book carrying one assessment status, sorted (3.5).
+ *
+ * `claimIdsInStage`'s counterpart over the *status* column, which Story 3.5 is
+ * the first spec to care about: the assessment approval is guarded on
+ * `initial`/`ch_assessment_process`, and "a claim in the treatment stage" and
+ * "a claim awaiting approval" are different sets — a claim can be in treatment
+ * and already `ch_approved`. Reading the seed rather than hardcoding a claim id
+ * keeps the spec meaningful if the dataset moves.
+ */
+export function claimIdsWithStatus(name: string, role: string, status: string): string[] {
+  const claims = claimsFor(name, role)
+    .filter((claim) => claim.status === status)
+    .map((claim) => claim.claim_id)
+    .sort();
+  if (claims.length === 0) throw new Error(`no seeded ${status} claim for ${name}/${role}`);
+  return claims;
+}
+
+/** Whether a seeded claim's injury is OSHA recordable — the trigger's input. */
+export function isOshaRecordable(claimId: string): boolean {
+  const claim = seed.claims.find((c) => c.claim_id === claimId);
+  if (!claim) throw new Error(`no seeded claim ${claimId}`);
+  return Boolean(claim.osha_recordable);
 }
 
 /** The risk band the gauge must be coloured by — the queue oracle's, reused. */

@@ -183,6 +183,143 @@ class ExpenseCategory(StrEnum):
     misc = "misc"
 
 
+class ActionKey(StrEnum):
+    """The eleven trigger rules of the action checklist (Story 3.5, AC 1).
+
+    **In the data layer although no column holds one**, and the reason is
+    neither `BodyRegion`'s nor `ScheduleWeekStatus`'s. Those two are here
+    because a native enum column needs its members below `services/`; these
+    three action enums are here because the **rules tier** needs them and
+    `rules/` must not import from `services/` (the direction
+    `rules/parameters.py` states and `_COMP_RATE_MIN_BP` restates the hard way
+    by copying a bound rather than importing it). `worklist_actions` carries one
+    urgency per rule, and `WorklistActions.of` resolves each member by name at
+    load time — the `_status_set` discipline, which turns a typo in a rule
+    document into one refusal naming the value instead of a chip that silently
+    stops rendering. `data/models/enums.py` is the only vocabulary module below
+    both tiers, so it is where a vocabulary two tiers share has to live.
+
+    `RiskBand` and `TreatmentPhase` stay in `services/derivations` precisely
+    because nothing *outside* that package needs to name their members.
+
+    **Member order is the rules' declaration order, and it is a contract.**
+    `services/worklist/actions.py` evaluates the rules in this order and ranks
+    on `(urgency, this index)`, so the list a claim produces is totally ordered
+    rather than merely sorted — Story 5.4 reads element 0 as the claim's "next
+    best action", and a tie broken by dict iteration is a top action that moves
+    between releases with nothing anywhere saying so.
+
+    `routine_review` is the eleventh and is the padding rule: it is what brings
+    a quiet claim's list up to the floor, and it is a rule rather than a
+    filler string because it too can decline to fire (a settled claim with no
+    documents and no schedule produces the empty state instead).
+    """
+
+    assessment_approval = "assessment_approval"
+    siu_escalation = "siu_escalation"
+    overdue_rtw = "overdue_rtw"
+    surgical_pre_auth = "surgical_pre_auth"
+    bill_review = "bill_review"
+    payment_confirmation = "payment_confirmation"
+    osha_log = "osha_log"
+    defense_counsel = "defense_counsel"
+    modified_duty = "modified_duty"
+    diary_check_in = "diary_check_in"
+    routine_review = "routine_review"
+
+
+class ActionUrgency(StrEnum):
+    """How loudly one checklist row speaks (Story 3.5, AC 1).
+
+    The prototype's `acti-tag` chips are two-tone — `high` and `med` — and this
+    is that scheme with a third value, because the padding rows are a different
+    kind of thing from the rules: "read the case file when you have a moment"
+    and "this claim's OSHA 300 entry is unfiled" rendering at one volume is a
+    worklist that has stopped distinguishing.
+
+    Read as: `high` — a statutory or lifecycle clock is running; `medium` —
+    somebody is waiting on this handler; `low` — routine.
+
+    **Member order is rank order**, most urgent first, which is what
+    `services/worklist/actions.py` sorts on and what PostgreSQL would sort the
+    type in if a column ever held one. The *values* per rule are a rule
+    document's answer (`worklist_actions`), never a Python literal — AD-8.
+
+    `medium`, not the prototype's `med`, although `RiskBand` uses the short
+    form. These are different vocabularies with different consumers and the
+    long form is the one a reader of a JSON payload does not have to expand;
+    `RiskBand`'s abbreviation exists because it is drawn inside a 68px gauge.
+    """
+
+    high = "high"
+    medium = "medium"
+    low = "low"
+
+
+class ActionTarget(StrEnum):
+    """Where a checklist row's "go to" control takes a handler (Story 3.5, AC 3).
+
+    The prototype's `handleActionGoto` kinds (lines 904-912), as a closed type.
+    Three of them are tabs this console already has, four are surfaces later
+    epics own, and one is not a place at all:
+
+    - `overview`, `bills`, `documents` — tabs Epic 2 and Story 3.3 built. The
+      control switches tabs within the detail pane; there is no bespoke routing
+      and no second notion of "where am I" (Story 2.2's tab state is local UI
+      state, and this reuses it).
+    - `diary`, `meetings` — Epic 4. `fraud` — Epic 6's AI Insights.
+      `rtw_letter` — Epic 6's RTW-letter modal (FR-H-11).
+    - `approve` — the assessment approval, which is a *command* rather than a
+      destination. The prototype models it the same way, and keeping it in this
+      enum is what lets the card render one control per row.
+
+    **This enum is the cross-epic seam, and it is why `enabled` is a server
+    field rather than a client-side membership test.** Story 4.2 enables the
+    diary link and Story 6.2 the fraud one; both are a change to
+    `services/worklist/actions.py`'s target table and to nothing in the SPA. A
+    browser that decided which targets exist would be a second copy of that
+    table, and it would go stale in the release where one of them shipped.
+    """
+
+    overview = "overview"
+    bills = "bills"
+    documents = "documents"
+    diary = "diary"
+    meetings = "meetings"
+    fraud = "fraud"
+    rtw_letter = "rtw_letter"
+    approve = "approve"
+
+
+class ActionCommand(StrEnum):
+    """The completion an action offers, when it offers one (Story 3.5, AC 5).
+
+    A checklist row can carry a second control beside its "go to": the audited
+    write that makes the row stop firing. Which write — and whether there is one
+    at all — is the **server's** answer, published on the action, for
+    `ScheduleWeekView.approvable`'s reason: a browser deciding that a document
+    is ready to confirm would offer a button the command refuses, and a 409 a
+    handler cannot act on is worse than no button.
+
+    The two document members are one command with two states rather than a
+    toggle. `mark_document_reviewed` is offered while the document is unread;
+    `confirm_document` replaces it once it has been reviewed, which is the
+    prototype's own sequencing (`confirmDocument` returns early when
+    `!st.reviewed`) and is enforced server-side as a status guard rather than
+    only as a disabled button.
+
+    There is deliberately no member for a payment confirmation: Story 3.4 owns
+    that command and its ✓ lives in the Bills tab's sheet, so the payment action
+    deep-links there rather than growing a second approval surface with its own
+    version handling.
+    """
+
+    approve_assessment = "approve_assessment"
+    mark_document_reviewed = "mark_document_reviewed"
+    confirm_document = "confirm_document"
+    mark_osha_logged = "mark_osha_logged"
+
+
 class BodyRegion(StrEnum):
     """The eleven regions the injury diagram can point at (Story 2.4).
 
@@ -376,6 +513,20 @@ class TimelineTag(StrEnum):
     # descriptions — which is the one thing `settlement` already proves a tag
     # is good for (`_settlement_date` matches on it).
     benefit = "benefit"
+    # Story 3.5's two, and they are two rather than one for the reason
+    # `benefit` is not folded into `edit`: a reader scanning a case file for
+    # what a handler *completed* is asking a different question from one
+    # scanning it for what they corrected. `document` is a document read and
+    # accepted (the review→confirm write-back); `compliance` is a regulatory
+    # filing recorded — today the OSHA 300 entry, and the tag Epic 8's audit
+    # review will filter on when it asks which claims were logged and when.
+    #
+    # The assessment approval is deliberately **not** here: it is `approval`,
+    # the tag the seed already uses for a claim's own lifecycle approval, which
+    # is exactly what this command performs. One event per claim, in its
+    # lifecycle, is what that tag has always meant.
+    document = "document"
+    compliance = "compliance"
 
 
 #: Tags no seeded row carries because they are emitted by a command rather
@@ -384,5 +535,5 @@ class TimelineTag(StrEnum):
 #: assertion an equality (it would be vacuous as a subset check) while
 #: letting later epics add their own event kinds.
 RUNTIME_ONLY_TIMELINE_TAGS: frozenset[TimelineTag] = frozenset(
-    {TimelineTag.edit, TimelineTag.benefit}
+    {TimelineTag.edit, TimelineTag.benefit, TimelineTag.document, TimelineTag.compliance}
 )

@@ -9,7 +9,7 @@
  * clause is dropped when there is nothing to put in it. If a real settlement
  * date ever lands in the data, this sentence gains it without a change.
  */
-import type { SettledOverviewData } from "@/api/claims";
+import type { ActionTarget, ClaimDetail, SettledOverviewData } from "@/api/claims";
 import { formatCents } from "@/lib/money";
 
 import {
@@ -21,9 +21,20 @@ import {
   TimelineCard,
   formatDate,
 } from "../Cards";
+import { ActionsCard } from "../actions/ActionsCard";
 import { DISABILITY_LABEL, RETURN_STATUS_LABEL } from "../labels";
 
-export function SettledOverview({ overview }: { overview: SettledOverviewData }) {
+export function SettledOverview({
+  claim,
+  overview,
+  onNavigate,
+}: {
+  /** The whole case file — `IntakeOverview`'s reason. A settled claim still
+      gets the card: it is usually empty, which is the answer. */
+  claim: ClaimDetail;
+  overview: SettledOverviewData;
+  onNavigate: (target: ActionTarget) => void;
+}) {
   return (
     <>
       <section
@@ -82,6 +93,8 @@ export function SettledOverview({ overview }: { overview: SettledOverviewData })
           <Kv label="Handler">{overview.handlerName}</Kv>
         </CaseCard>
       </CardGrid>
+
+      <ActionsCard claim={claim} onNavigate={onNavigate} />
 
       <TimelineCard
         title="📝 Summary of actions taken"

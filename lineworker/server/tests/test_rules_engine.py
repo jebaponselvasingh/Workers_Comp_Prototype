@@ -26,7 +26,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from data.models.enums import ClaimStatus, DocType, RecoveryWindow
+from data.models.enums import ActionKey, ActionUrgency, ClaimStatus, DocType, RecoveryWindow
 from rules.engine import LoadedDocument, RuleDocumentMissing, evaluate, load
 from rules.parameters import (
     BENEFIT_PARAMS_KEY,
@@ -35,16 +35,20 @@ from rules.parameters import (
     INTAKE_REQUIRED_DOCUMENTS_KEY,
     PRIORITY_WEIGHTS_KEY,
     RESERVE_BANDS_KEY,
+    WORKLIST_ACTIONS_KEY,
     BenefitParams,
     DerivationThresholds,
     IntakeRequirements,
     PriorityWeights,
     ReserveBands,
+    WorklistActions,
     benefit_params_for,
     intake_requirements_for,
     reserve_bands_for,
     thresholds_for,
+    urgency_parameter_name,
     weights_for,
+    worklist_actions_for,
 )
 from tests.conftest import requires_db
 
@@ -74,6 +78,8 @@ EFFECTIVE_DOCUMENTS: tuple[tuple[str, int, str], ...] = (
     (BENEFIT_PARAMS_KEY, 1, "benefit_params.jdm.json"),
     # Story 3.2's, the second — the reserve adequacy bands.
     (RESERVE_BANDS_KEY, 1, "reserve_bands.jdm.json"),
+    # Story 3.5's, and the first owned by `services/worklist`.
+    (WORKLIST_ACTIONS_KEY, 1, "worklist_actions.jdm.json"),
 )
 
 # **Every** seeded (key, version, file), not only the effective ones.
@@ -125,6 +131,26 @@ EXPECTED_BENEFIT_PARAMS: dict[str, Any] = {
 EXPECTED_RESERVE_BANDS: dict[str, Any] = {
     "lightRatioBp": 11_500,
     "heavyRatioBp": 6_000,
+}
+
+# Story 3.5's document, restated. Thirteen parameters: the cap, the padding
+# floor, and one urgency per trigger rule — keyed here by the *document's*
+# camelCase names, so a rename on either side of `urgency_parameter_name` shows
+# up as a failure rather than as a rule that quietly loses its tuning.
+EXPECTED_WORKLIST_ACTIONS: dict[str, Any] = {
+    "cap": 6,
+    "paddingFloor": 3,
+    "urgencyAssessmentApproval": "high",
+    "urgencySiuEscalation": "high",
+    "urgencyOverdueRtw": "high",
+    "urgencySurgicalPreAuth": "high",
+    "urgencyBillReview": "medium",
+    "urgencyPaymentConfirmation": "medium",
+    "urgencyOshaLog": "medium",
+    "urgencyDefenseCounsel": "medium",
+    "urgencyModifiedDuty": "medium",
+    "urgencyDiaryCheckIn": "low",
+    "urgencyRoutineReview": "low",
 }
 
 EXPECTED_INTAKE_REQUIREMENTS: dict[str, Any] = {
@@ -333,6 +359,29 @@ async def test_the_reserve_bands_document_evaluates_to_the_story_values(
     assert evaluate(await load(db, RESERVE_BANDS_KEY)) == EXPECTED_RESERVE_BANDS
 
 
+async def test_the_worklist_actions_document_evaluates_to_the_story_values(
+    db: AsyncSession,
+) -> None:
+    assert evaluate(await load(db, WORKLIST_ACTIONS_KEY)) == EXPECTED_WORKLIST_ACTIONS
+
+
+async def test_every_trigger_rule_has_an_urgency_in_the_document(db: AsyncSession) -> None:
+    """The eleven rules and the eleven parameters are the same eleven.
+
+    Asserted against `ActionKey` rather than against a list written here,
+    because the failure this catches is a twelfth rule added in Python with no
+    key in the document — which `WorklistActions.of` refuses, but only once
+    something loads it. A test that named the eleven itself would have to be
+    edited by the same person who forgot the document.
+    """
+    result = evaluate(await load(db, WORKLIST_ACTIONS_KEY))
+
+    for key in ActionKey:
+        name = urgency_parameter_name(key)
+        assert name in result, f"{name} is missing from worklist_actions"
+        assert ActionUrgency(result[name])
+
+
 async def test_the_typed_blocks_carry_the_evaluated_values(db: AsyncSession) -> None:
     """The JSON→Python boundary, in the direction consumers use it.
 
@@ -372,6 +421,15 @@ async def test_the_typed_blocks_carry_the_evaluated_values(db: AsyncSession) -> 
         version=1,
         light_ratio_bp=EXPECTED_RESERVE_BANDS["lightRatioBp"],
         heavy_ratio_bp=EXPECTED_RESERVE_BANDS["heavyRatioBp"],
+    )
+    assert await worklist_actions_for(db) == WorklistActions(
+        version=1,
+        cap=EXPECTED_WORKLIST_ACTIONS["cap"],
+        padding_floor=EXPECTED_WORKLIST_ACTIONS["paddingFloor"],
+        urgencies={
+            key: ActionUrgency(EXPECTED_WORKLIST_ACTIONS[urgency_parameter_name(key)])
+            for key in ActionKey
+        },
     )
     assert requirements == IntakeRequirements(
         version=1,

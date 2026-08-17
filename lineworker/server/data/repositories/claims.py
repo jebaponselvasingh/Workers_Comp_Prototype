@@ -804,6 +804,145 @@ async def update_claim_fields_cas(
     return int(cast(CursorResult[Any], result).rowcount)
 
 
+async def transition_claim_status_cas(
+    db: AsyncSession,
+    ctx: CallerContext,
+    claim_business_id: str,
+    *,
+    expected_version: int,
+    expected_statuses: frozenset[Any],
+    new_status: Any,
+) -> int:
+    """Move a claim's `status` under compare-and-swap **and** a status guard (3.5).
+
+    `transition_payment_row_cas`' contract over `claim`, and it exists for the
+    same reason that one does rather than reusing `update_claim_fields_cas`:
+    AD-4 says a lifecycle update "additionally guards on expected current
+    status", and a status written through the generic field patch would be
+    guarded only on the version.
+
+    The two predicates fail on different histories, which is the thing worth
+    being clear about. A version says "nobody has touched this claim since you
+    read it"; the status set says "the transition you are asking for is
+    available from where the claim is now". Approving an assessment somebody
+    else approved a second ago fails the *version*; approving one on a case file
+    a handler left open while the claim was denied — same version if nothing
+    else wrote — fails the *status*. Without the second, the timeline would
+    gain a second approval event for a decision that was made once, and the
+    audit log would say a denied claim was approved.
+
+    Returns rows changed: `1`, or `0` for out of scope, absent, moved on, or in
+    a status this transition cannot start from. Which of the four it was is the
+    service's question and it answers it by re-reading — `update_claim_fields_cas`'
+    division of labour.
+
+    **The scope predicate is on the WHERE clause**, exactly as on every read and
+    on the other two writes here, and `version = version + 1` is a SQL
+    expression so the increment happens inside the same row lock as the guards.
+    """
+    result = await db.execute(
+        sa.update(Claim)
+        .where(employer_scope(ctx))
+        .where(Claim.claim_id == claim_business_id)
+        .where(Claim.version == expected_version)
+        .where(Claim.status.in_(expected_statuses))
+        .values(status=new_status, version=Claim.version + 1)
+    )
+    return int(cast(CursorResult[Any], result).rowcount)
+
+
+async def mark_osha_logged_cas(
+    db: AsyncSession,
+    ctx: CallerContext,
+    claim_business_id: str,
+    *,
+    expected_version: int,
+) -> int:
+    """Record the OSHA 300 entry as filed, guarded on both OSHA columns (3.5).
+
+    A function of its own rather than `update_claim_fields_cas` with one value,
+    because the guard is the point: `osha_recordable = true` and `osha_logged =
+    false` are in the statement, so the row cannot come to say that a filing was
+    made for an injury the statute never required one for, and a second click
+    cannot write a second audit event for one that was already made.
+
+    That is the same argument `transition_claim_status_cas` makes above with a
+    different pair of columns — a completion flag is a lifecycle of exactly two
+    states, and AD-4's extra rung applies to it for the same reason.
+
+    Returns rows changed; `0` covers out of scope, absent, stale, not
+    recordable, and already logged, and the command tells them apart by
+    re-reading. Deliberately **not** four return values: this module's contract
+    is "the row was updated, or it was not", and a repository that classified
+    refusals would be deciding what each one means to a caller.
+    """
+    result = await db.execute(
+        sa.update(Claim)
+        .where(employer_scope(ctx))
+        .where(Claim.claim_id == claim_business_id)
+        .where(Claim.version == expected_version)
+        .where(Claim.osha_recordable.is_(True))
+        .where(Claim.osha_logged.is_(False))
+        .values(osha_logged=True, version=Claim.version + 1)
+    )
+    return int(cast(CursorResult[Any], result).rowcount)
+
+
+async def update_document_review_cas(
+    db: AsyncSession,
+    ctx: CallerContext,
+    claim_business_id: str,
+    document_id: int,
+    *,
+    expected_version: int,
+    expected_reviewed: bool,
+    expected_confirmed: bool,
+    values: Mapping[str, Any],
+) -> int:
+    """Move a document's review state under compare-and-swap and a state guard (3.5).
+
+    **The review→confirm ordering is a WHERE clause here, not a disabled
+    button.** Confirming asks for `reviewed = true AND confirmed = false`;
+    marking reviewed asks for both false. The prototype expresses the same rule
+    by returning early from `confirmDocument` when `!st.reviewed` (line 880) and
+    by disabling the control — which is a rule the browser keeps, and therefore
+    a rule an agent tool or a replayed request does not. Putting the expected
+    state in the statement makes it a property of the table.
+
+    The **claim** is named in the predicate as well as the document, for
+    `select_document`'s reason: a document id that is in the caller's scope but
+    belongs to a different claim must not resolve through this claim's URL, or
+    the path segment is decoration.
+
+    The scope predicate is a subquery on `claim` rather than a join, because
+    `UPDATE … FROM` is dialect-specific and this reads as what it is — update
+    this claim's document, where "this claim" is resolved under the caller's
+    scope exactly as every read in this module resolves it.
+    `delete_additional_injury_cas` takes the same shape for the same reason.
+    """
+    owner = (
+        sa.select(Claim.id)
+        .select_from(Claim)
+        .where(employer_scope(ctx))
+        .where(Claim.claim_id == claim_business_id)
+        .scalar_subquery()
+    )
+    result = await db.execute(
+        sa.update(Document)
+        .where(Document.claim_id == owner)
+        .where(Document.id == document_id)
+        .where(Document.version == expected_version)
+        .where(Document.reviewed.is_(expected_reviewed))
+        .where(Document.confirmed.is_(expected_confirmed))
+        .values(**values, version=Document.version + 1)
+        # The ORM cannot evaluate a predicate containing a subquery in Python,
+        # and there is nothing in the identity map worth synchronising: the
+        # command expires the session and re-reads the case file afterwards.
+        .execution_options(synchronize_session=False)
+    )
+    return int(cast(CursorResult[Any], result).rowcount)
+
+
 async def count_claims_matching(
     db: AsyncSession,
     ctx: CallerContext,

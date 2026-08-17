@@ -1,0 +1,108 @@
+{
+  "contentType": "application/vnd.gorules.decision",
+  "name": "worklist_actions",
+  "description": "Every tunable of the auto-generated action checklist (Story 3.5, AD-8). A document of its own for reserve_bands' reason applied one story later: services/worklist owns the generator, and derivation_thresholds is the single argument every REGISTERED DERIVATION is built from — an action checklist is a service query over a claim, its documents and its money rather than a banding of one column, so folding its knobs into that document would make the registry's contract mean 'whatever anybody needed a number for'. WHAT IS HERE IS ONLY THE TUNING. cap is how many rows the card renders at most; paddingFloor is how few it will settle for before it starts adding routine review items; the eleven urgency keys are how loudly each rule speaks. The eleven TRIGGER CONDITIONS stay in typed Python (services/worklist/actions.py) — that is AD-8's split exactly, and it is the same split reserve_bands makes between two thresholds here and the ratio arithmetic there. AN EXPRESSION NODE RATHER THAN A DECISION TABLE, DELIBERATELY, and the story's AC says 'decision table': all nine committed JDM documents use this inputNode -> expressionNode -> outputNode shape with constant expressions, and rules/engine.py evaluates a document ONCE PER REQUEST with an empty context, memoised on (key, version, content, context). A decisionTableNode keyed on a per-rule or per-claim input would be evaluated eleven times per request, thrash that cache, and have no home in the frozen-parameter-block pattern rules/parameters.py is built around. What AD-8 actually asks for — parameters DB-versioned, effective-dated and out of Python — is satisfied by this shape, and the deviation is recorded in deferred-work.md. THE CAP IS 6, NOT 7. epics.md AC 1 says six; docs/Architecture-LINEWORKER.md section 3.2 mentions 'the worklist's 7-item cap' and the prototype's actionsBlockHTML uses budget=7 (line 1241). The epics AC governs, and because the number is here rather than in Python, retuning it to 7 is a rules migration and not a deploy — which is the whole reason it is a parameter. THE URGENCIES ARE THE PROTOTYPE'S TWO-TONE SCHEME, WIDENED TO THREE. Its acti-tag chips are high/med only; a third tone exists here so that the padding rows — routine review items nobody is waiting on — do not render at the same volume as an unfiled OSHA 300 entry. high is 'a statutory or lifecycle clock is running', medium is 'somebody is waiting on this handler', low is 'read this when you have a moment'. Ties within a tone are broken by the rules' DECLARATION ORDER in services/worklist/actions.py, never by this document: Story 5.4 reads element 0 as the claim's next best action, so the ordering has to be total and it has to be one thing's job.",
+  "nodes": [
+    {
+      "id": "request",
+      "type": "inputNode",
+      "name": "request",
+      "position": { "x": 0, "y": 0 }
+    },
+    {
+      "id": "actions",
+      "type": "expressionNode",
+      "name": "actions",
+      "position": { "x": 240, "y": 0 },
+      "content": {
+        "expressions": [
+          {
+            "id": "cap",
+            "key": "cap",
+            "value": "6"
+          },
+          {
+            "id": "paddingFloor",
+            "key": "paddingFloor",
+            "value": "3"
+          },
+          {
+            "id": "urgencyAssessmentApproval",
+            "key": "urgencyAssessmentApproval",
+            "value": "'high'"
+          },
+          {
+            "id": "urgencySiuEscalation",
+            "key": "urgencySiuEscalation",
+            "value": "'high'"
+          },
+          {
+            "id": "urgencyOverdueRtw",
+            "key": "urgencyOverdueRtw",
+            "value": "'high'"
+          },
+          {
+            "id": "urgencySurgicalPreAuth",
+            "key": "urgencySurgicalPreAuth",
+            "value": "'high'"
+          },
+          {
+            "id": "urgencyBillReview",
+            "key": "urgencyBillReview",
+            "value": "'medium'"
+          },
+          {
+            "id": "urgencyPaymentConfirmation",
+            "key": "urgencyPaymentConfirmation",
+            "value": "'medium'"
+          },
+          {
+            "id": "urgencyOshaLog",
+            "key": "urgencyOshaLog",
+            "value": "'medium'"
+          },
+          {
+            "id": "urgencyDefenseCounsel",
+            "key": "urgencyDefenseCounsel",
+            "value": "'medium'"
+          },
+          {
+            "id": "urgencyModifiedDuty",
+            "key": "urgencyModifiedDuty",
+            "value": "'medium'"
+          },
+          {
+            "id": "urgencyDiaryCheckIn",
+            "key": "urgencyDiaryCheckIn",
+            "value": "'low'"
+          },
+          {
+            "id": "urgencyRoutineReview",
+            "key": "urgencyRoutineReview",
+            "value": "'low'"
+          }
+        ]
+      }
+    },
+    {
+      "id": "response",
+      "type": "outputNode",
+      "name": "response",
+      "position": { "x": 480, "y": 0 }
+    }
+  ],
+  "edges": [
+    {
+      "id": "request-actions",
+      "type": "edge",
+      "sourceId": "request",
+      "targetId": "actions"
+    },
+    {
+      "id": "actions-response",
+      "type": "edge",
+      "sourceId": "actions",
+      "targetId": "response"
+    }
+  ]
+}

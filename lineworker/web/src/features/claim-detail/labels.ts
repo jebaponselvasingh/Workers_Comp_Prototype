@@ -13,7 +13,10 @@
  * claimant's name.
  */
 import type {
+  ActionTarget,
+  ActionUrgency,
   BillCategory,
+  ClaimStatus,
   CommStatus,
   CoordinationStatus,
   Disability,
@@ -251,4 +254,57 @@ export const EXPENSE_CATEGORY_LABEL: Record<ExpenseCategory, string> = {
   prosthetic_assistive: "Prosthetic / Assistive Device",
   home_workstation_mod: "Home / Workstation Modification",
   misc: "Miscellaneous",
+};
+
+
+/**
+ * The claim's assessment status, as the header pill spells it (Story 3.5).
+ *
+ * The prototype's own display strings ("Initial", "CH Assessment Process",
+ * "CH Approved"), which the seed mapped mechanically to the snake_case tokens
+ * on the wire — so this map is that mapping read back, and it is the reason
+ * the tokens are what they are.
+ */
+export const CLAIM_STATUS_LABEL: Record<ClaimStatus, string> = {
+  initial: "Initial",
+  ch_assessment_process: "CH Assessment Process",
+  ch_approved: "CH Approved",
+  denied: "Denied",
+  settled: "Settled",
+  settled_closed: "Settled — Closed",
+};
+
+/**
+ * The urgency chip's text (Story 3.5).
+ *
+ * The prototype's `acti-tag` chips carry the word, not an icon, and they are
+ * the one thing a handler scans the card by — so the label is short enough to
+ * sit inside a 60px chip and long enough to read as a word rather than a code.
+ */
+export const ACTION_URGENCY_LABEL: Record<ActionUrgency, string> = {
+  high: "High",
+  medium: "Medium",
+  low: "Low",
+};
+
+/**
+ * What the "go to" control on a checklist row says.
+ *
+ * Keyed by the **target** rather than by the rule, because the button names
+ * where it goes — "View Bill", "Open RTW Letter" — and two rules pointing at
+ * the Bills tab should not offer two differently-worded ways to get there. The
+ * row's own `label` is where the rule's sentence lives.
+ *
+ * `approve` is not a destination; its control performs the assessment
+ * approval, which is why its label is a verb.
+ */
+export const ACTION_TARGET_LABEL: Record<ActionTarget, string> = {
+  overview: "Open Overview",
+  bills: "View Bill",
+  documents: "View Documents",
+  diary: "Log Diary Entry",
+  meetings: "Schedule Meeting",
+  fraud: "View Fraud Indicators",
+  rtw_letter: "Open RTW Letter",
+  approve: "Approve Assessment",
 };

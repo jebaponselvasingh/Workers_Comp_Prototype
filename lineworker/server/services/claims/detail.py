@@ -38,6 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from data.context import CallerContext
 from data.models.core import Claim, Document
 from data.models.enums import (
+    ClaimStatus,
     CommStatus,
     Disability,
     DocType,
@@ -258,6 +259,15 @@ class CaseHeader:
     (see `services/claims/reference.py`): the label is what a human reads,
     the key is what the body diagram and the edit select address. Neither is
     recoverable from the other — the seeded vocabularies do not overlap.
+
+    **`status` arrives with Story 3.5, which is the story that moves it.** The
+    header carried `stage` from 2.2 because that is what the pill and the
+    stepper render, and the claim's *assessment* status had no surface: nothing
+    displayed it and nothing wrote it. The approval command writes it, and AC 4
+    asks for the header to show the change without a manual refresh — so the
+    column has to be on the payload the header is built from. `stage` and
+    `status` are genuinely two facts (a treatment-stage claim can be `initial`
+    or `ch_approved`), and both are now on screen.
     """
 
     claim_id: str
@@ -273,11 +283,17 @@ class CaseHeader:
     severity_score: int
     risk: RiskBand
     stage: Stage
+    status: ClaimStatus
     fraud_flag: bool
     fraud_score: int
     litigation_flag: bool
     surgery_required: bool
     osha_recordable: bool
+    #: Whether the recordable injury's OSHA 300 entry has been filed (3.5).
+    #: On the header beside `osha_recordable` because the two are read
+    #: together — the badge says "OSHA recordable", and whether anybody has
+    #: acted on it is the next thing a handler wants to know.
+    osha_logged: bool
 
 
 @dataclass(frozen=True)
@@ -556,11 +572,13 @@ async def claim_detail(
         severity_score=claim.severity_score,
         risk=risk,
         stage=claim.stage,
+        status=claim.status,
         fraud_flag=claim.fraud_flag,
         fraud_score=claim.fraud_score,
         litigation_flag=claim.litigation_flag,
         surgery_required=claim.surgery_required,
         osha_recordable=claim.osha_recordable,
+        osha_logged=claim.osha_logged,
     )
 
     # **Read once, used twice** (code review, 2026-08-12). Story 2.5's block

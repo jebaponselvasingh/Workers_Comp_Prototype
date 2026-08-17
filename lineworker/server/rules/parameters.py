@@ -34,13 +34,15 @@ of these checks is the precedent the later ones copy.
 """
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
+from types import MappingProxyType
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from data.models.enums import ClaimStatus, DocType, RecoveryWindow
+from data.models.enums import ActionKey, ActionUrgency, ClaimStatus, DocType, RecoveryWindow
 
 # Submodule names rather than `from rules import engine`: the package
 # `__init__` re-exports both modules, so binding through it would make this
@@ -53,6 +55,7 @@ INTAKE_REQUIRED_DOCUMENTS_KEY = "intake_required_documents"
 INJURY_CAPTURE_KEY = "injury_capture"
 BENEFIT_PARAMS_KEY = "benefit_params"
 RESERVE_BANDS_KEY = "reserve_bands"
+WORKLIST_ACTIONS_KEY = "worklist_actions"
 
 
 class RuleParameterError(ValueError):
@@ -708,3 +711,135 @@ async def reserve_bands_for(db: AsyncSession, as_of: date | None = None) -> Rese
     """Load and validate the reserve adequacy bands effective on `as_of`."""
     document = await load(db, RESERVE_BANDS_KEY, as_of)
     return ReserveBands.of(document, evaluate(document))
+
+
+def urgency_parameter_name(key: ActionKey) -> str:
+    """The document key one rule's urgency is authored under — `urgencyBillReview`.
+
+    **Derived from the member rather than written out as an eleven-entry map**,
+    which is the one decision in this block worth arguing. A hand-written map
+    is eleven chances for a rule and its parameter to be spelled differently,
+    and the failure that produces is silent in the worst possible way: the
+    document still loads, ten rules keep their tuning, and the eleventh falls
+    back to whatever the missing-key path does. Deriving the name means a
+    twelfth rule cannot be added without the document gaining a key, because
+    `WorklistActions.of` will refuse the load until it does.
+
+    Exported so `tests/test_rule_parameters.py` can assert the naming against
+    the committed JSON rather than against this function's own output.
+    """
+    return "urgency" + "".join(part.capitalize() for part in key.value.split("_"))
+
+
+def _urgencies(
+    document: LoadedDocument, result: dict[str, Any]
+) -> Mapping[ActionKey, ActionUrgency]:
+    """One `ActionUrgency` per `ActionKey`, resolved member by member.
+
+    `_status_set`'s argument over a mapping rather than a set: resolve here, so
+    that a document saying `'urgent'` is one refusal naming the value and the
+    document, rather than an action whose chip renders a token no stylesheet
+    has a colour for. Every member is required — an action with no urgency has
+    no rank, and a generator that defaulted one would put a rule's ordering
+    back in Python, which is the tier AD-8 takes it out of.
+
+    Returned read-only, because `WorklistActions` is frozen and a frozen
+    dataclass holding a mutable dict is frozen about the wrong thing: the
+    registry builds these blocks once per request and hands them to a pure
+    generator, and a caller that could edit the mapping could retune a rule for
+    every claim after it.
+    """
+    urgencies: dict[ActionKey, ActionUrgency] = {}
+    for key in ActionKey:
+        name = urgency_parameter_name(key)
+        value: Any = result.get(name)
+        try:
+            # Not `ActionUrgency(value)` directly: a `str` subclass would be
+            # accepted and anything else raises `ValueError` anyway, but mypy
+            # cannot see that a `None` from `.get` is a refusal rather than a
+            # crash. Narrowing here makes the missing-key case explicitly the
+            # same refusal as the wrong-value case, which is what the message
+            # already claims.
+            if not isinstance(value, str):
+                raise ValueError(value)
+            urgencies[key] = ActionUrgency(value)
+        except ValueError as exc:
+            raise RuleParameterError(
+                f"{document.key} v{document.version} gives {name!r} as {value!r}, "
+                f"which is not an action urgency; the urgencies are "
+                f"{[member.value for member in ActionUrgency]}"
+            ) from exc
+    return MappingProxyType(urgencies)
+
+
+@dataclass(frozen=True)
+class WorklistActions:
+    """Every tunable of the action checklist (Story 3.5, AD-8).
+
+    A block of its own, in a document of its own, for `ReserveBands`' reason:
+    `services/worklist` owns the generator, and `DerivationThresholds` is the
+    single argument every *registered derivation* is built from. An action
+    checklist is a service query over a claim, its documents and its money
+    rather than a banding of one column, so its knobs belong beside the reserve
+    check's rather than inside the registry's argument.
+
+    **What is here is only the tuning.** The eleven trigger *conditions* — what
+    makes a bill reviewable, what makes a return-to-work date overdue — are
+    typed Python in `services/worklist/actions.py`. That is AD-8's split, and
+    the line it draws here is the same one `ReserveBands` draws between two
+    thresholds in the document and the cross-multiplied comparison in the
+    service.
+
+    **`urgencies` is keyed by the enum, not by the document's string.** The
+    resolution happens once, at load, so the generator ranks on members and
+    `tests/test_action_checklist.py` can hand it a block it wrote by hand with
+    no engine started and no database opened — the property `rules/engine.py`'s
+    docstring says the whole once-per-request arrangement exists to preserve.
+    """
+
+    version: int
+    cap: int
+    padding_floor: int
+    urgencies: Mapping[ActionKey, ActionUrgency]
+
+    def __post_init__(self) -> None:
+        # A cap of zero renders an empty card on every claim in the portfolio,
+        # silently, with the heading still there — the same class of failure
+        # `pageLimit: 0` is refused for. One is a strange policy and a policy:
+        # "show the handler only their next action" is a thing an operator
+        # might reasonably try, and it is exactly the tuning a parameter is for.
+        if self.cap < 1:
+            raise RuleParameterError(f"cap must be at least 1, got {self.cap}")
+        # Zero is legitimate and means "never pad" — the card then shows only
+        # what actually fired, which is a defensible reading of a worklist and
+        # is how the padding rule is switched off from the document.
+        if self.padding_floor < 0:
+            raise RuleParameterError(f"paddingFloor must not be negative, got {self.padding_floor}")
+        # `riskMedMin > riskHighMin`'s refusal over a different pair, and the
+        # failure it prevents is not a silently unreachable band but a directly
+        # contradictory instruction: pad up to eight rows, then cut to six. The
+        # generator would have to pick one, and whichever it picked would make
+        # the other parameter a lie.
+        if self.padding_floor > self.cap:
+            raise RuleParameterError(
+                f"paddingFloor ({self.padding_floor}) must not exceed cap ({self.cap})"
+            )
+
+    def urgency_of(self, key: ActionKey) -> ActionUrgency:
+        """This rule's urgency. Total by construction — see `_urgencies`."""
+        return self.urgencies[key]
+
+    @classmethod
+    def of(cls, document: LoadedDocument, result: dict[str, Any]) -> "WorklistActions":
+        return cls(
+            version=document.version,
+            cap=_integer(document, result, "cap"),
+            padding_floor=_integer(document, result, "paddingFloor"),
+            urgencies=_urgencies(document, result),
+        )
+
+
+async def worklist_actions_for(db: AsyncSession, as_of: date | None = None) -> WorklistActions:
+    """Load and validate the action-checklist parameters effective on `as_of`."""
+    document = await load(db, WORKLIST_ACTIONS_KEY, as_of)
+    return WorklistActions.of(document, evaluate(document))

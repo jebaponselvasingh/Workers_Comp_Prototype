@@ -26,8 +26,13 @@ from api.errors import PROBLEM_CONTENT_TYPE, ProblemDocument, ProblemException
 from api.routers.auth import UNAUTHENTICATED_RESPONSE
 from api.schemas import ApiModel
 from data.models.enums import (
+    ActionCommand,
+    ActionKey,
+    ActionTarget,
+    ActionUrgency,
     BillCategory,
     ClaimPath,
+    ClaimStatus,
     CommStatus,
     Disability,
     DocType,
@@ -37,6 +42,11 @@ from data.models.enums import (
     ReturnStatus,
     ScheduleWeekStatus,
     Stage,
+)
+from services.claims.assessment import (
+    approve_assessment,
+    mark_osha_logged,
+    set_document_review,
 )
 from services.claims.comp_rate import update_comp_rate_override
 from services.claims.detail import (
@@ -65,6 +75,7 @@ from services.financials import (
     ReserveVerdict,
     StalePaymentRow,
 )
+from services.worklist.actions import claim_actions
 from services.worklist.approvals import (
     ApprovalKind,
     ApprovalNotPermitted,
@@ -425,11 +436,20 @@ class CaseHeaderResponse(ApiModel):
     severity_score: int
     risk: RiskBand
     stage: Stage
+    #: The claim's assessment status (Story 3.5). New on this payload because
+    #: 3.5 is the first story that *moves* it: the approval command writes
+    #: `ch_approved`, and AC 4 asks the header to show the change without a
+    #: manual refresh. Distinct from `stage` — a treatment-stage claim can be
+    #: `initial` or `ch_approved` — and the UI owns the label.
+    status: ClaimStatus
     fraud_flag: bool
     fraud_score: int
     litigation_flag: bool
-    surgery_required: bool
     osha_recordable: bool
+    #: Whether the OSHA 300 entry has been filed (Story 3.5). Read beside
+    #: `oshaRecordable`, which is the only reason either is interesting.
+    osha_logged: bool
+    surgery_required: bool
 
 
 class BodyPartOptionResponse(ApiModel):
@@ -2257,4 +2277,346 @@ async def _approval_conflict(
             # tokens and the UI owns the label (Enums convention).
             "paymentStatus": str(exc.status.value),
         },
+    )
+
+
+# --- Story 3.5: the auto-generated action checklist and its three writes ---
+
+
+class ActionResponse(ApiModel):
+    """One row of the "⏰ Upcoming actions required" card.
+
+    **Everything on this object was decided by the server**, which is the whole
+    of AC 1: the urgency, the ordering, the cap and whether the row is even
+    here are `services/worklist/actions.py`'s answers over a rule document's
+    parameters. The SPA maps `urgency` to a chip colour and `target` to a
+    button label — the enum convention's UI half — and computes nothing.
+
+    `enabled` and `disabledReason` are the cross-epic seam (AC 3). A `false`
+    here is not a failure: it says the surface this points at belongs to Epic
+    4 or Epic 6, and the sentence beside it names which. Stories 4.2 and 6.2
+    flip these by deleting a row from the generator's seam table, with no
+    change to the client — which is only true because the client never decides
+    what has shipped.
+
+    `command`, `documentId` and `documentVersion` are the completion control
+    (AC 5). The version travels for `ScheduleWeekResponse.version`'s reason: a
+    control that compare-and-swaps has to be holding the number it will send,
+    or a handler's first click 409s against a payload they never saw.
+    """
+
+    id: str = Field(
+        description=(
+            "The row's stable identity, `{key}:{target}` — unique within the "
+            "list by construction. Keys a client-side list; not a database id."
+        ),
+    )
+    key: ActionKey
+    label: str
+    urgency: ActionUrgency
+    target: ActionTarget
+    enabled: bool
+    disabled_reason: str | None = Field(
+        description=(
+            "Why the go-to control is disabled, naming the epic that enables "
+            "it. Null exactly when `enabled` is true."
+        ),
+    )
+    command: ActionCommand | None = Field(
+        description=(
+            "The audited completion this row offers beside its go-to control, "
+            "or null when it offers none. Never set on a disabled row."
+        ),
+    )
+    document_id: int | None = Field(
+        description="The document `command` acts on, when it acts on one.",
+    )
+    document_version: int | None = Field(
+        description=(
+            "The **document's** `version`, to be sent back as `expectedVersion` — not the claim's."
+        ),
+    )
+
+
+class ClaimActionsResponse(ApiModel):
+    """The claim's checklist, and the rule document that shaped it.
+
+    `cap` and `paddingFloor` ride along for `thresholdsVersion`'s reason: the
+    length of this list is a rule document's answer, and "why are there six of
+    these?" should be answerable from the response rather than reconstructed.
+    `rulesVersion` names the document that answered, exactly as the queue
+    payload names both of its own.
+
+    No `count`: `items` is the list and its length is already the answer —
+    publishing a second one would be a number a client could find disagreeing
+    with what it is rendering.
+    """
+
+    items: list[ActionResponse]
+    cap: int
+    padding_floor: int
+    rules_version: int
+
+
+@router.get(
+    "/claims/{claim_business_id}/actions",
+    response_model=ClaimActionsResponse,
+    summary="The claim's auto-generated action checklist, ranked and capped",
+    responses={
+        **UNAUTHENTICATED_RESPONSE,
+        **NOT_FOUND_RESPONSE,
+    },
+)
+async def actions(
+    ctx: CallerContextDep,
+    db: DbDep,
+    response: Response,
+    claim_business_id: Annotated[
+        str,
+        Path(
+            pattern=CLAIM_ID_PATTERN,
+            description="The claim's business id, `WC-nnnn`.",
+            examples=["WC-20017"],
+        ),
+    ],
+) -> ClaimActionsResponse:
+    """What this claim needs next, in the order the server ranked it.
+
+    Thin by AD-1: one service call and a shape. Eleven trigger rules, their
+    urgencies, the cap and the padding floor are all decided in
+    `services/worklist` over the `worklist_actions` rule document — this route
+    does not filter, sort, count or compare anything, and the client must not
+    either (`web/src/features/queue/noDerivation.test.ts` holds that half).
+
+    **No `RATE_SCHEDULE_RESPONSE`**, unlike every other case-file route: this
+    payload carries no benefit block, so a jurisdiction with no statutory rate
+    schedule does not take it down. The checklist is exactly the surface that
+    should still answer when a money figure cannot be computed.
+
+    404 for out of scope, in the case file's exact wording and for its reason
+    (AD-7).
+    """
+    # Specific to one persona's book, so never served to another from a cache
+    # upstream — the same reason every other route on this router says so.
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        result = await claim_actions(db, ctx, claim_business_id)
+    except ClaimNotVisible as exc:
+        raise _not_found(claim_business_id) from exc
+    return ClaimActionsResponse.model_validate(result)
+
+
+UNPROCESSABLE_RESPONSE: dict[int | str, dict[str, object]] = {
+    422: {
+        "description": (
+            "The request names something this command cannot apply — a claim "
+            "whose injury is not OSHA recordable, or a document review step "
+            "that is not one of the two (RFC 9457 problem document)."
+        ),
+        "content": {PROBLEM_CONTENT_TYPE: {"schema": ProblemDocument.model_json_schema()}},
+    }
+}
+
+
+class VersionedCommand(ApiModel):
+    """The body every checklist completion sends: the version it was read at.
+
+    One model for the assessment approval and the OSHA entry, because they are
+    one body — a compare-and-swap and nothing else. The document review adds a
+    `step` and so has a model of its own rather than an optional field here: an
+    optional discriminator is a body that can be valid and mean nothing.
+
+    `extra="forbid"` for `ClaimFieldPatch`'s reason — an unknown key is a 422
+    from the contract rather than a value silently dropped on the way to a
+    command.
+    """
+
+    model_config = ApiModel.model_config | ConfigDict(extra="forbid")
+
+    expected_version: int = Field(
+        ge=1,
+        description=(
+            "The `version` the client read off the **claim**. The write is "
+            "compare-and-swapped on it *and* guarded on the claim's current "
+            "state; either mismatch answers 409 with the fresh case file."
+        ),
+    )
+
+
+class DocumentReviewCommand(ApiModel):
+    """The document review body: which completion, and the document's version.
+
+    **`step` is one of the two document members of `ActionCommand`**, which is
+    the same value the checklist published on the row the handler clicked — so
+    the control and the command name one thing rather than two that have to be
+    kept in agreement. A caller sending `approve_assessment` here gets a 422
+    from the enum before the command sees it, and the command refuses it again
+    for the AD-13 agent tools that never pass through this model.
+    """
+
+    model_config = ApiModel.model_config | ConfigDict(extra="forbid")
+
+    expected_version: int = Field(
+        ge=1,
+        description=(
+            "The **document's** `version`, published on the checklist row as "
+            "`documentVersion` — not the claim's."
+        ),
+    )
+    step: ActionCommand = Field(
+        description=(
+            "`mark_document_reviewed` for a first read, `confirm_document` to "
+            "accept one already reviewed. Confirming an unreviewed document "
+            "is refused with 409, which is the prototype's own sequencing "
+            "enforced server-side."
+        ),
+    )
+
+
+@router.post(
+    "/claims/{claim_business_id}/assessment/approval",
+    response_model=ClaimDetailResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Approve the claim's assessment (audited, versioned, status-guarded)",
+    responses={
+        **UNAUTHENTICATED_RESPONSE,
+        **FORBIDDEN_RESPONSE,
+        **NOT_FOUND_RESPONSE,
+        **CONFLICT_RESPONSE,
+        **RATE_SCHEDULE_RESPONSE,
+    },
+)
+async def approve_assessment_route(
+    ctx: CallerContextDep,
+    db: DbDep,
+    response: Response,
+    body: VersionedCommand,
+    claim_business_id: Annotated[
+        str,
+        Path(
+            pattern=CLAIM_ID_PATTERN,
+            description="The claim's business id, `WC-nnnn`.",
+            examples=["WC-20017"],
+        ),
+    ],
+) -> ClaimDetailResponse:
+    """Move a claim from assessment to `ch_approved`, and answer with the file.
+
+    **POST to a resource rather than PATCH of a field**, exactly as the payment
+    approval is: the client is not proposing a status, it is requesting a
+    transition, and the server decides both the target status and whether the
+    transition is available. `PATCH {status: "ch_approved"}` would publish the
+    whole status vocabulary as something a caller may ask for — including
+    `denied` and `settled_closed`, which no story has given anybody a command
+    for.
+
+    The success body is the whole case file, so the header's chip, the stepper
+    and the timeline arrive together (AC 4). The SPA invalidates the queue and
+    the top-bar counts beside it, because a claim leaving `ch_assessment_process`
+    changes a number two panes away that nothing in the browser could compute.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    return await _answer(
+        lambda: approve_assessment(
+            db, ctx, claim_business_id, expected_version=body.expected_version
+        ),
+        claim_business_id,
+    )
+
+
+@router.post(
+    "/claims/{claim_business_id}/documents/{document_id}/review",
+    response_model=ClaimDetailResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Mark a document reviewed, or confirm one already reviewed (audited)",
+    responses={
+        **UNAUTHENTICATED_RESPONSE,
+        **FORBIDDEN_RESPONSE,
+        **NOT_FOUND_RESPONSE,
+        **UNPROCESSABLE_RESPONSE,
+        **CONFLICT_RESPONSE,
+        **RATE_SCHEDULE_RESPONSE,
+    },
+)
+async def review_document(
+    ctx: CallerContextDep,
+    db: DbDep,
+    response: Response,
+    body: DocumentReviewCommand,
+    claim_business_id: Annotated[
+        str,
+        Path(
+            pattern=CLAIM_ID_PATTERN,
+            description="The claim's business id, `WC-nnnn`.",
+            examples=["WC-20017"],
+        ),
+    ],
+    document_id: Annotated[
+        int,
+        Path(ge=1, description="The document's surrogate id, as the payload publishes it."),
+    ],
+) -> ClaimDetailResponse:
+    """Record one step of a document's review, and answer with the case file.
+
+    **404 for a document that is not on this claim**, in the claim's own
+    wording: `select_document` conflates "no such document", "another claim's
+    document" and "not your claim" for the reason the claim route conflates its
+    own two, and a distinct "no such document" would confirm that the *claim*
+    exists (AD-7).
+    """
+    response.headers["Cache-Control"] = "no-store"
+    return await _answer(
+        lambda: set_document_review(
+            db,
+            ctx,
+            claim_business_id,
+            document_id,
+            step=body.step,
+            expected_version=body.expected_version,
+        ),
+        claim_business_id,
+    )
+
+
+@router.post(
+    "/claims/{claim_business_id}/osha-log",
+    response_model=ClaimDetailResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Record the injury on the OSHA 300 log (audited, versioned)",
+    responses={
+        **UNAUTHENTICATED_RESPONSE,
+        **FORBIDDEN_RESPONSE,
+        **NOT_FOUND_RESPONSE,
+        **UNPROCESSABLE_RESPONSE,
+        **CONFLICT_RESPONSE,
+        **RATE_SCHEDULE_RESPONSE,
+    },
+)
+async def mark_osha_logged_route(
+    ctx: CallerContextDep,
+    db: DbDep,
+    response: Response,
+    body: VersionedCommand,
+    claim_business_id: Annotated[
+        str,
+        Path(
+            pattern=CLAIM_ID_PATTERN,
+            description="The claim's business id, `WC-nnnn`.",
+            examples=["WC-20017"],
+        ),
+    ],
+) -> ClaimDetailResponse:
+    """Set `osha_logged`, and answer with the case file.
+
+    A claim whose injury is not recordable is **422, not 409**: there is
+    nothing to re-read and trying again will never work, because recordability
+    is a property of the injury rather than a state a claim passes through.
+    Every other refusal on this route is one of `_answer`'s four.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    return await _answer(
+        lambda: mark_osha_logged(
+            db, ctx, claim_business_id, expected_version=body.expected_version
+        ),
+        claim_business_id,
     )

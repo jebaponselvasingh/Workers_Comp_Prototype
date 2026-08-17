@@ -153,6 +153,16 @@ class Claim(Base):
 
     # Regulatory & risk source fields
     osha_recordable: Mapped[bool] = mapped_column(Boolean)
+
+    # Whether the recordable injury has actually been entered on the OSHA 300
+    # log (Story 3.5, AC 5). **Not derivable from `osha_recordable`, which is
+    # the whole point of the pair**: one says the injury must be logged, the
+    # other that somebody has logged it, and the checklist's `osha_log` action
+    # fires on exactly the gap between them. Written only by
+    # `services/claims/assessment.py` (AD-12), under a compare-and-swap that
+    # additionally requires the claim to be recordable — so the column cannot
+    # record a filing for an injury the statute never asked to be filed.
+    osha_logged: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     litigation_flag: Mapped[bool] = mapped_column(Boolean)
     attorney_rep: Mapped[bool] = mapped_column(Boolean)
     fraud_score: Mapped[int] = mapped_column(Integer)
@@ -269,6 +279,18 @@ class Document(Base):
     bytes land), so AD-4's compare-and-swap column belongs on it even though
     no story writes one yet. The same reasoning put `version` on `employer`
     and `employee` in Story 1.2.
+
+    **`reviewed` and `confirmed` are Story 3.5's, and they are the first
+    columns here that anything writes.** They are the prototype's
+    `docReviewState` (lines 871-883), which it keeps in a module-level object
+    lost on reload. Two columns rather than one three-valued state because they
+    are two events with two audit rows — a document is read, and then it is
+    accepted — and because the checklist's surgical pre-auth trigger asks a
+    different question of each. The ordering is the prototype's
+    (`confirmDocument` returns early when `!st.reviewed`) and is enforced in the
+    write rather than in the column: the compare-and-swap that sets `confirmed`
+    also requires `reviewed`, so an out-of-order confirmation is a 409 rather
+    than a row nobody can explain.
     """
 
     __tablename__ = "document"
@@ -279,6 +301,8 @@ class Document(Base):
     doc_type: Mapped[DocType] = mapped_column(_enum(DocType, "doc_type"))
     filed_date: Mapped[date | None] = mapped_column(Date)
     blob_key: Mapped[str | None] = mapped_column(Text)
+    reviewed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    confirmed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
 
 

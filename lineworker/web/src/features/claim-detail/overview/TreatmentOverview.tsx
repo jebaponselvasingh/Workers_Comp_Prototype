@@ -23,12 +23,18 @@
  * compares no figures: the ratio, its boundaries and the word for them are
  * all `services/financials`' (AD-1, AD-9, AD-10).
  */
-import type { ClaimDetail, RecoveryWindow, TreatmentOverviewData } from "@/api/claims";
+import type {
+  ActionTarget,
+  ClaimDetail,
+  RecoveryWindow,
+  TreatmentOverviewData,
+} from "@/api/claims";
 import { formatCents } from "@/lib/money";
 
 import { BenefitCard } from "../BenefitCard";
 import { CardGrid, CaseCard, Kv, TimelineCard } from "../Cards";
 import { EditableRow } from "../EditableRow";
+import { ActionsCard } from "../actions/ActionsCard";
 import {
   COMM_STATUS_LABEL,
   COORDINATION_LABEL,
@@ -62,11 +68,14 @@ export function TreatmentOverview({
   claim,
   overview,
   onOpenBills,
+  onNavigate,
 }: {
-  /** The whole case file: the recovery-window edit needs its `version`. */
+  /** The whole case file: the recovery-window edit needs its `version`, and
+      so does Story 3.5's actions card. */
   claim: ClaimDetail;
   overview: TreatmentOverviewData;
   onOpenBills: () => void;
+  onNavigate: (target: ActionTarget) => void;
 }) {
   const accent = COORDINATION_ACCENT[overview.coordinationStatus];
   const edits = useInlineEdits(claim);
@@ -209,6 +218,8 @@ export function TreatmentOverview({
       <div className="mb-[10px]">
         <BenefitCard claim={claim} />
       </div>
+
+      <ActionsCard claim={claim} onNavigate={onNavigate} />
 
       <TimelineCard
         // "Recent" only when it is: the server says whether it cut the log,

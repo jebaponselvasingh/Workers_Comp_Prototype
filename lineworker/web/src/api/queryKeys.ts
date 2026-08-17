@@ -131,6 +131,33 @@ export const queryKeys = {
      */
     financials: (claimId: string) => ["claims", "detail", claimId, "financials"] as const,
     /**
+     * One claim's auto-generated action checklist (Story 3.5).
+     *
+     * Nested under the claim's own segment, `financials`' arrangement and for
+     * the same reason: the list is generated from the claim's columns, its
+     * documents and its bills, so anything that invalidates the case file has
+     * to be able to reach it. A flat `["actions", id]` key would leave the card
+     * offering "Approve the claim assessment" on a claim somebody had just
+     * approved through a different surface.
+     *
+     * **A separate entry from `detail` rather than a field on it**, which is
+     * `financials`' call again: the checklist costs three child reads and two
+     * rule-document loads, and the case file is the console's most-fetched
+     * payload — so the two are refetched on their own schedules, and a
+     * completion re-reads the list without re-reading the whole case file.
+     * It is **not** a lazy-loading split, and an earlier version of this
+     * comment claimed it was (code review, 2026-08-17): `ActionsCard` mounts
+     * with every Overview variant and `useClaimActions` is gated only on the
+     * claim id, so the request goes out on every case-file open. Anyone
+     * optimising later should read that as an opportunity, not as a promise
+     * the code already keeps.
+     *
+     * The three completion mutations invalidate this key **exactly** — see
+     * `afterChecklistWrite`, and `useApprovePayment`'s comment for the defect
+     * that taught us prefix matching is not what a mutation wants here.
+     */
+    actions: (claimId: string) => ["claims", "detail", claimId, "actions"] as const,
+    /**
      * The **mutation** key every write against one claim carries (Story 2.4).
      *
      * Not a query key: nothing is cached under it. It exists so that

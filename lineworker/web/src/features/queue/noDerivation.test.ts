@@ -227,6 +227,17 @@ const DERIVED_FIELDS =
   // `PAYMENT_BATCH_WEEKDAYS`, and then silently wrong on a date a handler is
   // told to expect money on.
   "approvable|nextBatchDate|" +
+  // Story 3.5's. The whole checklist is a rule's answer, and three of these
+  // are the ones a component would most plausibly reconstruct: `urgency` is
+  // the chip *and* the ranking, so comparing two of them is one line from
+  // re-sorting a list the server ordered; `cap` and `paddingFloor` are the
+  // card's length, which the prototype decides in the browser with a `budget`
+  // counter (line 1241) and which is a rule document's number here; and
+  // `enabled` is which epics have shipped — a browser deciding that would be a
+  // second copy of the seam table, stale in exactly the release where one of
+  // them landed. `command` is on the list beside it because "reviewed but not
+  // confirmed" looks like the whole rule and is not.
+  "urgency|cap|paddingFloor|rulesVersion|enabled|disabledReason|command|" +
   // Story 2.5's. `path` is the claim's statutory classification and is the
   // single most consequential derived value in the console — it decides which
   // death-benefit forms a handler is shown — so a comparison against it, or
@@ -355,6 +366,14 @@ test("the scan reaches the files it claims to", () => {
   expect(scanned).toContain(
     path.join("features", "claim-detail", "bills", "FinancialSummaryCard.tsx"),
   );
+  // Story 3.5's card, in a sixth nested folder. The pull here is the ranking:
+  // the payload hands a component a list *and* the urgency each row was ranked
+  // by, so `.sort()` or a `urgency === "high"` partition is one line away — and
+  // it would be right on most claims and wrong on the ordering Story 5.4 reads
+  // element 0 of.
+  expect(scanned).toContain(
+    path.join("features", "claim-detail", "actions", "ActionsCard.tsx"),
+  );
   expect(scanned.some((name) => name.includes(".test."))).toBe(false);
 });
 
@@ -405,6 +424,12 @@ test("the guard would notice a derivation if one were added", () => {
     "const paid = bills.items.reduce((s, b) => s + b.paidCents, 0);",
     "const done = summary.installmentsPaid + 1;",
     "const projected = summary.paidToDateCents + summary.reserveCents;",
+    // Story 3.5's: the prototype's `budget=7` counter, transliterated, and the
+    // partition a component would reach for to draw the high-urgency rows
+    // first — both of which the server has already done.
+    "const room = actions.cap - shown.length;",
+    "items.sort((a, b) => a.urgency - b.urgency);",
+    "const spare = payload.paddingFloor - rows.length;",
   ];
 
   for (const smell of smells) {

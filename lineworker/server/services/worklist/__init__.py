@@ -27,9 +27,25 @@ above promised for Epic 3 turns out to be a *calling* role, which is the
 architecture working rather than a shortfall: two services writing one table is
 the failure AD-12 exists to prevent, and the approval surface is exactly where
 it would have happened.
+
+Story 3.5 closes the epic with `actions` — the deterministic checklist
+generator AD-2 homes here by name. It writes even less than the approval command
+does: it produces a *list*, and the three completions a handler can perform from
+it are `services/claims`' commands, because `claim` and `document` are that
+package's tables. Story 5.4's supervisor worklist reads element 0 of what this
+generates and Epic 6's copilot may quote it, which is why `generate_actions` is
+a pure function over structural protocols rather than a step inside the
+endpoint's assembly — the same reason `priority_score` is.
 """
 
-from services.worklist import approvals, priority, queue, sla
+from services.worklist import actions, approvals, priority, queue, sla
+from services.worklist.actions import (
+    Action,
+    ClaimActions,
+    ClaimFlags,
+    claim_actions,
+    generate_actions,
+)
 from services.worklist.approvals import (
     APPROVAL_KINDS,
     ApprovalKind,
@@ -66,9 +82,12 @@ __all__ = [
     "MAX_PAGE_LIMIT",
     "MIN_PAGE_LIMIT",
     "STAGE_ORDER",
+    "Action",
     "ApprovalKind",
     "ApprovalNotPermitted",
     "ApprovalResult",
+    "ClaimActions",
+    "ClaimFlags",
     "ClaimQueue",
     "Cursor",
     "InvalidCursor",
@@ -82,11 +101,14 @@ __all__ = [
     "SlaStatus",
     "StageGroup",
     "TopBarStats",
+    "actions",
     "approvals",
     "approve_payment",
+    "claim_actions",
     "claim_queue",
     "decode_cursor",
     "encode_cursor",
+    "generate_actions",
     "matches",
     "priority",
     "priority_markers",
