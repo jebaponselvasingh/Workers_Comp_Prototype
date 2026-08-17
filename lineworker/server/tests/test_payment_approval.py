@@ -37,6 +37,7 @@ from data.models import (
     Claim,
     Expense,
     PaymentScheduleWeek,
+    StateRateSchedule,
     TimelineEvent,
 )
 from data.models.enums import LineItemStatus, ScheduleWeekStatus, TimelineTag
@@ -431,6 +432,70 @@ async def test_a_stale_version_is_refused_with_the_fresh_payload(seeded_db_url: 
     fresh = next(r for r in body["financials"]["schedule"] if r["weekNo"] == week["weekNo"])
     assert fresh["status"] == "payment_scheduled"
     assert fresh["version"] == week["version"] + 1
+
+
+async def test_a_conflict_whose_re_read_cannot_be_assembled_still_answers_a_problem_document(
+    db: AsyncSession, seeded_db_url: str
+) -> None:
+    """The 409 path re-reads the whole tab, and that read can fail.
+
+    `_approval_conflict` assembles the fresh payload by calling the same
+    service `GET /financials` does, so it can raise everything that endpoint
+    can — including `MissingStateRate`. It runs *inside* the route's
+    `except StalePaymentRow` block, where the route's own handlers cannot see
+    it, and an escape there answered a bare 500 on the one path that exists to
+    answer 409.
+
+    The status is 500 either way, which is why this asserts on the *body*: a
+    problem document naming the missing schedule is the answer
+    `RATE_SCHEDULE_RESPONSE` publishes, and it is what tells an operator which
+    of the two failures they are looking at.
+
+    The schedule row is put back in a `finally` — the module-scoped fixture
+    means every later test in this file reads the same seventeen rows.
+    """
+    async with make_client(seeded_db_url) as client:
+        await login_as(client, *KAYA)
+        claim_id, _payload, week = await claim_with_approvable(client, KAYA, kind="week")
+
+        first = await approve(
+            client,
+            claim_id,
+            kind="week",
+            target_id=week["weekNo"],
+            expected_version=week["version"],
+        )
+        assert first.status_code == 200, first.text
+
+        state = (await db.scalars(sa.select(Claim.state).where(Claim.claim_id == claim_id))).one()
+        schedule = (
+            await db.scalars(
+                sa.select(StateRateSchedule).where(StateRateSchedule.state_code == state)
+            )
+        ).one()
+        saved = {
+            column.name: getattr(schedule, column.name)
+            for column in StateRateSchedule.__table__.columns
+        }
+        await db.execute(sa.delete(StateRateSchedule).where(StateRateSchedule.state_code == state))
+        await db.commit()
+        try:
+            # The same consumed version, so the command refuses before the
+            # missing schedule matters — the conflict is what sends the route
+            # down the re-reading path.
+            replay = await approve(
+                client,
+                claim_id,
+                kind="week",
+                target_id=week["weekNo"],
+                expected_version=week["version"],
+            )
+        finally:
+            await db.execute(sa.insert(StateRateSchedule).values(saved))
+            await db.commit()
+
+    assert replay.status_code == 500
+    assert replay.json()["type"] == "/problems/missing-state-rate"
 
 
 async def test_the_status_guard_refuses_where_the_version_would_have_allowed(

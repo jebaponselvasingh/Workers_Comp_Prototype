@@ -13,13 +13,15 @@
  * (NFR-3), which are states the server cannot describe.
  */
 import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 
 import { createQueryClient } from "@/api/queryClient";
+import { queryKeys } from "@/api/queryKeys";
 import {
   APPROVAL_CONFLICT_PAID,
+  CLAIM_DETAIL_TREATMENT,
   CLAIM_FINANCIALS,
   CLAIM_FINANCIALS_UNPAID,
   ME_HANDLER,
@@ -40,11 +42,19 @@ afterEach(() => {
 
 function renderTab(claimFinancials: StubRoute = CLAIM_FINANCIALS) {
   stubApi({ me: ME_HANDLER, claimFinancials });
-  return render(
-    <QueryClientProvider client={createQueryClient()}>
+  const client = createQueryClient();
+  // The case file is not rendered by this tab, so its cache entry has to be
+  // put there for an invalidation to have anything to mark —
+  // `InjuryWrites.test.tsx`'s rule: on an absent key `invalidateQueries` is a
+  // no-op, and the assertion would pass against a mutation that invalidated
+  // nothing.
+  client.setQueryData(queryKeys.claims.detail(CLAIM_ID), CLAIM_DETAIL_TREATMENT.body);
+  render(
+    <QueryClientProvider client={client}>
       <BillsTab claimId={CLAIM_ID} />
     </QueryClientProvider>,
   );
+  return client;
 }
 
 // --- NFR-3: the three states the server cannot describe -------------------
@@ -388,6 +398,63 @@ test("a refusal does not follow the handler onto the next row they open", async 
   const next = await screen.findByTestId("line-item-sheet");
   expect(within(next).getByTestId("line-sheet-title")).toHaveTextContent("Week 4");
   expect(within(next).queryByTestId("approve-error")).not.toBeInTheDocument();
+});
+
+test("a refusal does not greet the handler when they reopen the same row", async () => {
+  // The key stops a refusal following the handler to a *different* row; it
+  // cannot stop it waiting for them in the one it was raised about. Week 3 is
+  // `paid` by the time they come back — the 409 said so and the fresh payload
+  // installed it — so the alert would be sitting over a row nobody had just
+  // tried to approve, describing an attempt from a sheet that had been closed.
+  renderTab();
+  stubApi({
+    me: ME_HANDLER,
+    claimFinancials: CLAIM_FINANCIALS,
+    approvePayment: APPROVAL_CONFLICT_PAID,
+  });
+  await screen.findByTestId("bills-tab");
+
+  await userEvent.click(screen.getAllByTestId("schedule-week-button")[2]);
+  const sheet = await screen.findByTestId("line-item-sheet");
+  await userEvent.click(within(sheet).getByTestId("approve-payment"));
+  await within(sheet).findByTestId("approve-error");
+
+  await userEvent.keyboard("{Escape}");
+  await userEvent.click(screen.getAllByTestId("schedule-week-button")[2]);
+
+  const reopened = await screen.findByTestId("line-item-sheet");
+  expect(within(reopened).getByTestId("line-sheet-title")).toHaveTextContent("Week 3");
+  expect(within(reopened).queryByTestId("approve-error")).not.toBeInTheDocument();
+  // The row's own state is still what the conflict taught the tab.
+  expect(within(reopened).getByTestId("approve-paid")).toBeInTheDocument();
+});
+
+test("a conflict marks the case file stale, not only the tab", async () => {
+  // The success path invalidates the case file because its treatment Overview
+  // card renders `disbursedIndemnityCents` of `scheduledIndemnityCents` from
+  // these same rows. A 409 raised by the batch having paid the row moves
+  // exactly those figures too, so refreshing only the Bills tab would leave
+  // the two surfaces disagreeing about a claim nobody edited.
+  //
+  // On the cache rather than on a refetch: this tab is not the case file's
+  // observer, so TanStack correctly issues no request — marking it stale is
+  // what the mutation owes, fetching it is the pane's business.
+  const client = renderTab();
+  stubApi({
+    me: ME_HANDLER,
+    claimFinancials: CLAIM_FINANCIALS,
+    approvePayment: APPROVAL_CONFLICT_PAID,
+  });
+  await screen.findByTestId("bills-tab");
+
+  await userEvent.click(screen.getAllByTestId("schedule-week-button")[2]);
+  const sheet = await screen.findByTestId("line-item-sheet");
+  await userEvent.click(within(sheet).getByTestId("approve-payment"));
+  await within(sheet).findByTestId("approve-error");
+
+  await waitFor(() =>
+    expect(client.getQueryState(queryKeys.claims.detail(CLAIM_ID))?.isInvalidated).toBe(true),
+  );
 });
 
 test("a bill nobody has submitted offers nothing to approve, and says why", async () => {

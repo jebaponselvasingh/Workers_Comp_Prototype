@@ -256,7 +256,21 @@ export function LineItemDialog({
   }
 
   return (
-    <Dialog open={target !== null} onOpenChange={(open) => !open && onClose()}>
+    <Dialog
+      open={target !== null}
+      onOpenChange={(open) => {
+        if (open) return;
+        // **The refusal dies with the sheet that raised it.** The key above
+        // stops it following the handler to a *different* row; it does not
+        // stop it greeting them on the way back into the *same* one, where a
+        // week now correctly chipped `paid` would still be sitting under
+        // "this was disbursed in a batch" nobody had just attempted. Cleared
+        // here rather than on open because every close — the button, Esc, the
+        // overlay — comes through this callback, so there is one place to miss.
+        setRefusal(null);
+        onClose();
+      }}
+    >
       <DialogContent data-testid="line-item-sheet" className="max-h-[85vh] overflow-y-auto">
         {resolved === null ? null : (
           <>

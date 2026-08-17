@@ -674,7 +674,18 @@ export function useApprovePayment(claimId: string) {
     },
     onError: (error) => {
       const fresh = freshFinancialsFrom(error);
-      if (fresh) client.setQueryData(key, fresh);
+      if (!fresh) return;
+      client.setQueryData(key, fresh);
+      // The case file needs the same invalidation the success path gives it,
+      // for the same reason and with the same `exact: true`. A 409 raised
+      // because the batch disbursed this row moves precisely the figures the
+      // treatment Overview card renders — `disbursedIndemnityCents` of
+      // `scheduledIndemnityCents` — so refreshing only the Bills tab leaves
+      // the two surfaces disagreeing about a claim nobody edited.
+      void client.invalidateQueries({
+        queryKey: queryKeys.claims.detail(claimId),
+        exact: true,
+      });
     },
     onSuccess: (fresh) => {
       client.setQueryData(key, fresh);

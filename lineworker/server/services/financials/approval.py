@@ -288,7 +288,13 @@ async def _approve(
     await db.commit()
     return Approval(
         entity=entity,
-        entity_id=claim_ref,
+        # The **row's** identity here, not `claim_ref` — the opposite call from
+        # the audit row above, and for the same reason. The audit log is asked
+        # "what happened to WC-20017"; a caller holding this object already
+        # knows which claim it asked about and is missing only which line of it
+        # moved. Story 3.5's checklist acknowledgement is the caller the class
+        # docstring names, and "week 3" is what it has to render.
+        entity_id=entity_id,
         label=label,
         before=before,
         after=scheduled,

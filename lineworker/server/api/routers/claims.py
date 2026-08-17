@@ -2196,7 +2196,18 @@ async def approve_payment_route(
         # `select_claim_detail`'s single-answer rule closes.
         raise _not_found(claim_business_id) from exc
     except StalePaymentRow as exc:
-        raise await _approval_conflict(db, ctx, settings, claim_business_id, exc) from exc
+        try:
+            conflict = await _approval_conflict(db, ctx, settings, claim_business_id, exc)
+        except MissingStateRate as rate_exc:
+            # `_approval_conflict` re-reads the whole tab, so it can raise
+            # everything `GET /financials` can — and it runs *inside* an
+            # `except` block, where the handler eleven lines up cannot see it.
+            # Left alone, a claim whose state has no rate row answers 500 on
+            # the one path that exists to answer 409. Nothing committed on
+            # either branch, so the caller loses nothing by hearing the reason
+            # the read itself would have given them.
+            raise _missing_state_rate(rate_exc) from rate_exc
+        raise conflict from exc
     return ClaimFinancialsResponse.model_validate(result.financials)
 
 
