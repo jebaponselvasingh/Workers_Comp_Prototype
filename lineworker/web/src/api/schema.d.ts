@@ -45,6 +45,82 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/claims-diary/meetings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The session persona's scheduled meetings, oldest date first
+         * @description The caller's diary. Page it; you cannot re-scope it.
+         */
+        get: operations["meetings_claims_diary_meetings_get"];
+        put?: never;
+        /**
+         * Schedule a meeting (audited)
+         * @description Write one meeting row, and answer with it.
+         *
+         *     **201 with no `Location` header.** A row is created, so 201 is the honest
+         *     status; there is deliberately no `GET /claims-diary/meetings/{id}` to point
+         *     at, because the diary is read as a list and a second way to read one row
+         *     would be a second place its shape is decided (`add_injury`'s call).
+         *
+         *     The body is the created entity rather than an acknowledgement: it carries
+         *     the `id` and `version` the ✓ and ✕ will compare-and-swap on, and the
+         *     server-derived `status` the card is drawn from.
+         *
+         *     **No calendar invitation is sent, and none is queued.** Scheduling here is
+         *     a log of intent — see `services/claims/meetings.py` on why egress is a
+         *     Deferred decision rather than an omission.
+         */
+        post: operations["schedule_meeting_claims_diary_meetings_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/claims-diary/meetings/{meeting_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete a meeting (audited, versioned)
+         * @description Remove one meeting, and answer 204.
+         *
+         *     **The version travels in the query string** because a DELETE body is
+         *     permitted but widely dropped by proxies and generated clients, and a
+         *     compare-and-swap whose guard can be silently discarded is not a guard.
+         *
+         *     **204 rather than 200 with an entity**, which is where this departs from
+         *     `remove_injury`: that route answers with the case file because the diagram
+         *     it belongs to is the thing the caller is looking at. A meeting has no
+         *     parent payload — the list is its own read model under its own key — so
+         *     there is nothing to hand back, and the SPA invalidates the list.
+         */
+        delete: operations["delete_meeting_route_claims_diary_meetings__meeting_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Mark a meeting done (audited, versioned)
+         * @description Set one meeting's `isDone`, and answer with the fresh row.
+         *
+         *     The success body carries the new `version` the next command compares
+         *     against and the recomputed `status` — a completed meeting is `done`
+         *     whatever its date, so the card's styling follows from one field the server
+         *     owns rather than from two the browser would have to combine.
+         */
+        patch: operations["complete_meeting_route_claims_diary_meetings__meeting_id__patch"];
+        trace?: never;
+    };
     "/claims/queue": {
         parameters: {
             query?: never;
@@ -1824,6 +1900,173 @@ export interface components {
             role: components["schemas"]["UserRole"];
         };
         /**
+         * MeetingCompletion
+         * @description The ✓ body: the version the card was rendered at, and nothing else.
+         *
+         *     No `isDone` field, deliberately, for the reason the payment approval is a
+         *     POST rather than a `PATCH {status: …}`: the client is not proposing a
+         *     value, it is requesting the one transition this command offers, and a body
+         *     that could carry `false` would publish an un-complete nothing implements.
+         */
+        MeetingCompletion: {
+            /**
+             * Expectedversion
+             * @description The **meeting's** `version`. The write is compare-and-swapped on it and additionally guarded on the meeting not already being done; either mismatch answers 409 with the fresh meeting.
+             */
+            expectedVersion: number;
+        };
+        /**
+         * MeetingListResponse
+         * @description The list envelope the Lists convention fixes: `{items, nextCursor, total}`.
+         *
+         *     `total` is the size of the caller's whole diary, not of `items` — the
+         *     number a count beside the sub-tab shows. A total that shrank when the page
+         *     did would misdescribe the list, which is `StageGroupResponse`'s argument.
+         */
+        MeetingListResponse: {
+            /** Items */
+            items: components["schemas"]["MeetingResponse"][];
+            /** Nextcursor */
+            nextCursor?: string | null;
+            /** Total */
+            total: number;
+        };
+        /**
+         * MeetingParticipant
+         * @description The six stakeholder roles a meeting can be scheduled with (Story 4.1).
+         *
+         *     The modal's checkbox grid (prototype lines 555-562). **Six values in a
+         *     JSONB array on `meeting`, not a join table**, which is the story's own
+         *     ruling and worth restating where the vocabulary lives: nothing in Epics 1-8
+         *     asks a participant-side question ("which meetings is the NCM on?"), so a
+         *     child table would buy a join and a second write path for a list that is
+         *     always read whole with its meeting.
+         *
+         *     That JSONB column is why this is still a `StrEnum` rather than a tuple of
+         *     strings: the members are what the command validates against and what the
+         *     409's fresh entity round-trips, so an unknown participant is refused at the
+         *     boundary even though no database type constrains the array's elements.
+         *
+         *     Labels are the UI's, and two of them are deliberately longer than their
+         *     tokens — `ncm` renders "Nurse Case Manager" in the modal and "NCM" on a
+         *     card's participant tag, and `supervisor` renders "My Supervisor". A token
+         *     that carried either wording would make the tag and the checkbox two
+         *     different vocabularies.
+         *
+         *     Member order is the checkbox grid's order, reading left to right.
+         *     [Source: docs/Workers_Comp_Prototype.html lines 555-562]
+         * @enum {string}
+         */
+        MeetingParticipant: "employee" | "employer_hr" | "ncm" | "treating_physician" | "supervisor" | "attorney";
+        /**
+         * MeetingResponse
+         * @description One meeting, as every surface reads it.
+         *
+         *     **`status` is on the wire and `meetingDate` is not enough to reproduce
+         *     it** — that is AD-10 stated in a payload. The prototype computes
+         *     `m.date >= today && !m.done` inside the component that draws the card; here
+         *     the server answers, against one `as_of` for the whole page, and the SPA
+         *     renders what it was sent. Story 4.2's today's-meetings summary reads the
+         *     same field rather than writing a second comparison.
+         *
+         *     `claimId` and `workerName` travel together and are both nullable, because
+         *     `claim_id` is (the ERD's `CLAIM |o--o{ MEETING`). The card renders
+         *     `WC-nnnn — Worker Name`, which is why the name is here rather than fetched:
+         *     a browser assembling that reference from a second request would be showing
+         *     a claim this list did not scope.
+         *
+         *     `version` is what the ✓ and the ✕ compare-and-swap on, published for
+         *     `ScheduleWeekResponse.version`'s reason — a control that swaps must be
+         *     holding the number it will send, or the handler's first click 409s against
+         *     a payload they never saw.
+         */
+        MeetingResponse: {
+            /**
+             * Claimid
+             * @description The linked claim's `WC-nnnn`, or null.
+             */
+            claimId: string | null;
+            /**
+             * Createdat
+             * Format: date-time
+             */
+            createdAt: string;
+            /** Id */
+            id: number;
+            /** Isdone */
+            isDone: boolean;
+            /** Location */
+            location: string | null;
+            /**
+             * Meetingdate
+             * Format: date
+             * @description ISO calendar date, `YYYY-MM-DD`.
+             */
+            meetingDate: string;
+            /**
+             * Meetingtime
+             * @description ISO wall-clock time, or null for all day.
+             */
+            meetingTime: string | null;
+            meetingType: components["schemas"]["MeetingType"];
+            /** Notes */
+            notes: string | null;
+            /** Participants */
+            participants: components["schemas"]["MeetingParticipant"][];
+            /** @description Server-derived. `upcoming` while the date is on or after today and nobody has marked it complete, `done` otherwise. Do not recompute it from `meetingDate`. */
+            status: components["schemas"]["MeetingStatus"];
+            /** Version */
+            version: number;
+            /**
+             * Workername
+             * @description The linked claim's injured worker, or null.
+             */
+            workerName: string | null;
+        };
+        /**
+         * MeetingStatus
+         * @description The two states a meeting card renders in — Upcoming and Done.
+         *
+         *     Here rather than in `data/models/enums.py` because **no column holds
+         *     one**: `is_done` and `meeting_date` are the stored facts and this is the
+         *     answer computed from them, which is `RiskBand`'s and `TreatmentPhase`'s
+         *     position exactly. A member of this enum in a database enum type would be a
+         *     derived column, which Story 1.2 banned.
+         *
+         *     Snake_case tokens on the wire; the labels ("Upcoming", "✓ Done") and the
+         *     card's accent treatment are the browser's, per the Enums convention.
+         * @enum {string}
+         */
+        MeetingStatus: "upcoming" | "done";
+        /**
+         * MeetingType
+         * @description The ten kinds of stakeholder meeting a handler can schedule (Story 4.1).
+         *
+         *     The scheduler modal's `<select>` (prototype lines 541-551), as a closed
+         *     type. A native enum column holds one, so the vocabulary lives here for
+         *     `BodyRegion`'s reason — `data/` must not import from `services/` — and the
+         *     display strings stay the browser's: "3-Point Contact — Initial" carries an
+         *     em dash and a numeral that no wire token should have to encode.
+         *
+         *     **The seed's two demo meetings are not among these ten, and that is a
+         *     documented mapping rather than a gap.** The prototype's
+         *     `seedMeetingsIfEmpty` (line 1840) writes free-text titles — "RTW Check-In
+         *     Call" and "Case Review — Reserve & Treatment Plan" — which its scheduler
+         *     could never have produced, because the scheduler only offers this list.
+         *     Since `meeting_type` is an enum, migration 0033 seeds them as
+         *     `rtw_conference` and `claim_review_supervisor` and carries the prototype's
+         *     fuller wording in `notes`. Story 4.1's Dev Notes flag the discrepancy; a
+         *     free-text type would be a schema change request, not dev discretion.
+         *
+         *     Member order is the modal's option order, which is roughly the order a
+         *     claim encounters them — first contact, return to work, care coordination,
+         *     then the escalations — and it is the order PostgreSQL sorts the type in.
+         *     `other` is last because it is the catch-all rather than a stage.
+         *     [Source: docs/Workers_Comp_Prototype.html lines 541-551]
+         * @enum {string}
+         */
+        MeetingType: "three_point_contact_initial" | "rtw_conference" | "ncm_care_coordination" | "ime_preparation" | "settlement_discussion" | "physician_consultation" | "employer_accommodation_review" | "litigation_prep" | "claim_review_supervisor" | "other";
+        /**
          * NewInjury
          * @description The add-injury body: a region, a type, and a score.
          *
@@ -1858,6 +2101,63 @@ export interface components {
              * @description 0-100. The add form starts at `injury.defaultSeverityScore`.
              */
             severityScore: number;
+        };
+        /**
+         * NewMeetingRequest
+         * @description The scheduler modal's body — the ten types, six participants and a date.
+         *
+         *     `extra="forbid"` for `ClaimFieldPatch`'s reason: an unknown key is a 422
+         *     from the contract rather than a value silently dropped on the way to a
+         *     command.
+         *
+         *     **`meetingDate` is required and everything else about the meeting is not.**
+         *     That is AC 2's server half: a body without it is refused by FastAPI's own
+         *     body validation with `/problems/validation-error` naming the field, and the
+         *     SPA renders that inline at the date input rather than in a native dialog.
+         *
+         *     **`claimId` is optional on the wire and always sent by this SPA.** The
+         *     modal opens from a selected claim and shows it read-only, so a caller
+         *     cannot retarget one; the field admits null because the column does (a
+         *     touchpoint that is genuinely not about one file), not because the modal has
+         *     a state in which it is unset.
+         */
+        NewMeetingRequest: {
+            /**
+             * Claimid
+             * @description The claim to link, `WC-nnnn`. Must be in the caller's caseload.
+             * @example WC-20017
+             */
+            claimId?: string | null;
+            /**
+             * Location
+             * @description Room, plant or meeting link. Free text.
+             */
+            location?: string | null;
+            /**
+             * Meetingdate
+             * Format: date
+             * @description ISO calendar date, `YYYY-MM-DD`. Required — the one field AC 2 blocks on.
+             * @example 2026-08-17
+             */
+            meetingDate: string;
+            /**
+             * Meetingtime
+             * @description ISO wall-clock time, `HH:MM`. Null for an all-day touchpoint.
+             * @example 10:00
+             */
+            meetingTime?: string | null;
+            /** @description One of the ten scheduler types. */
+            meetingType: components["schemas"]["MeetingType"];
+            /**
+             * Notes
+             * @description Agenda and topics. Free text.
+             */
+            notes?: string | null;
+            /**
+             * Participants
+             * @description The stakeholder roles attending. Stored in the vocabulary's own order, de-duplicated — the request's order is not preserved.
+             */
+            participants?: components["schemas"]["MeetingParticipant"][];
         };
         /**
          * PaymentApproval
@@ -2688,6 +2988,387 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    meetings_claims_diary_meetings_get: {
+        parameters: {
+            query?: {
+                /** @description An opaque `nextCursor` from a previous response. */
+                cursor?: string | null;
+                /** @description Page size. Reused from the cursor when one is supplied. */
+                limit?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeetingListResponse"];
+                };
+            };
+            /** @description The pagination cursor is unreadable, or belongs to a different filter, group or rules version (RFC 9457 problem document). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    schedule_meeting_claims_diary_meetings_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewMeetingRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeetingResponse"];
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The caller's role does not carry the edit capability. Answered before the claim is looked up, so it says nothing about whether the claim exists (RFC 9457 problem document). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description No such meeting in the caller's diary, or no such claim in their caseload. Deliberately the same answer for a row that does not exist and one that belongs to somebody else (RFC 9457 problem document). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The request cannot be applied — free text carrying characters the column cannot store, which is the one refusal that reaches this route as `/problems/invalid-patch`. Free text *longer* than the field allows is caught a layer earlier: `location` and `notes` declare `maxLength`, so an over-long value is refused by the schema with `/problems/validation-error`, exactly as a body missing `meetingDate` or naming an unknown meeting type or participant is. The service enforces both caps regardless, for a caller that is not this schema (RFC 9457 problem document). */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+        };
+    };
+    delete_meeting_route_claims_diary_meetings__meeting_id__delete: {
+        parameters: {
+            query: {
+                /** @description The **meeting's** `version`; the delete swaps on it. */
+                expectedVersion: number;
+            };
+            header?: never;
+            path: {
+                /** @description The meeting's `id`, published on the list. */
+                meeting_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The caller's role does not carry the edit capability. Answered before the claim is looked up, so it says nothing about whether the claim exists (RFC 9457 problem document). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description No such meeting in the caller's diary, or no such claim in their caseload. Deliberately the same answer for a row that does not exist and one that belongs to somebody else (RFC 9457 problem document). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The meeting has changed since the caller read it — completed or re-dated by another session. The body is an RFC 9457 problem document carrying the fresh entity under `meeting`. Re-read and redo; nothing is merged server-side. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        meeting: components["schemas"]["MeetingResponse"];
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    complete_meeting_route_claims_diary_meetings__meeting_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The meeting's `id`, published on the list. */
+                meeting_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MeetingCompletion"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeetingResponse"];
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The caller's role does not carry the edit capability. Answered before the claim is looked up, so it says nothing about whether the claim exists (RFC 9457 problem document). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description No such meeting in the caller's diary, or no such claim in their caseload. Deliberately the same answer for a row that does not exist and one that belongs to somebody else (RFC 9457 problem document). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The meeting has changed since the caller read it — completed or re-dated by another session. The body is an RFC 9457 problem document carrying the fresh entity under `meeting`. Re-read and redo; nothing is merged server-side. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        meeting: components["schemas"]["MeetingResponse"];
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
             };
         };
     };

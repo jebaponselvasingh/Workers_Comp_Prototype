@@ -80,6 +80,23 @@ export interface StubRoutes {
   documentReview?: StubRouteFor;
   /** `POST /claims/{id}/osha-log` (Story 3.5). */
   oshaLog?: StubRouteFor;
+  /**
+   * `GET /claims-diary/meetings` (Story 4.1) — the handler's diary.
+   *
+   * Matched **before** the generic `/api/claims/` case-file case in the router
+   * below, and this is the third time that ordering has had to be spelled out:
+   * `/api/claims-diary/meetings` contains the substring `/api/claims`, so a
+   * stub that reached the case file first would answer the diary's request
+   * with a case file and the pane would render an empty list with nothing
+   * anywhere saying why.
+   */
+  meetings?: StubRouteFor;
+  /** `POST /claims-diary/meetings` (Story 4.1) — matched before the list. */
+  scheduleMeeting?: StubRouteFor;
+  /** `PATCH /claims-diary/meetings/{id}` (Story 4.1). */
+  completeMeeting?: StubRouteFor;
+  /** `DELETE /claims-diary/meetings/{id}` (Story 4.1). */
+  deleteMeeting?: StubRouteFor;
 }
 
 const problem = (status: number, detail: string) => ({
@@ -1596,7 +1613,40 @@ export const CLAIM_ACTIONS = {
         urgency: "low",
         target: "diary",
         enabled: false,
-        disabledReason: "Available with Diary & Meetings — Epic 4",
+        // Re-worded by Story 4.1: `diary` and `meetings` shared one sentence
+        // until the scheduler shipped, and "Diary & Meetings — Epic 4" then
+        // described work half of which was already on screen. The server owns
+        // this string; the fixture follows it.
+        disabledReason: "Available with diary notes — Story 4.2",
+        command: null,
+        documentId: null,
+        documentVersion: null,
+      },
+    ],
+  },
+};
+
+/**
+ * A checklist with a live `meetings` row — Story 4.1's deep link.
+ *
+ * `enabled: true` and `disabledReason: null` because Story 4.1 deleted the
+ * target from the server's `SEAM_REASONS`, which is the whole of what enabling
+ * a seam costs. The SPA has no membership test to update, so this fixture is
+ * the only place the change is visible on this side of the wire.
+ */
+export const CLAIM_ACTIONS_MEETINGS = {
+  status: 200,
+  body: {
+    ...CLAIM_ACTIONS.body,
+    items: [
+      {
+        id: "modified_duty:meetings",
+        key: "modified_duty",
+        label: "Schedule the modified-duty review with the plant",
+        urgency: "medium",
+        target: "meetings",
+        enabled: true,
+        disabledReason: null,
         command: null,
         documentId: null,
         documentVersion: null,
@@ -1654,6 +1704,83 @@ export const ASSESSMENT_CONFLICT = {
   },
 };
 
+/**
+ * Two meetings, one ahead and one behind — Story 4.1's list fixture.
+ *
+ * `status` is a field rather than something the card works out, which is the
+ * point of the pair: `done` on a meeting whose date is *in the future* is a
+ * shape only the server can produce, and a component that re-derived the
+ * status from `meetingDate` would render it as upcoming and fail the test.
+ */
+export const MEETING_UPCOMING = {
+  id: 501,
+  claimId: "WC-20017",
+  workerName: "Marcus Webb",
+  meetingType: "rtw_conference",
+  meetingDate: "2099-09-01",
+  meetingTime: "10:30:00",
+  location: "Phone",
+  notes: "Confirm light-duty availability and physician clearance status.",
+  participants: ["employee", "employer_hr"],
+  isDone: false,
+  version: 1,
+  createdAt: "2026-08-17T09:00:00Z",
+  status: "upcoming",
+};
+
+export const MEETING_DONE = {
+  id: 502,
+  claimId: "WC-20017",
+  workerName: "Marcus Webb",
+  meetingType: "claim_review_supervisor",
+  meetingDate: "2099-09-02",
+  meetingTime: "15:00:00",
+  location: "Video Call",
+  notes: "Review treatment progress and confirm reserve adequacy.",
+  participants: ["ncm", "supervisor"],
+  isDone: true,
+  version: 3,
+  createdAt: "2026-08-17T09:00:00Z",
+  status: "done",
+};
+
+export const MEETINGS = {
+  status: 200,
+  body: { items: [MEETING_UPCOMING, MEETING_DONE], nextCursor: null, total: 2 },
+};
+
+export const MEETINGS_EMPTY = {
+  status: 200,
+  body: { items: [], nextCursor: null, total: 0 },
+};
+
+/** What the ✓ answers: the row with `isDone`, `version` and `status` moved. */
+export const MEETING_COMPLETED = {
+  status: 200,
+  body: { ...MEETING_UPCOMING, isDone: true, version: 2, status: "done" },
+};
+
+export const MEETING_CREATED = {
+  status: 201,
+  body: { ...MEETING_UPCOMING, id: 503, version: 1 },
+};
+
+/**
+ * The 409 a stale ✓ or ✕ gets — a problem document carrying the fresh meeting
+ * under `meeting`, exactly as Story 2.3's inline edit carries a claim.
+ */
+export const MEETING_CONFLICT = {
+  status: 409,
+  body: {
+    type: "/problems/stale-write",
+    title: "Conflict",
+    status: 409,
+    detail:
+      "This meeting was changed by someone else while you were looking at it. The current version is attached.",
+    meeting: MEETING_COMPLETED.body,
+  },
+};
+
 /** Never settles — the request stays in flight for the life of the test. */
 const pending = (): Promise<Response> => new Promise<Response>(() => {});
 
@@ -1669,7 +1796,12 @@ function answerFor(route: StubRouteFor, url: string): Promise<Response> {
 export function stubApi(routes: StubRoutes): void {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+    // `init` is read for the **method**, which nothing needed until Story 4.1
+    // put four routes behind two URLs. `openapi-fetch` calls
+    // `fetch(new Request(...))`, so in practice the method arrives on the
+    // request object rather than here; both are read so a caller that passes a
+    // string URL with an init is handled too.
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const url =
         typeof input === "string"
           ? input
@@ -1691,6 +1823,27 @@ export function stubApi(routes: StubRoutes): void {
       }
       if (url.includes("/api/glossary")) {
         return answer(routes.glossary ?? GLOSSARY_TERMS);
+      }
+      // Story 4.1's four, **before** every `/api/claims` case below:
+      // `/api/claims-diary/meetings` contains `/api/claims`, so the case file
+      // would swallow the diary's request and the pane would render an empty
+      // list with nothing anywhere saying why. Method is read as well as path,
+      // because all four routes share two URLs.
+      if (url.includes("/api/claims-diary/meetings")) {
+        const method =
+          typeof input === "string" || input instanceof URL
+            ? (init?.method ?? "GET")
+            : (input as Request).method;
+        if (method === "POST") {
+          return answerFor(routes.scheduleMeeting ?? MEETING_CREATED, url);
+        }
+        if (method === "PATCH") {
+          return answerFor(routes.completeMeeting ?? MEETING_COMPLETED, url);
+        }
+        if (method === "DELETE") {
+          return answerFor(routes.deleteMeeting ?? { status: 204, body: null }, url);
+        }
+        return answerFor(routes.meetings ?? MEETINGS, url);
       }
       if (url.includes("/api/claims/queue")) {
         // The whole URL, query string included, so a stub can branch on the

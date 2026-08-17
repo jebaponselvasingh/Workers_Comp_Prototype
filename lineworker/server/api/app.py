@@ -23,7 +23,14 @@ from sqlalchemy.ext.asyncio import (
 
 from api.deps import enforce_authenticated
 from api.errors import register_error_handlers
-from api.routers import admin_router, auth_router, claims_router, glossary_router, stats_router
+from api.routers import (
+    admin_router,
+    auth_router,
+    claims_router,
+    diary_router,
+    glossary_router,
+    stats_router,
+)
 from config import Env, Settings, get_settings
 from logging_config import configure_logging
 from services.financials.batch import run_payment_batch, system_context
@@ -163,6 +170,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(stats_router)
     app.include_router(glossary_router)
     app.include_router(claims_router)
+    app.include_router(diary_router)
     if settings.env is Env.e2e:
         # AD-15's deterministic batch trigger, and it is *not served* anywhere
         # else — a 404 from the router rather than a 403 from a guard. See

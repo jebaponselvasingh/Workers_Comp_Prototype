@@ -102,6 +102,11 @@ const CONTROL_CLASS =
 const NAVIGABLE_FROM_OVERVIEW: ReadonlySet<ActionTarget> = new Set<ActionTarget>([
   "bills",
   "documents",
+  // Story 4.1. Not a tab — it opens the *right* pane's Diary → Meetings and
+  // its scheduler, through the context `WorkspaceShell` provides. It belongs
+  // in this set for the same reason the two tabs do: the control goes
+  // somewhere, so rendering it is not a dead click.
+  "meetings",
 ]);
 
 /**

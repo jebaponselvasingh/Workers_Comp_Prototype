@@ -6,7 +6,7 @@ are integer cents (Excel names kept, values in cents). No derived value
 (days_open, risk, severity band, totals, flags) is a column — AD-10.
 """
 
-from datetime import date, datetime
+from datetime import date, datetime, time
 
 from sqlalchemy import (
     BigInteger,
@@ -19,6 +19,7 @@ from sqlalchemy import (
     Identity,
     Integer,
     Text,
+    Time,
     UniqueConstraint,
     func,
 )
@@ -37,6 +38,7 @@ from data.models.enums import (
     ExpenseCategory,
     Gender,
     LineItemStatus,
+    MeetingType,
     RecoveryWindow,
     ReturnStatus,
     ScheduleWeekStatus,
@@ -680,6 +682,78 @@ class Expense(Base):
     amount_cents: Mapped[int] = mapped_column(BigInteger)
     status: Mapped[LineItemStatus] = mapped_column(_enum(LineItemStatus, "line_item_status"))
     version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+
+
+class Meeting(Base):
+    """One scheduled stakeholder touchpoint (Story 4.1, FR-DIARY-2).
+
+    The prototype keeps these in a browser-lifetime object (`meetingsStore`,
+    line 1838) re-seeded at every login and lost on reload; here they are rows
+    written by the three audited commands in `services/claims/meetings.py`,
+    which AD-12 names as the diary aggregate's only writer.
+
+    **A row is a log of intent, not a delivery attempt.** No calendar invite,
+    no ICS attachment and no notification is produced by scheduling one — real
+    calendar egress is a Deferred architecture decision with its own compliance
+    review. So there is no `sent_at`, no `external_event_id` and no delivery
+    status: the table records that a handler planned a touchpoint, and nothing
+    about it claims anybody was told.
+
+    **`app_user_id` is the owner, and it is what scopes every read.** A meeting
+    belongs to the handler who holds it rather than to the claim it references
+    — which is why `list_meetings` is a *caller*-scoped list rather than a
+    child read-model of the case file, and why the repository's predicate is
+    the owner first and the employer scope second. Two handlers whose books
+    overlap (the seed has two on John Deere) see their own meetings and not
+    each other's.
+
+    **`claim_id` is nullable**, which is the ERD's `CLAIM |o--o{ MEETING`. The
+    scheduler always opens from a selected claim, so every meeting the UI
+    creates carries one; the column admits null because "a supervisor catch-up
+    that is not about one file" is a real thing to have scheduled, and a
+    NOT NULL here would make it unrecordable rather than unrepresented.
+
+    **`participants` is JSONB, not an array column and not a join table.** No
+    `ARRAY` column exists anywhere in this schema, and the story's own ruling
+    is that nothing in Epics 1-8 asks a participant-side question — the list is
+    always read whole with its meeting. The elements are `MeetingParticipant`
+    values; the command validates them, because a JSONB column cannot.
+
+    **`version` from birth**, unlike `photo` and `treatment_plan_step`: the
+    complete and delete commands compare-and-swap on it (AD-4), and a ✓ that
+    could remove the row another handler had just re-dated is exactly what the
+    column is for. `created_at` is the database's fact, defaulted there for
+    `RuleDocument.created_at`'s reason.
+
+    AD-11: `notes`, `location` and `participants` are PHI-class — a meeting
+    agenda names a worker's treatment and a physician's practice. Nothing about
+    them reaches a log beyond ids and event names, and the table belongs in
+    Story 8.1's purge cascade, which does not exist yet and is not invented
+    here.
+    """
+
+    __tablename__ = "meeting"
+
+    id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+    # Indexed: every read of this table is "my meetings" — the list has no
+    # other entry point, and the owner predicate is on every statement.
+    app_user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), index=True)
+    claim_id: Mapped[int | None] = mapped_column(ForeignKey("claim.id"), index=True)
+    meeting_type: Mapped[MeetingType] = mapped_column(_enum(MeetingType, "meeting_type"))
+    # A calendar `date`, not a timestamp: the modal captures a day and an
+    # optional wall-clock time in the handler's own locale, and combining them
+    # into one instant would require a timezone this console does not collect.
+    meeting_date: Mapped[date] = mapped_column(Date)
+    # Nullable because the prototype's time input can be cleared and an
+    # all-day touchpoint is a real thing to record. The card omits the clock
+    # rather than printing midnight.
+    meeting_time: Mapped[time | None] = mapped_column(Time)
+    location: Mapped[str | None] = mapped_column(Text)
+    notes: Mapped[str | None] = mapped_column(Text)
+    participants: Mapped[list[str]] = mapped_column(JSONB)
+    is_done: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class GlossaryTerm(Base):

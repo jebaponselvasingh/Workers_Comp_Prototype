@@ -320,6 +320,77 @@ class ActionCommand(StrEnum):
     mark_osha_logged = "mark_osha_logged"
 
 
+class MeetingType(StrEnum):
+    """The ten kinds of stakeholder meeting a handler can schedule (Story 4.1).
+
+    The scheduler modal's `<select>` (prototype lines 541-551), as a closed
+    type. A native enum column holds one, so the vocabulary lives here for
+    `BodyRegion`'s reason — `data/` must not import from `services/` — and the
+    display strings stay the browser's: "3-Point Contact — Initial" carries an
+    em dash and a numeral that no wire token should have to encode.
+
+    **The seed's two demo meetings are not among these ten, and that is a
+    documented mapping rather than a gap.** The prototype's
+    `seedMeetingsIfEmpty` (line 1840) writes free-text titles — "RTW Check-In
+    Call" and "Case Review — Reserve & Treatment Plan" — which its scheduler
+    could never have produced, because the scheduler only offers this list.
+    Since `meeting_type` is an enum, migration 0033 seeds them as
+    `rtw_conference` and `claim_review_supervisor` and carries the prototype's
+    fuller wording in `notes`. Story 4.1's Dev Notes flag the discrepancy; a
+    free-text type would be a schema change request, not dev discretion.
+
+    Member order is the modal's option order, which is roughly the order a
+    claim encounters them — first contact, return to work, care coordination,
+    then the escalations — and it is the order PostgreSQL sorts the type in.
+    `other` is last because it is the catch-all rather than a stage.
+    [Source: docs/Workers_Comp_Prototype.html lines 541-551]
+    """
+
+    three_point_contact_initial = "three_point_contact_initial"
+    rtw_conference = "rtw_conference"
+    ncm_care_coordination = "ncm_care_coordination"
+    ime_preparation = "ime_preparation"
+    settlement_discussion = "settlement_discussion"
+    physician_consultation = "physician_consultation"
+    employer_accommodation_review = "employer_accommodation_review"
+    litigation_prep = "litigation_prep"
+    claim_review_supervisor = "claim_review_supervisor"
+    other = "other"
+
+
+class MeetingParticipant(StrEnum):
+    """The six stakeholder roles a meeting can be scheduled with (Story 4.1).
+
+    The modal's checkbox grid (prototype lines 555-562). **Six values in a
+    JSONB array on `meeting`, not a join table**, which is the story's own
+    ruling and worth restating where the vocabulary lives: nothing in Epics 1-8
+    asks a participant-side question ("which meetings is the NCM on?"), so a
+    child table would buy a join and a second write path for a list that is
+    always read whole with its meeting.
+
+    That JSONB column is why this is still a `StrEnum` rather than a tuple of
+    strings: the members are what the command validates against and what the
+    409's fresh entity round-trips, so an unknown participant is refused at the
+    boundary even though no database type constrains the array's elements.
+
+    Labels are the UI's, and two of them are deliberately longer than their
+    tokens — `ncm` renders "Nurse Case Manager" in the modal and "NCM" on a
+    card's participant tag, and `supervisor` renders "My Supervisor". A token
+    that carried either wording would make the tag and the checkbox two
+    different vocabularies.
+
+    Member order is the checkbox grid's order, reading left to right.
+    [Source: docs/Workers_Comp_Prototype.html lines 555-562]
+    """
+
+    employee = "employee"
+    employer_hr = "employer_hr"
+    ncm = "ncm"
+    treating_physician = "treating_physician"
+    supervisor = "supervisor"
+    attorney = "attorney"
+
+
 class BodyRegion(StrEnum):
     """The eleven regions the injury diagram can point at (Story 2.4).
 

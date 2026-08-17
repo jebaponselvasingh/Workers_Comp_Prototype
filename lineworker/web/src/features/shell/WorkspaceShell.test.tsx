@@ -6,6 +6,7 @@ import { afterEach, expect, test, vi } from "vitest";
 
 import { createQueryClient } from "@/api/queryClient";
 import {
+  CLAIM_ACTIONS_MEETINGS,
   CLAIM_DETAIL_INTAKE,
   CLAIM_DETAIL_NOT_FOUND,
   CLAIM_DETAIL_TREATMENT,
@@ -13,6 +14,7 @@ import {
   CLAIM_QUEUE_PAGE_TWO,
   CLAIM_QUEUE_PAGED,
   ME_HANDLER,
+  MEETINGS,
   type StubRoutes,
   stubApi,
 } from "@/test/api-mock";
@@ -198,4 +200,33 @@ test("the three panes are all present", async () => {
   expect(await screen.findByTestId("queue-pane")).toBeInTheDocument();
   expect(screen.getByTestId("detail-pane")).toBeInTheDocument();
   expect(screen.getByTestId("copilot-pane")).toBeInTheDocument();
+  // Story 4.1 filled the third one. The pane keeps its name and its testid —
+  // three specs and two component tests key off them — and what changed is
+  // what is inside it.
+  expect(screen.getByTestId("copilot")).toBeInTheDocument();
+});
+
+test("a meetings action in the centre pane opens the scheduler in the right one", async () => {
+  // Story 4.1 AC 5, and the only place in the suite where the deep link can be
+  // proved: the checklist lives in the centre pane and its target is the right
+  // one, so nothing below the shell sees both ends of it. This is what
+  // `DiaryNavProvider` exists for.
+  renderShell(
+    {
+      claimsQueue: CLAIM_QUEUE,
+      claimDetail: CLAIM_DETAIL_TREATMENT,
+      claimActions: CLAIM_ACTIONS_MEETINGS,
+      meetings: MEETINGS,
+    },
+    "/workspace?claim=WC-20017",
+  );
+
+  const goTo = await screen.findByTestId("action-goto");
+  // The server said this row is navigable; the browser does not decide that.
+  expect(goTo).toBeEnabled();
+  expect(goTo).toHaveAttribute("data-target", "meetings");
+  await userEvent.click(goTo);
+
+  expect(await screen.findByTestId("meeting-scheduler")).toBeInTheDocument();
+  expect(screen.getByTestId("diary-subtab-meetings")).toHaveAttribute("aria-selected", "true");
 });

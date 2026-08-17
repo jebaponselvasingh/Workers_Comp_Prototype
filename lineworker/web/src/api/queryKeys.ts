@@ -177,4 +177,46 @@ export const queryKeys = {
      */
     writes: (claimId: string) => ["claims", "write", claimId] as const,
   },
+  /**
+   * The handler's diary (Story 4.1) — **a top-level group, not a child of
+   * `claims`**, and that placement is the whole reason this comment is long.
+   *
+   * `GET /claims-diary/meetings` is scoped to the *caller*, not to a claim: a
+   * meeting belongs to the handler who holds it and merely references a case
+   * file. So the list is not a child read-model of `claims.detail` the way
+   * `financials` and `actions` are, and nesting it under a claim's segment
+   * would make an unrelated case-file edit invalidate the whole diary.
+   *
+   * **The mutation key is this group's own, and using `claims.writes` here
+   * would be a bug with a visible symptom.** That key drives
+   * `useClaimWriteInFlight`, which disables every editable control on the case
+   * file while a command is in flight — because those controls all read
+   * `expectedVersion` out of one cached case file. A meeting write touches no
+   * column of `claim` and bumps no claim version, so carrying that key would
+   * grey out the severity score and the comp-rate input while somebody ticked
+   * a meeting done, for no reason anyone could see.
+   */
+  meetings: {
+    /**
+     * The caller's meetings, one page at a time.
+     *
+     * No cursor in the key, deliberately: the cursor is a *page param* the
+     * infinite query keeps inside its entry, and putting it in the key would
+     * make every page its own cache entry and lose the accumulated list on the
+     * way back — `queuePages`' lesson, in the case where there is no separate
+     * first-page query to anchor against.
+     *
+     * No persona in it either, for the reason the stats keys record: the server
+     * answers for whoever holds the cookie (AD-7), and switching personas
+     * clears the whole cache.
+     */
+    list: ["meetings", "list"] as const,
+    /**
+     * The **mutation** key every meeting command carries. Nothing is cached
+     * under it; `useIsMutating` counts it so the scheduler and each card can
+     * disable their controls while any write is in flight — the same guarantee
+     * `claims.writes` gives the case file, over a different aggregate.
+     */
+    writes: ["meetings", "write"] as const,
+  },
 } as const;

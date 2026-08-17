@@ -28,6 +28,7 @@
 import type { ActionTarget } from "@/api/claims";
 import { useClaimDetail } from "@/api/claims";
 import { isNotFound } from "@/api/errors";
+import { useDiaryNav } from "@/features/diary/DiaryNav";
 import { useSelectedClaimId } from "@/features/queue/useSelectedClaim";
 
 import { CaseHeader } from "./CaseHeader";
@@ -76,6 +77,7 @@ function DetailSkeleton() {
 function CaseFile({ claimId }: { claimId: string }) {
   const detail = useClaimDetail(claimId);
   const [activeTab, setActiveTab] = useDetailTab();
+  const { requestMeetings } = useDiaryNav();
 
   if (detail.isPending) return <DetailSkeleton />;
 
@@ -101,16 +103,36 @@ function CaseFile({ claimId }: { claimId: string }) {
    * Story 3.5's deep links, and they are the tab state this pane already owns
    * (AC 3: "real navigation … reuse Epic 2's tab state, no bespoke routing").
    *
-   * The four targets that are not tabs never reach here: the server sends them
-   * with `enabled: false` and the card renders a disabled control with the
-   * sentence naming the epic that will enable it. The fallthrough is a no-op
-   * rather than a throw, because the seam is a *contract* between two versions
-   * of the app — an SPA held open across a deploy that added a target must not
-   * blank the pane over it.
+   * The remaining seam targets never reach here: the server sends them with
+   * `enabled: false` and the card renders a disabled control with the sentence
+   * naming the story that will enable it. The fallthrough is a no-op rather
+   * than a throw, because the seam is a *contract* between two versions of the
+   * app — an SPA held open across a deploy that added a target must not blank
+   * the pane over it.
+   *
+   * **`meetings` is the first target that is not a tab** (Story 4.1). It lives
+   * in the right pane, so instead of moving this pane's tab state it raises an
+   * intent on the context `WorkspaceShell` provides, and the copilot pane's
+   * Diary tab picks it up.
+   *
+   * **Below the `xl` breakpoint the scheduler still opens**, and that is worth
+   * stating because the obvious guess is the opposite. The copilot aside is
+   * `hidden … xl:flex` — `display: none`, but still *mounted* — so
+   * `MeetingsSubTab` is alive behind it, and the Radix dialog it renders
+   * portals to `document.body` rather than into the aside. A handler on a
+   * narrow window therefore gets a working modal over a workspace whose diary
+   * list they cannot see, and a meeting saved from it is written correctly and
+   * stays invisible until the window widens. The pane has been `xl`-only since
+   * Story 2.1; changing that is not this deep link's decision to take, and the
+   * e2e spec pins the behaviour rather than the assumption.
    */
   const navigate = (target: ActionTarget): void => {
     if (target === "overview" || target === "bills" || target === "documents") {
       setActiveTab(target);
+      return;
+    }
+    if (target === "meetings") {
+      requestMeetings();
     }
   };
 

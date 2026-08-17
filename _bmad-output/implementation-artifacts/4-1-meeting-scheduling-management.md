@@ -1,6 +1,6 @@
 # Story 4.1: Meeting Scheduling & Management
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -116,10 +116,45 @@ This story ships the **meetings** third of the diary aggregate plus the right-pa
 
 ### Agent Model Used
 
-<!-- filled by dev-story -->
+claude-opus-5[1m] (Claude Opus 5, 1M context), via the `bmad-dev-auto` workflow.
 
 ### Debug Log References
 
+- **`web/src/features/copilot/` and `web/src/features/diary/` already existed — and contained nothing.** Task 4's instruction to "extend the right pane in place if a prior story stubbed it" resolves in two directions at once: the *directories* were created empty in Stories 1.1/1.2 (`.gitkeep`, 0 bytes), so the feature code is genuinely new, but a real right-pane stub **is** rendered in `features/shell/WorkspaceShell.tsx` and was extended in place, keeping its `aria-label="Copilot"` and `data-testid="copilot-pane"` because `WorkspaceShell.test.tsx`, `App.test.tsx` and existing e2e specs key off both.
+- **The deep link crosses panes, and an event-shaped context would not survive lint.** `ClaimDetailPane` (centre) raises the intent; the copilot `<aside>` (right) consumes it. The obvious shape — a "somebody asked for the scheduler" event each consumer reacts to in a `useEffect` — is what `react-hooks/set-state-in-effect` refuses, and it produced three errors. `DiaryNav` therefore owns the state itself (`subTab`, `schedulerOpen`, `schedulerSession`), so the deep link is two setters in one handler and the whole feature contains no `useEffect`.
+- **The scheduler opens below the `xl` breakpoint, over a diary nobody can see.** Two code comments confidently asserted the opposite ("does nothing visible — the honest behaviour"). Code review checked: the aside is `hidden … xl:flex`, which is `display:none` but still **mounted**, `MeetingsSubTab` is the default sub-tab, and the Radix dialog portals to `document.body`. So the modal does render, the meeting saves correctly, and the list behind it is invisible until the window widens. The comments were wrong rather than the code; both were corrected and an e2e test at 1024px now pins the real behaviour.
+- **`meeting_type` is an enum and the prototype's two demo titles are not among its ten members.** Seeded as `rtw_conference` and `claim_review_supervisor` with the prototype's fuller labels carried in `notes`, exactly as the story's seed-type mapping directs. Flagged rather than quietly resolved: verbatim seed titles would be a schema change (free-text type), not dev discretion.
+- **`meeting_date` comes from the database clock, and one test compared it to the local one.** Migration 0033 stamps `sa.func.current_date()` specifically because a Python `date.today()` and a Postgres `CURRENT_DATE` can disagree across a UTC midnight — then `test_meeting_seed.py` bounded the result with `date.today()` and reintroduced the straddle for any developer west of UTC running after local afternoon. Caught in review; the bound is now the database's own date.
+- **A test that would have failed on a calendar rather than a regression.** `a_meeting_body()` defaulted `meetingDate` to `2026-09-01` and asserted `status == "upcoming"`; the route derives status from `utc_today()`, so the assertion inverts on 2026-09-02. The e2e spec and the vitest fixtures had already been given far-future dates; this file had not.
+- **The list sorts ascending, which decides what silent truncation costs.** `(meeting_date, id)` ascending against a fifty-row default page means the rows that survive the cut are the *completed past* ones and newly scheduled meetings fall off the end. `useMeetings` shipped as a plain `useQuery` ignoring `nextCursor`; review reclassified that from a deferral to a defect for exactly this reason, and it is now a `useInfiniteQuery` with `total` and a "Show more".
+- **`normalise_participants` dropped unknown values instead of refusing them,** while `_view` does `MeetingParticipant(value)` on read — so a token written by any non-Pydantic caller is accepted silently and then 500s on the next list. `MeetingParticipant`'s own docstring promises refusal at the boundary. It now raises `InvalidPatch` without echoing the value.
+- **A seed migration's `downgrade()` is not automatically safe when the table is user-writable.** `0033`'s downgrade was written as the `DELETE FROM …` its 0011/0021/0027 precedents use — but those tables were seed-only, and `meeting` is written by three handler-facing commands from the day it ships. It now deletes only the tuples `upgrade()` builds.
+- **The `noDerivation` guard was pointed at the new directories but could not catch the rule it was added for.** Its comment cites `m.date >= today && !m.done`; `DERIVED_FIELDS` held no `status`, `isDone`, `meetingDate` or `meetingTime`, and the only comparison rule needs a numeric literal on the right. Adding the field names armed it, verified by writing the offending comparison into `MeetingCard.tsx` and watching the guard fail.
+
 ### Completion Notes List
 
+- All six ACs are implemented and covered end to end. Server: `meeting` table (structure `0032`, seed `0033`), audited CAS `create_meeting` / `complete_meeting` / `delete_meeting` plus `list_meetings` in `services/claims/meetings.py`, `meeting_status` registered as a derivation, four thin routes at `/claims-diary`. Web: the copilot panel shell in the existing aside, the Diary tab with Meetings implemented and Notes/Emails naming Stories 4.2/4.3, the UX-DR10 scheduler modal, the UX-DR9 card list, and the cross-pane deep link.
+- **Story 3.5's `meetings` seam is live**, and enabling it was one deletion from `SEAM_REASONS` in `services/worklist/actions.py` plus a branch in the SPA's `navigate()` — the property `ActionTarget`'s docstring promised, now asserted directly. `diary` stays disabled and its shared sentence was re-worded to name Story 4.2, which required updating `tests/test_action_checklist.py`, `web/src/test/api-mock.ts` and `ActionsCard.test.tsx` rather than working around them.
+- **Two deliberate divergences from the story text.** Feedback is the existing polite live region, not a toast: no toast provider exists in `web/`, Story 3.4 deferred building one to the first story with *two* surfaces needing it, and this story has one — so the primitive is deferred to 4.3 (Story 4.3's email send is the second surface). And no `timeline_event` is emitted for meetings, per AD-12 — which contradicts Story 3.5's prediction that this story would widen the tag set, so that prediction is corrected in `deferred-work.md` rather than left looking like missed work.
+- **`/problems/invalid-cursor`, not the spec's `/problems/bad-cursor`.** The queue has answered `invalid-cursor` since Story 2.1 and the diary router imports its shared `BAD_CURSOR_RESPONSE` dict; two type strings for one failure across two list endpoints would make the SPA's error handling depend on which list it was reading.
+- **Code review found 20 issues, all fixed** (3 medium, 17 low) — see the spec's Review Triage Log. The medium three: the silent fifty-row truncation, the seed downgrade deleting handler-created rows, and the participant validator dropping unknown values. Two findings were deferred (`feedbackFromError` has no 404/403 branch; `delete_meeting`'s audit diff takes `claim_business_id` from a pre-read row) and three rejected.
+- **Gate, run twice — once at implementation, once after the review patches:** ruff + format clean (182 files), mypy strict clean, **pytest 1702 passed** (was 1646 at Epic 3 close), eslint 0 errors, tsc clean, **vitest 356 passed** (was 314), **Playwright 128/128** (was 123) against a stack rebuilt `--build` from patched source. `schema.d.ts` regenerated and stable.
+- **Known rough edge:** below 1280px the copilot pane is hidden while the scheduler still opens over it. The pane has been `xl`-only since Story 2.1; the behaviour is now documented and tested rather than assumed, but reopening the breakpoint belongs to whoever owns the layout.
+
 ### File List
+
+**New — server:** `services/claims/meetings.py` · `services/derivations/meeting_horizon.py` · `api/routers/diary.py` · `data/versions/20260817_0032_meeting.py` · `data/versions/20260817_0033_seed_meetings.py` · `tests/test_meetings.py` · `tests/test_meeting_seed.py`
+
+**Modified — server:** `data/models/enums.py` (`MeetingType`, `MeetingParticipant`) · `data/models/core.py` (`Meeting`) · `data/models/__init__.py` (export) · `data/repositories/claims.py` (five scoped meeting queries) · `services/derivations/__init__.py` (registration) · `services/worklist/actions.py` (`meetings` seam live, `diary` re-worded) · `api/app.py` + `api/routers/__init__.py` (router mounted) · `tests/seed_fixture.py` (meeting oracles) · `tests/test_action_checklist.py` (seam wording)
+
+**New — web:** `src/api/meetings.ts` · `src/features/copilot/CopilotPane.tsx` + `.test.tsx` · `src/features/diary/{DiaryNav,DiaryTab,MeetingsSubTab,MeetingSchedulerDialog,MeetingCard,labels}.tsx` · `src/features/diary/{DiaryNav,DiaryTab,MeetingsSubTab,MeetingSchedulerDialog,MeetingCard}.test.tsx` · `src/components/ui/checkbox.tsx` · `src/components/ui/textarea.tsx`
+
+**Modified — web:** `src/api/queryKeys.ts` (meetings group) · `src/api/schema.d.ts` (regenerated) · `src/features/shell/WorkspaceShell.tsx` + `.test.tsx` (aside extended in place) · `src/features/claim-detail/ClaimDetailPane.tsx` (deep link) · `src/features/claim-detail/actions/ActionsCard.tsx` + `.test.tsx` (`meetings` navigable) · `src/features/queue/noDerivation.test.ts` (roots + fields) · `src/test/api-mock.ts` (meetings route, ordered before the case-file match)
+
+**New — e2e:** `stories/4-1-meeting-scheduling-management.spec.ts` (`@story:4-1 @epic:4`, five tests, one `@smoke`)
+
+**Modified — e2e:** `fixtures/seed.ts` (independent seed oracle) · `stories/2-2-case-header-stage-adaptive-overview.spec.ts` (page-wide `role="tab"` count re-scoped to the case file's own tablist)
+
+**Deleted:** `src/components/ui/label.tsx` (vendored, imported nowhere)
+
+**Artifacts:** `_bmad-output/implementation-artifacts/spec-4-1-meeting-scheduling-management.md` · `epic-4-context.md` (new) · `deferred-work.md` (9 items) · `sprint-status.yaml`

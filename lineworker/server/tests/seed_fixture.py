@@ -455,3 +455,41 @@ def prognosis_for(claim_business_id: str) -> dict[str, str]:
     assert row is not None, f"no seeded deferred block for {claim_business_id!r}"
     prognosis: dict[str, str] = dict(row["prognosis"])
     return prognosis
+
+
+# --- Story 4.1: the two demo meetings per handler persona ----------------
+#
+# Recomputed from `seed_data.json` rather than read back from the migration
+# that wrote them, which is what makes this an oracle: migration 0033 picks
+# the two lowest-sorted claim business ids in each handler's *employer* scope,
+# and this restates that rule independently. If the two ever disagree, one of
+# them is wrong and the test says so.
+
+#: The two demo meetings' types, in the order 0033 inserts them — the mapping
+#: of the prototype's two free-text titles onto `MeetingType` members. See
+#: that migration's docstring on why they are mapped rather than copied.
+DEMO_MEETING_TYPES = ("rtw_conference", "claim_review_supervisor")
+
+HANDLER_ROLE = "handler"
+
+
+def handler_personas() -> list[str]:
+    """Every seeded persona with the `handler` role, in the seed file's order."""
+    return [user["name"] for user in seed()["app_users"] if user["role"] == HANDLER_ROLE]
+
+
+def expected_meetings_for(persona_name: str) -> list[dict[str, str]]:
+    """The two meetings migration 0033 seeds for one handler.
+
+    `(claim_id, meeting_type)` pairs — the date is the migration's run date and
+    therefore not something a static oracle can name.
+    """
+    claim_ids = sorted(claim["claim_id"] for claim in claims_for(persona_name, HANDLER_ROLE))
+    assert len(claim_ids) >= len(DEMO_MEETING_TYPES), (
+        f"{persona_name!r} has {len(claim_ids)} scoped claims; "
+        "Story 4.1 AC 6 needs two for its two demo meetings"
+    )
+    return [
+        {"claim_id": claim_id, "meeting_type": meeting_type}
+        for claim_id, meeting_type in zip(claim_ids, DEMO_MEETING_TYPES, strict=False)
+    ]

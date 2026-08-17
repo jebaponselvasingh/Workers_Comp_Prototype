@@ -120,17 +120,28 @@ PAYMENT_DUE_WEEK_STATUSES: Final[frozenset[ScheduleWeekStatus]] = frozenset(
     {ScheduleWeekStatus.due_this_week, ScheduleWeekStatus.pending_approval}
 )
 
-#: The four targets no surface exists for yet, and the sentence each one shows
+#: The targets no surface exists for yet, and the sentence each one shows
 #: instead of a dead click (NFR-3, AC 3).
 #:
 #: **The sentence is the server's, not the browser's**, which is what makes the
-#: seam one field: Story 4.2 enables the diary and meeting links and Story 6.2
+#: seam one field: Story 4.1 enabled the meetings link and Story 6.2 will enable
 #: the fraud one by deleting an entry here, and the SPA changes not at all. A
 #: client-side map of "which epics have shipped" would be a second copy of this
 #: table, stale in exactly the release where one of them landed.
+#:
+#: **`meetings` was here and is not any more** — Story 4.1 built the scheduler,
+#: so the target is live and the row carries a real "Schedule Meeting →". That
+#: is the whole of what enabling a seam costs, and it is the demonstration
+#: `ActionTarget`'s docstring promised: one deletion here, nothing in the SPA.
+#:
+#: `diary` stays, and its sentence had to be re-worded rather than left alone.
+#: Both entries said "Diary & Meetings — Epic 4"; with meetings shipped, that
+#: sentence describes work half of which is already on screen, and a handler
+#: reading it beside a working meetings link would reasonably conclude the
+#: console was broken. It now names the story that owns the surface, which is
+#: the level of precision the other two entries were already at.
 SEAM_REASONS: Final[Mapping[ActionTarget, str]] = {
-    ActionTarget.diary: "Available with Diary & Meetings — Epic 4",
-    ActionTarget.meetings: "Available with Diary & Meetings — Epic 4",
+    ActionTarget.diary: "Available with diary notes — Story 4.2",
     ActionTarget.fraud: "Available with AI Insights — Epic 6",
     ActionTarget.rtw_letter: "Available with the RTW letter — Epic 6",
 }

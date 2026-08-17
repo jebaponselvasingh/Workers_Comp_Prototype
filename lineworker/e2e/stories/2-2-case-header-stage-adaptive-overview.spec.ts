@@ -202,7 +202,13 @@ test.describe("@story:2-2 @epic:2 case header and stage-adaptive overview", () =
     await loginAs(page, PERSONAS.handler);
     await openClaim(page, firstClaimInStage(KAYA.name, KAYA.role, "treatment"));
 
-    await expect(byRole(page, "tab")).toHaveCount(6);
+    // Scoped to the **case file's** strip since Story 4.1 (which put a second
+    // and third tablist on the page — the copilot's two tabs and the diary's
+    // three). A page-wide `role="tab"` count was only ever right while the
+    // case file was the sole tabbed surface, and it counted 11 the day the
+    // right pane arrived. Addressing the strip by its accessible name is what
+    // the assertion always meant.
+    await expect(byRole(page, "tablist", "Case file sections").getByRole("tab")).toHaveCount(6);
 
     // **Story 2.4 built the Injury Diagram tab, 2.5 the Documents & ID tab,
     // 2.6 the Photos tab and 3.3 the Bills & Payments tab, so their rows are

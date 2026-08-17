@@ -81,7 +81,7 @@ development_status:
 
   # Epic 4: Diary, Meetings & Stakeholder Emails
   epic-4: in-progress
-  4-1-meeting-scheduling-management: ready-for-dev
+  4-1-meeting-scheduling-management: review
   4-2-claim-linked-diary-notes: ready-for-dev
   4-3-templated-stakeholder-emails: ready-for-dev
   epic-4-retrospective: optional

@@ -386,16 +386,54 @@ def test_every_seam_target_renders_disabled_with_the_epic_that_enables_it() -> N
     for key, target in (
         (ActionKey.siu_escalation, ActionTarget.fraud),
         (ActionKey.overdue_rtw, ActionTarget.rtw_letter),
-        (ActionKey.modified_duty, ActionTarget.meetings),
         (ActionKey.diary_check_in, ActionTarget.diary),
     ):
         action = actions.get(key)
-        # Not every one of the four survives the cap on this claim; the ones
+        # Not every one of the three survives the cap on this claim; the ones
         # that do must be disabled, and the assertion is about them.
         if action is None:
             continue
         assert action.enabled is False
         assert action.disabled_reason == SEAM_REASONS[target]
+
+
+def test_the_meetings_target_is_live_since_story_4_1() -> None:
+    """The seam this file's previous version asserted disabled (Story 4.1).
+
+    `modified_duty` points at `meetings`, and until 4.1 the scheduler did not
+    exist so the row shipped refused. Enabling it was one deletion from
+    `SEAM_REASONS` and nothing in the SPA — which is the property
+    `ActionTarget`'s docstring promises and the reason `enabled` is a server
+    field rather than a client-side membership test. Asserted rather than
+    simply removed from the loop above, so a regression that re-added the
+    entry fails here instead of silently re-disabling a shipped surface.
+    """
+    assert ActionTarget.meetings not in SEAM_REASONS
+
+    action = next(
+        candidate
+        for candidate in run(
+            FakeClaim(
+                stage=Stage.treatment,
+                return_status=ReturnStatus.returned_and_under_therapy,
+            )
+        )
+        if candidate.key is ActionKey.modified_duty
+    )
+    assert action.target is ActionTarget.meetings
+    assert action.enabled is True
+    assert action.disabled_reason is None
+
+
+def test_the_diary_seam_names_the_story_that_delivers_it() -> None:
+    """The re-wording Story 4.1 forced (code review of the seam table).
+
+    `diary` and `meetings` shared one sentence — "Diary & Meetings — Epic 4" —
+    and with meetings shipped that sentence describes work half of which is
+    already on screen. A handler reading it beside a working "Schedule
+    Meeting →" would reasonably conclude the console was broken.
+    """
+    assert SEAM_REASONS[ActionTarget.diary] == "Available with diary notes — Story 4.2"
 
 
 def test_a_disabled_row_never_carries_a_completion_command() -> None:

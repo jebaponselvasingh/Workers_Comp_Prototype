@@ -1353,3 +1353,88 @@ export const RESERVE_VERDICT_LABEL: Record<SeedVerdict, string> = {
   closed_final: "Closed — Final",
   indeterminate: "Awaiting Bill Data",
 };
+
+// --- Story 4.1: the two demo meetings per handler persona ----------------
+
+/**
+ * What migration 0033 seeds, restated from `seed_data.json`.
+ *
+ * The rule: each handler persona gets two meetings, linked to the two
+ * lowest-sorted claim business ids **in their employer scope**, typed
+ * `rtw_conference` and `claim_review_supervisor` in that order.
+ *
+ * Independent of the migration, like every other oracle here: this walks the
+ * same seed file the stack migrated with and applies the rule again, so a
+ * migration that picked different claims — or seeded three meetings, or one —
+ * disagrees with this rather than agreeing with itself.
+ *
+ * The **date** is deliberately not part of the expectation. The migration
+ * stamps its own run date, which is whenever the image was built; a static
+ * oracle that named a day would be wrong the morning after. What the spec
+ * asserts instead is the type, the claim and the count.
+ */
+export const DEMO_MEETING_TYPES = ["rtw_conference", "claim_review_supervisor"] as const;
+
+export interface ExpectedMeeting {
+  claimId: string;
+  meetingType: (typeof DEMO_MEETING_TYPES)[number];
+}
+
+export function expectedMeetingsFor(name: string, role: string): ExpectedMeeting[] {
+  const claimIds = claimsFor(name, role)
+    .map((claim) => claim.claim_id)
+    .sort((left, right) => left.localeCompare(right));
+
+  if (claimIds.length < DEMO_MEETING_TYPES.length) {
+    throw new Error(
+      `${name}/${role} has ${claimIds.length} scoped claims; Story 4.1 AC 6 seeds two meetings`,
+    );
+  }
+
+  return DEMO_MEETING_TYPES.map((meetingType, index) => ({
+    claimId: claimIds[index],
+    meetingType,
+  }));
+}
+
+/**
+ * The ten scheduler labels — `features/diary/labels.ts`, restated.
+ *
+ * A second copy on purpose: a spec that imported the app's own map would
+ * assert that the map equals itself. These are the words a handler reads, and
+ * they are the prototype's (lines 541-551).
+ */
+export const MEETING_TYPE_LABEL: Record<string, string> = {
+  three_point_contact_initial: "3-Point Contact — Initial",
+  rtw_conference: "RTW Conference",
+  ncm_care_coordination: "NCM Care Coordination",
+  ime_preparation: "IME Preparation",
+  settlement_discussion: "Settlement Discussion",
+  physician_consultation: "Physician Consultation",
+  employer_accommodation_review: "Employer Accommodation Review",
+  litigation_prep: "Litigation Prep",
+  claim_review_supervisor: "Claim Review — Supervisor",
+  other: "Other",
+};
+
+/**
+ * Claims whose worker is back on restricted capacity — the `modified_duty`
+ * rule's trigger, and therefore the claims whose checklist carries a
+ * `meetings` action (Story 4.1's half of Story 3.5's seam).
+ *
+ * The *condition* is restated here rather than the action list: which rows a
+ * claim produces is eleven rules and belongs in
+ * `server/tests/test_action_checklist.py`, but "which claim can demonstrate
+ * the deep link" has to be answerable from the seed or the spec is reduced to
+ * hunting through a book for one.
+ */
+export function claimIdsOnModifiedDuty(name: string, role: string): string[] {
+  const claims = claimsFor(name, role)
+    .filter((claim) => claim.return_status === "returned_and_under_therapy")
+    .map((claim) => claim.claim_id)
+    .sort((left, right) => left.localeCompare(right));
+  if (claims.length === 0) {
+    throw new Error(`no seeded modified-duty claim for ${name}/${role}`);
+  }
+  return claims;
+}

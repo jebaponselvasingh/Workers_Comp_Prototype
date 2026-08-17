@@ -29,6 +29,7 @@ with the scope filter and can only ever narrow the result.
 """
 
 from collections.abc import Mapping, Sequence
+from datetime import date
 from typing import Any, cast
 
 import sqlalchemy as sa
@@ -47,6 +48,7 @@ from data.models import (
     Employee,
     Employer,
     Expense,
+    Meeting,
     PaymentScheduleWeek,
     Photo,
     TimelineEvent,
@@ -941,6 +943,282 @@ async def update_document_review_cas(
         .execution_options(synchronize_session=False)
     )
     return int(cast(CursorResult[Any], result).rowcount)
+
+
+# --- Story 4.1: the diary aggregate's first table ------------------------
+
+
+def meeting_scope(ctx: CallerContext) -> ColumnElement[bool]:
+    """The AD-7 predicate for `meeting` — owner **and** employer scope.
+
+    Two conditions, and neither is redundant.
+
+    **Owner.** A meeting belongs to the handler who holds it, not to the claim
+    it references, so `list_meetings` is a caller-scoped list rather than a
+    child read-model of the case file. Two handlers whose books overlap (the
+    seed puts two on John Deere) must not see each other's diaries, and
+    `employer_scope` alone would let them.
+
+    **Employer scope, on the linked claim.** The owner predicate would already
+    be sufficient for *visibility* — you can only ever see your own rows — but
+    scope is re-resolved per request (AD-7), so a handler whose book narrowed
+    between scheduling a meeting and reading it back must stop seeing the claim
+    it names. A row surviving that narrowing would republish a claim reference
+    the caller has lost the right to. `claim_id IS NULL` passes: a meeting that
+    names no claim is scoped by its owner and nothing else.
+
+    Written as a helper rather than spelled at five call sites for
+    `employer_scope`'s reason — the first statement that omitted half of it
+    would look exactly like the other four.
+    """
+    return sa.and_(
+        Meeting.app_user_id == ctx.user_id,
+        sa.or_(
+            Meeting.claim_id.is_(None),
+            Meeting.claim_id.in_(sa.select(Claim.id).where(employer_scope(ctx))),
+        ),
+    )
+
+
+def _meeting_query() -> sa.Select[Any]:
+    """The columns a meeting card renders beside the row itself.
+
+    Two joins, both **outer**, because `claim_id` is nullable — an inner join
+    would silently drop every meeting that names no claim, which is the one
+    case the ERD's `CLAIM |o--o{ MEETING` exists to allow.
+    """
+    return (
+        sa.select(
+            Meeting,
+            Claim.claim_id.label("claim_business_id"),
+            Employee.name.label("worker_name"),
+        )
+        .select_from(Meeting)
+        .outerjoin(Claim, Meeting.claim_id == Claim.id)
+        .outerjoin(Employee, Claim.employee_id == Employee.id)
+    )
+
+
+async def select_meetings_page(
+    db: AsyncSession,
+    ctx: CallerContext,
+    *,
+    after: tuple[date, int] | None,
+    limit: int,
+) -> Sequence[sa.Row[Any]]:
+    """One page of the caller's meetings, oldest date first — scoped (4.1).
+
+    **Ordered by `(meeting_date, id)`, and the second column is what makes the
+    order total.** A handler routinely schedules two touchpoints on one day, so
+    `meeting_date` alone is a partial order: two rows tie, the plan is free to
+    return them either way round, and a keyset page that ended inside the tie
+    would repeat one and drop the other. Story 3.5 recorded the same lesson
+    about the action checklist.
+
+    **Keyset, not offset.** `after` is the last row of the previous page as a
+    `(date, id)` pair and the predicate is the row-value comparison
+    `(meeting_date, id) > (…)`, which PostgreSQL evaluates against the same
+    ordering the sort uses. A meeting inserted or completed between two pages
+    therefore cannot shift the window: an offset would, and a handler scheduling
+    a meeting mid-scroll is exactly the case that produces one.
+    """
+    statement = _meeting_query().where(meeting_scope(ctx))
+    if after is not None:
+        last_date, last_id = after
+        statement = statement.where(
+            sa.tuple_(Meeting.meeting_date, Meeting.id)
+            > sa.tuple_(
+                # Typed literals rather than bare Python values: a row-value
+                # comparison hands both sides to the driver as parameters, and
+                # an untyped `date` reaches asyncpg with nothing to encode it
+                # as (`insert_additional_injury_cas`' lesson, one operator
+                # over).
+                sa.literal(last_date, Meeting.meeting_date.type),
+                sa.literal(last_id, Meeting.id.type),
+            )
+        )
+    rows = await db.execute(statement.order_by(Meeting.meeting_date, Meeting.id).limit(limit))
+    return rows.all()
+
+
+async def count_meetings(db: AsyncSession, ctx: CallerContext) -> int:
+    """How many meetings the caller has in total — scoped (4.1).
+
+    A second statement rather than a window function on the page above,
+    because `total` is the size of the whole list and the page is a slice of
+    it: a `count(*) OVER ()` would answer the size of the *page's* result set,
+    which is the number the envelope must not carry.
+    """
+    total = await db.scalar(
+        sa.select(sa.func.count()).select_from(Meeting).where(meeting_scope(ctx))
+    )
+    return int(total or 0)
+
+
+async def select_meeting(
+    db: AsyncSession,
+    ctx: CallerContext,
+    meeting_id: int,
+) -> sa.Row[Any] | None:
+    """One meeting of the caller's, or `None` — scoped (4.1).
+
+    **`None` for absent, for somebody else's, and for one whose claim has left
+    the caller's book, deliberately the same answer** — `select_claim_detail`'s
+    rule one aggregate over. A meeting is addressed by a dense surrogate id, so
+    a route that distinguished "not yours" from "does not exist" would let a
+    caller walk 1…10000 and size the portfolio's diary.
+
+    Exists so the two commands can tell a *stale* version from a row that is
+    not there: their compare-and-swapped statements report only "one row or
+    none", and 409 and 404 are different answers to a handler. It is read only
+    *after* a write has already failed, so the happy path pays nothing —
+    `select_additional_injury`'s division of labour.
+    """
+    rows = await db.execute(
+        _meeting_query().where(meeting_scope(ctx)).where(Meeting.id == meeting_id)
+    )
+    return rows.one_or_none()
+
+
+async def insert_meeting(
+    db: AsyncSession,
+    ctx: CallerContext,
+    *,
+    claim_business_id: str | None,
+    values: Mapping[str, Any],
+) -> int | None:
+    """Schedule one meeting, with the claim link resolved under scope (4.1).
+
+    Returns the new row's id, or `None` when a `claim_business_id` was given
+    and it names no claim in the caller's book. Which of "absent" or "not
+    yours" it was is nobody's question — the command answers 404 either way,
+    `select_claim_detail`'s rule.
+
+    **`INSERT … SELECT` for the linked case**, `insert_additional_injury_cas`'
+    shape and for its reason: an INSERT has no WHERE clause, so resolving the
+    claim in Python and then inserting would be a read-modify-write with a
+    window in it. Selecting the claim row *as the source of the insert* puts
+    the scope predicate inside the statement, so a claim that leaves the
+    caller's book in the gap inserts nothing.
+
+    **`INSERT … VALUES` for the unlinked case**, and the asymmetry is the
+    absence of anything to guard: with no claim there is no scope predicate to
+    put inside a statement, and the owner is `ctx.user_id`, which no caller
+    supplies. Forcing the unlinked insert through a one-row `SELECT` purely for
+    symmetry would be a statement whose predicate is `TRUE`.
+
+    **The literals are typed** in the linked branch. `meeting_type` is a native
+    enum and `participants` is JSONB; an untyped parameter in an
+    `INSERT … SELECT` reaches asyncpg with no type to encode it as. Taking each
+    literal's type from the column it lands in also means a column that changes
+    type does not need a second edit here.
+    """
+    fields = tuple(values)
+    if claim_business_id is None:
+        inserted = await db.execute(
+            sa.insert(Meeting)
+            .values(app_user_id=ctx.user_id, claim_id=None, **values)
+            .returning(Meeting.id)
+        )
+        return inserted.scalar_one()
+
+    columns = Meeting.__table__.c
+    source = (
+        sa.select(
+            sa.literal(ctx.user_id, columns["app_user_id"].type).label("app_user_id"),
+            Claim.id.label("claim_id"),
+            *[sa.literal(values[field], columns[field].type).label(field) for field in fields],
+        )
+        .select_from(Claim)
+        .where(employer_scope(ctx))
+        .where(Claim.claim_id == claim_business_id)
+    )
+    inserted = await db.execute(
+        sa.insert(Meeting)
+        .from_select(["app_user_id", "claim_id", *fields], source)
+        .returning(Meeting.id)
+    )
+    return inserted.scalar_one_or_none()
+
+
+async def complete_meeting_cas(
+    db: AsyncSession,
+    ctx: CallerContext,
+    meeting_id: int,
+    expected_version: int,
+) -> int:
+    """Mark one meeting done under compare-and-swap — scoped (4.1).
+
+    Returns rows changed: `1`, or `0` for absent, somebody else's, out of
+    scope, moved on from `expected_version`, or **already done**. Which of the
+    five it was is the command's question and it answers it by re-reading —
+    `update_claim_fields_cas`' division of labour.
+
+    **`is_done IS false` is in the statement**, which is AD-4's extra rung for
+    a lifecycle move: a completion is a two-state lifecycle, and a version
+    alone would let a client holding a stale-but-matching version complete a
+    meeting somebody already completed, emitting a second audit event for a
+    decision that was made once. `mark_osha_logged_cas` guards the identical
+    shape for the identical reason.
+
+    `version = version + 1` is a SQL expression, so the increment happens
+    inside the same row lock as the predicates.
+    """
+    result = await db.execute(
+        sa.update(Meeting)
+        .where(meeting_scope(ctx))
+        .where(Meeting.id == meeting_id)
+        .where(Meeting.version == expected_version)
+        .where(Meeting.is_done.is_(False))
+        .values(is_done=True, version=Meeting.version + 1)
+        # The ORM cannot evaluate a predicate containing a subquery in Python,
+        # and there is nothing in the identity map worth synchronising: the
+        # command expires the session and re-reads the row afterwards.
+        .execution_options(synchronize_session=False)
+    )
+    return int(cast(CursorResult[Any], result).rowcount)
+
+
+async def delete_meeting_cas(
+    db: AsyncSession,
+    ctx: CallerContext,
+    meeting_id: int,
+    expected_version: int,
+) -> sa.Row[Any] | None:
+    """Remove one meeting under compare-and-swap — scoped (4.1).
+
+    Returns the deleted row's columns, or `None` if nothing matched. The
+    columns come back through `RETURNING` rather than from a prior read for
+    `delete_additional_injury_cas`' reason, which is specific to a delete: the
+    audit event has to record what was removed as its `before` diff (AD-4), and
+    a value read *before* the statement is one another writer could have
+    changed in between — so the log would describe a row that never existed in
+    that state.
+
+    `claim_id` comes back as the surrogate, not the `WC-nnnn` string. The
+    command resolves it for the audit diff from the entity it read before the
+    delete, so an audit row for a deleted meeting names a claim a purge can
+    still find (`services/claims/injuries.py::_diff`'s argument).
+    """
+    deleted = await db.execute(
+        sa.delete(Meeting)
+        .where(meeting_scope(ctx))
+        .where(Meeting.id == meeting_id)
+        .where(Meeting.version == expected_version)
+        .returning(
+            Meeting.id,
+            Meeting.claim_id,
+            Meeting.meeting_type,
+            Meeting.meeting_date,
+            Meeting.meeting_time,
+            Meeting.location,
+            Meeting.notes,
+            Meeting.participants,
+            Meeting.is_done,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    return deleted.one_or_none()
 
 
 async def count_claims_matching(

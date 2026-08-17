@@ -47,7 +47,19 @@ const SRC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..",
  * to 500, and a guard that had to grow an allowlist for unrelated code is a
  * guard the next person turns off.
  */
-const ROOTS = ["features/queue", "features/shell", "features/claim-detail"];
+const ROOTS = [
+  "features/queue",
+  "features/shell",
+  "features/claim-detail",
+  // Story 4.1's two. The diary is the newest place a component is handed a
+  // rule's answer beside the facts it was computed from: a meeting card
+  // carries `status` *and* `meetingDate` *and* `isDone`, and the prototype
+  // writes `m.date >= today && !m.done` inside the function that draws the
+  // card (line 1898). That comparison is exactly what this guard refuses, and
+  // a scan that stopped at Epic 3's surfaces would not have seen it.
+  "features/diary",
+  "features/copilot",
+];
 
 /**
  * Source with comments and literal text removed, so the patterns below see
@@ -242,7 +254,16 @@ const DERIVED_FIELDS =
   // single most consequential derived value in the console — it decides which
   // death-benefit forms a handler is shown — so a comparison against it, or
   // any arithmetic near it, is a browser deciding a regulatory question.
-  "path";
+  "path|" +
+  // Story 4.1's. Adding `features/diary` to the roots above was only half the
+  // guard: the rule the comment there describes — `m.date >= today && !m.done`
+  // inside the function that draws the card — matches nothing unless the field
+  // names themselves are on this list, because the only comparison rule that
+  // fires without them needs a numeric *literal* on the right and `today` is
+  // not one. `status` is the derivation's answer; `meetingDate`, `meetingTime`
+  // and `isDone` are the three facts it was computed from, all three on the
+  // same payload one line away from being recombined into a second copy of it.
+  "status|isDone|meetingDate|meetingTime";
 
 const FLAGS = "siuReview|rtwBlocked|paymentDue|fraudFlag|litigationFlag|surgeryRequired";
 
@@ -326,6 +347,9 @@ test("the scan reaches the files it claims to", () => {
   // plausibly be recomputed, so a scan that stopped at the folder's top
   // level would miss exactly the files this guard is now for.
   expect(scanned).toContain(path.join("features", "claim-detail", "CaseHeader.tsx"));
+  // Story 4.1's card, for the same reason: it is the file that would hold the
+  // date comparison if anybody re-derived Upcoming/Done.
+  expect(scanned).toContain(path.join("features", "diary", "MeetingCard.tsx"));
   expect(scanned).toContain(
     path.join("features", "claim-detail", "overview", "TreatmentOverview.tsx"),
   );
@@ -430,6 +454,12 @@ test("the guard would notice a derivation if one were added", () => {
     "const room = actions.cap - shown.length;",
     "items.sort((a, b) => a.urgency - b.urgency);",
     "const spare = payload.paddingFloor - rows.length;",
+    // Story 4.1's: the prototype's own line, transliterated. This is the
+    // shape the diary root was added for, and until the four field names went
+    // on the list above nothing here caught it — `today` is not a numeric
+    // literal, so the threshold rule never fired.
+    "const upcoming = meeting.meetingDate >= today && !meeting.isDone;",
+    'const tone = m.status < "done" ? UPCOMING : DONE;',
   ];
 
   for (const smell of smells) {

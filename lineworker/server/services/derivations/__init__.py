@@ -31,7 +31,11 @@ construction rather than by two components being kept in step. Each one
 function, here, called by every consumer. Story 3.4 adds `next_batch_date`,
 which is the first entry whose parameter is *deployment* config rather than a
 rules-tier threshold — see `batch_calendar.py` for why a disbursement calendar
-is not an AD-8 parameter.
+is not an AD-8 parameter. Story 4.1 adds `meeting_status`, the first entry
+belonging to the diary aggregate rather than to a claim: the prototype answers
+"is this meeting still ahead?" with a `>=` in the component that draws the
+card, and Story 4.2's today's-meetings summary is the second component that
+would have written one.
 
 **Naming rule for the modules below** (code review, 2026-08-10): a module
 is named after the *rule* (`risk_band`, `open_duration`, `queue_flags`),
@@ -85,6 +89,12 @@ from services.derivations.indemnity_classification import (
     IndemnityTypeDerivation,
     indemnity_type,
 )
+from services.derivations.meeting_horizon import (
+    MeetingStatus,
+    MeetingStatusDerivation,
+    ScheduledMeeting,
+    meeting_status,
+)
 from services.derivations.open_duration import (
     OpenDurationDerivation,
     SettlementDurationDerivation,
@@ -124,6 +134,8 @@ __all__ = [
     "IndemnityTypeDerivation",
     "InstallmentsPaidDerivation",
     "LineItem",
+    "MeetingStatus",
+    "MeetingStatusDerivation",
     "NextBatchDateDerivation",
     "NextPaymentDueDerivation",
     "OpenDurationDerivation",
@@ -135,6 +147,7 @@ __all__ = [
     "RiskDerivation",
     "RtwBlockedDerivation",
     "ScheduleRow",
+    "ScheduledMeeting",
     "SettlementDurationDerivation",
     "SiuReviewDerivation",
     "TotalClaimProjectedDerivation",
@@ -152,6 +165,7 @@ __all__ = [
     "hash_bucket",
     "indemnity_type",
     "installments_paid",
+    "meeting_status",
     "next_batch_date",
     "next_payment_due",
     "paid_to_date",

@@ -206,9 +206,9 @@ test("a seam control names the epic that will enable it, without a pointer", asy
 
   expect(within(diaryRow).getByTestId("action-goto")).toHaveAttribute(
     "title",
-    "Available with Diary & Meetings — Epic 4",
+    "Available with diary notes — Story 4.2",
   );
-  expect(diaryRow).toHaveTextContent("Available with Diary & Meetings — Epic 4");
+  expect(diaryRow).toHaveTextContent("Available with diary notes — Story 4.2");
 });
 
 test("the seam reason shown is the server's, not a map held in the browser", async () => {
