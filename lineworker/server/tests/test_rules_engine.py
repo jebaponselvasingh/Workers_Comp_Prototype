@@ -67,7 +67,7 @@ DOCUMENTS_DIR = Path(__file__).resolve().parents[1] / "rules" / "documents"
 # reads the unversioned name at migration time and editing it would rewrite
 # v1's content on a fresh database.
 EFFECTIVE_DOCUMENTS: tuple[tuple[str, int, str], ...] = (
-    (DERIVATION_THRESHOLDS_KEY, 4, "derivation_thresholds.v4.jdm.json"),
+    (DERIVATION_THRESHOLDS_KEY, 5, "derivation_thresholds.v5.jdm.json"),
     (PRIORITY_WEIGHTS_KEY, 1, "priority_weights.jdm.json"),
     (INTAKE_REQUIRED_DOCUMENTS_KEY, 1, "intake_required_documents.jdm.json"),
     # Story 2.4's, missing from this tuple until Story 2.6's review pass found
@@ -95,6 +95,7 @@ SEEDED_DOCUMENTS: tuple[tuple[str, int, str], ...] = (
     (DERIVATION_THRESHOLDS_KEY, 1, "derivation_thresholds.jdm.json"),
     (DERIVATION_THRESHOLDS_KEY, 2, "derivation_thresholds.v2.jdm.json"),
     (DERIVATION_THRESHOLDS_KEY, 3, "derivation_thresholds.v3.jdm.json"),
+    (DERIVATION_THRESHOLDS_KEY, 4, "derivation_thresholds.v4.jdm.json"),
     *EFFECTIVE_DOCUMENTS,
 )
 
@@ -118,6 +119,12 @@ EXPECTED_THRESHOLDS: dict[str, Any] = {
     # which is a registered derivation — the rate it selects lives in
     # `benefit_params` instead, which is the AD-8 split this pair illustrates.
     "ptdSeverityThreshold": 85,
+    # Story 5.1's one, added in version 5. It parameterises `fraud_flagged`,
+    # the dashboard's fraud REVIEW rule — deliberately a different number from
+    # `siuFraudScoreMin` above, which is the queue's *referral* rule over the
+    # same column pair. Two rules, two thresholds, and this document is where
+    # the difference is visible at a glance.
+    "fraudFlagScoreMin": 55,
 }
 
 # Story 3.1's document, restated. Rates are BASIS POINTS: 6667 is 66.67%.
@@ -252,7 +259,8 @@ async def test_every_superseded_version_is_still_exactly_what_it_was(
         2: {
             key: value
             for key, value in EXPECTED_THRESHOLDS.items()
-            if not key.startswith("path") and key != "ptdSeverityThreshold"
+            if not key.startswith("path")
+            and key not in ("ptdSeverityThreshold", "fraudFlagScoreMin")
         },
         # v3 is v2 plus the path three, and *without* Story 3.1's one — the
         # same assertion one story later, against the version the forms card
@@ -260,8 +268,12 @@ async def test_every_superseded_version_is_still_exactly_what_it_was(
         3: {
             key: value
             for key, value in EXPECTED_THRESHOLDS.items()
-            if key != "ptdSeverityThreshold"
+            if key not in ("ptdSeverityThreshold", "fraudFlagScoreMin")
         },
+        # v4 is v3 plus Story 3.1's one, and *without* Story 5.1's — the same
+        # assertion two epics later, against the version the seeded benefit
+        # figures are still explained by.
+        4: {key: value for key, value in EXPECTED_THRESHOLDS.items() if key != "fraudFlagScoreMin"},
     }
 
     for version, expected in superseded.items():
@@ -394,7 +406,7 @@ async def test_the_typed_blocks_carry_the_evaluated_values(db: AsyncSession) -> 
     requirements = await intake_requirements_for(db)
 
     assert thresholds == DerivationThresholds(
-        version=4,
+        version=5,
         risk_high_min=EXPECTED_THRESHOLDS["riskHighMin"],
         risk_med_min=EXPECTED_THRESHOLDS["riskMedMin"],
         siu_fraud_score_min=EXPECTED_THRESHOLDS["siuFraudScoreMin"],
@@ -410,6 +422,7 @@ async def test_the_typed_blocks_carry_the_evaluated_values(db: AsyncSession) -> 
         ),
         path_fatality_severity_min=EXPECTED_THRESHOLDS["pathFatalitySeverityMin"],
         ptd_severity_threshold=EXPECTED_THRESHOLDS["ptdSeverityThreshold"],
+        fraud_flag_score_min=EXPECTED_THRESHOLDS["fraudFlagScoreMin"],
     )
     assert await benefit_params_for(db) == BenefitParams(
         version=1,

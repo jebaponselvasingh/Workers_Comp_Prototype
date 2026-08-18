@@ -34,7 +34,7 @@ from rules.parameters import (
 )
 from services.financials import COMP_RATE_MAX_BP, COMP_RATE_MIN_BP
 
-THRESHOLDS_DOC = LoadedDocument(key="derivation_thresholds", version=4, content={})
+THRESHOLDS_DOC = LoadedDocument(key="derivation_thresholds", version=5, content={})
 WEIGHTS_DOC = LoadedDocument(key="priority_weights", version=7, content={})
 REQUIREMENTS_DOC = LoadedDocument(key="intake_required_documents", version=3, content={})
 BENEFIT_DOC = LoadedDocument(key="benefit_params", version=2, content={})
@@ -57,6 +57,9 @@ VALID_THRESHOLDS = {
     "pathFatalitySeverityMin": 100,
     # Story 3.1's one, which arrived with version 4.
     "ptdSeverityThreshold": 85,
+    # Story 5.1's one, which arrived with version 5 — the dashboard's fraud
+    # REVIEW cut-off, deliberately not `siuFraudScoreMin`'s referral one.
+    "fraudFlagScoreMin": 55,
 }
 
 VALID_BENEFIT_PARAMS = {
@@ -120,7 +123,7 @@ def requirements(**changes: object) -> IntakeRequirements:
 def test_the_valid_blocks_are_valid() -> None:
     """Every negative case below changes exactly one key of these, so the
     delta *is* the thing under test."""
-    assert thresholds().version == 4
+    assert thresholds().version == 5
     assert weights().version == 7
     assert requirements().version == 3
     assert benefit().version == 2
@@ -185,6 +188,34 @@ def test_the_siu_fraud_cut_off_is_held_to_fraud_scores_range(bound: int) -> None
     a portfolio with no fraud in it."""
     with pytest.raises(RuleParameterError, match="siuFraudScoreMin"):
         thresholds(siuFraudScoreMin=bound)
+
+
+@pytest.mark.parametrize("bound", [-1, 101, 60_000])
+def test_the_fraud_review_cut_off_is_held_to_fraud_scores_range(bound: int) -> None:
+    """The same column, the other rule (Story 5.1).
+
+    A cut-off above the column's range empties the dashboard's Fraud Flags
+    card and empties Story 5.4's worklist of its fraud population, neither of
+    which raises anything: a portfolio with no suspected fraud and a portfolio
+    nobody is checking render identically.
+    """
+    with pytest.raises(RuleParameterError, match="fraudFlagScoreMin"):
+        thresholds(fraudFlagScoreMin=bound)
+
+
+def test_the_two_fraud_cut_offs_are_independent_parameters() -> None:
+    """Neither validates against the other, and that is deliberate.
+
+    They are two rules over one column pair, not a band pair: review is wider
+    than referral today, but an operator who decided to refer everything they
+    review would be stating a policy rather than inverting an ordering.
+    Refusing that here would be the rules tier legislating one — the check that
+    exists is the column's range, and nothing else.
+    """
+    block = thresholds(siuFraudScoreMin=40, fraudFlagScoreMin=90)
+
+    assert block.siu_fraud_score_min == 40
+    assert block.fraud_flag_score_min == 90
 
 
 @pytest.mark.parametrize("modulus", [0, -3])

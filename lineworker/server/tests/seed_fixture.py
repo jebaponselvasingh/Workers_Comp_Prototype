@@ -72,6 +72,60 @@ def expected_topbar_stats(persona_name: str, role: str) -> dict[str, int]:
     }
 
 
+# --- Story 5.1: the portfolio KPI cards, restated independently ---------
+#
+# `HIGH_RISK_MIN` above is one of the two thresholds these cards read; this is
+# the other. Written out here rather than imported from `DerivationThresholds`
+# for that constant's reason, and with one extra edge: it is *deliberately not*
+# `SIU_FRAUD_SCORE_MIN` further down. The dashboard's Fraud Flags card counts a
+# wider population than the queue's SIU chip (13 seeded claims against 9), and
+# an oracle that shared one number with the other would have agreed with the
+# single most plausible way to get this story wrong.
+FRAUD_FLAG_SCORE_MIN = 55
+
+
+def expected_portfolio_summary(persona_name: str, role: str) -> dict[str, int]:
+    """The ten KPI figures plus the dataset chip's counts, from the seed file.
+
+    Every rule restated from the prototype's `renderSV` (line 1002) and the
+    story text, with the two deliberate departures written out here so the
+    oracle disagrees loudly if either is quietly reverted:
+
+    - **`settled_closed` counts `stage == "settled"`**, where `renderSV`
+      filters `status === "Settled & Closed"`. Sixty-two seeded claims against
+      the status rule's fifty-four; the console groups by stage everywhere else
+      and a card that disagreed with 5.3's donut is the failure AD-10 exists to
+      prevent.
+    - **`plant_count` is counted**, where the prototype's chip hardcodes "15 US
+      plants" over an array holding twenty-nine distinct ones.
+
+    `employer` is counted by the seed file's employer *name* while the service
+    counts `claim.employer_id`; the two are one-to-one by construction (the
+    migration inserts one `employer` row per distinct name), and counting the
+    name here rather than resolving a surrogate id keeps this an oracle over
+    the file rather than a second reading of the schema.
+    """
+    visible = claims_for(persona_name, role)
+    return {
+        "totalClaims": len(visible),
+        "underTreatment": sum(1 for c in visible if c["stage"] == "treatment"),
+        "settledClosed": sum(1 for c in visible if c["stage"] == "settled"),
+        "highRisk": sum(1 for c in visible if c["severity_score"] >= HIGH_RISK_MIN),
+        "totalPaidCents": sum(
+            c["paid_indemnity"] + c["paid_medical"] + c["paid_expense"] for c in visible
+        ),
+        "totalReserveCents": sum(c["reserve"] for c in visible),
+        "fraudFlagged": sum(
+            1 for c in visible if c["fraud_flag"] and c["fraud_score"] >= FRAUD_FLAG_SCORE_MIN
+        ),
+        "oshaRecordable": sum(1 for c in visible if c["osha_recordable"]),
+        "litigation": sum(1 for c in visible if c["litigation_flag"]),
+        "surgeryRequired": sum(1 for c in visible if c["surgery_required"]),
+        "employerCount": len({c["employer"] for c in visible}),
+        "plantCount": len({c["plant"] for c in visible}),
+    }
+
+
 def expected_claim_ids(persona_name: str, role: str) -> set[str]:
     return {claim["claim_id"] for claim in claims_for(persona_name, role)}
 

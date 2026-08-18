@@ -35,7 +35,13 @@ is not an AD-8 parameter. Story 4.1 adds `meeting_status`, the first entry
 belonging to the diary aggregate rather than to a claim: the prototype answers
 "is this meeting still ahead?" with a `>=` in the component that draws the
 card, and Story 4.2's today's-meetings summary is the second component that
-would have written one.
+would have written one. Story 5.1 adds `fraud_flagged` — and it is the entry
+that shows most plainly why registration is by *name* rather than by shape: it
+is `siu_review` with a different threshold, so the one thing standing between
+the dashboard's Fraud Flags card and the queue's referral count is that they
+ask for different names. Reusing `siu_review` there would have been a one-word
+change that showed 9 claims under a caption promising 13, and nothing in the
+type system would have objected.
 
 **Naming rule for the modules below** (code review, 2026-08-10): a module
 is named after the *rule* (`risk_band`, `open_duration`, `queue_flags`),
@@ -105,9 +111,11 @@ from services.derivations.open_duration import (
 )
 from services.derivations.path_classification import ClaimPathDerivation, claim_path
 from services.derivations.queue_flags import (
+    FraudFlaggedDerivation,
     PaymentDueDerivation,
     RtwBlockedDerivation,
     SiuReviewDerivation,
+    fraud_flagged,
     hash_bucket,
     payment_due,
     rtw_blocked,
@@ -131,6 +139,7 @@ __all__ = [
     "CostSplit",
     "CostSplitDerivation",
     "Derivation",
+    "FraudFlaggedDerivation",
     "IndemnityType",
     "IndemnityTypeDerivation",
     "InstallmentsPaidDerivation",
@@ -162,6 +171,7 @@ __all__ = [
     "cost_split",
     "days_open",
     "days_to_settlement",
+    "fraud_flagged",
     "get",
     "hash_bucket",
     "indemnity_type",

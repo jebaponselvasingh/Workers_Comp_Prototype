@@ -34,9 +34,12 @@ from services.derivations.treatment_progress import EXPECTED_WEEKS, PHASE_NOTES
 
 SERVER_ROOT = Path(__file__).resolve().parents[1]
 
-# Version 3 of `derivation_thresholds`, restated. See the module docstring.
+# Version 5 of `derivation_thresholds`, restated — the current committed
+# document. See the module docstring. (This comment said "version 3" through
+# 3.1's version 4 and into 5.1's version 5: it names the version below it, so
+# it moves with every supersession that touches this block.)
 SEEDED_THRESHOLDS = DerivationThresholds(
-    version=4,
+    version=5,
     risk_high_min=65,
     risk_med_min=35,
     siu_fraud_score_min=60,
@@ -52,6 +55,9 @@ SEEDED_THRESHOLDS = DerivationThresholds(
     # Story 3.1's, added in version 4 — the PTD cut-off `indemnity_type`
     # bands `severity_score` against.
     ptd_severity_threshold=85,
+    # Story 5.1's, added in version 5 — the dashboard's fraud REVIEW cut-off,
+    # which is deliberately not `siu_fraud_score_min` (the referral one).
+    fraud_flag_score_min=55,
 )
 
 

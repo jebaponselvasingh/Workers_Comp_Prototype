@@ -1,4 +1,5 @@
-"""`siu_review`, `rtw_blocked`, `payment_due` — the queue's operational flags.
+"""`siu_review`, `fraud_flagged`, `rtw_blocked`, `payment_due` — the
+operational flags over `claim`'s fraud, stage and return columns.
 
 **These are demo definitions, and that is a decision, not an oversight.**
 The architecture's Deferred list says so in as many words: "the prototype's
@@ -22,9 +23,18 @@ Two consequences worth stating plainly, because a reader arriving at
   a real definition changes a document and this module — never the twenty
   call sites that ask whether a claim is blocked.
 
-`siu_review` is the one of the three with real content: a fraud-flagged
-claim whose score clears the SIU referral threshold. Its threshold is a
-parameter for the same reason the risk bands are.
+`siu_review` is the one of the original three with real content: a
+fraud-flagged claim whose score clears the SIU referral threshold. Its
+threshold is a parameter for the same reason the risk bands are.
+
+Story 5.1 adds a fourth, `fraud_flagged`, and homes it here rather than in a
+module of its own precisely so the two fraud rules are read together: they
+share a column pair, differ only in their threshold, and are the pair most
+likely to be collapsed by a later reader who notices they look alike. Sitting
+one screen apart with the difference written down is the cheapest guard
+against that; see `FraudFlaggedDerivation`. (The module name still describes
+the *rules* rather than one consumer — the queue chips one of them, the
+dashboard counts another, and Story 5.4's worklist population will read both.)
 """
 
 from dataclasses import dataclass
@@ -63,6 +73,39 @@ class SiuReviewDerivation:
     suspicion, and a high score without the flag is a claim the fraud model
     rated but nobody triaged. The queue's +35 weight is worth only the
     intersection.
+    """
+
+    fraud_score_min: int
+
+    def of(self, *, fraud_flag: bool, fraud_score: int) -> bool:
+        return fraud_flag and fraud_score >= self.fraud_score_min
+
+
+@dataclass(frozen=True)
+class FraudFlaggedDerivation:
+    """Fraud-flagged, and scored above the *review* threshold — not the SIU one.
+
+    **This is a second rule, not a second copy of `siu_review`**, and the
+    numbers are what force the distinction rather than a preference. The
+    prototype chips a queue card for SIU at `fraudFlag && fraudScore >= 60`
+    (line 953) and counts its dashboard Fraud Flags card under the caption
+    "Score ≥ 55 — review needed" (line 1069). On the seeded portfolio that is
+    9 claims against 13. Referral and review are different populations because
+    they fund different work: a referral opens an investigation, a review is
+    the wider set somebody reads before deciding whether to refer.
+
+    So the two thresholds are two parameters, adjacent in one block, and the
+    two derivations are two entries in one registry. Pointing the dashboard at
+    `siu_review` would have shown 9 under a caption promising 55 — defensible
+    at every step, wrong on the screen, and invisible without the prototype
+    open beside it.
+
+    `fraud_flag and fraud_score >= min`, matching `SiuReviewDerivation`'s
+    "both conditions, not either": the flag without a score is an unranked
+    suspicion, and a score without the flag is a claim the model rated and
+    nobody triaged. On today's seed the two conditions happen to coincide
+    exactly at 55, which is why the card reproduces the prototype's 13 — a
+    coincidence of the data, not a licence to drop either half.
     """
 
     fraud_score_min: int
@@ -122,6 +165,19 @@ siu_review = register(
         describes="claim.fraud_flag and fraud_score at or above the SIU referral threshold",
         build=lambda thresholds: SiuReviewDerivation(
             fraud_score_min=thresholds.siu_fraud_score_min
+        ),
+    )
+)
+
+fraud_flagged = register(
+    Derivation(
+        name="fraud_flagged",
+        describes=(
+            "claim.fraud_flag and fraud_score at or above the fraud REVIEW threshold "
+            "(wider than siu_review's referral threshold — see FraudFlaggedDerivation)"
+        ),
+        build=lambda thresholds: FraudFlaggedDerivation(
+            fraud_score_min=thresholds.fraud_flag_score_min
         ),
     )
 )

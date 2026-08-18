@@ -218,6 +218,14 @@ class DerivationThresholds:
     # claim is permanently *totally* disabled and pays the matching rate,
     # instead of comparing a score against a threshold of its own.
     ptd_severity_threshold: int
+    # Story 5.1's one (document v5). The dashboard's Fraud Flags card counts a
+    # *wider* population than the queue's SIU chip does, so it gets its own
+    # cut-off beside `siu_fraud_score_min` rather than borrowing it — see
+    # `queue_flags.FraudFlaggedDerivation` for why collapsing the two would
+    # silently show the referral count on a card captioned for the review one.
+    # Two parameters in one block, adjacent, is the arrangement that makes the
+    # difference legible to whoever reads either of them next.
+    fraud_flag_score_min: int
 
     def __post_init__(self) -> None:
         # Story 1.4's `Field(ge=0, le=100)`, in its new home. `severity_score`
@@ -241,6 +249,22 @@ class DerivationThresholds:
             raise RuleParameterError(
                 "siuFraudScoreMin must be between 0 and 100 (fraud_score's range), "
                 f"got {self.siu_fraud_score_min}"
+            )
+        # The same check for the dashboard's cut-off, and the same failure it
+        # catches one screen over: `fraudFlagScoreMin: 200` empties the Fraud
+        # Flags card and empties Story 5.4's worklist of its fraud population,
+        # neither of which raises anything — a portfolio with no suspected
+        # fraud and a portfolio nobody is checking look identical.
+        #
+        # Deliberately **not** validated against `siu_fraud_score_min`. The two
+        # are separate rules, not a band pair: the review population is wider
+        # than the referral population today, but an operator who decided to
+        # refer everything they review would be stating a policy, not inverting
+        # an ordering, and refusing it here would be this tier legislating one.
+        if not 0 <= self.fraud_flag_score_min <= 100:
+            raise RuleParameterError(
+                "fraudFlagScoreMin must be between 0 and 100 (fraud_score's range), "
+                f"got {self.fraud_flag_score_min}"
             )
         # Story 1.4's `_bands_must_not_overlap`, in its new home. An
         # inverted pair puts scores in two bands at once and the derivation
@@ -343,6 +367,7 @@ class DerivationThresholds:
             ),
             path_fatality_severity_min=_integer(document, result, "pathFatalitySeverityMin"),
             ptd_severity_threshold=_integer(document, result, "ptdSeverityThreshold"),
+            fraud_flag_score_min=_integer(document, result, "fraudFlagScoreMin"),
         )
 
 

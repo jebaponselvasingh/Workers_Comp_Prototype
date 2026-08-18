@@ -65,6 +65,10 @@ interface SeedClaim {
   litigation_flag: boolean;
   fraud_flag: boolean;
   fraud_score: number;
+  // Story 5.1's: the dataset chip counts distinct plants over the scoped set,
+  // because the prototype's "15 US plants" is a literal that is wrong for the
+  // one portfolio it was written for and scope-blind for every other persona.
+  plant: string;
   sla_pick_days: number | null;
   sla_approve_days: number | null;
   settlement_days: number | null;
@@ -1524,3 +1528,94 @@ export function expectedTemplateRecipients(key: EmailTemplateKey): string[] {
  * never unioned" a real assertion.
  */
 export const BLANK_COMPOSE_RECIPIENTS = ["employee"] as const;
+
+/**
+ * Story 5.1 — the portfolio KPI cards, restated independently.
+ *
+ * The oracle returns what the *cards read*, not what the endpoint answers:
+ * formatted strings, keyed by the `data-testid` stem the spec looks each card
+ * up under. A spec comparing numbers would still pass if the page divided
+ * cents by a hundred twice.
+ *
+ * Two rules are restated here rather than imported, `HIGH_RISK_MIN`'s
+ * discipline extended one story:
+ *
+ * - `FRAUD_FLAG_SCORE_MIN` is the dashboard's *review* threshold and is
+ *   deliberately **not** `SIU_FRAUD_SCORE_MIN` above, which is the queue's
+ *   *referral* threshold over the same column pair. Reusing that constant here
+ *   would make the single most plausible wiring mistake in this story invisible
+ *   to the one suite that runs against a real browser and a real database.
+ * - `SETTLED_STAGE` is the stage, not the status. `renderSV` filters
+ *   `status === "Settled & Closed"` (54 seeded claims); the console groups by
+ *   stage everywhere (62). The delta is a recorded departure from the
+ *   prototype, so the oracle states the shipped rule and the Dev Agent Record
+ *   states why.
+ */
+const FRAUD_FLAG_SCORE_MIN = 55;
+const SETTLED_STAGE = "settled";
+const TREATMENT_STAGE = "treatment";
+
+/**
+ * `web/src/lib/money.ts::formatCents`, restated.
+ *
+ * The same `Intl` options rather than an import: the point of the assertion is
+ * that the page turned the server's cents into these characters, and an oracle
+ * that called the shipped formatter would agree with it whatever it did.
+ */
+const DOLLARS = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  maximumFractionDigits: 0,
+});
+
+export interface ExpectedPortfolioSummary {
+  /** `data-testid` stem → the exact text that card's `-value` element must hold. */
+  cards: Record<string, string>;
+  /** The dataset chip's whole text, counts included. */
+  chip: string;
+  /** Pulled out so a spec can compare two personas' portfolios directly. */
+  totalClaims: number;
+}
+
+export function expectedPortfolioSummaryFor(persona: {
+  name: string;
+  role: string;
+}): ExpectedPortfolioSummary {
+  const visible = claimsFor(persona.name, persona.role);
+  const count = (predicate: (claim: SeedClaim) => boolean): number =>
+    visible.filter(predicate).length;
+  const sum = (amount: (claim: SeedClaim) => number): number =>
+    visible.reduce((total, claim) => total + amount(claim), 0);
+
+  const employers = new Set(visible.map((claim) => claim.employer));
+  const plants = new Set(visible.map((claim) => claim.plant));
+
+  return {
+    cards: {
+      "kpi-total-claims": String(visible.length),
+      "kpi-under-treatment": String(count((c) => c.stage === TREATMENT_STAGE)),
+      "kpi-settled-closed": String(count((c) => c.stage === SETTLED_STAGE)),
+      "kpi-high-risk": String(count((c) => c.severity_score >= HIGH_RISK_MIN)),
+      "kpi-total-paid": DOLLARS.format(
+        sum((c) => c.paid_indemnity + c.paid_medical + c.paid_expense) / 100,
+      ),
+      "kpi-total-reserve": DOLLARS.format(sum((c) => c.reserve) / 100),
+      "kpi-fraud-flags": String(
+        count((c) => c.fraud_flag && c.fraud_score >= FRAUD_FLAG_SCORE_MIN),
+      ),
+      "kpi-osha-recordable": String(count((c) => c.osha_recordable)),
+      "kpi-litigation": String(count((c) => c.litigation_flag)),
+      "kpi-surgery-required": String(count((c) => c.surgery_required)),
+    },
+    chip:
+      `📊 WC_Manufacturing_Claims_2026.xlsx · ${visible.length} claims · ` +
+      `${employers.size} employers · ${plants.size} plants`,
+    totalClaims: visible.length,
+  };
+}
+
+/** The two rule captions, restated from the thresholds above (AC 2). */
+export const EXPECTED_KPI_CAPTIONS = {
+  "kpi-high-risk": `Severity ≥ ${HIGH_RISK_MIN}/100`,
+  "kpi-fraud-flags": `Score ≥ ${FRAUD_FLAG_SCORE_MIN} — review needed`,
+} as const;

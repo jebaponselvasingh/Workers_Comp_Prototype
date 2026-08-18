@@ -29,6 +29,30 @@ export const queryKeys = {
   // for scope-free, PHI-free reference data), so a query per keystroke
   // would be a cache entry per keystroke for the same 25 rows.
   glossary: ["glossary"] as const,
+  /**
+   * The supervisor/analyst portfolio dashboard (Story 5.1).
+   *
+   * One key with nothing under it, because there is one summary: the ten KPI
+   * figures, the dataset chip's counts and the two thresholds behind the
+   * captions all arrive in a single response.
+   *
+   * **No persona and no scope segment**, for the reason the stats keys record
+   * at length: the server answers `/dashboard/summary` for whoever holds the
+   * session cookie (AD-7), so putting an identity here would imply the client
+   * chooses whose portfolio it sees. Switching personas clears the whole cache
+   * (`useLogout`), which is what keeps David Bline's hundred claims out of
+   * Jennifer Park's dashboard.
+   *
+   * A `dashboard` group rather than a `stats.dashboard` sibling: the top bar's
+   * two keys are *caseload* aggregates shared by every role, and this is a
+   * portfolio aggregate for one route. Epic 5's later stories (handler
+   * benchmarking, the charts, the top-30 worklist) are separate server answers
+   * with separate costs, so they become siblings here rather than fields on
+   * this one.
+   */
+  dashboard: {
+    summary: ["dashboard", "summary"] as const,
+  },
   claims: {
     /**
      * The queue, keyed by filter (Story 2.1).

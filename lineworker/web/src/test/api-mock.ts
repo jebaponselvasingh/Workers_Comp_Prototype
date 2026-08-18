@@ -33,6 +33,8 @@ export interface StubRoutes {
   stats?: StubRoute;
   sla?: StubRoute;
   glossary?: StubRoute;
+  /** `GET /dashboard/summary` (Story 5.1) — the portfolio KPI cards. */
+  dashboardSummary?: StubRoute;
   claimsQueue?: StubRouteFor;
   /**
    * `GET /claims/{id}` (Story 2.2). A function so a test can answer
@@ -179,6 +181,62 @@ export const TOPBAR_STATS = {
   status: 200,
   body: { caseload: 27, activeTx: 5, highRisk: 10 },
 };
+
+/**
+ * Jennifer Park's real seed portfolio — the ten KPI figures, the chip's two
+ * counts and the two thresholds the captions quote.
+ *
+ * `TOPBAR_STATS`' argument: component tests do not verify these numbers (that
+ * is `test_portfolio_summary.py`'s job against the real database), they verify
+ * that whatever the server sends is what the cards show. Using her real book
+ * anyway keeps a reader from mistaking a stub for a computation — and keeps
+ * every figure distinct, so a card wired to the wrong field fails rather than
+ * coincidentally matching.
+ *
+ * `fraudScoreMin` is 55, not the SIU referral rule's 60: the card counts the
+ * wider review population, and a fixture that used the other number would make
+ * the one wiring mistake this story is exposed to invisible.
+ */
+export const DASHBOARD_SUMMARY = {
+  status: 200,
+  body: {
+    totalClaims: 27,
+    underTreatment: 5,
+    settledClosed: 20,
+    highRisk: 10,
+    totalPaidCents: 63293700,
+    totalReserveCents: 8973300,
+    fraudFlagged: 3,
+    oshaRecordable: 18,
+    litigation: 0,
+    surgeryRequired: 11,
+    employerCount: 3,
+    plantCount: 9,
+    highRiskSeverityMin: 65,
+    fraudScoreMin: 55,
+    rulesVersion: 5,
+  },
+};
+
+/**
+ * The same portfolio under a superseded rule document: a raised fraud cut-off,
+ * a smaller count, a higher version.
+ *
+ * Its whole purpose is to be asserted *against* `DASHBOARD_SUMMARY` — a card
+ * caption that followed the response reads differently under the two, and one
+ * holding a constant of its own reads the same. That is the difference a
+ * fixture pair can show and a single fixture cannot.
+ */
+export const DASHBOARD_SUMMARY_RETUNED = {
+  status: 200,
+  body: {
+    ...DASHBOARD_SUMMARY.body,
+    fraudFlagged: 1,
+    fraudScoreMin: 80,
+    rulesVersion: 6,
+  },
+};
+
 
 /**
  * Jennifer Park's real seed strip: three missed targets and one made one,
@@ -2202,6 +2260,9 @@ export function stubApi(routes: StubRoutes): void {
       }
       if (url.includes("/api/glossary")) {
         return answer(routes.glossary ?? GLOSSARY_TERMS);
+      }
+      if (url.includes("/api/dashboard/summary")) {
+        return answer(routes.dashboardSummary ?? DASHBOARD_SUMMARY);
       }
       // Story 4.1's four, before every `/api/claims` case below. **Not because
       // the case file would swallow them**: the catch-all tests `/api/claims/`

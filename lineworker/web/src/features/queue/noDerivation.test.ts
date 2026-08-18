@@ -59,6 +59,15 @@ const ROOTS = [
   // a scan that stopped at Epic 3's surfaces would not have seen it.
   "features/diary",
   "features/copilot",
+  // Story 5.1's. The supervisor dashboard is handed twelve server-computed
+  // figures at once — ten card values and the chip's two counts — which is
+  // exactly the shape a component starts totalling: the prototype's `renderSV`
+  // does ten `filter`/`reduce` passes over the claim array to produce these
+  // very numbers, and porting it "just for the chip" is one line. It is also
+  // the first surface whose *captions* quote rule thresholds, so a constant
+  // named `HIGH_RISK_MIN` here would look like formatting and be a second copy
+  // of a JDM parameter the browser cannot see change.
+  "features/dashboard",
 ];
 
 /**
@@ -305,7 +314,25 @@ const DERIVED_FIELDS =
   // nothing else. `priority` is the card's accent *and* a value a component
   // would plausibly rank by — three tones is one comparison away from a sort —
   // and it is a stored enum rather than a scale.
-  "sentAt|priority";
+  "sentAt|priority|" +
+  // Story 5.1's twelve. Every one is a *count over a scoped set the browser
+  // does not hold*, which is the strongest form of this guard's argument: the
+  // SPA has never seen the hundred claims, so any arithmetic on these is not a
+  // second opinion, it is a guess. `highRisk` is the most rule-laden of them —
+  // it is a band of `severityScore` decided by a JDM document, and the card
+  // beside it publishes that document's cut-off, so a component holding both
+  // is one comparison away from re-banding the portfolio itself.
+  // `employerCount` and `plantCount` are the most tempting — they read like
+  // chip decoration rather than like figures — and the prototype writes both as
+  // literals that are wrong for every persona. `highRiskSeverityMin` and
+  // `fraudScoreMin` are here for the other reason: they are rule-document
+  // values the captions quote, so a comparison against one would be the browser
+  // re-deciding a band the server already banded. (`totalPaidCents` is covered
+  // by Story 3.x's entry and `surgeryRequired` by `FLAGS`, so neither repeats
+  // here.)
+  "totalClaims|underTreatment|settledClosed|highRisk|totalReserveCents|" +
+  "fraudFlagged|oshaRecordable|litigation|employerCount|plantCount|" +
+  "highRiskSeverityMin|fraudScoreMin";
 
 const FLAGS = "siuReview|rtwBlocked|paymentDue|fraudFlag|litigationFlag|surgeryRequired";
 
@@ -438,6 +465,12 @@ test("the scan reaches the files it claims to", () => {
   // surface at once while every component root stayed green.
   expect(scanned).toContain(path.join("features", "diary", "EmailsSubTab.tsx"));
   expect(scanned).toContain(path.join("features", "diary", "EmailComposerDialog.tsx"));
+  // Story 5.1's dashboard, and `DashboardPage.tsx` is the tempting file in it:
+  // it holds the card table, so it is the one place where all twelve figures
+  // are in scope at once and a caption's threshold sits beside the count that
+  // threshold produced. A scan that stopped at Epic 4's surfaces would leave
+  // the whole supervisor half of the console unguarded.
+  expect(scanned).toContain(path.join("features", "dashboard", "DashboardPage.tsx"));
   expect(scanned).toContain("api/emails.ts");
   expect(scanned).toContain(
     path.join("features", "claim-detail", "overview", "TreatmentOverview.tsx"),

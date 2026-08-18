@@ -128,7 +128,7 @@ def test_the_schedule_is_not_the_treatment_phases_window() -> None:
 
 
 THRESHOLDS = DerivationThresholds(
-    version=4,
+    version=5,
     risk_high_min=65,
     risk_med_min=35,
     siu_fraud_score_min=60,
@@ -142,6 +142,9 @@ THRESHOLDS = DerivationThresholds(
     path_minor_recovery_windows=frozenset({RecoveryWindow.weeks_0_2}),
     path_fatality_severity_min=100,
     ptd_severity_threshold=85,
+    # Story 5.1's, added in version 5 — the dashboard's fraud REVIEW cut-off,
+    # which is deliberately not `siu_fraud_score_min` (the referral one).
+    fraud_flag_score_min=55,
 )
 
 

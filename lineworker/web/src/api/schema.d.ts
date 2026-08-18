@@ -699,6 +699,31 @@ export interface paths {
         patch: operations["edit_severity_claims__claim_business_id__severity_patch"];
         trace?: never;
     };
+    "/dashboard/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Portfolio KPI cards for the session's persona
+         * @description The ten cards, for whoever holds the session cookie — and no one else.
+         *
+         *     No role branch of any kind. The analyst reads this same dashboard until
+         *     Epic 7 gives them their own workspace, and the only difference between two
+         *     personas' responses is the scope predicate the repository applied — which
+         *     is a property this endpoint has by having nothing else in it.
+         */
+        get: operations["summary_dashboard_summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/glossary": {
         parameters: {
             query?: never;
@@ -2837,6 +2862,59 @@ export interface components {
             count: number;
             /** Photos */
             photos: components["schemas"]["PhotoResponse"][];
+        };
+        /**
+         * PortfolioSummaryResponse
+         * @description The ten KPI figures, the dataset chip's counts, and the rules behind them.
+         *
+         *     Flat rather than nested per card row, for the reason `TopBarStatsResponse`
+         *     is flat: this is one aggregate over one scoped set, not a list, and grouping
+         *     the fields by which row of the design they happen to render in would encode
+         *     a layout decision in the contract. The UI owns the order.
+         *
+         *     **`highRiskSeverityMin` and `fraudScoreMin` are on the wire deliberately.**
+         *     Two card captions quote them ("Severity ≥ N/100", "Score ≥ N — review
+         *     needed"), and a client holding either number would be a second copy of a
+         *     rule it cannot see change: superseding the rule document would move the
+         *     count and leave the caption claiming the old cut-off. They arrive from the
+         *     derivations that did the counting, so the published number is provably the
+         *     one the figures were produced at.
+         *
+         *     `rulesVersion` names the document those two came from. It is what makes the
+         *     pair auditable after the fact — "13 flagged" is only interpretable next to
+         *     which version of the rule said so.
+         */
+        PortfolioSummaryResponse: {
+            /** Employercount */
+            employerCount: number;
+            /** Fraudflagged */
+            fraudFlagged: number;
+            /** Fraudscoremin */
+            fraudScoreMin: number;
+            /** Highrisk */
+            highRisk: number;
+            /** Highriskseveritymin */
+            highRiskSeverityMin: number;
+            /** Litigation */
+            litigation: number;
+            /** Osharecordable */
+            oshaRecordable: number;
+            /** Plantcount */
+            plantCount: number;
+            /** Rulesversion */
+            rulesVersion: number;
+            /** Settledclosed */
+            settledClosed: number;
+            /** Surgeryrequired */
+            surgeryRequired: number;
+            /** Totalclaims */
+            totalClaims: number;
+            /** Totalpaidcents */
+            totalPaidCents: number;
+            /** Totalreservecents */
+            totalReserveCents: number;
+            /** Undertreatment */
+            underTreatment: number;
         };
         /**
          * PrognosisResponse
@@ -5999,6 +6077,44 @@ export interface operations {
             };
             /** @description The claim's jurisdiction has no `state_rate_schedule` row, so its weekly benefit cannot be calculated and no default is substituted (RFC 9457 problem document). Unreachable against a correctly migrated database — 0023 refuses to complete otherwise. */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+        };
+    };
+    summary_dashboard_summary_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PortfolioSummaryResponse"];
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

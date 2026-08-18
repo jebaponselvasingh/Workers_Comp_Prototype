@@ -36,9 +36,18 @@ package's tables. Story 5.4's supervisor worklist reads element 0 of what this
 generates and Epic 6's copilot may quote it, which is why `generate_actions` is
 a pure function over structural protocols rather than a step inside the
 endpoint's assembly — the same reason `priority_score` is.
+
+Story 5.1 opens Epic 5 with `summary` — the first *portfolio* aggregate, as
+against the caseload aggregates above. It is the same shape as `sla`: one
+scoped projection read, one pure fold, so the ten KPI cards, 5.2's handler
+benchmarking and 5.3's charts fold the same rows through the same registered
+derivations rather than each counting a portfolio their own way. That the
+supervisor's dashboard and the handler's top bar cannot disagree about "high
+risk" is not a coincidence of two correct implementations; it is that there is
+one, and both call it.
 """
 
-from services.worklist import actions, approvals, priority, queue, sla
+from services.worklist import actions, approvals, priority, queue, sla, summary
 from services.worklist.actions import (
     Action,
     ClaimActions,
@@ -76,6 +85,12 @@ from services.worklist.queue import (
 )
 from services.worklist.sla import SlaMetric, SlaMetricKey, SlaSample, SlaStatus, sla_strip, strip_of
 from services.worklist.stats import TopBarStats, topbar_stats
+from services.worklist.summary import (
+    PortfolioClaim,
+    PortfolioSummary,
+    portfolio_summary,
+    summary_of,
+)
 
 __all__ = [
     "APPROVAL_KINDS",
@@ -91,6 +106,8 @@ __all__ = [
     "ClaimQueue",
     "Cursor",
     "InvalidCursor",
+    "PortfolioClaim",
+    "PortfolioSummary",
     "QueueCard",
     "QueueClaim",
     "QueueFilter",
@@ -110,6 +127,7 @@ __all__ = [
     "encode_cursor",
     "generate_actions",
     "matches",
+    "portfolio_summary",
     "priority",
     "priority_markers",
     "priority_score",
@@ -117,5 +135,7 @@ __all__ = [
     "sla",
     "sla_strip",
     "strip_of",
+    "summary",
+    "summary_of",
     "topbar_stats",
 ]

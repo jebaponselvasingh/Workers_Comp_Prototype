@@ -27,6 +27,7 @@ from api.routers import (
     admin_router,
     auth_router,
     claims_router,
+    dashboard_router,
     diary_router,
     glossary_router,
     stats_router,
@@ -171,6 +172,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(glossary_router)
     app.include_router(claims_router)
     app.include_router(diary_router)
+    app.include_router(dashboard_router)
     if settings.env is Env.e2e:
         # AD-15's deterministic batch trigger, and it is *not served* anywhere
         # else — a 404 from the router rather than a 403 from a guard. See

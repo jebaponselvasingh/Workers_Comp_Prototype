@@ -44,7 +44,7 @@ SERVER_ROOT = Path(__file__).resolve().parents[1]
 # with that code however wrong both were. `tests/test_rules_engine.py` is
 # what ties these values back to the committed document.
 SEEDED_THRESHOLDS = DerivationThresholds(
-    version=4,
+    version=5,
     risk_high_min=65,
     risk_med_min=35,
     siu_fraud_score_min=60,
@@ -62,6 +62,12 @@ SEEDED_THRESHOLDS = DerivationThresholds(
     # Story 3.1's, added in version 4 — the PTD cut-off `indemnity_type`
     # bands `severity_score` against.
     ptd_severity_threshold=85,
+    # Story 5.1's, added in version 5 — the dashboard's fraud REVIEW cut-off.
+    # **Not** `siu_fraud_score_min`, and the gap is the point: 55 reviews where
+    # 60 refers, which is 13 seeded claims against 9. An oracle that reused the
+    # referral number would have agreed with the one mistake this story is most
+    # exposed to.
+    fraud_flag_score_min=55,
 )
 
 
@@ -253,6 +259,87 @@ def test_the_siu_threshold_is_a_parameter_not_a_literal() -> None:
     assert strict.of(fraud_flag=True, fraud_score=90) is True
 
 
+# --- the dashboard's fraud review rule (Story 5.1) ----------------------
+
+
+def test_fraud_flagged_needs_both_the_flag_and_the_score() -> None:
+    """`siu_review`'s shape at the review threshold — both conditions, not either."""
+    flagged = derivations.fraud_flagged.for_thresholds(thresholds())
+
+    assert flagged.of(fraud_flag=True, fraud_score=55) is True  # boundary: at the threshold
+    assert flagged.of(fraud_flag=True, fraud_score=54) is False
+    assert flagged.of(fraud_flag=False, fraud_score=99) is False
+
+
+def test_the_fraud_review_threshold_is_its_own_parameter_not_the_siu_one() -> None:
+    """Moving one threshold must not move the other.
+
+    The single most plausible way to get Story 5.1 wrong is to build the
+    dashboard's rule from `siu_fraud_score_min` — the two derivations are the
+    same three lines and the two parameters sit adjacent in one block, so a
+    misdirected builder type-checks and produces a perfectly plausible number.
+    Retuning each in isolation is what makes the wiring checkable.
+    """
+    dashboard_only = thresholds(fraud_flag_score_min=90)
+    assert (
+        derivations.fraud_flagged.for_thresholds(dashboard_only).of(fraud_flag=True, fraud_score=89)
+        is False
+    )
+    assert (
+        derivations.siu_review.for_thresholds(dashboard_only).of(fraud_flag=True, fraud_score=89)
+        is True
+    )
+
+    queue_only = thresholds(siu_fraud_score_min=90)
+    assert (
+        derivations.fraud_flagged.for_thresholds(queue_only).of(fraud_flag=True, fraud_score=89)
+        is True
+    )
+    assert (
+        derivations.siu_review.for_thresholds(queue_only).of(fraud_flag=True, fraud_score=89)
+        is False
+    )
+
+
+def test_fraud_flagged_and_siu_review_disagree_on_the_seeded_portfolio() -> None:
+    """The guard against a later reader collapsing the two (AD-10, Design Note 2).
+
+    Referral and review are different populations, and on the seeded data they
+    are 9 claims and 13. If some future change pointed the dashboard card at
+    `siu_review` — or, worse, made the two derivations read one parameter —
+    every boundary test above would still pass and this is what would not.
+
+    Counted from the seed file rather than from either derivation's own
+    threshold, so the two sides of the comparison have independent origins.
+    """
+    block = thresholds()
+    siu = derivations.siu_review.for_thresholds(block)
+    flagged = derivations.fraud_flagged.for_thresholds(block)
+
+    referred = {
+        claim["claim_id"]
+        for claim in seed_fixture.seed()["claims"]
+        if siu.of(fraud_flag=claim["fraud_flag"], fraud_score=claim["fraud_score"])
+    }
+    reviewed = {
+        claim["claim_id"]
+        for claim in seed_fixture.seed()["claims"]
+        if flagged.of(fraud_flag=claim["fraud_flag"], fraud_score=claim["fraud_score"])
+    }
+
+    assert referred < reviewed, "the referral set must be a strict subset of the review set"
+    assert len(referred) == sum(
+        1
+        for claim in seed_fixture.seed()["claims"]
+        if claim["fraud_flag"] and claim["fraud_score"] >= seed_fixture.SIU_FRAUD_SCORE_MIN
+    )
+    assert len(reviewed) == sum(
+        1
+        for claim in seed_fixture.seed()["claims"]
+        if claim["fraud_flag"] and claim["fraud_score"] >= seed_fixture.FRAUD_FLAG_SCORE_MIN
+    )
+
+
 @pytest.mark.parametrize(
     ("business_id", "bucket"),
     [
@@ -373,7 +460,9 @@ def test_risk_is_registered_under_its_canonical_name() -> None:
     assert "risk" in derivations.registered_names()
 
 
-@pytest.mark.parametrize("name", ["days_open", "siu_review", "rtw_blocked", "payment_due"])
+@pytest.mark.parametrize(
+    "name", ["days_open", "siu_review", "fraud_flagged", "rtw_blocked", "payment_due"]
+)
 def test_the_queue_derivations_are_registered_under_their_canonical_names(name: str) -> None:
     """AC 5: the queue's flags come only from registered functions.
 
