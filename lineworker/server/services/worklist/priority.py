@@ -157,6 +157,46 @@ def priority_score(claim: QueueClaim, flags: QueueFlags, weights: PriorityWeight
     return score
 
 
+def order_key(entry: tuple[QueueClaim, float]) -> tuple[float, str]:
+    """`(-score, claim_id)` — the ranked order, with **one** definition.
+
+    Extracted from `queue._ranked_group`'s inline lambda by Story 5.4, and the
+    extraction is the point rather than a tidy-up. AD-2 says the scorer exists
+    exactly once and it does; its *ordering* did not. A second surface that
+    "sorts by the same scorer" is one `reverse=True` away from a table that
+    agrees with the queue on every score and disagrees with it on every tie, and
+    nothing would say so — both lists would be plausibly ordered, both would be
+    ranked by the same numbers, and only the claims whose scores collide would
+    swap. Sharing a symbol turns "the same ordering" from a sentence in a
+    docstring into a fact a test can assert without restating the rule.
+
+    **Descending score, ascending business id, and the tie-break is
+    load-bearing.** Ties are common rather than exotic — the settled group is
+    full of claims carrying the same penalty and a similar severity, and the
+    priority worklist's fraud arm collects claims whose categorical signals
+    coincide. A sort with a non-total key leaves equal elements in whatever
+    order the input arrived in, so a cursor into the list would repeat one claim
+    and drop another between two requests. `claim_id` is unique and orderable,
+    which is what makes this key total.
+
+    **`-score` rather than `reverse=True`**, because `reverse=True` reverses the
+    tie-break with it and would give descending business ids. Both halves of the
+    key have to point the way they are documented.
+
+    Takes the `(claim, score)` pair rather than a claim and a score, so it can
+    be handed straight to `sorted(key=…)` by callers whose members are wider
+    tuples — `queue._ranked_group` carries flags in the middle and adapts, this
+    module's own consumers do not have to.
+
+    `priority_markers` below still requires its input already sorted **by this
+    key** and raises if it is not; that precondition is what makes the marker a
+    statement about the top of a ranked list rather than about the first three
+    rows somebody happened to pass in.
+    """
+    claim, score = entry
+    return (-score, claim.claim_id)
+
+
 def priority_markers(scores: Sequence[float], weights: PriorityWeights) -> list[bool]:
     """Which of an already-ranked list carry the 🔺 — one bool per score.
 

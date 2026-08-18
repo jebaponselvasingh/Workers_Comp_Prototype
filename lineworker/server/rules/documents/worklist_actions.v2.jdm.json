@@ -1,0 +1,127 @@
+{
+  "contentType": "application/vnd.gorules.decision",
+  "name": "worklist_actions",
+  "description": "Version 2 (Story 5.4): version 1's thirteen expressions verbatim, plus the two numbers that bound the supervisor's priority worklist. Superseding is a new document, never an edit \u2014 v1 stays exactly what Story 3.5 shipped, so a checklist rendered under it stays explainable. Every tunable of the auto-generated action checklist (Story 3.5, AD-8), plus the two numbers that bound Story 5.4's supervisor priority worklist. A document of its own for reserve_bands' reason applied one story later: services/worklist owns the generator, and derivation_thresholds is the single argument every REGISTERED DERIVATION is built from \u2014 an action checklist is a service query over a claim, its documents and its money rather than a banding of one column, so folding its knobs into that document would make the registry's contract mean 'whatever anybody needed a number for'. WHAT IS HERE IS ONLY THE TUNING. cap is how many rows the card renders at most; paddingFloor is how few it will settle for before it starts adding routine review items; the eleven urgency keys are how loudly each rule speaks. The eleven TRIGGER CONDITIONS stay in typed Python (services/worklist/actions.py) \u2014 that is AD-8's split exactly, and it is the same split reserve_bands makes between two thresholds here and the ratio arithmetic there. WHY v2 ADDS THE SUPERVISOR WORKLIST'S TWO NUMBERS HERE RATHER THAN IN priority_weights. supervisorWorklistCap is how many claims the top-30 table holds and supervisorWorklistPageLimit is how many of them one page carries, and pageLimit \u2014 the queue's own page size \u2014 already lives in priority_weights, so that is where a reader would look first. It must not be there. The claims queue's pagination cursor RECORDS THE priority_weights VERSION and refuses any page cut under a superseded one, so publishing a v2 of that document to add a number the queue never reads would invalidate every outstanding queue cursor across the console \u2014 the exact cost deferred-work.md recorded when pageLimit was placed there, paid a second time for nothing. This document is already loaded by the priority-claims path (the table's Priority Next Best Action column is element 0 of what the generator below produces), it is owned by the same service, and it already holds the family's other list-length knobs. So the cap costs no extra document load and no unrelated cursor. THE NAMES CARRY A supervisorWorklist PREFIX because this block's existing cap means something else entirely \u2014 the per-claim checklist's row budget \u2014 and two unqualified caps in one parameter block is precisely the confusion the prefix exists to prevent. AN EXPRESSION NODE RATHER THAN A DECISION TABLE, DELIBERATELY, and the story's AC says 'decision table': all committed JDM documents use this inputNode -> expressionNode -> outputNode shape with constant expressions, and rules/engine.py evaluates a document ONCE PER REQUEST with an empty context, memoised on (key, version, content, context). A decisionTableNode keyed on a per-rule or per-claim input would be evaluated eleven times per request, thrash that cache, and have no home in the frozen-parameter-block pattern rules/parameters.py is built around. What AD-8 actually asks for \u2014 parameters DB-versioned, effective-dated and out of Python \u2014 is satisfied by this shape, and the deviation is recorded in deferred-work.md. THE CAP IS 6, NOT 7. epics.md AC 1 says six; docs/Architecture-LINEWORKER.md section 3.2 mentions 'the worklist's 7-item cap' and the prototype's actionsBlockHTML uses budget=7 (line 1241). The epics AC governs, and because the number is here rather than in Python, retuning it to 7 is a rules migration and not a deploy \u2014 which is the whole reason it is a parameter. THE SUPERVISOR WORKLIST'S PAGE LIMIT IS BELOW ITS CAP ON PURPOSE: ten of thirty, so the cursor is exercised by the seeded book rather than by a hypothetical one, and so one request generates actions for ten claims instead of thirty. THE URGENCIES ARE THE PROTOTYPE'S TWO-TONE SCHEME, WIDENED TO THREE. Its acti-tag chips are high/med only; a third tone exists here so that the padding rows \u2014 routine review items nobody is waiting on \u2014 do not render at the same volume as an unfiled OSHA 300 entry. high is 'a statutory or lifecycle clock is running', medium is 'somebody is waiting on this handler', low is 'read this when you have a moment'. Ties within a tone are broken by the rules' DECLARATION ORDER in services/worklist/actions.py, never by this document: Story 5.4 reads element 0 as the claim's next best action, so the ordering has to be total and it has to be one thing's job.",
+  "nodes": [
+    {
+      "id": "request",
+      "type": "inputNode",
+      "name": "request",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "actions",
+      "type": "expressionNode",
+      "name": "actions",
+      "position": {
+        "x": 240,
+        "y": 0
+      },
+      "content": {
+        "expressions": [
+          {
+            "id": "cap",
+            "key": "cap",
+            "value": "6"
+          },
+          {
+            "id": "paddingFloor",
+            "key": "paddingFloor",
+            "value": "3"
+          },
+          {
+            "id": "urgencyAssessmentApproval",
+            "key": "urgencyAssessmentApproval",
+            "value": "'high'"
+          },
+          {
+            "id": "urgencySiuEscalation",
+            "key": "urgencySiuEscalation",
+            "value": "'high'"
+          },
+          {
+            "id": "urgencyOverdueRtw",
+            "key": "urgencyOverdueRtw",
+            "value": "'high'"
+          },
+          {
+            "id": "urgencySurgicalPreAuth",
+            "key": "urgencySurgicalPreAuth",
+            "value": "'high'"
+          },
+          {
+            "id": "urgencyBillReview",
+            "key": "urgencyBillReview",
+            "value": "'medium'"
+          },
+          {
+            "id": "urgencyPaymentConfirmation",
+            "key": "urgencyPaymentConfirmation",
+            "value": "'medium'"
+          },
+          {
+            "id": "urgencyOshaLog",
+            "key": "urgencyOshaLog",
+            "value": "'medium'"
+          },
+          {
+            "id": "urgencyDefenseCounsel",
+            "key": "urgencyDefenseCounsel",
+            "value": "'medium'"
+          },
+          {
+            "id": "urgencyModifiedDuty",
+            "key": "urgencyModifiedDuty",
+            "value": "'medium'"
+          },
+          {
+            "id": "urgencyDiaryCheckIn",
+            "key": "urgencyDiaryCheckIn",
+            "value": "'low'"
+          },
+          {
+            "id": "urgencyRoutineReview",
+            "key": "urgencyRoutineReview",
+            "value": "'low'"
+          },
+          {
+            "id": "supervisorWorklistCap",
+            "key": "supervisorWorklistCap",
+            "value": "30"
+          },
+          {
+            "id": "supervisorWorklistPageLimit",
+            "key": "supervisorWorklistPageLimit",
+            "value": "10"
+          }
+        ]
+      }
+    },
+    {
+      "id": "response",
+      "type": "outputNode",
+      "name": "response",
+      "position": {
+        "x": 480,
+        "y": 0
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "request-actions",
+      "type": "edge",
+      "sourceId": "request",
+      "targetId": "actions"
+    },
+    {
+      "id": "actions-response",
+      "type": "edge",
+      "sourceId": "actions",
+      "targetId": "response"
+    }
+  ]
+}

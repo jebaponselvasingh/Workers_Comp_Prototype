@@ -39,6 +39,16 @@ export interface StubRoutes {
   handlerBenchmarks?: StubRoute;
   /** `GET /dashboard/charts` (Story 5.3) — the seven analytics surfaces. */
   dashboardCharts?: StubRoute;
+  /**
+   * `GET /dashboard/priority-claims` (Story 5.4) — the top-30 worklist.
+   *
+   * A `StubRouteFor` rather than a `StubRoute`, unlike its three dashboard
+   * siblings: this is the only cursor-paged surface on the page, so a "Show
+   * more" test needs the second request — the one carrying `?cursor=…` — to
+   * answer a different page from the first, and that is a decision about the
+   * URL. `claimDetail`'s form, for `claimDetail`'s reason.
+   */
+  priorityClaims?: StubRouteFor;
   claimsQueue?: StubRouteFor;
   /**
    * `GET /claims/{id}` (Story 2.2). A function so a test can answer
@@ -1002,6 +1012,348 @@ export const DASHBOARD_CHARTS_EMPTY = {
     byEmployer: { items: [], total: 0, totalCategories: 0, truncated: false, limit: null },
     byState: { items: [], total: 0, totalCategories: 0, truncated: false, limit: 10 },
     sla: SLA_NO_DATA.body,
+  },
+};
+
+/**
+ * The first page of David Bline's real priority worklist (Story 5.4).
+ *
+ * `DASHBOARD_CHARTS`' argument: component tests do not verify these figures
+ * (that is `test_priority_claims.py`'s job against the real database), they
+ * verify that whatever the server sends is what the table draws. Using the real
+ * book — the real thirty-eight-claim population, the real cap, the real
+ * ordering, the real workers, employers and injury types — keeps a reader from
+ * mistaking a stub for a computation.
+ *
+ * **Everything that diverges from a live response, named.** A fixture docstring
+ * that claims "real numbers" while a column was rewritten is worse than no
+ * docstring, because the next reader trusts it:
+ *
+ * 1. `nextBestAction` — the live payload answers "Review Return-to-Work policy
+ *    & offer letter" for eight of these ten rows, because the same trigger
+ *    fires across a population defined as claims in treatment. Ten identical
+ *    strings in one column is exactly the fixture that cannot catch a
+ *    mis-wired cell, so each row carries a **different** label. Every one of
+ *    them is a real label from `services/worklist/actions.py` — the ten trigger
+ *    rules and the three padding rows are the whole vocabulary — so the column
+ *    still renders text the generator can produce.
+ * 2. `WC-20765` — its live `fraudScore` is 22 (a tie with `WC-20459`) and its
+ *    live `daysOpen` is 0 (a tie with `WC-21275`). Both are nudged to 25 and 3
+ *    so that every figure in each numeric column is distinct: a table that read
+ *    the wrong row's fraud score or age would otherwise be indistinguishable
+ *    from a correct one on two of the ten rows.
+ *
+ * Everything else is the seed's: the ten claim ids in the server's priority
+ * order, the workers, employers, injury types, severity bands, the three LITIG
+ * rows at the top, the fraud flags (two `true`, at scores of 61 and 63, both
+ * above the published 55), the stages, `total`, `cap` and all three thresholds.
+ *
+ * **`severityBand`, `stage` and `fraudFlagged` repeat, and cannot not.** They
+ * are three-, four- and two-valued, so the "every figure distinct" rule reaches
+ * the numeric columns only — which is what the assertions read: the tests
+ * compare label/value *pairs* per row keyed on `claimId`, so a swapped row
+ * fails on its id before a band is compared at all.
+ */
+export const PRIORITY_CLAIMS = {
+  status: 200,
+  body: {
+    items: [
+      {
+        claimId: "WC-21139",
+        worker: "Jeremy Baker",
+        employerShortName: "Whirlpool",
+        injuryType: "Amputation",
+        severityBand: "high",
+        fraudScore: 5,
+        fraudFlagged: false,
+        handlerName: "Kaya Johnson",
+        daysOpen: 143,
+        nextBestAction: "Review Return-to-Work policy & offer letter",
+        stage: "treatment",
+        litigationFlag: true,
+      },
+      {
+        claimId: "WC-21275",
+        worker: "Monique Allen",
+        employerShortName: "Whirlpool",
+        injuryType: "Crushing",
+        severityBand: "high",
+        fraudScore: 4,
+        fraudFlagged: false,
+        handlerName: "Kaya Johnson",
+        daysOpen: 0,
+        nextBestAction: "Coordinate the case file with defense counsel",
+        stage: "treatment",
+        litigationFlag: true,
+      },
+      {
+        claimId: "WC-20646",
+        worker: "Gina Hamilton",
+        employerShortName: "GE",
+        injuryType: "Myocardial Infarction",
+        severityBand: "high",
+        fraudScore: 18,
+        fraudFlagged: false,
+        handlerName: "Kaya Johnson",
+        daysOpen: 130,
+        nextBestAction: "Authorize the surgical pre-approval",
+        stage: "treatment",
+        litigationFlag: true,
+      },
+      {
+        claimId: "WC-20816",
+        worker: "Kenneth Hughes",
+        employerShortName: "Honeywell",
+        injuryType: "Myocardial Infarction",
+        severityBand: "high",
+        fraudScore: 23,
+        fraudFlagged: false,
+        handlerName: "Dante Reyes",
+        daysOpen: 121,
+        nextBestAction: "Record the injury on the OSHA 300 log",
+        stage: "treatment",
+        litigationFlag: false,
+      },
+      {
+        claimId: "WC-20459",
+        worker: "Gerald Brown",
+        employerShortName: "Caterpillar",
+        injuryType: "Amputation",
+        severityBand: "high",
+        fraudScore: 22,
+        fraudFlagged: false,
+        handlerName: "Kaya Johnson",
+        daysOpen: 142,
+        nextBestAction: "Review medical bills awaiting approval",
+        stage: "treatment",
+        litigationFlag: false,
+      },
+      {
+        claimId: "WC-21428",
+        worker: "Vanessa Morgan",
+        employerShortName: "John Deere",
+        injuryType: "Fall from Height",
+        severityBand: "high",
+        fraudScore: 13,
+        fraudFlagged: false,
+        handlerName: "Liam O'Sullivan",
+        daysOpen: 67,
+        nextBestAction: "Confirm the indemnity payment for this week",
+        stage: "treatment",
+        litigationFlag: false,
+      },
+      {
+        claimId: "WC-20884",
+        worker: "Helen Powell",
+        employerShortName: "Toyota",
+        injuryType: "Fracture",
+        severityBand: "high",
+        fraudScore: 14,
+        fraudFlagged: false,
+        handlerName: "Marcus Chen",
+        daysOpen: 11,
+        nextBestAction: "Schedule the modified-duty review with the plant",
+        stage: "treatment",
+        litigationFlag: false,
+      },
+      {
+        claimId: "WC-21462",
+        worker: "James Harris",
+        employerShortName: "John Deere",
+        // The longest injury type in the seeded portfolio, kept because this
+        // column truncates with CSS and keeps the full string in `title` —
+        // a fixture of short labels could not tell the two apart.
+        injuryType: "Vibration White Finger (HAVS)",
+        severityBand: "low",
+        fraudScore: 61,
+        fraudFlagged: true,
+        handlerName: "Liam O'Sullivan",
+        daysOpen: 17,
+        nextBestAction: "Approve the claim assessment",
+        stage: "investigation",
+        litigationFlag: false,
+      },
+      {
+        claimId: "WC-20935",
+        worker: "Lucinda West",
+        employerShortName: "Toyota",
+        injuryType: "Strain or Tear — Shoulder",
+        severityBand: "med",
+        fraudScore: 63,
+        fraudFlagged: true,
+        handlerName: "Marcus Chen",
+        daysOpen: 65,
+        nextBestAction: "Escalate to SIU — fraud indicators on file",
+        stage: "investigation",
+        litigationFlag: false,
+      },
+      {
+        claimId: "WC-20765",
+        worker: "Richard Morris",
+        employerShortName: "Honeywell",
+        injuryType: "Crushing",
+        severityBand: "high",
+        // 25 and 3, not the live 22 and 0 — see the docstring on why every
+        // figure in a numeric column is distinct here.
+        fraudScore: 25,
+        fraudFlagged: false,
+        handlerName: "Dante Reyes",
+        daysOpen: 3,
+        nextBestAction: "Log the weekly diary check-in",
+        stage: "treatment",
+        litigationFlag: false,
+      },
+    ],
+    nextCursor:
+      "eyJvIjoxMCwibCI6MTAsInYiOjEsInQiOjUsImEiOjIsImQiOiIyMDI2LTA4LTE4In0",
+    total: 38,
+    cap: 30,
+    truncated: true,
+    highRiskSeverityMin: 65,
+    medRiskSeverityMin: 35,
+    fraudFlagScoreMin: 55,
+    rulesVersion: 2,
+  },
+};
+
+/**
+ * The second page of the same walk, with **no** cursor behind it.
+ *
+ * Three rows rather than ten, deliberately: what the "Show more" test is about
+ * is that the pages are *appended and deduped* and that the button disappears
+ * when the server stops offering a cursor, and a ten-row second page would make
+ * the assertion "twenty rows" rather than "these thirteen, in this order". The
+ * three claim ids and their facts are the real page two's first three.
+ *
+ * `total` and `cap` repeat page one's, which is the contract: the population is
+ * counted before the cap and is stable across every page of a walk. A fixture
+ * that moved either would let a component publish a caption that changed as the
+ * table grew.
+ */
+export const PRIORITY_CLAIMS_PAGE_TWO = {
+  status: 200,
+  body: {
+    items: [
+      {
+        claimId: "WC-21530",
+        worker: "Lucinda Davis",
+        employerShortName: "John Deere",
+        injuryType: "Conveyor Entanglement",
+        severityBand: "high",
+        fraudScore: 6,
+        fraudFlagged: false,
+        handlerName: "Liam O'Sullivan",
+        daysOpen: 1,
+        nextBestAction: "Review the case file and confirm the reserve position",
+        stage: "treatment",
+        litigationFlag: false,
+      },
+      {
+        claimId: "WC-20102",
+        worker: "George Lee",
+        employerShortName: "Boeing",
+        injuryType: "Strain or Tear — Shoulder",
+        severityBand: "med",
+        fraudScore: 65,
+        fraudFlagged: true,
+        handlerName: "Dante Reyes",
+        daysOpen: 137,
+        nextBestAction: "Review the documents on file",
+        stage: "treatment",
+        litigationFlag: false,
+      },
+      {
+        claimId: "WC-20034",
+        worker: "Michelle Cox",
+        employerShortName: "Boeing",
+        injuryType: "Fall from Height",
+        severityBand: "high",
+        fraudScore: 16,
+        fraudFlagged: false,
+        handlerName: "Dante Reyes",
+        daysOpen: 78,
+        nextBestAction: "Review the indemnity payment schedule",
+        stage: "treatment",
+        litigationFlag: false,
+      },
+    ],
+    nextCursor: null,
+    total: 38,
+    cap: 30,
+    truncated: true,
+    highRiskSeverityMin: 65,
+    medRiskSeverityMin: 35,
+    fraudFlagScoreMin: 55,
+    rulesVersion: 2,
+  },
+};
+
+/**
+ * `PRIORITY_CLAIMS`' ten rows, in a **different order**.
+ *
+ * Its whole purpose is to be asserted *against* `PRIORITY_CLAIMS`. A component
+ * that renders what it was sent reads differently under the two; one that
+ * sorted — by severity, by fraud score, by days open, by claim id, by anything
+ * — reads the same. The order here is deliberately the reverse of the server's,
+ * which is the one permutation that every plausible client-side sort would
+ * *undo*: a table that re-imposed the priority ranking would produce
+ * `PRIORITY_CLAIMS`' order from this payload, and the test would catch it.
+ *
+ * `total` and `cap` are unchanged, because re-ordering a page does not change
+ * how many claims qualified.
+ */
+export const PRIORITY_CLAIMS_REORDERED = {
+  status: 200,
+  body: {
+    ...PRIORITY_CLAIMS.body,
+    items: [...PRIORITY_CLAIMS.body.items].reverse(),
+  },
+};
+
+/**
+ * A scope whose book needs no priority attention — the table's empty state.
+ *
+ * Reachable, and it is the one empty state on this dashboard that is good news:
+ * a supervisor whose claims are all settled, none litigated and none
+ * fraud-flagged has an empty worklist because her portfolio is quiet.
+ *
+ * The three thresholds and `cap` are spread through from the fixture above
+ * rather than nulled with everything else, because that is what the server
+ * sends: "nothing in this book" says nothing about which rules were in force.
+ * `total` is 0 and so the caption reads "top 30 of 0" — the cap is still the
+ * document's answer even when nothing reaches it.
+ */
+export const PRIORITY_CLAIMS_EMPTY = {
+  status: 200,
+  body: {
+    ...PRIORITY_CLAIMS.body,
+    items: [],
+    nextCursor: null,
+    total: 0,
+    // Nothing qualified, so nothing was cut: `truncated` follows the population
+    // and not the cap, and an empty book is the limit case of the untruncated
+    // caption rather than a third state.
+    truncated: false,
+  },
+};
+
+/**
+ * A scoped supervisor's whole worklist — eight rows, under the cap.
+ *
+ * Jennifer Park's seeded figures, and the fixture the caption's other sentence
+ * needs: `total` below `cap` means the cut never happened, so the heading must
+ * read "(8 claims)" and never "showing top 30 of 8". `truncated` is the
+ * server's answer to that question and this fixture is where the component's
+ * handling of `false` is exercised against a non-empty table.
+ */
+export const PRIORITY_CLAIMS_UNDER_CAP = {
+  status: 200,
+  body: {
+    ...PRIORITY_CLAIMS.body,
+    items: PRIORITY_CLAIMS.body.items.slice(0, 8),
+    nextCursor: null,
+    total: 8,
+    truncated: false,
   },
 };
 
@@ -3014,6 +3366,14 @@ export function stubApi(routes: StubRoutes): void {
       // readability rather than routing.
       if (url.includes("/api/dashboard/charts")) {
         return answer(routes.dashboardCharts ?? DASHBOARD_CHARTS);
+      }
+      // Story 5.4's. Disjoint from the three dashboard paths above, so the
+      // order is readability rather than routing — but `answerFor` rather than
+      // `answer`, because this route is paged and a stub has to be able to see
+      // the cursor. The default answers page one whatever the URL says, which
+      // is what every test that does not walk the table wants.
+      if (url.includes("/api/dashboard/priority-claims")) {
+        return answerFor(routes.priorityClaims ?? PRIORITY_CLAIMS, url);
       }
       // Story 4.1's four, before every `/api/claims` case below. **Not because
       // the case file would swallow them**: the catch-all tests `/api/claims/`

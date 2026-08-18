@@ -73,8 +73,39 @@ Structurally it is `summary`'s shape again, widened: one scoped projection read
 and the settings injected by the router. It gates on scope and **not** on role,
 unlike `benchmarks` — seven distributions over your own book name nobody, so
 there is no capability to gate; the route's docstring carries the argument.
+
+Story 5.4 adds `priority_claims`, and it is the entry that makes this package's
+whole argument load-bearing rather than decorative: it is the first module here
+that composes *two* of the others. Its ordering is `priority`'s — the same
+scorer and, from this story, the same `order_key`, which was a lambda inside
+`queue._ranked_group` until a second consumer needed it and is now one symbol
+with two callers. Its action column is element 0 of what `actions.
+generate_actions` returns, the pure generator that module built its structural
+protocols for. So "the supervisor's worklist ranks claims the way the handler's
+queue does and names the same next action the handler's checklist does" is not
+two implementations agreeing; it is two call sites of one function each, and the
+tests assert the equalities rather than restating the answers.
+
+Structurally it departs from its three Epic 5 siblings in exactly one way, and
+the reason is the cursor: it takes *five* awaited reads rather than one — the
+scoped book, then four bulk child reads over the page's ids, because the action
+generator reads a claim's documents, bills, schedule and diary. Five rather than
+the forty a page of ten would cost through the single-claim reads, and
+`test_the_aggregate_takes_exactly_five_scoped_reads` is what keeps it there. Like
+`charts` it gates on scope and not on role, and the route's docstring carries an
+argument that had to be *applied* rather than inherited: this payload names a
+handler in every row, as the owner of a claim the caller can already read.
 """
 
+# **`priority_claims` is deliberately missing from this list**, and it is the
+# one submodule that is. Its name and its entry point's name coincide — the
+# module is `priority_claims` and the aggregate it exists for is
+# `priority_claims(db, ctx, …)` — so re-exporting both would make
+# `services.worklist.priority_claims` a module at import time and a function
+# immediately afterwards, depending on which import ran last. The function wins,
+# because it is what every caller wants; anything needing the module reaches it
+# by path (`from services.worklist.priority_claims import Cursor`), which is
+# what `tests/test_priority_claims.py` does.
 from services.worklist import (
     actions,
     approvals,
@@ -125,8 +156,18 @@ from services.worklist.priority import (
     QueueFilter,
     QueueFlags,
     matches,
+    order_key,
     priority_markers,
     priority_score,
+)
+from services.worklist.priority_claims import (
+    NO_ACTION,
+    PriorityClaim,
+    PriorityClaims,
+    PriorityFlags,
+    PriorityRow,
+    priority_claims,
+    rank,
 )
 from services.worklist.queue import (
     MAX_PAGE_LIMIT,
@@ -152,11 +193,6 @@ from services.worklist.summary import (
 
 __all__ = [
     "APPROVAL_KINDS",
-    "INJURY_TYPE_LIMIT",
-    "MAX_PAGE_LIMIT",
-    "MIN_PAGE_LIMIT",
-    "STAGE_ORDER",
-    "STATE_LIMIT",
     "Action",
     "ApprovalKind",
     "ApprovalNotPermitted",
@@ -173,15 +209,25 @@ __all__ = [
     "EmployerPaid",
     "HandlerBenchmark",
     "HandlerBenchmarks",
+    "INJURY_TYPE_LIMIT",
     "InvalidCursor",
     "LabelCount",
+    "MAX_PAGE_LIMIT",
+    "MIN_PAGE_LIMIT",
+    "NO_ACTION",
     "PortfolioCharts",
     "PortfolioClaim",
     "PortfolioSummary",
+    "PriorityClaim",
+    "PriorityClaims",
+    "PriorityFlags",
+    "PriorityRow",
     "QueueCard",
     "QueueClaim",
     "QueueFilter",
     "QueueFlags",
+    "STAGE_ORDER",
+    "STATE_LIMIT",
     "SlaMetric",
     "SlaMetricKey",
     "SlaSample",
@@ -202,12 +248,15 @@ __all__ = [
     "generate_actions",
     "handler_benchmarks",
     "matches",
+    "order_key",
     "portfolio_charts",
     "portfolio_summary",
     "priority",
+    "priority_claims",
     "priority_markers",
     "priority_score",
     "queue",
+    "rank",
     "require_benchmarks_access",
     "sla",
     "sla_strip",

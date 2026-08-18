@@ -87,6 +87,45 @@ export const queryKeys = {
      * handler table standing.
      */
     charts: ["dashboard", "charts"] as const,
+    /**
+     * The top-30 priority worklist (Story 5.4) — the fourth and last sibling
+     * the group's docstring above pre-authorised.
+     *
+     * Its own key rather than a field on any of the three, for their recorded
+     * reason: it is a separate server answer with a separate cost (a scoped
+     * read of the whole book, ranked, plus four bulk child reads and an action
+     * generated per row), and it fails and refetches on its own. The page
+     * renders four sections behind four independent states, so a worklist
+     * outage leaves the KPI cards, the handler table and the charts standing.
+     *
+     * No persona and no role segment, although this payload names a handler in
+     * every row: the server answers for whoever holds the session cookie
+     * (AD-7), and putting an identity here would imply the client picks whose
+     * worklist it sees.
+     */
+    priorityClaims: ["dashboard", "priority-claims"] as const,
+    /**
+     * The pages the worklist has been walked through ("Show more").
+     *
+     * `claims.queuePages`' shape and its whole argument, on a list that is not
+     * grouped: keyed by **the cursor the accumulation starts from**, but not by
+     * the cursors after it. Those are the infinite query's own page params and
+     * live inside the entry; putting them in the key would make every page its
+     * own cache entry and lose the accumulated rows on the way back.
+     *
+     * The *first* cursor is different in kind: it is not a page param the query
+     * produced, it is an input handed in from the base query, and it encodes
+     * both the offset the accumulation is anchored at and the three rule
+     * versions that ranked it. When the base query refetches and the worklist
+     * has changed underneath it — a claim left treatment, a rule document was
+     * superseded — the first cursor changes, and pages accumulated from the old
+     * one describe a list that no longer starts where they think it does. In
+     * the key, that is a different entry and the table reloads; out of it, page
+     * 1 and page 2 came from two different rankings and nothing anywhere would
+     * say so.
+     */
+    priorityClaimPages: (firstCursor: string | null) =>
+      ["dashboard", "priority-claims", "pages", firstCursor] as const,
   },
   claims: {
     /**

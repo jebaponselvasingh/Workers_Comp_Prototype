@@ -66,18 +66,22 @@ function handlerOrder(container: HTMLElement): (string | null)[] {
 }
 
 test("the table renders all nine columns in the prototype's order", async () => {
-  const { container } = renderPage({ handlerBenchmarks: HANDLER_BENCHMARKS });
+  renderPage({ handlerBenchmarks: HANDLER_BENCHMARKS });
 
   await waitFor(() => expect(screen.getAllByTestId("handler-row")).toHaveLength(6));
 
-  const headers = [...container.querySelectorAll("th")].map((th) => th.textContent);
+  // Scoped to this section rather than to the whole page: Story 5.4 put a
+  // second `<table>` on the dashboard, so a query over `container` now reads
+  // nineteen headers from two tables and the ordering assertion means nothing.
+  const section = screen.getByTestId("handler-benchmarks");
+  const headers = [...section.querySelectorAll("th")].map((th) => th.textContent);
   expect(headers).toEqual(HEADERS);
   // Every header is a real column header, not a styled cell — the whole reason
   // this is a `<table>` rather than a grid of divs.
-  for (const th of container.querySelectorAll("th")) {
+  for (const th of section.querySelectorAll("th")) {
     expect(th).toHaveAttribute("scope", "col");
   }
-  expect(container.querySelector("caption")).toHaveClass("sr-only");
+  expect(section.querySelector("caption")).toHaveClass("sr-only");
 });
 
 test("the rows arrive in the server's rank order and are not re-sorted", async () => {

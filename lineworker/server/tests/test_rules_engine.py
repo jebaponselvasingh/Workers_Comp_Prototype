@@ -81,8 +81,11 @@ EFFECTIVE_DOCUMENTS: tuple[tuple[str, int, str], ...] = (
     (BENEFIT_PARAMS_KEY, 1, "benefit_params.jdm.json"),
     # Story 3.2's, the second — the reserve adequacy bands.
     (RESERVE_BANDS_KEY, 1, "reserve_bands.jdm.json"),
-    # Story 3.5's, and the first owned by `services/worklist`.
-    (WORKLIST_ACTIONS_KEY, 1, "worklist_actions.jdm.json"),
+    # Story 3.5's, and the first owned by `services/worklist`. Story 5.4
+    # supersedes it with a v2 carrying the supervisor worklist's cap and page
+    # size — see `SEEDED_DOCUMENTS` for v1, which is still committed and still
+    # seeded.
+    (WORKLIST_ACTIONS_KEY, 2, "worklist_actions.v2.jdm.json"),
     # Story 5.2's, the second owned by `services/worklist` — and the first whose
     # parameters reach a *registered derivation* from outside
     # `derivation_thresholds`, through `.of()` rather than through `build`.
@@ -103,6 +106,11 @@ SEEDED_DOCUMENTS: tuple[tuple[str, int, str], ...] = (
     (DERIVATION_THRESHOLDS_KEY, 2, "derivation_thresholds.v2.jdm.json"),
     (DERIVATION_THRESHOLDS_KEY, 3, "derivation_thresholds.v3.jdm.json"),
     (DERIVATION_THRESHOLDS_KEY, 4, "derivation_thresholds.v4.jdm.json"),
+    # Story 3.5's v1, superseded by Story 5.4's v2 above and still committed:
+    # 0031 reads the unversioned filename at migration time, so this row exists
+    # on every fresh database and is still a file that can silently disagree
+    # with it.
+    (WORKLIST_ACTIONS_KEY, 1, "worklist_actions.jdm.json"),
     *EFFECTIVE_DOCUMENTS,
 )
 
@@ -186,6 +194,15 @@ EXPECTED_WORKLIST_ACTIONS: dict[str, Any] = {
     "urgencyModifiedDuty": "medium",
     "urgencyDiaryCheckIn": "low",
     "urgencyRoutineReview": "low",
+    # Story 5.4's two, added in version 2. They bound the supervisor's priority
+    # worklist and nothing on the action checklist reads either — they are in
+    # *this* document rather than beside `priority_weights.pageLimit` because
+    # that document's version is recorded in every outstanding queue cursor, and
+    # superseding it to add a number the queue never reads would invalidate all
+    # of them. The page limit is below the cap deliberately, so the seeded book
+    # exercises the cursor.
+    "supervisorWorklistCap": 30,
+    "supervisorWorklistPageLimit": 10,
 }
 
 EXPECTED_INTAKE_REQUIREMENTS: dict[str, Any] = {
@@ -481,13 +498,15 @@ async def test_the_typed_blocks_carry_the_evaluated_values(db: AsyncSession) -> 
         complexity_med_min=EXPECTED_HANDLER_PERFORMANCE["complexityMedMin"],
     )
     assert await worklist_actions_for(db) == WorklistActions(
-        version=1,
+        version=2,
         cap=EXPECTED_WORKLIST_ACTIONS["cap"],
         padding_floor=EXPECTED_WORKLIST_ACTIONS["paddingFloor"],
         urgencies={
             key: ActionUrgency(EXPECTED_WORKLIST_ACTIONS[urgency_parameter_name(key)])
             for key in ActionKey
         },
+        supervisor_worklist_cap=EXPECTED_WORKLIST_ACTIONS["supervisorWorklistCap"],
+        supervisor_worklist_page_limit=EXPECTED_WORKLIST_ACTIONS["supervisorWorklistPageLimit"],
     )
     assert requirements == IntakeRequirements(
         version=1,

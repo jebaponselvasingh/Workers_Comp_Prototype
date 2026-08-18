@@ -38,7 +38,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Final
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -798,9 +798,22 @@ def _urgencies(
     return MappingProxyType(urgencies)
 
 
+#: The largest page size any cursor in this codebase will decode.
+#:
+#: Restated here rather than imported, deliberately: `rules` sits below
+#: `services` and importing a list service's constant upwards would invert the
+#: layering for one integer. The duplication is made safe by a test rather than
+#: by a comment — `test_priority_claims.py::
+#: test_the_rules_tier_page_ceiling_is_the_one_the_cursor_enforces` pins this
+#: against `services.worklist.queue.MAX_PAGE_LIMIT`, so the two cannot drift
+#: apart without a failure that names both.
+CURSOR_PAGE_CEILING: Final[int] = 200
+
+
 @dataclass(frozen=True)
 class WorklistActions:
-    """Every tunable of the action checklist (Story 3.5, AD-8).
+    """Every tunable of the action checklist (Story 3.5, AD-8), and the two that
+    bound the supervisor's priority worklist (Story 5.4).
 
     A block of its own, in a document of its own, for `ReserveBands`' reason:
     `services/worklist` owns the generator, and `DerivationThresholds` is the
@@ -821,12 +834,42 @@ class WorklistActions:
     `tests/test_action_checklist.py` can hand it a block it wrote by hand with
     no engine started and no database opened — the property `rules/engine.py`'s
     docstring says the whole once-per-request arrangement exists to preserve.
+
+    **Why the supervisor worklist's two numbers are here and not in
+    `PriorityWeights`.** They look like they belong beside `page_limit`, and
+    superficially they do — that field is the claims queue's page size and this
+    is a page size. The reason they must not go there is the cursor:
+    `services/worklist/queue.py` records the `priority_weights` version inside
+    every pagination token and refuses a page cut under a superseded one, so
+    publishing a v2 of *that* document to add a number the queue never reads
+    would invalidate every outstanding queue cursor in the console. That is the
+    cost `deferred-work.md` recorded when `page_limit` was placed there, and
+    paying it a second time for a value the queue cannot see would be paying it
+    for nothing. `worklist_actions` is already loaded by the priority-claims
+    path — the table's action column is element 0 of what the generator
+    produces — is owned by the same service, and already carries the family's
+    other list-length knobs.
+
+    **The names are prefixed, and the prefix is load-bearing.** This block
+    already has a field called `cap`, and it means the per-claim checklist's row
+    budget. Two unqualified caps in one dataclass is the confusion the prefix
+    exists to prevent, and it would be the quiet kind: both are small integers
+    bounding a list length, so a call site that reached for the wrong one would
+    type-check, run, and produce a plausible list of the wrong size.
     """
 
     version: int
     cap: int
     padding_floor: int
     urgencies: Mapping[ActionKey, ActionUrgency]
+    #: How many claims the supervisor's priority worklist holds at most, after
+    #: scoring and ordering — AD-8 names "worklist caps" as JDM-owned, which is
+    #: why no module in `services/worklist` may spell this number.
+    supervisor_worklist_cap: int
+    #: How many of those claims one page of `GET /dashboard/priority-claims`
+    #: carries. A published rule rather than a caller's choice: that route
+    #: declares no `limit` parameter, so this is the only thing that decides.
+    supervisor_worklist_page_limit: int
 
     def __post_init__(self) -> None:
         # A cap of zero renders an empty card on every claim in the portfolio,
@@ -850,6 +893,51 @@ class WorklistActions:
             raise RuleParameterError(
                 f"paddingFloor ({self.padding_floor}) must not exceed cap ({self.cap})"
             )
+        # `cap: 0`'s refusal, one surface over. A supervisor worklist capped at
+        # zero renders a table with a heading, ten column labels and no rows —
+        # indistinguishable on screen from a portfolio in which nothing needs
+        # attention, which is the single most reassuring thing this console can
+        # say wrongly. One is a strange policy and is a policy: "show me only
+        # the worst claim in the book" is exactly the tuning a parameter is for.
+        if self.supervisor_worklist_cap < 1:
+            raise RuleParameterError(
+                f"supervisorWorklistCap must be at least 1, got {self.supervisor_worklist_cap}"
+            )
+        # A page size of zero serves an empty first page beside a non-null
+        # cursor and pages for ever without advancing; a negative one slices
+        # backwards. Both are the shape `pageLimit: 0` is refused for.
+        if self.supervisor_worklist_page_limit < 1:
+            raise RuleParameterError(
+                "supervisorWorklistPageLimit must be at least 1, "
+                f"got {self.supervisor_worklist_page_limit}"
+            )
+        # `paddingFloor > cap`'s refusal over the other pair, and the failure is
+        # subtler than a contradiction: a page wider than the cap is not
+        # nonsense, it just means the first page is the whole list and the
+        # cursor is never issued. The table would still render correctly and the
+        # pagination this endpoint publishes would be dead code that no request
+        # could reach — a mechanism switched off by a number, silently. Equal is
+        # allowed and is a real policy: "one page, the whole worklist".
+        if self.supervisor_worklist_page_limit > self.supervisor_worklist_cap:
+            raise RuleParameterError(
+                f"supervisorWorklistPageLimit ({self.supervisor_worklist_page_limit}) must not "
+                f"exceed supervisorWorklistCap ({self.supervisor_worklist_cap}) — a page wider "
+                "than the cap leaves the cursor unreachable rather than re-tuning the table"
+            )
+        # The symmetric refusal, and the one the pair above does not imply.
+        # `cap: 500, pageLimit: 250` satisfies both rules, serves a first page,
+        # mints a cursor carrying `l: 250` — and then every "Show more" is a 400,
+        # because the cursor readers bound a decoded page size against the
+        # transport ceiling and 250 is past it. A rules migration would switch
+        # off a working control with nothing deployed and no error until the
+        # second click, which is exactly the class of failure the two refusals
+        # above exist to convert into a startup-time one.
+        if self.supervisor_worklist_page_limit > CURSOR_PAGE_CEILING:
+            raise RuleParameterError(
+                f"supervisorWorklistPageLimit ({self.supervisor_worklist_page_limit}) must not "
+                f"exceed {CURSOR_PAGE_CEILING}, the largest page any cursor in this codebase "
+                "will decode — a wider page mints cursors that are refused on arrival"
+            )
 
     def urgency_of(self, key: ActionKey) -> ActionUrgency:
         """This rule's urgency. Total by construction — see `_urgencies`."""
@@ -862,6 +950,10 @@ class WorklistActions:
             cap=_integer(document, result, "cap"),
             padding_floor=_integer(document, result, "paddingFloor"),
             urgencies=_urgencies(document, result),
+            supervisor_worklist_cap=_integer(document, result, "supervisorWorklistCap"),
+            supervisor_worklist_page_limit=_integer(
+                document, result, "supervisorWorklistPageLimit"
+            ),
         )
 
 

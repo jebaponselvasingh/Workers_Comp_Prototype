@@ -962,3 +962,95 @@ def expected_portfolio_charts(persona_name: str, role: str) -> dict[str, Any]:
         },
         "byState": _ranked_series(states, STATE_LIMIT),
     }
+
+
+# --- Story 5.4: the priority claims worklist, restated independently ------
+#
+# Three rules and an ordering, all built on blocks already in this file rather
+# than restated a second time — which is a departure from `HIGH_RISK_MIN`'s
+# discipline and a deliberate one, argued per rule:
+#
+# - The **ordering** reuses Story 2.1's `expected_score` and its `(-score,
+#   claim_id)` key, because the assertion this story is actually about is that
+#   the worklist and the queue rank identically. A third scoring rule written
+#   here would check the worklist against itself and would agree with an
+#   implementation that had quietly re-weighted, so long as this oracle
+#   re-weighted the same way.
+# - The **fraud arm** reuses Story 5.1's `FRAUD_FLAG_SCORE_MIN` for the same
+#   reason one level down: the population's fraud arm and the Fraud Flags card
+#   count one rule, and an oracle with its own number could not tell the two
+#   apart. It is still deliberately **not** `SIU_FRAUD_SCORE_MIN` — 13 seeded
+#   claims against 9 — which is the single most plausible way to get this
+#   population wrong.
+# - The **cap** is written out, because it is this story's own parameter and
+#   nothing else in this file knows it.
+#
+# What this oracle deliberately does **not** predict is `next_best_action`.
+# That column's oracle is Story 3.5's generator itself — the test asserts each
+# row against `generate_actions(...)[0].label` for the same claim, inputs and
+# `as_of`, which is an equality between two call sites rather than a
+# transliteration of eleven trigger rules into a fourth language. Restating the
+# generator here would be several hundred lines that agree with the
+# implementation exactly as often as they were copied from it.
+
+SUPERVISOR_WORKLIST_CAP = 30
+SUPERVISOR_WORKLIST_PAGE_LIMIT = 10
+
+TREATMENT_STAGE = "treatment"
+
+
+def qualifies_for_worklist(claim: dict[str, Any]) -> bool:
+    """The population: active treatment ∪ fraud-flagged ∪ litigation-flagged.
+
+    One `or` rather than three filters, restating the union the service spells
+    the same way — a claim matching two arms is in the set once, and a claim
+    matching only the third is in it at all.
+
+    "Active treatment" is the **stage**, not the status: Story 5.1's ruling,
+    which `expected_portfolio_summary` above records at length and which is
+    worth 62 seeded claims against 54 on the settled side of the same rule.
+    """
+    return (
+        claim["stage"] == TREATMENT_STAGE
+        or (claim["fraud_flag"] and claim["fraud_score"] >= FRAUD_FLAG_SCORE_MIN)
+        or bool(claim["litigation_flag"])
+    )
+
+
+def expected_priority_claims(
+    persona_name: str,
+    role: str,
+    as_of: date | None = None,
+    cap: int = SUPERVISOR_WORKLIST_CAP,
+) -> dict[str, Any]:
+    """`{population, total, claimIds}` for a persona's seeded book.
+
+    `total` is the size of the population **before** the cap — the number the
+    table's caption reads "of" — and `claimIds` is the capped, scorer-ordered
+    sequence the rows must appear in. Both, because the two are different facts
+    and a test that had only the second could not tell "the cap applied" from
+    "the book was that small".
+
+    Ordering is `(-score, claim_id)`, the tie-break included, for
+    `expected_queue`'s reason and more sharply here: this list is ungrouped, so
+    every tie in the whole book competes in one sequence rather than within a
+    stage, and the cursor's stability depends on the key being total.
+
+    The cap is a parameter so a test can demonstrate the rules tier — supersede
+    the document with a smaller number, pass the same number here, and the two
+    move together or the assertion fails. That is
+    `test_a_superseded_document_with_a_smaller_cap_shortens_the_table`, which is
+    the one caller that passes it.
+
+    `population` is the whole ordered sequence before the cut, published beside
+    the capped one so a test can assert what the cap *removed* rather than only
+    what it kept.
+    """
+    today = as_of or datetime.now(UTC).date()
+    population = [c for c in claims_for(persona_name, role) if qualifies_for_worklist(c)]
+    ordered = sorted(population, key=lambda c: (-expected_score(c, today), c["claim_id"]))
+    return {
+        "population": [c["claim_id"] for c in ordered],
+        "total": len(population),
+        "claimIds": [c["claim_id"] for c in ordered[:cap]],
+    }

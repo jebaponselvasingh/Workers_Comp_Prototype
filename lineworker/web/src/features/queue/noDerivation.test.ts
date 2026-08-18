@@ -397,7 +397,42 @@ const DERIVED_FIELDS =
   //   the guard still fires if a later story ships the field under its
   //   server-side name.
   "byStage|bySeverity|byRecoveryStatus|byInjuryType|byEmployer|byState|" +
-  "paidCents|totalCategories|truncated|\\.limit|medRiskSeverityMin|employerLabel";
+  "paidCents|totalCategories|truncated|\\.limit|medRiskSeverityMin|employerLabel|" +
+  // Story 5.4's. A ranked, capped, cursor-paged list of claims — 5.2's pull and
+  // 5.3's pull at once, on the one surface that has both a server-decided order
+  // and a server-decided cut.
+  //
+  // - `nextBestAction` is the deterministic generator's top row. A component
+  //   that compared two of them, or partitioned rows by one, would be re-doing a
+  //   ranking `services/worklist/actions.py` made total *for this column*.
+  // - `severityBand` is the chip, and it is the band rather than the score
+  //   precisely so nothing here can re-band it — but `highRiskSeverityMin` is on
+  //   the same payload, so the material for a second opinion is one object away.
+  // - `fraudFlagged` is the Fraud Score cell's tint, and it is the single most
+  //   tempting entry on this list: `fraudScore` and `fraudFlagScoreMin` are both
+  //   on the row's own payload, so `row.fraudScore >= data.fraudFlagScoreMin` is
+  //   one line, reads like formatting, and is the browser re-deciding the rule
+  //   the Fraud Flags card was counted with. The prototype writes exactly that
+  //   comparison — twice, against two cut-offs, one of which is in no rule
+  //   document at all. Like `cap`, it is **not repeated below**: Story 5.1 put
+  //   it on this list for the Fraud Flags card, and one token guards both.
+  // - `truncated` is the caption's branch, and it is a boolean on the wire for
+  //   exactly the reason the rest of this list exists: `total > cap` in the
+  //   browser is a rule comparison wearing a formatting costume, and the server
+  //   sends the answer so nothing here has to reach for the operator.
+  // - `cap` is the worklist's length and a rule document's answer, so
+  //   `items.slice(0, data.cap)` or `data.total - data.cap` is a client
+  //   re-cutting a population the server capped — and the claims past the cut
+  //   were never sent, so the arithmetic would be about rows the browser has
+  //   never seen. It is **not repeated below**: Story 3.5 already put `cap` on
+  //   this list for the action checklist's row budget, and the token guards both.
+  // - `fraudFlagScoreMin` joins 5.1's two thresholds for their reason: it is a
+  //   rule-document value on a payload whose cells were decided at it.
+  // - `handlerName` is the first per-row named person on any payload, and
+  //   grouping or counting rows by one — "how many of these are Kaya's?" — is
+  //   the aggregate this table deliberately does not publish. **Not repeated
+  //   below either**: Story 5.2 put it on this list for the benchmark table.
+  "nextBestAction|severityBand|truncated|fraudFlagScoreMin";
 
 const FLAGS = "siuReview|rtwBlocked|paymentDue|fraudFlag|litigationFlag|surgeryRequired";
 
@@ -459,6 +494,20 @@ const FORBIDDEN: readonly Forbidden[] = [
     // is ordinary presentation and is left alone (`ClaimCard`'s badge list).
     why: "filters or partitions a list by a derived payload value — the server already answered that question, over data the client does not hold in full (AD-1, AD-10)",
     pattern: new RegExp(`\\.filter\\s*\\([^\\n]{0,80}\\b(?:${DERIVED_FIELDS})\\b`),
+  },
+  {
+    // Story 5.4's rule, and the one shape the five above cannot see. A
+    // server-capped list is handed to the browser already cut, and re-cutting
+    // it — `rows.slice(0, data.cap)`, `items.slice(0, data.total)` — involves no
+    // operator, no comparison and no `.sort`, so every existing pattern reads it
+    // as innocent. It is not: the claims past the cut were never sent, so the
+    // arithmetic is about rows the client has never seen, and the count it
+    // applies is a rule document's answer. Truncating an *array* by a derived
+    // value is therefore its own mistake and gets its own rule; `.slice` over a
+    // string (`characters.slice(0, SNIPPET_LENGTH)`) mentions no payload field
+    // and is left alone, as the innocent list below asserts.
+    why: "re-cuts a list the server already capped — the rows past the cut were never sent (AD-1, AD-8)",
+    pattern: new RegExp(`\\.slice\\s*\\([^\\n]{0,60}\\b(?:${DERIVED_FIELDS})\\b`),
   },
   {
     why: "names a threshold constant — the numbers live in the rule documents, not in the client",
@@ -561,6 +610,15 @@ test("the scan reaches the files it claims to", () => {
   ]) {
     expect(scanned).toContain(path.join("features", "dashboard", "charts", file));
   }
+  // Story 5.4's table, and it is the strongest pull on the page after 5.2's:
+  // the component holds a page of a *ranked* list, the cap it was cut at, the
+  // population it was cut from, and — on every row — a fraud score beside the
+  // published threshold that decided its tint. Re-sorting the table, re-cutting
+  // it at `cap`, and re-banding the fraud cell are each one line, in one file.
+  // `DashboardPage.tsx` being scanned says nothing about this file.
+  expect(scanned).toContain(
+    path.join("features", "dashboard", "PriorityClaimsTable.tsx"),
+  );
   // The SLA tile vocabulary Story 5.3 lifted out of `SlaStrip.tsx` so both
   // surfaces render one server value through one spec. It holds the tone map
   // and both formatters, which is precisely where a client-side verdict would
@@ -720,6 +778,16 @@ test("the guard would notice a derivation if one were added", () => {
     "const hidden = series.totalCategories - series.limit;",
     'const band = item.count >= data.medRiskSeverityMin ? "med" : "low";',
     "const top = charts.byState.filter((s) => s.count > 5);",
+    // Story 5.4's four, and they are the four things this table is most tempted
+    // by. Re-banding the fraud cell from the score and the cut-off published
+    // side by side — the prototype's own line, transliterated; re-cutting the
+    // page at the server's cap; re-sorting a list the server ranked under three
+    // rule versions the browser has never seen; and partitioning the rows by
+    // the generator's answer to draw the loud ones first.
+    'const tone = row.fraudScore >= data.fraudFlagScoreMin ? ER : OK;',
+    "const shown = rows.slice(0, data.cap);",
+    "rows.sort((a, b) => a.severityBand - b.severityBand);",
+    'const urgent = rows.filter((r) => r.nextBestAction);',
   ];
 
   for (const smell of smells) {
@@ -770,6 +838,20 @@ test("the guard does not fire on rendering the server's answers", () => {
     "{truncationCaption(series.limit, series.totalCategories)}",
     "value={(item) => item.paidCents}",
     "series={data?.byInjuryType}",
+    // Story 5.4's: reading a band through a tone map, reading the server's flag
+    // to pick between two classes, and *stating* the two numbers the caption
+    // quotes. None computes anything, and all three are the shape
+    // `PriorityClaimsTable.tsx` is full of — a guard that fired on them would be
+    // the guard training the code.
+    "className={SEVERITY_TONE[row.severityBand]}",
+    'className={row.fraudFlagged ? "text-warn" : "text-muted-text"}',
+    "<span>(showing top {data.cap} of {data.total})</span>",
+    "title={row.nextBestAction}",
+    // …and the `.slice` the new rule must *not* fire on: a string clamped by a
+    // local display constant, which is what `EmailsSubTab` and `NotesSubTab`
+    // already do and which mentions no payload field at all.
+    "const snippet = characters.slice(0, SNIPPET_LENGTH).join(\"\");",
+    "const initials = name.split(\" \").slice(0, 2);",
   ];
 
   for (const line of innocent) {

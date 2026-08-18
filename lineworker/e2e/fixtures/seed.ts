@@ -16,7 +16,9 @@ import { fileURLToPath } from "node:url";
  * matter what either of them did.
  */
 
-const SEED_PATH = fileURLToPath(new URL("../../server/data/seed/seed_data.json", import.meta.url));
+const SEED_PATH = fileURLToPath(
+  new URL("../../server/data/seed/seed_data.json", import.meta.url),
+);
 const GLOSSARY_PATH = fileURLToPath(
   new URL("../../server/data/seed/glossary_terms.json", import.meta.url),
 );
@@ -79,6 +81,11 @@ interface SeedClaim {
   // because the prototype's "15 US plants" is a literal that is wrong for the
   // one portfolio it was written for and scope-blind for every other persona.
   plant: string;
+  // Story 5.4's: the priority worklist's Worker column names the injured
+  // employee, which is on `employee` rather than on `claim` — the join
+  // `select_priority_rows` makes and the only thing this file needs the
+  // `employees` array for.
+  employee_id: string;
   sla_pick_days: number | null;
   sla_approve_days: number | null;
   settlement_days: number | null;
@@ -103,10 +110,17 @@ interface SeedEmployer {
   short_name: string;
 }
 
+/** Story 5.4's: the injured worker's display name, keyed by business id. */
+interface SeedEmployee {
+  employee_id: string;
+  name: string;
+}
+
 interface Seed {
   claims: SeedClaim[];
   app_users: SeedUser[];
   employers: SeedEmployer[];
+  employees: SeedEmployee[];
 }
 
 const seed = JSON.parse(readFileSync(SEED_PATH, "utf8")) as Seed;
@@ -132,7 +146,8 @@ export function expectedStatsFor(name: string, role: string): ExpectedStats {
   return {
     caseload: visible.length,
     activeTx: visible.filter((claim) => claim.stage === "treatment").length,
-    highRisk: visible.filter((claim) => claim.severity_score >= HIGH_RISK_MIN).length,
+    highRisk: visible.filter((claim) => claim.severity_score >= HIGH_RISK_MIN)
+      .length,
   };
 }
 
@@ -160,16 +175,27 @@ function mean(values: number[], decimals: number): number {
 }
 
 /** The four tiles a persona's seeded book should produce. */
-export function expectedSlaFor(name: string, role: string): Record<string, ExpectedSlaTile> {
+export function expectedSlaFor(
+  name: string,
+  role: string,
+): Record<string, ExpectedSlaTile> {
   const visible = claimsFor(name, role);
   const settled = visible.filter((claim) => claim.stage === "settled");
 
-  const picks = visible.map((c) => c.sla_pick_days).filter((d): d is number => d !== null);
-  const approves = visible.map((c) => c.sla_approve_days).filter((d): d is number => d !== null);
-  const settles = settled.map((c) => c.settlement_days).filter((d): d is number => d !== null);
+  const picks = visible
+    .map((c) => c.sla_pick_days)
+    .filter((d): d is number => d !== null);
+  const approves = visible
+    .map((c) => c.sla_approve_days)
+    .filter((d): d is number => d !== null);
+  const settles = settled
+    .map((c) => c.settlement_days)
+    .filter((d): d is number => d !== null);
   // 100 or 0 per settled claim, then averaged: the rate is over *all*
   // settled claims, including those with no recorded settlement duration.
-  const recovered = settled.map((c) => (c.return_status === FULLY_RECOVERED ? 100 : 0));
+  const recovered = settled.map((c) =>
+    c.return_status === FULLY_RECOVERED ? 100 : 0,
+  );
 
   /**
    * An empty segment is a legitimate outcome, not an impossible one — so
@@ -223,7 +249,9 @@ export interface SeedGlossaryTerm {
   sort_order: number;
 }
 
-const glossary = (JSON.parse(readFileSync(GLOSSARY_PATH, "utf8")) as SeedGlossaryTerm[])
+const glossary = (
+  JSON.parse(readFileSync(GLOSSARY_PATH, "utf8")) as SeedGlossaryTerm[]
+)
   .slice()
   .sort((a, b) => a.sort_order - b.sort_order);
 
@@ -295,7 +323,12 @@ const MARKER_COUNT = 3;
 const PENDING_APPROVAL_STATUSES = ["initial", "ch_assessment_process"];
 const UNDER_TREATMENT = "under_treatment";
 
-export const STAGES = ["intake", "investigation", "treatment", "settled"] as const;
+export const STAGES = [
+  "intake",
+  "investigation",
+  "treatment",
+  "settled",
+] as const;
 export type SeedStage = (typeof STAGES)[number];
 
 export type SeedFilter =
@@ -336,7 +369,11 @@ function riskBand(severityScore: number): "high" | "med" | "low" {
  */
 function daysOpen(claim: SeedClaim): number {
   const now = new Date();
-  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const today = Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+  );
   const [year, month, day] = claim.froi_date.split("-").map(Number);
   const froi = Date.UTC(year, month - 1, day);
   return Math.max(Math.round((today - froi) / 86_400_000), 0);
@@ -359,7 +396,8 @@ function queueFlags(claim: SeedClaim): QueueFlags {
       claim.stage === "treatment" &&
       claim.return_status === UNDER_TREATMENT &&
       (bucket % RTW_HASH_MODULUS === 0 || risk === "high"),
-    paymentDue: claim.stage === "treatment" && bucket % PAYMENT_HASH_MODULUS !== 0,
+    paymentDue:
+      claim.stage === "treatment" && bucket % PAYMENT_HASH_MODULUS !== 0,
   };
 }
 
@@ -369,7 +407,8 @@ function priorityScore(claim: SeedClaim): number {
   if (claim.litigation_flag) score += WEIGHTS.litigation;
   if (flags.siuReview) score += WEIGHTS.siuReview;
   if (flags.rtwBlocked) score += WEIGHTS.rtwBlocked;
-  if (PENDING_APPROVAL_STATUSES.includes(claim.status)) score += WEIGHTS.pendingApproval;
+  if (PENDING_APPROVAL_STATUSES.includes(claim.status))
+    score += WEIGHTS.pendingApproval;
   if (flags.paymentDue) score += WEIGHTS.paymentDue;
   if (claim.surgery_required) score += WEIGHTS.surgery;
   score += claim.severity_score * SEVERITY_FACTOR;
@@ -423,14 +462,18 @@ export function expectedQueueFor(
   role: string,
   filter: SeedFilter = "all",
 ): ExpectedQueue {
-  const visible = claimsFor(name, role).filter((claim) => matchesFilter(claim, filter));
+  const visible = claimsFor(name, role).filter((claim) =>
+    matchesFilter(claim, filter),
+  );
   const groups = {} as ExpectedQueue;
 
   for (const stage of STAGES) {
     const members = visible
       .filter((claim) => claim.stage === stage)
       .sort(
-        (a, b) => priorityScore(b) - priorityScore(a) || a.claim_id.localeCompare(b.claim_id),
+        (a, b) =>
+          priorityScore(b) - priorityScore(a) ||
+          a.claim_id.localeCompare(b.claim_id),
       );
 
     let marked = 0;
@@ -453,7 +496,9 @@ export function expectedQueueFor(
 /** Every claim id in the portfolio the persona must NOT be shown. */
 export function claimIdsOutsideScopeOf(name: string, role: string): string[] {
   const mine = new Set(claimsFor(name, role).map((claim) => claim.claim_id));
-  return seed.claims.map((claim) => claim.claim_id).filter((id) => !mine.has(id));
+  return seed.claims
+    .map((claim) => claim.claim_id)
+    .filter((id) => !mine.has(id));
 }
 
 // --- Story 2.2: the case file, restated independently --------------------
@@ -486,13 +531,20 @@ interface CaseFileSeed {
   documents: SeedDocument[];
 }
 
-const caseFile = JSON.parse(readFileSync(CASE_FILE_PATH, "utf8")) as CaseFileSeed;
+const caseFile = JSON.parse(
+  readFileSync(CASE_FILE_PATH, "utf8"),
+) as CaseFileSeed;
 
 /** The prototype's `.slice(-6)` on the treatment overview. */
 export const RECENT_TIMELINE_COUNT = 6;
 
 /** The story's intake requirement list — restated, not read from the JDM document. */
-export const REQUIRED_INTAKE_DOC_TYPES = ["froi", "incident", "medauth", "wage"] as const;
+export const REQUIRED_INTAKE_DOC_TYPES = [
+  "froi",
+  "incident",
+  "medauth",
+  "wage",
+] as const;
 
 export interface ExpectedTimelineEntry {
   eventDate: string | null;
@@ -512,7 +564,9 @@ export function expectedTimelineFor(claimId: string): ExpectedTimelineEntry[] {
 }
 
 /** What the treatment variant shows: the last six, or all of them. */
-export function expectedRecentTimelineFor(claimId: string): ExpectedTimelineEntry[] {
+export function expectedRecentTimelineFor(
+  claimId: string,
+): ExpectedTimelineEntry[] {
   return expectedTimelineFor(claimId).slice(-RECENT_TIMELINE_COUNT);
 }
 
@@ -524,7 +578,9 @@ export interface ExpectedChecklistRow {
 /** Received/Missing per required type, in the requirement list's order. */
 export function expectedChecklistFor(claimId: string): ExpectedChecklistRow[] {
   const onFile = new Set(
-    caseFile.documents.filter((doc) => doc.claim_id === claimId).map((doc) => doc.doc_type),
+    caseFile.documents
+      .filter((doc) => doc.claim_id === claimId)
+      .map((doc) => doc.doc_type),
   );
   return REQUIRED_INTAKE_DOC_TYPES.map((docType) => ({
     docType,
@@ -538,21 +594,29 @@ export function expectedChecklistFor(claimId: string): ExpectedChecklistRow[] {
  * Restated here rather than derived from the payload so the spec can
  * disagree with the server about which steps a claim has left behind.
  */
-export function expectedStepperFor(stage: SeedStage): { stage: string; state: string }[] {
+export function expectedStepperFor(
+  stage: SeedStage,
+): { stage: string; state: string }[] {
   const position = STAGES.indexOf(stage);
   return STAGES.map((step, index) => ({
     stage: step,
-    state: index < position ? "done" : index === position ? "current" : "upcoming",
+    state:
+      index < position ? "done" : index === position ? "current" : "upcoming",
   }));
 }
 
 /** The first claim of a persona's book in a given stage, by business id. */
-export function firstClaimInStage(name: string, role: string, stage: SeedStage): string {
+export function firstClaimInStage(
+  name: string,
+  role: string,
+  stage: SeedStage,
+): string {
   const claims = claimsFor(name, role)
     .filter((claim) => claim.stage === stage)
     .map((claim) => claim.claim_id)
     .sort();
-  if (claims.length === 0) throw new Error(`no seeded ${stage} claim for ${name}/${role}`);
+  if (claims.length === 0)
+    throw new Error(`no seeded ${stage} claim for ${name}/${role}`);
   return claims[0];
 }
 
@@ -565,12 +629,17 @@ export function firstClaimInStage(name: string, role: string, stage: SeedStage):
  * partly paid ones, and one that has not started. A single sample can agree
  * with an oracle by luck.
  */
-export function claimIdsInStage(name: string, role: string, stage: SeedStage): string[] {
+export function claimIdsInStage(
+  name: string,
+  role: string,
+  stage: SeedStage,
+): string[] {
   const claims = claimsFor(name, role)
     .filter((claim) => claim.stage === stage)
     .map((claim) => claim.claim_id)
     .sort();
-  if (claims.length === 0) throw new Error(`no seeded ${stage} claim for ${name}/${role}`);
+  if (claims.length === 0)
+    throw new Error(`no seeded ${stage} claim for ${name}/${role}`);
   return claims;
 }
 
@@ -584,12 +653,17 @@ export function claimIdsInStage(name: string, role: string, stage: SeedStage): s
  * returns — which turns a destructive test into a failure two tests later,
  * pointing at the wrong code (Story 2.5, found in the first e2e run).
  */
-export function lastClaimInStage(name: string, role: string, stage: SeedStage): string {
+export function lastClaimInStage(
+  name: string,
+  role: string,
+  stage: SeedStage,
+): string {
   const claims = claimsFor(name, role)
     .filter((claim) => claim.stage === stage)
     .map((claim) => claim.claim_id)
     .sort();
-  if (claims.length === 0) throw new Error(`no seeded ${stage} claim for ${name}/${role}`);
+  if (claims.length === 0)
+    throw new Error(`no seeded ${stage} claim for ${name}/${role}`);
   return claims[claims.length - 1];
 }
 
@@ -603,12 +677,17 @@ export function lastClaimInStage(name: string, role: string, stage: SeedStage): 
  * and already `ch_approved`. Reading the seed rather than hardcoding a claim id
  * keeps the spec meaningful if the dataset moves.
  */
-export function claimIdsWithStatus(name: string, role: string, status: string): string[] {
+export function claimIdsWithStatus(
+  name: string,
+  role: string,
+  status: string,
+): string[] {
   const claims = claimsFor(name, role)
     .filter((claim) => claim.status === status)
     .map((claim) => claim.claim_id)
     .sort();
-  if (claims.length === 0) throw new Error(`no seeded ${status} claim for ${name}/${role}`);
+  if (claims.length === 0)
+    throw new Error(`no seeded ${status} claim for ${name}/${role}`);
   return claims;
 }
 
@@ -673,17 +752,28 @@ export function recoveryToken(display: string): string {
 }
 
 /** A window the claim is *not* already in, so an edit is a real change. */
-export function otherRecoveryWindow(claimId: string): { token: string; label: string } {
+export function otherRecoveryWindow(claimId: string): {
+  token: string;
+  label: string;
+} {
   const current = recoveryToken(seededField(claimId, "recovery"));
   const option = RECOVERY_WINDOWS.find((window) => window.token !== current);
-  if (!option) throw new Error("the recovery vocabulary has fewer than two members");
+  if (!option)
+    throw new Error("the recovery vocabulary has fewer than two members");
   return option;
 }
 
 /** A seeded claim's stored value for one of the editable columns. */
 export function seededField(
   claimId: string,
-  field: "injury_type" | "cause" | "body_key" | "body_part" | "icd" | "recovery" | "disability",
+  field:
+    | "injury_type"
+    | "cause"
+    | "body_key"
+    | "body_part"
+    | "icd"
+    | "recovery"
+    | "disability",
 ): string {
   const claim = seed.claims.find((c) => c.claim_id === claimId);
   if (!claim) throw new Error(`no seeded claim ${claimId}`);
@@ -694,7 +784,8 @@ export function seededField(
 export function otherBodyKey(claimId: string): { key: string; label: string } {
   const current = seededField(claimId, "body_key");
   const option = BODY_PART_OPTIONS.find((o) => o.key !== current);
-  if (!option) throw new Error("the body-part vocabulary has fewer than two members");
+  if (!option)
+    throw new Error("the body-part vocabulary has fewer than two members");
   return { key: option.key, label: option.label };
 }
 
@@ -708,14 +799,18 @@ export function otherBodyKey(claimId: string): { key: string; label: string } {
 interface SeedDeferred {
   claim_id: string;
   treatment_plan: string[];
-  prognosis: { mmi: string; rtw: string; impairment: string; litigation: string };
+  prognosis: {
+    mmi: string;
+    rtw: string;
+    impairment: string;
+    litigation: string;
+  };
 }
 
 const deferred = new Map(
-  ((seed as unknown as { deferred: SeedDeferred[] }).deferred ?? []).map((row) => [
-    row.claim_id,
-    row,
-  ]),
+  ((seed as unknown as { deferred: SeedDeferred[] }).deferred ?? []).map(
+    (row) => [row.claim_id, row],
+  ),
 );
 
 function deferredFor(claimId: string): SeedDeferred {
@@ -737,9 +832,9 @@ export function expectedPrognosis(claimId: string): SeedDeferred["prognosis"] {
 /** A claim's restrictions text — the `contraindications` column. */
 export function expectedContraindications(claimId: string): string {
   const claim = seed.claims.find((c) => c.claim_id === claimId) as unknown as
-    | { contraindications?: string }
-    | undefined;
-  if (!claim?.contraindications) throw new Error(`no seeded contraindications for ${claimId}`);
+    { contraindications?: string } | undefined;
+  if (!claim?.contraindications)
+    throw new Error(`no seeded contraindications for ${claimId}`);
   return claim.contraindications;
 }
 
@@ -849,8 +944,13 @@ export function expectedFormCodes(path: SeedPath): string[] {
 }
 
 /** One form's full row, for asserting the description and timing render. */
-export function expectedForm(path: SeedPath, formCode: string): SeedRequiredForm {
-  const form = requiredForms.find((f) => f.path === path && f.form_code === formCode);
+export function expectedForm(
+  path: SeedPath,
+  formCode: string,
+): SeedRequiredForm {
+  const form = requiredForms.find(
+    (f) => f.path === path && f.form_code === formCode,
+  );
   if (!form) throw new Error(`no seeded ${formCode} on path ${path}`);
   return form;
 }
@@ -862,12 +962,17 @@ export function expectedForm(path: SeedPath, formCode: string): SeedRequiredForm
  * Path-A case because the seed had none would be a green tick over an
  * untested banner.
  */
-export function firstClaimOnPath(name: string, role: string, path: SeedPath): string {
+export function firstClaimOnPath(
+  name: string,
+  role: string,
+  path: SeedPath,
+): string {
   const claims = claimsFor(name, role)
     .map((claim) => claim.claim_id)
     .filter((id) => claimPath(id) === path)
     .sort();
-  if (claims.length === 0) throw new Error(`no seeded path-${path} claim for ${name}/${role}`);
+  if (claims.length === 0)
+    throw new Error(`no seeded path-${path} claim for ${name}/${role}`);
   return claims[0];
 }
 
@@ -885,7 +990,13 @@ export function expectedIdCardFor(claimId: string): {
   region: string;
 } {
   const claim = seed.claims.find((c) => c.claim_id === claimId) as unknown as
-    | { policy_num: string; doi: string; plant: string; state: string; region: string }
+    | {
+        policy_num: string;
+        doi: string;
+        plant: string;
+        state: string;
+        region: string;
+      }
     | undefined;
   if (!claim) throw new Error(`no seeded claim ${claimId}`);
   return {
@@ -898,7 +1009,10 @@ export function expectedIdCardFor(claimId: string): {
 }
 
 /** A score that lands in a band the claim is not currently in. */
-export function scoreInAnotherBand(claimId: string): { score: number; band: string } {
+export function scoreInAnotherBand(claimId: string): {
+  score: number;
+  band: string;
+} {
   const current = expectedPrimaryMarker(claimId).band;
   // 0 and 100 are the ends of the domain, so one of them is always in a
   // different band from any claim — and both are legal values, so the test
@@ -945,10 +1059,10 @@ export function claimWithMostPhotos(name: string, role: string): string {
   const best = mine
     .map((claimId) => ({ claimId, n: expectedPhotosFor(claimId).length }))
     .sort((a, b) => b.n - a.n || a.claimId.localeCompare(b.claimId))[0];
-  if (!best || best.n === 0) throw new Error(`no photographed claim for ${name}/${role}`);
+  if (!best || best.n === 0)
+    throw new Error(`no photographed claim for ${name}/${role}`);
   return best.claimId;
 }
-
 
 /* --- Story 3.1: the statutory benefit calculation ---------------------- */
 
@@ -963,11 +1077,15 @@ interface SeedStateRate {
   weekly_max_cents: number;
 }
 
-const stateRates = JSON.parse(readFileSync(STATE_RATES_PATH, "utf8")) as SeedStateRate[];
+const stateRates = JSON.parse(
+  readFileSync(STATE_RATES_PATH, "utf8"),
+) as SeedStateRate[];
 
 // --- Story 3.3: bills and expenses ---------------------------------------
 
-const BILLS_PATH = fileURLToPath(new URL("../../server/data/seed/bills.json", import.meta.url));
+const BILLS_PATH = fileURLToPath(
+  new URL("../../server/data/seed/bills.json", import.meta.url),
+);
 const EXPENSES_PATH = fileURLToPath(
   new URL("../../server/data/seed/expenses.json", import.meta.url),
 );
@@ -981,7 +1099,9 @@ export interface SeedLineItem {
 }
 
 const bills = JSON.parse(readFileSync(BILLS_PATH, "utf8")) as SeedLineItem[];
-const expenses = JSON.parse(readFileSync(EXPENSES_PATH, "utf8")) as SeedLineItem[];
+const expenses = JSON.parse(
+  readFileSync(EXPENSES_PATH, "utf8"),
+) as SeedLineItem[];
 
 /** A claim's medical bills, in the order the seed migration inserted them. */
 export function expectedBills(claimId: string): SeedLineItem[] {
@@ -1056,7 +1176,8 @@ export function expectedPaidToDate(claimId: string): {
   const claim = seed.claims.find((c) => c.claim_id === claimId);
   if (!claim) throw new Error(`no seeded claim ${claimId}`);
 
-  const staticTotal = claim.paid_indemnity + claim.paid_medical + claim.paid_expense;
+  const staticTotal =
+    claim.paid_indemnity + claim.paid_medical + claim.paid_expense;
   if (staticTotal > 0) {
     return {
       totalCents: staticTotal,
@@ -1157,7 +1278,10 @@ function roundHalfUp(value: number, divisor: number): number {
  * Written out step by step rather than delegating, because every step is an
  * assertion: the PTD branch, the rate it selects, the rounding and the clamp.
  */
-export function expectedBenefit(claimId: string, overrideBp?: number): ExpectedBenefit {
+export function expectedBenefit(
+  claimId: string,
+  overrideBp?: number,
+): ExpectedBenefit {
   const claim = seed.claims.find((c) => c.claim_id === claimId);
   if (!claim) throw new Error(`no seeded claim ${claimId}`);
   const rate = expectedStateRate(claimId);
@@ -1232,7 +1356,8 @@ const SCHEDULE_WEEKS: Record<string, number> = {
 
 const DAY_MS = 86_400_000;
 
-export type SeedVerdict = "light" | "adequate" | "heavy" | "closed_final" | "indeterminate";
+export type SeedVerdict =
+  "light" | "adequate" | "heavy" | "closed_final" | "indeterminate";
 
 export interface ExpectedReserveCheck {
   verdict: SeedVerdict;
@@ -1297,7 +1422,10 @@ export function expectedReserveCheck(claimId: string): ExpectedReserveCheck {
       expectedBenefit(claimId).weeklyCents *
       Math.max(
         MIN_SCHEDULE_WEEKS,
-        Math.min(MAX_SCHEDULE_WEEKS, SCHEDULE_WEEKS[recoveryToken(claim.recovery)]),
+        Math.min(
+          MAX_SCHEDULE_WEEKS,
+          SCHEDULE_WEEKS[recoveryToken(claim.recovery)],
+        ),
       );
     return {
       verdict: "closed_final",
@@ -1324,7 +1452,8 @@ export function expectedReserveCheck(claimId: string): ExpectedReserveCheck {
   );
   const weekly = expectedBenefit(claimId).weeklyCents;
   const firstStart = utcDate(claim.doi) + WAITING_PERIOD_DAYS * DAY_MS;
-  const unapproved = claim.stage === "intake" || claim.stage === "investigation";
+  const unapproved =
+    claim.stage === "intake" || claim.stage === "investigation";
   const today = utcToday();
 
   let paid = 0;
@@ -1400,14 +1529,20 @@ export const RESERVE_VERDICT_LABEL: Record<SeedVerdict, string> = {
  * oracle that named a day would be wrong the morning after. What the spec
  * asserts instead is the type, the claim and the count.
  */
-export const DEMO_MEETING_TYPES = ["rtw_conference", "claim_review_supervisor"] as const;
+export const DEMO_MEETING_TYPES = [
+  "rtw_conference",
+  "claim_review_supervisor",
+] as const;
 
 export interface ExpectedMeeting {
   claimId: string;
   meetingType: (typeof DEMO_MEETING_TYPES)[number];
 }
 
-export function expectedMeetingsFor(name: string, role: string): ExpectedMeeting[] {
+export function expectedMeetingsFor(
+  name: string,
+  role: string,
+): ExpectedMeeting[] {
   const claimIds = claimsFor(name, role)
     .map((claim) => claim.claim_id)
     .sort((left, right) => left.localeCompare(right));
@@ -1733,14 +1868,23 @@ interface Segment {
 
 function segmentAverages(claims: SeedClaim[]): (Segment | null)[] {
   const settled = claims.filter((claim) => claim.stage === "settled");
-  const picks = claims.map((c) => c.sla_pick_days).filter((d): d is number => d !== null);
-  const approves = claims.map((c) => c.sla_approve_days).filter((d): d is number => d !== null);
-  const settles = settled.map((c) => c.settlement_days).filter((d): d is number => d !== null);
+  const picks = claims
+    .map((c) => c.sla_pick_days)
+    .filter((d): d is number => d !== null);
+  const approves = claims
+    .map((c) => c.sla_approve_days)
+    .filter((d): d is number => d !== null);
+  const settles = settled
+    .map((c) => c.settlement_days)
+    .filter((d): d is number => d !== null);
 
   return [picks, approves, settles].map((values) =>
     values.length === 0
       ? null
-      : { sum: values.reduce((total, value) => total + value, 0), count: values.length },
+      : {
+          sum: values.reduce((total, value) => total + value, 0),
+          count: values.length,
+        },
   );
 }
 
@@ -1793,21 +1937,32 @@ function value(fraction: Segment): number {
  */
 function publishedComposite(fraction: Segment): string {
   return (
-    roundHalfAwayFromZero((fraction.sum * COMPOSITE_TENTHS) / fraction.count) / COMPOSITE_TENTHS
+    roundHalfAwayFromZero((fraction.sum * COMPOSITE_TENTHS) / fraction.count) /
+    COMPOSITE_TENTHS
   ).toFixed(COMPOSITE_DECIMALS);
 }
 
 function complexityOf(claims: SeedClaim[]): { score: number; band: string } {
   const weighted =
     SEVERITY_WEIGHT_BP * claims.reduce((sum, c) => sum + c.severity_score, 0) +
-    SURGERY_RATE_WEIGHT_BP * claims.filter((c) => c.surgery_required).length * PERCENT +
-    LITIGATION_RATE_WEIGHT_BP * claims.filter((c) => c.litigation_flag).length * PERCENT;
+    SURGERY_RATE_WEIGHT_BP *
+      claims.filter((c) => c.surgery_required).length *
+      PERCENT +
+    LITIGATION_RATE_WEIGHT_BP *
+      claims.filter((c) => c.litigation_flag).length *
+      PERCENT;
   const score = Math.min(
     COMPLEXITY_SCORE_MAX,
-    roundHalfAwayFromZero(weighted / (claims.length * BASIS_POINTS_PER_UNIT_BLEND)),
+    roundHalfAwayFromZero(
+      weighted / (claims.length * BASIS_POINTS_PER_UNIT_BLEND),
+    ),
   );
   const band =
-    score >= COMPLEXITY_HIGH_MIN ? "high" : score >= COMPLEXITY_MED_MIN ? "med" : "low";
+    score >= COMPLEXITY_HIGH_MIN
+      ? "high"
+      : score >= COMPLEXITY_MED_MIN
+        ? "med"
+        : "low";
   return { score, band };
 }
 
@@ -1820,7 +1975,9 @@ function complexityOf(claims: SeedClaim[]): { score: number; band: string } {
  * fetched, like every other rule in this file.
  */
 function handlerOrdinal(name: string): number {
-  const index = seed.app_users.findIndex((u) => u.name === name && u.role === "handler");
+  const index = seed.app_users.findIndex(
+    (u) => u.name === name && u.role === "handler",
+  );
   if (index < 0) throw new Error(`no seeded handler ${name}`);
   return index;
 }
@@ -1847,7 +2004,9 @@ function cycleStatusOf(deviationPct: number): string {
 
 /** The signed deviation as the Status chip prints it — `Intl`'s `exceptZero`. */
 function signedPct(deviationPct: number): string {
-  return new Intl.NumberFormat("en-US", { signDisplay: "exceptZero" }).format(deviationPct);
+  return new Intl.NumberFormat("en-US", { signDisplay: "exceptZero" }).format(
+    deviationPct,
+  );
 }
 
 export interface ExpectedHandlerRow {
@@ -1913,24 +2072,32 @@ export function expectedHandlerBenchmarksFor(persona: {
   const portfolioSegments = segmentAverages(visible);
   const portfolio = compositeOf(portfolioSegments, portfolioSegments);
   if (portfolio === null) {
-    throw new Error(`${persona.name} has no cycle-time data — the seed has moved`);
+    throw new Error(
+      `${persona.name} has no cycle-time data — the seed has moved`,
+    );
   }
   const portfolioDays = value(portfolio);
 
   const byHandler = new Map<string, SeedClaim[]>();
   for (const claim of visible) {
-    byHandler.set(claim.handler, [...(byHandler.get(claim.handler) ?? []), claim]);
+    byHandler.set(claim.handler, [
+      ...(byHandler.get(claim.handler) ?? []),
+      claim,
+    ]);
   }
 
   const rows = [...byHandler.entries()]
     .map(([handler, claims]) => {
       const composite = compositeOf(segmentAverages(claims), portfolioSegments);
-      if (composite === null) throw new Error(`${handler} has no composite — the seed has moved`);
+      if (composite === null)
+        throw new Error(`${handler} has no composite — the seed has moved`);
       const days = value(composite);
       const published = publishedComposite(composite);
       const handlerId = handlerOrdinal(handler);
       const settled = claims.filter((c) => c.stage === "settled");
-      const recovered = settled.map((c) => (c.return_status === FULLY_RECOVERED ? 100 : 0));
+      const recovered = settled.map((c) =>
+        c.return_status === FULLY_RECOVERED ? 100 : 0,
+      );
       const { score, band } = complexityOf(claims);
       const deviation = roundHalfAwayFromZero(
         ((days - portfolioDays) / portfolioDays) * PERCENT,
@@ -1949,17 +2116,25 @@ export function expectedHandlerBenchmarksFor(persona: {
           `${published}d`,
           settled.length === 0 ? "—" : `${String(mean(recovered, 0))}%`,
           `${COMPLEXITY_LABEL[band]} (${String(score)})`,
-          String(claims.filter((c) => PENDING_APPROVAL_STATUSES.includes(c.status)).length),
+          String(
+            claims.filter((c) => PENDING_APPROVAL_STATUSES.includes(c.status))
+              .length,
+          ),
           `${CYCLE_STATUS_LABEL[cycleStatusOf(deviation)]} ${signedPct(deviation)}%`,
         ],
       };
     })
     .sort(
-      (a, b) => a.days - b.days || byCodePoint(a.handler, b.handler) || a.handlerId - b.handlerId,
+      (a, b) =>
+        a.days - b.days ||
+        byCodePoint(a.handler, b.handler) ||
+        a.handlerId - b.handlerId,
     );
 
   const slowest = Math.max(...rows.map((row) => row.days));
-  const bars = rows.map((row) => roundHalfAwayFromZero((row.days / slowest) * PERCENT));
+  const bars = rows.map((row) =>
+    roundHalfAwayFromZero((row.days / slowest) * PERCENT),
+  );
 
   return {
     rows: rows.map((row, index) => ({
@@ -2053,7 +2228,8 @@ function countBy<T extends string>(
   key: (claim: SeedClaim) => T,
 ): Map<T, number> {
   const counts = new Map<T, number>();
-  for (const claim of claims) counts.set(key(claim), (counts.get(key(claim)) ?? 0) + 1);
+  for (const claim of claims)
+    counts.set(key(claim), (counts.get(key(claim)) ?? 0) + 1);
   return counts;
 }
 
@@ -2077,7 +2253,10 @@ function barRows(
 }
 
 /** Count descending, then label ascending — the server's tie-break, restated. */
-function ranked(counts: Map<string, number>, limit: number): [string, number][] {
+function ranked(
+  counts: Map<string, number>,
+  limit: number,
+): [string, number][] {
   return [...counts.entries()]
     .sort((a, b) => b[1] - a[1] || byCodePoint(a[0], b[0]))
     .slice(0, limit);
@@ -2103,7 +2282,11 @@ export interface ExpectedPortfolioCharts {
    * The truncation caption each ranked chart should show, or `null` where the
    * scope was not cut and no caption may appear.
    */
-  truncation: { injury: string | null; state: string | null; employer: string | null };
+  truncation: {
+    injury: string | null;
+    state: string | null;
+    employer: string | null;
+  };
   /** `chart-sla-*` testid → the text that tile must read. */
   slaTiles: Record<string, string>;
 }
@@ -2116,7 +2299,9 @@ export function expectedPortfolioChartsFor(persona: {
   const total = String(visible.length);
 
   const stages = countBy(visible, (claim) => claim.stage);
-  const severities = countBy(visible, (claim) => riskBand(claim.severity_score));
+  const severities = countBy(visible, (claim) =>
+    riskBand(claim.severity_score),
+  );
   const recoveries = countBy(visible, (claim) => claim.return_status);
   const injuries = countBy(visible, (claim) => claim.injury_type);
   const states = countBy(visible, (claim) => claim.state);
@@ -2143,8 +2328,14 @@ export function expectedPortfolioChartsFor(persona: {
 
   const sla = expectedSlaFor(persona.name, persona.role);
 
-  const caption = (noun: string, shown: number, categories: number): string | null =>
-    categories > shown ? `Showing ${String(shown)} of ${String(categories)} ${noun}.` : null;
+  const caption = (
+    noun: string,
+    shown: number,
+    categories: number,
+  ): string | null =>
+    categories > shown
+      ? `Showing ${String(shown)} of ${String(categories)} ${noun}.`
+      : null;
 
   return {
     stage: {
@@ -2187,5 +2378,157 @@ export function expectedPortfolioChartsFor(persona: {
       [CHART_SLA_TILES.settle]: sla.settle.text,
       [CHART_SLA_TILES.rtwRate]: sla.rtwRate.text,
     },
+  };
+}
+
+/**
+ * Story 5.4 — the priority claims worklist, restated independently.
+ *
+ * The population, the ordering and the cap, built on this file's *existing*
+ * private scorer rather than on a second copy of it. That is a departure from
+ * `HIGH_RISK_MIN`'s "restate rather than import" discipline and a deliberate
+ * one: the property this story is actually about is that the worklist and the
+ * handler queue rank identically, so both oracles have to be the same oracle. A
+ * third scoring rule written here would check the worklist against itself and
+ * would agree with an implementation that had quietly re-weighted, so long as
+ * this file re-weighted the same way. `expectedQueueFor` above uses the same
+ * `priorityScore` for the same reason one story earlier.
+ *
+ * `FRAUD_FLAG_SCORE_MIN` is likewise reused from Story 5.1's block rather than
+ * restated: the population's fraud arm and the Fraud Flags card count *one*
+ * rule, and an oracle with its own number could not tell the two apart. It is
+ * still deliberately not `SIU_FRAUD_SCORE_MIN`, which is the queue's referral
+ * threshold over the same column pair — 13 seeded claims against 9, and the
+ * single most plausible way to get this population wrong.
+ *
+ * The cap is written out, because it is this story's own JDM parameter and
+ * nothing else in this file knows it.
+ */
+const SUPERVISOR_WORKLIST_CAP = 30;
+
+/** The severity chip's copy — `RISK_LABEL`, the abbreviated gauge vocabulary. */
+const SEVERITY_CHIP_LABEL: Record<string, string> = {
+  high: "High",
+  med: "Med",
+  low: "Low",
+};
+
+/** The Status cell's stage pill copy — `STAGE_LABEL`, not the donut's wording. */
+const STAGE_PILL_LABEL: Record<string, string> = {
+  intake: "Intake",
+  investigation: "Investigation",
+  treatment: "Treatment",
+  settled: "Settled",
+};
+
+/** The injured worker's display name, from the `employees` array. */
+function workerName(employeeId: string): string {
+  const employee = seed.employees.find((row) => row.employee_id === employeeId);
+  if (!employee) throw new Error(`no seeded employee ${employeeId}`);
+  return employee.name;
+}
+
+/** Active treatment ∪ fraud-flagged ∪ litigation-flagged — one `or`, not three filters. */
+function qualifiesForWorklist(claim: SeedClaim): boolean {
+  return (
+    claim.stage === TREATMENT_STAGE ||
+    (claim.fraud_flag && claim.fraud_score >= FRAUD_FLAG_SCORE_MIN) ||
+    claim.litigation_flag
+  );
+}
+
+export interface ExpectedPriorityRow {
+  claimId: string;
+  /**
+   * The nine columns this oracle can predict, as rendered text, in the table's
+   * order — Claim ID, Worker, Employer, Injury Type, Severity, Fraud Score,
+   * Handler, Days Open, Status.
+   *
+   * **The tenth is deliberately absent.** "Priority Next Best Action" is the top
+   * row of Story 3.5's eleven-rule generator, and restating that here would be
+   * several hundred lines of TypeScript that agree with the implementation
+   * exactly as often as they were copied from it. Its oracle is the generator
+   * itself, asserted server-side in `test_priority_claims.py` against
+   * `generate_actions(...)[0].label` for the same claim, inputs and `as_of`.
+   * The spec drops the same index from the rendered row and says so.
+   */
+  cells: string[];
+  /** Whether the Status cell should be the LITIG chip rather than a stage pill. */
+  litig: boolean;
+}
+
+export interface ExpectedPriorityClaims {
+  rows: ExpectedPriorityRow[];
+  /** The population **before** the cap — what the caption reads "of". */
+  total: number;
+  /** The JDM cap — what the caption reads "top". */
+  cap: number;
+  /**
+   * The heading's parenthetical, already decided.
+   *
+   * Which of the two sentences applies is a comparison of the population
+   * against the cap, and the server publishes the answer as `truncated` rather
+   * than letting a client work it out. The oracle does the same, so a spec
+   * cannot assert "showing top 30 of 8" at a persona whose book the cap never
+   * touched — which is what it did before this was computed here.
+   */
+  caption: string;
+}
+
+/** The index of the column this oracle does not predict — see `ExpectedPriorityRow`. */
+export const NEXT_BEST_ACTION_COLUMN = 8;
+
+/**
+ * The worklist a persona's seeded book should render, as rendered strings.
+ *
+ * Rendered text rather than numbers, `expectedPortfolioSummaryFor`'s discipline:
+ * a spec comparing numbers would still pass if the page rendered a band token
+ * where a label belongs, or printed a handler's first name only (which is what
+ * the prototype does in this very column).
+ *
+ * Ordering is `(-score, claimId)` — the tie-break included, and it matters more
+ * here than on the queue: this list is ungrouped, so every tie in the whole book
+ * competes in one sequence rather than within a stage, and the cursor's
+ * stability depends on the key being total.
+ */
+export function expectedPriorityClaimsFor(persona: {
+  name: string;
+  role: string;
+}): ExpectedPriorityClaims {
+  const population = claimsFor(persona.name, persona.role).filter(
+    qualifiesForWorklist,
+  );
+  const ordered = [...population].sort(
+    (a, b) =>
+      priorityScore(b) - priorityScore(a) ||
+      a.claim_id.localeCompare(b.claim_id),
+  );
+
+  return {
+    rows: ordered.slice(0, SUPERVISOR_WORKLIST_CAP).map((claim) => ({
+      claimId: claim.claim_id,
+      cells: [
+        claim.claim_id,
+        workerName(claim.employee_id),
+        employerShortName(claim.employer),
+        claim.injury_type,
+        SEVERITY_CHIP_LABEL[riskBand(claim.severity_score)],
+        String(claim.fraud_score),
+        claim.handler,
+        String(daysOpen(claim)),
+        claim.litigation_flag ? "LITIG" : STAGE_PILL_LABEL[claim.stage],
+      ],
+      litig: claim.litigation_flag,
+    })),
+    total: population.length,
+    cap: SUPERVISOR_WORKLIST_CAP,
+    // The caption is two sentences and the population decides which. A book
+    // under the cap was not cut, so quoting the cap at it would promise thirty
+    // rows above a table holding eight — computed here rather than restated in
+    // the spec so a persona whose book crosses the cap moves both together.
+    caption:
+      population.length > SUPERVISOR_WORKLIST_CAP
+        ? `(showing top ${String(SUPERVISOR_WORKLIST_CAP)} of ${String(population.length)})`
+        : `(${String(population.length)} claims)`,
   };
 }

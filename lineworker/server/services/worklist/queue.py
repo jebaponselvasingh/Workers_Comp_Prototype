@@ -72,6 +72,7 @@ from services.worklist.priority import (
     QueueFilter,
     QueueFlags,
     matches,
+    order_key,
     priority_markers,
     priority_score,
 )
@@ -356,18 +357,26 @@ def _ranked_group(
 ) -> list[QueueCard]:
     """One stage's cards, highest priority first, markers already decided.
 
-    Sorted on `(-score, claim_id)`. The tie-break is not cosmetic: ties are
-    common (a settled group where every claim carries the same penalty and a
-    similar severity), and a sort with a non-total key leaves equal elements
-    in whatever order the input arrived — which would let a cursor into the
-    group repeat one claim and drop another between two requests.
+    Sorted on `priority.order_key` — `(-score, claim_id)`, the definition this
+    function used to hold inline and now shares with Story 5.4's ungrouped
+    worklist. The tie-break is not cosmetic: ties are common (a settled group
+    where every claim carries the same penalty and a similar severity), and a
+    sort with a non-total key leaves equal elements in whatever order the input
+    arrived — which would let a cursor into the group repeat one claim and drop
+    another between two requests. See `order_key` for why the two callers share
+    a symbol rather than a sentence.
+
+    The lambda adapts this function's three-tuple to the key's `(claim, score)`
+    pair. Adapting here rather than widening the key keeps the ordering a
+    statement about a claim and its score, which is all it is about; the flags
+    ride along because the card needs them, not because the order does.
     """
     members = [
         (claim, flags, score)
         for claim, flags, score in scored
         if claim.stage is stage and matches(queue_filter, claim, flags)
     ]
-    members.sort(key=lambda entry: (-entry[2], entry[0].claim_id))
+    members.sort(key=lambda entry: order_key((entry[0], entry[2])))
 
     markers = priority_markers([score for _claim, _flags, score in members], weights)
     return [

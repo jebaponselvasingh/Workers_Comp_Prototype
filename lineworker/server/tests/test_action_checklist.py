@@ -49,6 +49,7 @@ from data.models.enums import (
     ScheduleWeekStatus,
     Stage,
 )
+from rules.engine import utc_today
 from rules.parameters import WorklistActions, urgency_parameter_name
 from services.worklist.actions import (
     SEAM_REASONS,
@@ -126,7 +127,19 @@ URGENCIES = {
     ActionKey.routine_review: ActionUrgency.low,
 }
 
-PARAMS = WorklistActions(version=1, cap=6, padding_floor=3, urgencies=URGENCIES)
+#: The supervisor worklist's two numbers, restated for the same reason and used
+#: by nothing in this file. `generate_actions` never reads them — they bound
+#: Story 5.4's table rather than this card — but they are required members of the
+#: block, so a checklist test has to state them. Written out at the committed
+#: document's values so a reader comparing the two sees one block, not two.
+PARAMS = WorklistActions(
+    version=2,
+    cap=6,
+    padding_floor=3,
+    urgencies=URGENCIES,
+    supervisor_worklist_cap=30,
+    supervisor_worklist_page_limit=10,
+)
 
 
 def run(
@@ -887,7 +900,11 @@ async def test_the_endpoint_answers_a_ranked_capped_list_for_a_seeded_claim(
 
             assert payload["cap"] == 6
             assert payload["paddingFloor"] == 3
-            assert payload["rulesVersion"] == 1
+            # v2, not v1: Story 5.4 superseded `worklist_actions` to add the
+            # supervisor worklist's cap and page size. Nothing this card renders
+            # moved — the thirteen expressions above are v1's, verbatim — which
+            # is why the two assertions either side of this one are unchanged.
+            assert payload["rulesVersion"] == 2
             assert len(payload["items"]) <= payload["cap"]
 
             ranks = ["high", "medium", "low"]
@@ -966,10 +983,15 @@ async def test_a_superseded_rule_document_changes_the_list_with_no_code_change(
 ) -> None:
     """AC 2, end to end — the only demonstration of AD-8 that is worth anything.
 
-    A v2 of `worklist_actions` with `cap: 1` is inserted, effective today, and
+    A v3 of `worklist_actions` with `cap: 1` is inserted, effective today, and
     the same claim's list comes back one row long. Nothing is deployed, nothing
     is restarted and no Python changes; `rules/engine.py` picks the highest
     version whose date has arrived on the next request.
+
+    **v3 rather than v2**, because Story 5.4's migration made v2 the effective
+    document. The variant is built from whatever is currently highest rather
+    than from a version written into this test, so the next supersession moves
+    this test with it.
 
     Rolled back at the end so the rest of the module sees the seeded document —
     and read back *before* the rollback, because the assertion is about what a
@@ -994,23 +1016,28 @@ async def test_a_superseded_rule_document_changes_the_list_with_no_code_change(
         await db.execute(
             sa.text(
                 "INSERT INTO rule_document (key, version, effective_from, content, created_at) "
-                "VALUES ('worklist_actions', 2, :today, CAST(:content AS jsonb), now())"
+                "VALUES ('worklist_actions', 3, :today, CAST(:content AS jsonb), now())"
             ),
-            {"today": date.today(), "content": _dumps(narrowed)},
+            # `utc_today()`, not `date.today()`: `rules/engine.py::load` filters
+            # `effective_from <= utc_today()`, so a machine whose local date runs
+            # ahead of UTC — anywhere east of it, in the hours after local
+            # midnight — would insert a document dated tomorrow, never resolve
+            # it, and fail this test on the clock rather than on the code.
+            {"today": utc_today(), "content": _dumps(narrowed)},
         )
         await db.commit()
 
         try:
             retuned = (await client.get(f"/claims/{claim_id}/actions")).json()
             assert retuned["cap"] == 1
-            assert retuned["rulesVersion"] == 2
+            assert retuned["rulesVersion"] == 3
             assert len(retuned["items"]) == 1
             # The one survivor is the first of the original list — the ranking
             # is unchanged, only its length.
             assert retuned["items"][0]["key"] == original["items"][0]["key"]
         finally:
             await db.execute(
-                sa.text("DELETE FROM rule_document WHERE key = 'worklist_actions' AND version = 2")
+                sa.text("DELETE FROM rule_document WHERE key = 'worklist_actions' AND version = 3")
             )
             await db.commit()
 

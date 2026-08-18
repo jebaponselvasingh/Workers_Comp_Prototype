@@ -21,9 +21,8 @@
  * **What this page does not render.** Caseload, Active Tx, High Risk and the
  * SLA strip are already in the shared top bar (`TopBar`, `SlaStrip`) for every
  * role; repeating them here would be two components showing one number, which
- * is the disagreement Epic 5 is most exposed to. The charts (5.3), the top-30
- * worklist (5.4) and drill-through (5.5) are the rest of the epic and are
- * deliberately absent.
+ * is the disagreement Epic 5 is most exposed to. Drill-through (5.5) is the
+ * rest of the epic and is deliberately absent — rows and cards are inert.
  *
  * **Story 5.2's table is a second query, deliberately.** Two server answers with
  * two costs, so they get two cache entries, two loading states and two failure
@@ -36,6 +35,7 @@ import {
   useDashboardCharts,
   useDashboardSummary,
   useHandlerBenchmarks,
+  usePriorityClaims,
   type PortfolioSummary,
 } from "@/api/dashboard";
 import { formatCents } from "@/lib/money";
@@ -43,6 +43,7 @@ import { formatCents } from "@/lib/money";
 import { PortfolioCharts } from "./charts/PortfolioCharts";
 import { HandlerBenchmarkTable } from "./HandlerBenchmarkTable";
 import { KpiCard, KpiCardSkeleton, type KpiTone } from "./KpiCard";
+import { PriorityClaimsTable } from "./PriorityClaimsTable";
 
 /** The response's money fields, by the `*Cents` suffix the contract guarantees. */
 type MoneyField = Extract<keyof PortfolioSummary, `${string}Cents`>;
@@ -241,6 +242,7 @@ export function DashboardPage() {
   const summary = useDashboardSummary();
   const benchmarks = useHandlerBenchmarks();
   const charts = useDashboardCharts();
+  const priority = usePriorityClaims();
 
   return (
     <div
@@ -337,6 +339,18 @@ export function DashboardPage() {
         data={charts.data}
         isPending={charts.isPending}
         isError={charts.isError}
+      />
+
+      {/* Outside the summary's error branch for the two sections above's
+          reason, one further down: four server answers, four failure modes. A
+          worklist request that 404s shows one inline alert and leaves the ten
+          KPI cards, the ranked table and the seven charts exactly as they were
+          (NFR-3). Its own `aria-busy` too — the page-level flag still tracks
+          only the summary. */}
+      <PriorityClaimsTable
+        data={priority.data}
+        isPending={priority.isPending}
+        isError={priority.isError}
       />
     </div>
   );

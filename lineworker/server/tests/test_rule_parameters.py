@@ -99,6 +99,11 @@ VALID_WORKLIST_ACTIONS: dict[str, object] = {
     # are about refusals, and a rule's own urgency is asserted against the
     # committed document in `tests/test_rules_engine.py`.
     **{urgency_parameter_name(key): "medium" for key in ActionKey},
+    # Story 5.4's two, added by version 2 of the document. Required members of
+    # the block, so every case below has to carry them; the refusal tests for
+    # the pair are further down.
+    "supervisorWorklistCap": 30,
+    "supervisorWorklistPageLimit": 10,
 }
 
 
@@ -606,6 +611,55 @@ def test_a_padding_floor_above_the_cap_is_refused() -> None:
 def test_a_non_integer_cap_is_refused(value: object) -> None:
     with pytest.raises(RuleParameterError, match="worklist_actions v5"):
         actions(cap=value)
+
+
+@pytest.mark.parametrize("cap", [0, -1])
+def test_a_supervisor_worklist_cap_below_one_is_refused(cap: int) -> None:
+    """`cap: 0`'s failure one surface over, and the quieter of the two.
+
+    A worklist capped at zero renders a table with a heading, ten column labels
+    and no rows — indistinguishable on screen from a portfolio in which nothing
+    needs attention, which is the single most reassuring thing this console can
+    say wrongly. One is strange and is a policy: "show me only the worst claim
+    in the book" is exactly the tuning a parameter is for.
+    """
+    assert (
+        actions(supervisorWorklistCap=1, supervisorWorklistPageLimit=1).supervisor_worklist_cap == 1
+    )
+    with pytest.raises(RuleParameterError, match="supervisorWorklistCap"):
+        actions(supervisorWorklistCap=cap)
+
+
+@pytest.mark.parametrize("limit", [0, -1])
+def test_a_supervisor_worklist_page_limit_below_one_is_refused(limit: int) -> None:
+    """`pageLimit: 0`'s refusal, on the other list that has a page size.
+
+    Zero serves an empty first page beside a non-null cursor and pages for ever
+    without advancing; negative slices backwards. Neither is a tuning choice.
+    """
+    assert actions(supervisorWorklistPageLimit=1).supervisor_worklist_page_limit == 1
+    with pytest.raises(RuleParameterError, match="supervisorWorklistPageLimit"):
+        actions(supervisorWorklistPageLimit=limit)
+
+
+def test_a_supervisor_worklist_page_wider_than_the_cap_is_refused() -> None:
+    """Not a contradiction like `paddingFloor > cap`, and subtler for it.
+
+    A page wider than the cap is not nonsense — the first page is simply the
+    whole list, and the table still renders correctly. What it does is switch
+    the cursor off: `nextCursor` is never issued, and the pagination the
+    endpoint publishes becomes a mechanism no request can reach, silently, from
+    a number. Equal is allowed and is a real policy ("one page, the whole
+    worklist"), so the refusal is strictly-greater.
+    """
+    assert (
+        actions(
+            supervisorWorklistCap=10, supervisorWorklistPageLimit=10
+        ).supervisor_worklist_page_limit
+        == 10
+    )
+    with pytest.raises(RuleParameterError, match="supervisorWorklistPageLimit"):
+        actions(supervisorWorklistCap=10, supervisorWorklistPageLimit=11)
 
 
 def test_the_urgency_mapping_cannot_be_edited_by_a_consumer() -> None:

@@ -793,6 +793,81 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/dashboard/priority-claims": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The session persona's highest-priority claims, ranked and paged
+         * @description The top-N priority claims for whoever holds the session cookie.
+         *
+         *     ## One query parameter, and it is not a page size
+         *
+         *     Every other route in this file declares none, and `cursor` is the smallest
+         *     possible departure: an opaque token this service minted, handed back
+         *     unchanged. **There is deliberately no `limit`.** The page size is a published
+         *     rule (`worklist_actions.supervisorWorklistPageLimit`), not a caller's
+         *     choice — so `?limit=20` is an unknown parameter that FastAPI ignores and
+         *     `test_query_parameters_cannot_widen_or_change_the_scope` keeps inert, exactly
+         *     as `?employerId=3` is. The three sibling routes' contract test —
+         *     `test_the_route_declares_no_parameters_at_all` — becomes
+         *     `test_the_route_declares_exactly_one_parameter_and_it_is_the_cursor` here:
+         *     an allowlist of exactly `{"cursor"}` rather than an assertion of emptiness,
+         *     renamed rather than relaxed under its old name, because a test called "no
+         *     parameters at all" that passes on a route with one is a sentence a reader
+         *     would have to disbelieve.
+         *
+         *     ## This endpoint is ungated, and it is the harder of the two calls
+         *
+         *     Story 5.3 settled this file's discriminator: role-gate when the payload puts
+         *     a **named other person's performance** on the wire.
+         *     `/dashboard/handler-benchmarks` ranks colleagues by speed and says whose desk
+         *     needs a check-in, which is oversight — a capability a handler does not carry.
+         *     `/dashboard/summary` and `/dashboard/charts` name nobody.
+         *
+         *     This payload names somebody in every row, so the rule has to be applied
+         *     rather than pattern-matched. `handlerName` is the **owner** of the claim on
+         *     that row: it is the answer to "whose desk is this on", carries no figure
+         *     about that person, and is attached to a claim the caller could already open
+         *     one by one — `employer_scope` is the same predicate here as in the queue, so
+         *     a handler reading this table sees nothing her own caseload does not already
+         *     contain. A name beside a claim is a fact about the claim; a *metric* beside a
+         *     name is a fact about the person, and that is the line.
+         *
+         *     The counter-argument is real and is worth stating rather than hiding: this
+         *     table exists precisely so that effort can be directed at named people, and a
+         *     future column carrying a per-handler figure — a count of their rows, an
+         *     average age of their book — would move it across the line and the gate would
+         *     have to be reconsidered on that day. That is a reason to keep the
+         *     discriminator written down here, not a reason to gate a claim list today.
+         *     `test_a_handler_may_read_her_own_books_priority_claims` pins it as a
+         *     contract rather than leaving it an omission a later reader has to guess at.
+         *
+         *     ## Three documents, loaded here
+         *
+         *     All three blocks are loaded in the route and handed down, so the aggregate
+         *     stays a composition of scope and parameters — `portfolio_summary`'s rule.
+         *     Three because the table reaches three rules, and each is a different half of
+         *     the answer: `derivation_thresholds` decides the flags and the fraud arm of
+         *     the population, `priority_weights` decides the ordering, and
+         *     `worklist_actions` decides the cap, the page size *and* the eleven urgencies
+         *     the action column is ranked by. All three are also what the cursor is
+         *     validated against, which is why they are resolved at today's date and never
+         *     at the cursor's — a comparison against the versions effective on the
+         *     cursor's own date could only ever succeed.
+         */
+        get: operations["worklist_dashboard_priority_claims_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/dashboard/summary": {
         parameters: {
             query?: never;
@@ -3287,6 +3362,137 @@ export interface components {
             totalReserveCents: number;
             /** Undertreatment */
             underTreatment: number;
+        };
+        /**
+         * PriorityClaimRowResponse
+         * @description One row of the priority worklist, in the columns' own order (UX-DR7).
+         *
+         *     The prototype's ten headers, verbatim: Claim ID · Worker · Employer · Injury
+         *     Type · Severity · Fraud Score · Handler · Days Open · Priority Next Best
+         *     Action · Status. Every field is rendered as it arrives — the SPA formats,
+         *     truncates visually and picks a colour token, and computes nothing (AD-1).
+         *
+         *     **`severityBand` is a band, not a score**, for the reason the queue card
+         *     publishes one: the boundaries are a rule document's and a client holding them
+         *     would be a second copy of a rule it cannot see change. The raw
+         *     `severityScore` is deliberately absent — the column shows a chip, and sending
+         *     the number beside the band would put every ingredient of a re-banding on one
+         *     object.
+         *
+         *     **`fraudScore` and `fraudFlagged` travel together, and that is not
+         *     redundancy.** The column shows the score and tints it by whether the claim
+         *     clears the dashboard's fraud *review* threshold. Sending only the score would
+         *     push that comparison into the browser; sending only the flag would lose the
+         *     figure the column exists to show. The flag is the registered `fraud_flagged`
+         *     derivation's answer — the same one the Fraud Flags card above this table was
+         *     counted with, and deliberately **not** the queue's SIU referral rule.
+         *
+         *     **`stage` and `litigationFlag` are both here because the Status cell is a
+         *     choice between them.** The prototype draws a LITIG chip on a litigated claim
+         *     and the stage pill otherwise; *which* to draw is a presentation decision the
+         *     UI owns, and the two facts behind it are the server's. A single pre-resolved
+         *     "status chip" string would be the server deciding copy over a contract, which
+         *     is what the enum convention exists to prevent.
+         *
+         *     `nextBestAction` is a **label** and carries no command, no target and no
+         *     document id — unlike `ActionResponse`, whose rows a handler can act on. This
+         *     table is read-only by role capability: a supervisor directs effort by talking
+         *     to a handler, so there is nothing here to press. Story 5.5 makes the row
+         *     itself clickable; that is a navigation, not a mutation.
+         *
+         *     `injuryType` and `nextBestAction` carry their **full** strings. The prototype
+         *     cuts them at 22 and 48 characters in the render function; truncation is a
+         *     property of the column a value is drawn in, not of the claim, so the SPA
+         *     truncates with CSS and keeps the whole text available to a screen reader.
+         */
+        PriorityClaimRowResponse: {
+            /** Claimid */
+            claimId: string;
+            /** Daysopen */
+            daysOpen: number;
+            /** Employershortname */
+            employerShortName: string;
+            /** Fraudflagged */
+            fraudFlagged: boolean;
+            /** Fraudscore */
+            fraudScore: number;
+            /** Handlername */
+            handlerName: string;
+            /** Injurytype */
+            injuryType: string;
+            /** Litigationflag */
+            litigationFlag: boolean;
+            /** Nextbestaction */
+            nextBestAction: string;
+            severityBand: components["schemas"]["RiskBand"];
+            stage: components["schemas"]["Stage"];
+            /** Worker */
+            worker: string;
+        };
+        /**
+         * PriorityClaimsResponse
+         * @description One page of the worklist, the size of the book behind it, and the rules.
+         *
+         *     `{items, nextCursor, total}` — the list convention, with `total` the
+         *     **population before the cap** rather than the length of `items` or of the
+         *     capped list. The caption reads "showing top 30 of 38", and both numbers are
+         *     on the wire: `cap` is thirty and `total` is thirty-eight. Publishing the
+         *     post-cap count instead would make the caption say "top 30 of 30", which is
+         *     true, circular, and tells a supervisor nothing about how much of her book
+         *     qualified. `total` is stable across every page of a walk, for
+         *     `StageGroupResponse.total`'s reason — a count that shrank as the page moved
+         *     would misdescribe the portfolio.
+         *
+         *     **`cap` is on the wire because the caption quotes it and because it is a rule
+         *     document's answer.** Superseding `worklist_actions` has to move the row count
+         *     *and* the sentence explaining it, together, with nothing deployed — the same
+         *     contract the KPI cards' two thresholds have.
+         *
+         *     **The three thresholds ride along** for that reason exactly: the severity
+         *     chips were banded at two of them and the fraud tint decided at the third, so
+         *     a client holding any would be a second copy of a rule it cannot see change.
+         *     They arrive from the derivations that did the deciding, so the published
+         *     numbers are provably the ones the rows were produced at.
+         *
+         *     **`rulesVersion` is `worklist_actions`', not the thresholds'**, which is
+         *     worth stating because the two other dashboard payloads publish a different
+         *     document's version under the same field name. It names the document that
+         *     decided the *cap* — the number this response publishes and this endpoint's
+         *     cursor is validated against. As on its siblings it rides along unrendered:
+         *     it is what makes a stored or forwarded response self-describing, and the only
+         *     thing a client wanting to invalidate on a rules change could key on.
+         *
+         *     **`truncated` is the caption's other half.** "Showing top 30 of 38" and
+         *     "8 claims" are two different sentences, and which one is true is a
+         *     comparison of two rule-decided numbers — so it is decided on this side of
+         *     the wire, like every other comparison on this dashboard. A browser working
+         *     it out from `total` and `cap` would be evaluating a rule it cannot see
+         *     change, which AD-1 forbids and `noDerivation.test.ts` catches. Without it, a
+         *     scoped supervisor with eight qualifying claims is told "showing top 30 of 8".
+         *
+         *     `nextCursor` is null exactly when the worklist is finished — never "null
+         *     because this page came back short", which would strand a tail the caption has
+         *     already told the reader is there.
+         */
+        PriorityClaimsResponse: {
+            /** Cap */
+            cap: number;
+            /** Fraudflagscoremin */
+            fraudFlagScoreMin: number;
+            /** Highriskseveritymin */
+            highRiskSeverityMin: number;
+            /** Items */
+            items: components["schemas"]["PriorityClaimRowResponse"][];
+            /** Medriskseveritymin */
+            medRiskSeverityMin: number;
+            /** Nextcursor */
+            nextCursor: string | null;
+            /** Rulesversion */
+            rulesVersion: number;
+            /** Total */
+            total: number;
+            /** Truncated */
+            truncated: boolean;
         };
         /**
          * PrognosisResponse
@@ -6557,6 +6763,74 @@ export interface operations {
                         /** Type */
                         type: string;
                     };
+                };
+            };
+        };
+    };
+    worklist_dashboard_priority_claims_get: {
+        parameters: {
+            query?: {
+                /** @description An opaque `nextCursor` from a previous response. */
+                cursor?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PriorityClaimsResponse"];
+                };
+            };
+            /** @description The pagination cursor is unreadable, names a position past the end of the worklist, or was cut under a rules version that has since been superseded (RFC 9457 problem document). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

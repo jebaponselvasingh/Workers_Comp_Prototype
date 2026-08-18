@@ -12,7 +12,7 @@
  * known separately, which is what lets two card captions quote a rule number
  * without the SPA holding one.
  */
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 
 import { api } from "./client";
 import { queryKeys } from "./queryKeys";
@@ -129,5 +129,75 @@ export function useDashboardCharts() {
       return data!;
     },
     staleTime: 30_000,
+  });
+}
+
+export type PriorityClaims =
+  components["schemas"]["PriorityClaimsResponse"];
+export type PriorityClaimRow =
+  components["schemas"]["PriorityClaimRowResponse"];
+/** The severity chip's three values — snake_case tokens; the UI owns labels. */
+export type RiskBand = PriorityClaimRow["severityBand"];
+
+/**
+ * Server state for the top-30 priority worklist (FR-SUP-5/D).
+ *
+ * `useHandlerBenchmarks`' shape and its emptiness, for the same reason: the
+ * population, the ordering, the cap, every severity band, the fraud tint and
+ * the whole Priority Next Best Action column are decided by `services/worklist`
+ * over the caller's scope, and this hook exists to fetch them and nothing else.
+ *
+ * **No `select`**, deliberately, and it matters as much here as on the charts:
+ * a `select` over this payload is the single most plausible home for a re-sorted
+ * table, a client-side cut at thirty, or a fraud tint decided from `fraudScore`
+ * and the `fraudFlagScoreMin` published beside it — the three things AD-1
+ * forbids and the three things the response is shaped to make unnecessary. With
+ * no transform there is nothing for `noDerivation.test.ts` to have to read, and
+ * `api/dashboard.ts` stays out of its `ROOT_FILES`.
+ *
+ * The same `staleTime` as the three hooks above, so the four sections of the
+ * dashboard go stale together rather than one of them refetching under the
+ * others. Nothing polls; the window only decides whether the *next* mount
+ * refetches or serves the cache.
+ */
+export function usePriorityClaims() {
+  return useQuery({
+    queryKey: queryKeys.dashboard.priorityClaims,
+    queryFn: async (): Promise<PriorityClaims> => {
+      const { data } = await api.GET("/dashboard/priority-claims");
+      return data!;
+    },
+    staleTime: 30_000,
+  });
+}
+
+/**
+ * The pages "Show more" has walked, accumulated — `useStageGroupPages`' shape.
+ *
+ * The only other cursor-paged surface in the console, copied deliberately
+ * rather than reinvented: `initialPageParam` is the cursor the base query
+ * already holds, `getNextPageParam` reads the server's `nextCursor` and nothing
+ * computes an offset. `enabled` is the caller's, so the request goes out on the
+ * first "Show more" rather than on mount — the first page is already in
+ * `usePriorityClaims`' entry, and fetching it twice would be a second read of
+ * the whole scoped book.
+ *
+ * `firstCursor !== null` in the `enabled` conjunction because a worklist that
+ * fits on one page has no cursor to start from, and `initialPageParam: null`
+ * would ask the endpoint for page one again.
+ */
+export function usePriorityClaimPages(firstCursor: string | null, enabled: boolean) {
+  return useInfiniteQuery({
+    queryKey: queryKeys.dashboard.priorityClaimPages(firstCursor),
+    initialPageParam: firstCursor,
+    queryFn: async ({ pageParam }): Promise<PriorityClaims> => {
+      const { data } = await api.GET("/dashboard/priority-claims", {
+        params: { query: { cursor: pageParam ?? undefined } },
+      });
+      return data!;
+    },
+    getNextPageParam: (last: PriorityClaims) => last.nextCursor ?? undefined,
+    enabled: enabled && firstCursor !== null,
+    staleTime: 15_000,
   });
 }

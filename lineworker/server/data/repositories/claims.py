@@ -28,7 +28,7 @@ that is the derivations registry's job (AD-10). Those predicates are ANDed
 with the scope filter and can only ever narrow the result.
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from datetime import date, datetime, time
 from typing import Any, Final, cast
 
@@ -195,6 +195,36 @@ async def select_claim_columns_with_employer(
     return rows.all()
 
 
+#: The thirteen columns a queue card is built from, named once.
+#:
+#: Extracted from `select_queue_rows` when Story 5.4 needed the same thirteen
+#: plus five more (`select_priority_rows` below). Two reads listing thirteen
+#: columns each is two lists that agree today and drift the first time one of
+#: them gains a column — and the drift would be silent in the direction that
+#: matters, because both projections feed a `QueueClaim`-shaped row and a
+#: missing attribute only shows up when the scorer reads it.
+#:
+#: `Employee.name` and `Employer.short_name` carry their labels here rather than
+#: at the call site so both reads spell the alias identically; a projection whose
+#: label differed between two functions would hand one caller `worker_name` and
+#: the other `name`, and only one of them would notice.
+QUEUE_ROW_COLUMNS: Final[tuple[Any, ...]] = (
+    Claim.claim_id,
+    Claim.stage,
+    Claim.status,
+    Claim.severity_score,
+    Claim.froi_date,
+    Claim.injury_type,
+    Claim.surgery_required,
+    Claim.litigation_flag,
+    Claim.fraud_flag,
+    Claim.fraud_score,
+    Claim.return_status,
+    Employee.name.label("worker_name"),
+    Employer.short_name.label("employer_short_name"),
+)
+
+
 async def select_queue_rows(
     db: AsyncSession,
     ctx: CallerContext,
@@ -224,24 +254,71 @@ async def select_queue_rows(
     requests, or a cursor into the group would repeat or skip one.
     """
     rows = await db.execute(
+        sa.select(*QUEUE_ROW_COLUMNS)
+        .select_from(Claim)
+        .join(Employee, Claim.employee_id == Employee.id)
+        .join(Employer, Claim.employer_id == Employer.id)
+        .where(employer_scope(ctx))
+        .order_by(Claim.claim_id)
+    )
+    return rows.all()
+
+
+async def select_priority_rows(
+    db: AsyncSession,
+    ctx: CallerContext,
+) -> Sequence[sa.Row[Any]]:
+    """`select_queue_rows`, plus the handler's name and the five action columns.
+
+    Story 5.4's supervisor worklist scores the caller's book with the *same*
+    scorer the queue uses and then fills a "Priority Next Best Action" column
+    from the *same* generator the case file's checklist uses — so it needs
+    exactly the queue's thirteen columns, the assigned handler's display name
+    (a column of that table), and the five stored columns `generate_actions`
+    reads beyond the scorer's set: `osha_recordable`, `osha_logged`,
+    `attorney_rep`, `rtw_rec` and `actual_rtw`.
+
+    **A sibling of `select_queue_rows` rather than a parameter on it**, and the
+    reason is what a parameter would cost rather than what it would save.
+    Widening the queue's projection — even behind a default — changes the row
+    every queue card in the console is derived from, on the console's most
+    fetched list, for the benefit of one dashboard table. Adding a `columns`
+    argument instead would put back the seam that function's docstring argues
+    against at length ("this module decides *which rows* — scope, and nothing
+    else"). Two reads over one shared column tuple is the arrangement that keeps
+    the queue's projection fixed and this one honest about its extra needs.
+
+    **Three joins, and each is spelled the way its neighbour's docstring
+    argues.** `Employee` and `Employer` un-aliased, because each is reachable
+    from `claim` by exactly one foreign key and `select_queue_rows` already
+    joins both that way; `AppUser` **aliased**, because it is reachable by more
+    than one foreign key over the life of this schema and an un-aliased join
+    would collide silently the first time a second one is added — the split
+    `select_claim_columns_with_handler` and `select_claim_columns_with_employer`
+    already record between them. All three inner: every one of the three foreign
+    keys is non-nullable, so an outer join would add a `None` branch that cannot
+    happen and every consumer would then have to reason about it.
+
+    Ordered by `claim_id` for `select_queue_rows`' reason: the service re-sorts
+    by score, and a total, deterministic order underneath is what makes that
+    sort stable across two requests — which a cursor into the ranked list
+    depends on absolutely.
+    """
+    handler = sa.orm.aliased(AppUser)
+    rows = await db.execute(
         sa.select(
-            Claim.claim_id,
-            Claim.stage,
-            Claim.status,
-            Claim.severity_score,
-            Claim.froi_date,
-            Claim.injury_type,
-            Claim.surgery_required,
-            Claim.litigation_flag,
-            Claim.fraud_flag,
-            Claim.fraud_score,
-            Claim.return_status,
-            Employee.name.label("worker_name"),
-            Employer.short_name.label("employer_short_name"),
+            *QUEUE_ROW_COLUMNS,
+            handler.name.label("handler_name"),
+            Claim.osha_recordable,
+            Claim.osha_logged,
+            Claim.attorney_rep,
+            Claim.rtw_rec,
+            Claim.actual_rtw,
         )
         .select_from(Claim)
         .join(Employee, Claim.employee_id == Employee.id)
         .join(Employer, Claim.employer_id == Employer.id)
+        .join(handler, Claim.handler_id == handler.id)
         .where(employer_scope(ctx))
         .order_by(Claim.claim_id)
     )
@@ -339,6 +416,51 @@ async def select_documents(
     return rows.all()
 
 
+async def select_documents_for_claims(
+    db: AsyncSession,
+    ctx: CallerContext,
+    claim_business_ids: Collection[str],
+) -> Mapping[str, tuple[Document, ...]]:
+    """`select_documents` over a set of claims — one round trip, not one each.
+
+    **Why the family exists at all.** Story 5.4's worklist fills its action
+    column by handing each row of a page to `generate_actions`, which reads a
+    claim's documents, its bills, its payment schedule and the caller's latest
+    note on it. Doing that through the single-claim reads costs four round trips
+    per claim — forty for a ten-row page, a hundred and twenty for a full walk —
+    on a route with no cache, sitting beside three other Epic 5 aggregates that
+    each take exactly one read. Bulk-reading over the page's ids makes that
+    aggregate five reads regardless of page size, and
+    `test_the_aggregate_takes_exactly_five_scoped_reads` keeps it there.
+
+    **Same scope, same ordering, same shape as the neighbour above.** The only
+    difference is `IN (…)` where that one has `=`, so a claim outside the
+    caller's book contributes nothing here for exactly the reason it returns
+    nothing there. `ORDER BY Document.id` is `select_documents`' filing order,
+    preserved within each claim by grouping a single ordered result set rather
+    than by re-sorting per key.
+
+    **Absent claims map to an empty tuple, and the mapping is keyed by the
+    business id.** A claim with no documents and a claim outside the scope are
+    the same answer here, which is `select_claim_detail`'s deliberate
+    conflation one level down: the caller already resolved which ids it may ask
+    about, and a `KeyError` on a scoped-out id would be a way to tell the two
+    apart. `.get(claim_id, ())` at the call site is therefore total.
+    """
+    rows = await db.execute(
+        sa.select(Claim.claim_id, Document)
+        .select_from(Document)
+        .join(Claim, Document.claim_id == Claim.id)
+        .where(employer_scope(ctx))
+        .where(Claim.claim_id.in_(claim_business_ids))
+        .order_by(Document.id)
+    )
+    grouped: dict[str, list[Document]] = {}
+    for claim_id, document in rows.all():
+        grouped.setdefault(claim_id, []).append(document)
+    return {claim_id: tuple(documents) for claim_id, documents in grouped.items()}
+
+
 async def select_photos(
     db: AsyncSession,
     ctx: CallerContext,
@@ -411,6 +533,61 @@ async def select_bills(
         .order_by(Bill.id)
     )
     return rows.all()
+
+
+async def select_payment_schedule_for_claims(
+    db: AsyncSession,
+    ctx: CallerContext,
+    claim_business_ids: Collection[str],
+) -> Mapping[str, tuple[PaymentScheduleWeek, ...]]:
+    """`select_payment_schedule` over a set of claims — `select_documents_for_claims`' rule.
+
+    `ORDER BY week_no` rather than `id`, exactly as the single-claim read
+    argues: these rows are a materialized projection keyed by
+    `(claim_id, week_no)`, so a week inserted late by a refresh carries a higher
+    `id` than weeks it precedes. Ordering the whole result set by the week
+    number leaves each claim's weeks in week order after grouping, because the
+    grouping preserves arrival order within a key and the key is disjoint across
+    claims.
+    """
+    rows = await db.execute(
+        sa.select(Claim.claim_id, PaymentScheduleWeek)
+        .select_from(PaymentScheduleWeek)
+        .join(Claim, PaymentScheduleWeek.claim_id == Claim.id)
+        .where(employer_scope(ctx))
+        .where(Claim.claim_id.in_(claim_business_ids))
+        .order_by(PaymentScheduleWeek.week_no)
+    )
+    grouped: dict[str, list[PaymentScheduleWeek]] = {}
+    for claim_id, week in rows.all():
+        grouped.setdefault(claim_id, []).append(week)
+    return {claim_id: tuple(weeks) for claim_id, weeks in grouped.items()}
+
+
+async def select_bills_for_claims(
+    db: AsyncSession,
+    ctx: CallerContext,
+    claim_business_ids: Collection[str],
+) -> Mapping[str, tuple[Bill, ...]]:
+    """`select_bills` over a set of claims — `select_documents_for_claims`' rule.
+
+    `ORDER BY id` is the display order for that function's reason: the seed
+    inserted each claim's bills in the prototype's emission order and nothing
+    else in the row is a total order. Category would look like a natural sort
+    key and is not.
+    """
+    rows = await db.execute(
+        sa.select(Claim.claim_id, Bill)
+        .select_from(Bill)
+        .join(Claim, Bill.claim_id == Claim.id)
+        .where(employer_scope(ctx))
+        .where(Claim.claim_id.in_(claim_business_ids))
+        .order_by(Bill.id)
+    )
+    grouped: dict[str, list[Bill]] = {}
+    for claim_id, bill in rows.all():
+        grouped.setdefault(claim_id, []).append(bill)
+    return {claim_id: tuple(bills) for claim_id, bills in grouped.items()}
 
 
 async def select_expenses(
@@ -1568,6 +1745,44 @@ async def select_latest_note_at(
         .where(Claim.claim_id == claim_business_id)
     )
     return latest
+
+
+async def select_latest_note_at_for_claims(
+    db: AsyncSession,
+    ctx: CallerContext,
+    claim_business_ids: Collection[str],
+) -> Mapping[str, datetime]:
+    """`select_latest_note_at` over a set of claims — one `GROUP BY`, not one query each.
+
+    `select_documents_for_claims`' argument for the family, and the same scope
+    predicate as its single-claim neighbour above: `diary_note_scope` narrows to
+    the **caller's own** diary, so this answers "when did *I* last write about
+    each of these", never "has anybody". That distinction is the whole of the
+    single-claim read's argument and it is inherited here unchanged — counting
+    anybody's note would publish a handler's private working record to whoever
+    else read the claim.
+
+    **A claim absent from the mapping means no note, and that is the answer the
+    rule wants** rather than a missing datum: `generate_actions` requires
+    `latest_note_at` and reads `None` as "this claim has never been checked in
+    on", which is what makes the diary check-in fire. Returning the maximum
+    `noted_at` rather than a boolean keeps the seven-day window in
+    `services/worklist` and this query ignorant of it.
+
+    The consequence on the supervisor's worklist is real and is recorded rather
+    than worked around: a supervisor has no notes on these claims, so every row
+    resolves `None` and the check-in rule fires for every treatment claim in her
+    page. `services/worklist/priority_claims.py` explains why that is bounded.
+    """
+    rows = await db.execute(
+        sa.select(Claim.claim_id, sa.func.max(DiaryNote.noted_at).label("latest"))
+        .select_from(DiaryNote)
+        .join(Claim, DiaryNote.claim_id == Claim.id)
+        .where(diary_note_scope(ctx))
+        .where(Claim.claim_id.in_(claim_business_ids))
+        .group_by(Claim.claim_id)
+    )
+    return {row.claim_id: row.latest for row in rows.all()}
 
 
 async def insert_diary_note(
