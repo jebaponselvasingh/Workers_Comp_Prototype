@@ -3,7 +3,8 @@ title: 'Story 5.2 — Handler Performance Benchmarking'
 type: 'feature'
 created: '2026-08-18'
 baseline_revision: '4f94b880ed824f841eca12d1cd0e1c74691114ca'
-status: 'in-review'
+final_revision: '1e0fe2e5064cd11d6b0410706c9ea237378b7710'
+status: 'done'
 review_loop_iteration: 1
 followup_review_recommended: true # a full bad_spec loopback re-derived the ranking arithmetic, then 14 patches across server, web, fixtures and both oracles — two of them tests that did not test what they claimed. Breadth plus a reverted core makes an independent look worthwhile
 context:
