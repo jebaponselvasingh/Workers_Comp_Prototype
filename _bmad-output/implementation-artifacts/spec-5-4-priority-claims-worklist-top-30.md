@@ -3,7 +3,8 @@ title: 'Story 5.4 — Priority Claims Worklist (Top 30)'
 type: 'feature'
 created: '2026-08-18'
 baseline_revision: '7cca6cabf8dc6e8ec607b161e2bc71ab3e6aaa64'
-status: 'in-review'
+final_revision: '21b2b8fdeb5200dec9947568f9eba9bad5d945b7'
+status: 'done'
 review_loop_iteration: 0
 followup_review_recommended: true # 10 patches across the rules tier, the aggregate, the router, three test layers and the SPA — one of them a wrong number on a supervisor's screen that two test layers had blessed, one of them a caller-controlled page size arriving through an unsigned cursor. Breadth plus a new wire field makes an independent look worthwhile
 context:
