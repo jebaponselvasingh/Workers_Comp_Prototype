@@ -50,6 +50,16 @@
  * `location` after a save (line 1878) and pre-fills the next meeting from the
  * last one; this is that bug not being ported.
  *
+ * **Story 4.3 adds the email composer on the same three principles.**
+ * `composer` holds `{open, session, prefill}` — state, not an intent; the
+ * session is `schedulerSession`'s counter, so every open is a fresh mount of a
+ * modal that would otherwise re-open onto the last handler's half-edited letter;
+ * and the prefill is a *reference* (`{kind: "meeting", meetingId}`) rather than
+ * content, because the letter is merged on the server and this provider has no
+ * business fetching one. `requestEmails()` is the post-send switch to ✉ Emails
+ * and nothing else — see `openComposer` on why opening the modal deliberately
+ * does *not* move the sub-tab.
+ *
  * **The default value is a working no-op rather than a throw.**
  * `ClaimDetailPane` and `ActionsCard` are rendered directly by their own
  * vitest files, outside any shell; a provider-or-throw would make those tests
@@ -96,6 +106,44 @@ export interface NoteDraft {
   text: string;
   /** The claim captured at the first keystroke, or `null` for an empty draft. */
   claimId: string | null;
+}
+
+/**
+ * What the email composer opens holding — a **reference**, never content
+ * (Story 4.3).
+ *
+ * `blank` is the ＋ Compose button: an empty letter with Employee ticked, which
+ * the handler fills in or replaces with a quick template. `meeting` is the ✉ on
+ * a meeting card, and it carries the meeting's *id* rather than its
+ * confirmation letter, because the letter is merged on the server (AD-1) and
+ * this provider has no business fetching one. The composer turns the id into an
+ * enabled-gated query; see `EmailComposerDialog`.
+ *
+ * There is deliberately no `template` variant. A quick template is chosen
+ * *inside* the open modal, from the row of six buttons, so it is that modal's
+ * own state rather than something a caller can pre-select from outside.
+ */
+export type ComposerPrefill = { kind: "blank" } | { kind: "meeting"; meetingId: number };
+
+/**
+ * The composer's whole navigation state, in one object.
+ *
+ * One `useState` over a record rather than three, so `openComposer` cannot
+ * advance the session and forget the prefill — and so the `useMemo` below has
+ * one dependency for the three facts that always move together.
+ */
+export interface ComposerState {
+  open: boolean;
+  /**
+   * Increments on every open; `EmailsSubTab` keys the dialog on it.
+   *
+   * `schedulerSession`'s device and its reason: the composer seeds its draft at
+   * mount, so keying it on this number makes every open a fresh mount — a
+   * handler who cancels halfway through a settlement notice and re-opens gets an
+   * empty form rather than the last one's half-edited body.
+   */
+  session: number;
+  prefill: ComposerPrefill;
 }
 
 export interface DiaryNav {
@@ -161,6 +209,31 @@ export interface DiaryNav {
   typeNoteDraft: (text: string, claimId: string | null) => void;
   /** Empty the draft and release its captured claim — after a save. */
   clearNoteDraft: () => void;
+  /** The email composer's open state, session counter and prefill (4.3). */
+  composer: ComposerState;
+  /**
+   * Open the composer, **without moving the sub-tab**.
+   *
+   * Unlike `requestMeetings`, which has to select 📅 Meetings because the
+   * scheduler is rendered there, the composer is mounted by `DiaryTab` itself —
+   * outside the panel that swaps — precisely so that ✉ on a meeting card opens
+   * a modal over the list the handler is looking at rather than yanking the pane
+   * to a sub-tab they did not ask for. That is also the prototype's behaviour:
+   * its composer is a page-level modal, and the jump to Emails happens *after* a
+   * send (`requestEmails`), which is when there is something new there to see.
+   */
+  openComposer: (prefill?: ComposerPrefill) => void;
+  closeComposer: () => void;
+  /**
+   * Show the Emails sub-tab, opening nothing — the post-send switch.
+   *
+   * The prototype jumps to the Emails tab after a send so the logged mail is
+   * immediately visible, and that is all this does. It goes through
+   * `selectSubTab`, so it lowers `noteFocusPending` like every other way out of
+   * Notes; a mover that used the raw setter is the asymmetry `requestMeetings`
+   * records as a bug.
+   */
+  requestEmails: () => void;
 }
 
 /**
@@ -175,6 +248,9 @@ const INITIAL_SUB_TAB: DiarySubTab = "notes";
 
 /** An untouched draft — the value the provider starts from and returns to. */
 const EMPTY_NOTE_DRAFT: NoteDraft = { text: "", claimId: null };
+
+/** A composer nobody has opened — the value the provider starts from. */
+const CLOSED_COMPOSER: ComposerState = { open: false, session: 0, prefill: { kind: "blank" } };
 
 const NO_DIARY_PANE: DiaryNav = {
   subTab: INITIAL_SUB_TAB,
@@ -191,6 +267,10 @@ const NO_DIARY_PANE: DiaryNav = {
   noteDraft: EMPTY_NOTE_DRAFT,
   typeNoteDraft: () => {},
   clearNoteDraft: () => {},
+  composer: CLOSED_COMPOSER,
+  openComposer: () => {},
+  closeComposer: () => {},
+  requestEmails: () => {},
 };
 
 const DiaryNavContext = createContext<DiaryNav>(NO_DIARY_PANE);
@@ -202,6 +282,7 @@ export function DiaryNavProvider({ children }: { children: React.ReactNode }) {
   const [noteFocusSession, setNoteFocusSession] = useState(0);
   const [noteFocusPending, setNoteFocusPending] = useState(false);
   const [noteDraft, setNoteDraft] = useState<NoteDraft>(EMPTY_NOTE_DRAFT);
+  const [composer, setComposer] = useState<ComposerState>(CLOSED_COMPOSER);
 
   const selectSubTab = useCallback((tab: DiarySubTab) => {
     setSubTab(tab);
@@ -260,6 +341,24 @@ export function DiaryNavProvider({ children }: { children: React.ReactNode }) {
     setNoteFocusPending(true);
   }, []);
 
+  const requestEmails = useCallback(() => {
+    // Through `selectSubTab`, never `setSubTab` — see the field's docstring.
+    selectSubTab("emails");
+  }, [selectSubTab]);
+
+  const openComposer = useCallback((prefill: ComposerPrefill = { kind: "blank" }) => {
+    // No sub-tab move — see the field's docstring. `DiaryTab` mounts the dialog
+    // outside the panel that swaps, so this works from any of the three.
+    setComposer((current) => ({ open: true, session: current.session + 1, prefill }));
+  }, []);
+
+  const closeComposer = useCallback(() => {
+    // The session is deliberately *not* advanced on close: the re-seed happens
+    // on the open, and a counter that moved on both would be describing
+    // something else (`schedulerSession`'s own test asserts the same thing).
+    setComposer((current) => ({ ...current, open: false }));
+  }, []);
+
   // Memoised so the panes below do not re-render on every shell render — the
   // value is otherwise a fresh object each time, and this provider sits above
   // the whole workspace.
@@ -279,6 +378,10 @@ export function DiaryNavProvider({ children }: { children: React.ReactNode }) {
       noteDraft,
       typeNoteDraft,
       clearNoteDraft,
+      composer,
+      openComposer,
+      closeComposer,
+      requestEmails,
     }),
     [
       subTab,
@@ -295,6 +398,10 @@ export function DiaryNavProvider({ children }: { children: React.ReactNode }) {
       noteDraft,
       typeNoteDraft,
       clearNoteDraft,
+      composer,
+      openComposer,
+      closeComposer,
+      requestEmails,
     ],
   );
 

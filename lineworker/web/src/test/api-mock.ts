@@ -116,6 +116,36 @@ export interface StubRoutes {
   diaryNotes?: StubRouteFor;
   /** `POST /claims-diary/notes` (Story 4.2) — matched before the list. */
   addDiaryNote?: StubRouteFor;
+  /**
+   * `GET /claims-diary/email-templates` (Story 4.3) — the six quick templates.
+   *
+   * Matched before `/api/claims-diary/emails` below only for readability: the
+   * two prefixes are disjoint (`email-templates` does not contain `emails`), so
+   * unlike the pairs further down this is not load-bearing.
+   */
+  emailTemplates?: StubRouteFor;
+  /**
+   * `GET /claims-diary/email-templates/{key}/merged` (Story 4.3).
+   *
+   * Matched **before** the template list, because the merge URL contains it.
+   * A `StubRouteFor` so a test can answer differently per template key — which
+   * is how "the recipient set becomes exactly this template's" is written
+   * without two renders.
+   */
+  mergedTemplate?: StubRouteFor;
+  /**
+   * `GET /claims-diary/meetings/{id}/email-draft` (Story 4.3) — convert-to-email.
+   *
+   * Matched **before the meetings block**, and this one really is load-bearing:
+   * the draft's URL contains `/api/claims-diary/meetings`, so the list would
+   * otherwise answer the composer's request with a page of meetings and the
+   * modal would open blank with nothing saying why.
+   */
+  meetingEmailDraft?: StubRouteFor;
+  /** `GET /claims-diary/emails` (Story 4.3) — the caller's sent log. */
+  emails?: StubRouteFor;
+  /** `POST /claims-diary/emails` (Story 4.3) — matched before the list. */
+  sendEmail?: StubRouteFor;
 }
 
 const problem = (status: number, detail: string) => ({
@@ -1917,6 +1947,219 @@ export const DIARY_NOTE_WRITTEN_NOT_READABLE = {
   },
 };
 
+/**
+ * The six seeded quick templates — Story 4.3's reference data.
+ *
+ * Keys, labels and default recipient sets verbatim from the seed migration, so
+ * a component test asserting "the button row is the server's six, in the
+ * server's order" is asserting against the real vocabulary. The template *text*
+ * is deliberately absent from this payload, exactly as it is on the wire: a
+ * client holding it would be one `replace()` from merging in the browser.
+ *
+ * Every `defaultRecipients` list is in the **vocabulary's own order** —
+ * `employee, employer_hr, ncm, treating_physician, supervisor, attorney` — which
+ * is how the rows are seeded and how the command stores every set it is handed.
+ * Two of the migration's six were written out of that order and this fixture was
+ * not, which made "verbatim" false in exactly the place a reader would trust it;
+ * the migration is the half that moved.
+ */
+export const EMAIL_TEMPLATES = {
+  status: 200,
+  body: {
+    items: [
+      {
+        templateKey: "three_point_contact",
+        label: "3-Point Contact",
+        defaultRecipients: ["employee", "employer_hr", "treating_physician"],
+      },
+      {
+        templateKey: "rtw_offer",
+        label: "RTW Offer",
+        defaultRecipients: ["employee", "employer_hr", "ncm"],
+      },
+      {
+        templateKey: "ncm_referral",
+        label: "NCM Referral",
+        defaultRecipients: ["employer_hr", "ncm", "treating_physician"],
+      },
+      {
+        templateKey: "status_update",
+        label: "Status Update",
+        defaultRecipients: ["employer_hr", "supervisor"],
+      },
+      {
+        templateKey: "ime_request",
+        label: "IME Request",
+        defaultRecipients: ["ncm", "treating_physician"],
+      },
+      {
+        templateKey: "settlement_notice",
+        label: "Settlement Notice",
+        defaultRecipients: ["employee", "attorney"],
+      },
+    ],
+  },
+};
+
+/**
+ * One template, merged — what `GET …/merged` answers for the RTW Offer.
+ *
+ * **Merged, with no `{{…}}` anywhere**, which is the whole contract: the server
+ * resolved every placeholder or refused, and the SPA renders what came back. The
+ * square-bracketed prompt is left literal on purpose — it is handler-fill text,
+ * not a merge field (AD-2), and a component test that saw it disappear would be
+ * seeing a browser-side merge nobody asked for.
+ *
+ * `recipients` deliberately differs from the composer's blank default (Employee
+ * alone) and from `MERGED_STATUS_UPDATE` below, so "the checkbox set is replaced
+ * by exactly this template's" has something to be wrong about.
+ */
+export const MERGED_RTW_OFFER = {
+  status: 200,
+  body: {
+    claimId: "WC-20017",
+    subject: "Return-to-Work Offer — WC Claim WC-20017",
+    body:
+      "Dear Marcus Webb,\n\nFollowing your Fall from Height injury of 2026-03-22, " +
+      "we are pleased to offer transitional duty.\n\n" +
+      "[Transitional Duty — to be completed by supervisor]\n\nKaya Johnson",
+    recipients: ["employee", "employer_hr", "ncm"],
+  },
+};
+
+/** A second merge, so a test can watch one template replace another. */
+export const MERGED_STATUS_UPDATE = {
+  status: 200,
+  body: {
+    claimId: "WC-20017",
+    subject: "Claim Status Update — WC-20017 (140 days open)",
+    body:
+      "Current stage: Treatment. Current status: CH Assessment Process.\n\n" +
+      "[Please add current activity summary]\n\nKaya Johnson",
+    recipients: ["employer_hr", "supervisor"],
+  },
+};
+
+/**
+ * A meeting's confirmation letter — the convert-to-email prefill (AC 5).
+ *
+ * `recipients` is that meeting's participants, which is the identity mapping the
+ * shared vocabulary buys: the prototype substring-matched participant *labels*,
+ * which is why "Employer HR" happened to match "employer".
+ */
+export const MEETING_EMAIL_DRAFT = {
+  status: 200,
+  body: {
+    claimId: "WC-20017",
+    subject: "Meeting Confirmation: RTW Conference — WC-20017",
+    body:
+      "This confirms the RTW Conference scheduled for Tuesday, September 1, 2099 at 10:30 AM.\n" +
+      "Location: Phone\n\nPlease confirm your attendance.\n\nKaya Johnson",
+    recipients: ["employee", "employer_hr"],
+  },
+};
+
+/**
+ * Two logged emails, newest first — Story 4.3's list fixture.
+ *
+ * One claim-linked and one free-composed, because `claimId`/`workerName` are
+ * nullable together (the ERD's `CLAIM |o--o{ EMAIL_LOG`) and the untagged branch
+ * is the one a card is most likely to render as `· null`. The free one also
+ * carries `body: null` and `priority: "urgent"`, so the two branches a card can
+ * take on a single row are both exercised in one render.
+ */
+export const EMAIL_LOG_TAGGED = {
+  id: 801,
+  claimId: "WC-20017",
+  workerName: "Marcus Webb",
+  templateKey: "rtw_offer",
+  subject: "Return-to-Work Offer — WC Claim WC-20017",
+  body:
+    "Dear Marcus Webb, following your Fall from Height injury we are pleased to offer " +
+    "transitional duty beginning Monday, subject to your treating physician's clearance.",
+  priority: "normal",
+  recipients: ["employee", "employer_hr", "ncm"],
+  sentAt: "2026-08-18T14:05:00Z",
+};
+
+export const EMAIL_LOG_FREE = {
+  id: 800,
+  claimId: null,
+  workerName: null,
+  templateKey: null,
+  subject: "Plant walkthrough next Tuesday",
+  body: null,
+  priority: "urgent",
+  recipients: ["supervisor"],
+  sentAt: "2026-08-17T09:00:00Z",
+};
+
+export const EMAIL_LOGS = {
+  status: 200,
+  body: { items: [EMAIL_LOG_TAGGED, EMAIL_LOG_FREE], nextCursor: null, total: 2 },
+};
+
+export const EMAIL_LOGS_EMPTY = {
+  status: 200,
+  body: { items: [], nextCursor: null, total: 0 },
+};
+
+export const EMAIL_CREATED = {
+  status: 201,
+  body: { ...EMAIL_LOG_TAGGED, id: 802, subject: "A brand new letter." },
+};
+
+/**
+ * The 404 an email that **was logged** gets — `/problems/email-not-readable`.
+ *
+ * `DIARY_NOTE_WRITTEN_NOT_READABLE`'s twin, on the table with the least
+ * recourse: the row is committed and audited by the time this is answered and
+ * only the scoped re-read failed, so a composer that treated it as a refusal
+ * would leave an intact draft over an enabled Send — and `email_log` has no edit
+ * and no delete to take the second copy back. The `detail` is the server's own,
+ * and it is the sentence the console must not contradict: *do not send it
+ * again.*
+ */
+export const EMAIL_WRITTEN_NOT_READABLE = {
+  status: 404,
+  body: {
+    type: "/problems/email-not-readable",
+    title: "Not Found",
+    status: 404,
+    detail:
+      "Email 802 was logged, but it can no longer be read back from your sent log — " +
+      "your caseload changed while it was being written. Do not send it again; reload the list.",
+  },
+};
+
+/**
+ * The 404 a claim reference outside the caller's book gets on a send.
+ *
+ * A refusal that will answer the same way for ever, and the one that proves the
+ * composer routes 404s through `feedbackFromError`'s readable set rather than
+ * flattening them to "Could not save. Try again in a moment."
+ */
+export const EMAIL_CLAIM_NOT_FOUND = {
+  status: 404,
+  body: {
+    type: "/problems/email-claim-not-found",
+    title: "Not Found",
+    status: 404,
+    detail: "No claim WC-20017 in your caseload.",
+  },
+};
+
+/** The 422 an empty or unstorable composition gets — inline, never a dialog. */
+export const EMAIL_INVALID = {
+  status: 422,
+  body: {
+    type: "/problems/invalid-patch",
+    title: "Unprocessable Content",
+    status: 422,
+    detail: "Subject cannot be empty",
+  },
+};
+
 /** Never settles — the request stays in flight for the life of the test. */
 const pending = (): Promise<Response> => new Promise<Response>(() => {});
 
@@ -1967,6 +2210,32 @@ export function stubApi(routes: StubRoutes): void {
       // true. They are first because they are the most specific prefixes and
       // the block reads in order. Method is read as well as path, because all
       // four routes share two URLs.
+      // Story 4.3's five, **before the meetings block**. That ordering is
+      // load-bearing for exactly one of them: `/claims-diary/meetings/{id}/
+      // email-draft` contains `/api/claims-diary/meetings`, so the list below
+      // would otherwise answer the composer's request with a page of meetings.
+      // The rest are here to keep the 4.3 routes readable in one place.
+      if (url.includes("/email-draft")) {
+        return answerFor(routes.meetingEmailDraft ?? MEETING_EMAIL_DRAFT, url);
+      }
+      if (url.includes("/api/claims-diary/email-templates")) {
+        // The merge first: its URL *contains* the template list's.
+        if (url.includes("/merged")) {
+          return answerFor(routes.mergedTemplate ?? MERGED_RTW_OFFER, url);
+        }
+        return answerFor(routes.emailTemplates ?? EMAIL_TEMPLATES, url);
+      }
+      if (url.includes("/api/claims-diary/emails")) {
+        const method =
+          typeof input === "string" || input instanceof URL
+            ? (init?.method ?? "GET")
+            : (input as Request).method;
+        // POST before GET, the meetings block's arrangement: both share one URL.
+        if (method === "POST") {
+          return answerFor(routes.sendEmail ?? EMAIL_CREATED, url);
+        }
+        return answerFor(routes.emails ?? EMAIL_LOGS, url);
+      }
       if (url.includes("/api/claims-diary/meetings")) {
         const method =
           typeof input === "string" || input instanceof URL

@@ -46,6 +46,8 @@ from data.models import (
     Claim,
     DiaryNote,
     Document,
+    EmailLog,
+    EmailTemplate,
     Employee,
     Employer,
     Expense,
@@ -1538,6 +1540,307 @@ async def insert_diary_note(
         .returning(DiaryNote.id)
     )
     return inserted.scalar_one_or_none()
+
+
+# --- Story 4.3: the diary aggregate's emails -----------------------------
+
+
+def email_log_scope(ctx: CallerContext) -> ColumnElement[bool]:
+    """The AD-7 predicate for `email_log` — **sender scope, and only that**.
+
+    `diary_note_scope`'s shape and its argument, one table over. A logged email
+    belongs to the handler who composed it (the ERD's
+    `APP_USER ||--o{ EMAIL_LOG : sends`), so the sent log is a caller-scoped
+    list rather than a child read-model of the case file. Two handlers whose
+    books overlap must not read each other's correspondence, and a supervisor
+    over both must not either — the I/O matrix's "Author scope, not employer
+    scope" row.
+
+    **Employer scope is deliberately *not* here**, `diary_note_scope`'s
+    divergence from `meeting_scope` and for its reason, sharpened by this
+    table's own facts: `email_log` is append-only with no edit and no delete, so
+    a row silently vanishing from the caller's list on a re-scoping would be the
+    only record that a communication went out disappearing with nothing anywhere
+    saying so. What was sent is a fact about what the handler did, not about
+    which claims they may currently open.
+
+    Scope still gates the **write**: `insert_email_log` resolves the claim
+    reference through `employer_scope` inside its statement, so a claim outside
+    the caller's book is a 404 and no row is written. Accepting a claim
+    reference and keeping a sent record are different questions, and only the
+    first is about current scope.
+    """
+    return EmailLog.app_user_id == ctx.user_id
+
+
+def _email_log_query() -> sa.Select[Any]:
+    """The row, plus the three columns an email card renders beside it.
+
+    Three **outer** joins, because all three foreign keys are nullable — an
+    inner join would silently drop every free composition (no claim) and every
+    hand-written send (no template), which are the two cases the ERD's
+    `CLAIM |o--o{ EMAIL_LOG` and `EMAIL_TEMPLATE ||--o{ EMAIL_LOG` optional
+    edges exist to allow. `_meeting_query`'s shape and its lesson.
+
+    **`worker_name` is projected here where `_diary_note_query` dropped it**,
+    and the asymmetry follows AD-11's "carry what the surface renders" rule
+    rather than contradicting it: an email card's recipients line reads
+    `To: … · {claimName}`, which is the prototype's own `e.claimName` — the
+    injured worker's name. A note card renders `📎 WC-nnnn` and never a name, so
+    projecting one there was PHI on the wire with no consumer.
+
+    `template_key` rather than the whole template row: the card shows which of
+    the six letters a send started from, and nothing renders the template's text
+    a second time.
+    """
+    return (
+        sa.select(
+            EmailLog,
+            Claim.claim_id.label("claim_business_id"),
+            Employee.name.label("worker_name"),
+            EmailTemplate.template_key.label("template_key"),
+        )
+        .select_from(EmailLog)
+        .outerjoin(Claim, EmailLog.claim_id == Claim.id)
+        .outerjoin(Employee, Claim.employee_id == Employee.id)
+        .outerjoin(EmailTemplate, EmailLog.template_id == EmailTemplate.id)
+    )
+
+
+async def select_email_logs_page(
+    db: AsyncSession,
+    ctx: CallerContext,
+    *,
+    after: tuple[datetime, int] | None,
+    limit: int,
+) -> Sequence[sa.Row[Any]]:
+    """One page of the caller's sent log, **newest first** — scoped (4.3).
+
+    **Ordered by `(sent_at DESC, id DESC)`, and the descent is the whole
+    point**: the Emails sub-tab is read from the top and the prototype reverses
+    its array for exactly this reason. `sent_at` alone is a partial order — two
+    sends inside the same clock tick tie, and a keyset page that ended inside
+    the tie would repeat one row and drop the other — so `id` closes it, and it
+    descends *with* the timestamp because a keyset comparison has to run in the
+    ordering's own direction.
+
+    **Both the comparison and the sort are flipped**, `select_diary_notes_page`'s
+    warning and the mistake it exists to prevent: `>` with `ORDER BY … DESC`
+    walks away from the page it just served and pages forward through nothing.
+    `after` is the last row of the previous page, and the predicate is
+    `(sent_at, id) < (last_sent_at, last_id)`.
+    """
+    statement = _email_log_query().where(email_log_scope(ctx))
+    if after is not None:
+        last_sent_at, last_id = after
+        statement = statement.where(
+            sa.tuple_(EmailLog.sent_at, EmailLog.id)
+            < sa.tuple_(
+                # Typed literals rather than bare Python values, for
+                # `select_meetings_page`'s reason: a row-value comparison hands
+                # both sides to the driver as parameters, and an untyped
+                # `datetime` reaches asyncpg with nothing to encode it as.
+                sa.literal(last_sent_at, EmailLog.sent_at.type),
+                sa.literal(last_id, EmailLog.id.type),
+            )
+        )
+    rows = await db.execute(
+        statement.order_by(EmailLog.sent_at.desc(), EmailLog.id.desc()).limit(limit)
+    )
+    return rows.all()
+
+
+async def count_email_logs(db: AsyncSession, ctx: CallerContext) -> int:
+    """How many emails the caller has logged in total — scoped (4.3).
+
+    A second statement rather than a window function on the page above, for
+    `count_meetings`' reason: `total` is the size of the whole list and the page
+    is a slice of it.
+
+    **Called on the first page only.** `services/claims/emails.py::
+    list_email_logs` issues it when no cursor was supplied and answers `None`
+    otherwise — `deferred-work.md`'s envelope question, answered for this table
+    while nothing depends on the other answer. The decision is the service's;
+    this function just counts what it is asked to.
+    """
+    total = await db.scalar(
+        sa.select(sa.func.count()).select_from(EmailLog).where(email_log_scope(ctx))
+    )
+    return int(total or 0)
+
+
+async def insert_email_log(
+    db: AsyncSession,
+    ctx: CallerContext,
+    *,
+    claim_business_id: str | None,
+    values: Mapping[str, Any],
+) -> int | None:
+    """Log one sent email, with the claim reference resolved under scope (4.3).
+
+    Returns the new row's id, or `None` when a `claim_business_id` was given and
+    it names no claim in the caller's book. Which of "absent" or "not yours" it
+    was is nobody's question — the command answers 404 either way,
+    `select_claim_detail`'s rule.
+
+    **`INSERT … SELECT` for the claim-linked case**, `insert_diary_note`'s shape
+    and for its reason: an INSERT has no WHERE clause, so resolving the claim in
+    Python and then inserting would be a read-modify-write with a window in it.
+    Selecting the claim row *as the source of the insert* puts the scope
+    predicate inside the statement, so a claim that leaves the caller's book in
+    the gap inserts nothing.
+
+    **`INSERT … VALUES` for the free composition**, and the asymmetry is the
+    absence of anything to guard: with no claim there is no scope predicate to
+    put inside a statement, and the sender is `ctx.user_id`, which no caller
+    supplies.
+
+    `template_id` travels in `values` rather than as a parameter of its own: it
+    is already resolved against `email_template` by the command, which is where
+    an unknown key becomes a 404 rather than a NULL.
+
+    **The literals are typed** in the linked branch: an untyped parameter in an
+    `INSERT … SELECT` reaches asyncpg with no type to encode it as, and this
+    statement carries a native enum (`priority`), a JSONB array (`recipients`)
+    and a `timestamptz` (`sent_at`) — three of the four kinds that fail. Taking
+    each literal's type from the column it lands in also means a column that
+    changes type needs no second edit here.
+    """
+    fields = tuple(values)
+    if claim_business_id is None:
+        inserted = await db.execute(
+            sa.insert(EmailLog)
+            .values(app_user_id=ctx.user_id, claim_id=None, **values)
+            .returning(EmailLog.id)
+        )
+        return inserted.scalar_one()
+
+    columns = EmailLog.__table__.c
+    source = (
+        sa.select(
+            sa.literal(ctx.user_id, columns["app_user_id"].type).label("app_user_id"),
+            Claim.id.label("claim_id"),
+            *[sa.literal(values[field], columns[field].type).label(field) for field in fields],
+        )
+        .select_from(Claim)
+        .where(employer_scope(ctx))
+        .where(Claim.claim_id == claim_business_id)
+    )
+    inserted = await db.execute(
+        sa.insert(EmailLog)
+        .from_select(["app_user_id", "claim_id", *fields], source)
+        .returning(EmailLog.id)
+    )
+    return inserted.scalar_one_or_none()
+
+
+async def select_email_log(
+    db: AsyncSession,
+    ctx: CallerContext,
+    email_id: int,
+) -> sa.Row[Any] | None:
+    """One logged email of the caller's, or `None` — scoped (4.3).
+
+    Not a route: there is no `GET /claims-diary/emails/{id}`, because the sent
+    log is read as a list and the prototype's `.email-card` opens nothing. It
+    exists so `send_email` can re-read what it just wrote through the same
+    scoped query the list uses — the alternative, building the response from the
+    values the command was handed, is how a payload starts disagreeing with what
+    is stored (`select_diary_note`'s argument).
+    """
+    rows = await db.execute(
+        _email_log_query().where(email_log_scope(ctx)).where(EmailLog.id == email_id)
+    )
+    return rows.one_or_none()
+
+
+async def select_merge_source(
+    db: AsyncSession,
+    ctx: CallerContext,
+    claim_business_id: str,
+) -> sa.Row[Any] | None:
+    """The claim, its worker and the caller's own name — or `None` (4.3).
+
+    Everything one template merge reads, in one scoped statement. Returning
+    `None` for a claim that is absent *and* for one outside the caller's book is
+    `select_claim_detail`'s rule: the two must be the same answer, or the merge
+    endpoint becomes an oracle a caller can walk `WC-20000`…`WC-20999` through.
+
+    **The join to `Employee` is inner** — `claim.employee_id` is NOT NULL, so
+    there is no row it could drop — where `_email_log_query`'s is outer because
+    *its* claim link is nullable.
+
+    **`handler_name` is the caller's name, not the claim's assigned handler.**
+    The prototype interpolates `${handler}` from `currentUser`, and the letter
+    signs off as whoever is composing it: a covering handler who sends an RTW
+    offer signs their own name, not the name of the person the claim is assigned
+    to. It is read as a scalar subquery rather than a join so the shape of the
+    statement does not change when it is absent — which it cannot be, the
+    session having produced the id, but a join whose ON clause never mentions
+    `Claim` reads as an accident.
+    """
+    rows = await db.execute(
+        sa.select(
+            Claim,
+            Employee.name.label("worker_name"),
+            sa.select(AppUser.name)
+            .where(AppUser.id == ctx.user_id)
+            .scalar_subquery()
+            .label("handler_name"),
+        )
+        .select_from(Claim)
+        .join(Employee, Claim.employee_id == Employee.id)
+        .where(employer_scope(ctx))
+        .where(Claim.claim_id == claim_business_id)
+    )
+    return rows.one_or_none()
+
+
+async def select_email_templates(db: AsyncSession, ctx: CallerContext) -> Sequence[EmailTemplate]:
+    """The six seeded templates, in the composer's button order (4.3).
+
+    **Reference data, and the `ctx` is not a scope.** `email_template` has no
+    employer column, no claim relationship and no PHI: it is six rows of letter
+    text, identical for every persona, and there is nothing here to filter.
+    `glossary.py` and `statutory_forms.py` carve themselves out of AD-7 on
+    exactly this basis and take no context at all.
+
+    This one does, because it lives in *this* module, where
+    `tests/test_scoped_repository.py` requires every public function to take one
+    — a rule worth more than the exception: a reader scanning `claims.py` for an
+    unscoped read must be able to trust that every signature here looks the
+    same, and the alternative (a fourth carve-out module for two functions
+    consumed by one scoped command) splits one story's reads across two
+    repositories to avoid one unused parameter. The parameter is named here so
+    that this docstring can say plainly what it is *not*.
+
+    Ordered by `id`, which is the seed's insertion order and therefore the
+    prototype's button order. Unique and dense, so the ordering is total.
+    """
+    del ctx  # Not a scope — see above. Deleted so nothing below can read it.
+    rows = await db.scalars(sa.select(EmailTemplate).order_by(EmailTemplate.id))
+    return rows.all()
+
+
+async def select_email_template(
+    db: AsyncSession,
+    ctx: CallerContext,
+    template_key: str,
+) -> EmailTemplate | None:
+    """One template by its key, or `None` — reference data (4.3).
+
+    The `ctx` is not a scope; see `select_email_templates`.
+
+    `None` for a key that is not seeded, which the command answers as
+    `/problems/email-template-not-found`. The same 404 covers a malformed key
+    and an absent one — there is nothing to enumerate here (the six keys are on
+    the wire already), so the sameness costs nothing and keeps one branch.
+    """
+    del ctx  # Not a scope — see `select_email_templates`.
+    rows = await db.scalars(
+        sa.select(EmailTemplate).where(EmailTemplate.template_key == template_key)
+    )
+    return rows.one_or_none()
 
 
 async def count_claims_matching(

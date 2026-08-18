@@ -81,7 +81,7 @@ const ROOTS = [
  * A file joins this list when it holds a `select`, a transform or an
  * accumulation over a payload carrying a `DERIVED_FIELDS` member.
  */
-const ROOT_FILES = ["api/meetings.ts"];
+const ROOT_FILES = ["api/meetings.ts", "api/emails.ts"];
 
 /**
  * Source with comments and literal text removed, so the patterns below see
@@ -296,7 +296,16 @@ const DERIVED_FIELDS =
   // `notedAt` joins the field list because a note's header is formatted from
   // it and a comparison against it would be a client deciding recency — the
   // rule that closes the diary check-in lives in `services/worklist`.
-  "upcomingCount|notedAt";
+  "upcomingCount|notedAt|" +
+  // Story 4.3's two. `sentAt` is the "Sent" badge's instant and the sent log's
+  // **sort key**, which is the reason it belongs here rather than beside
+  // `createdAt`: a browser that compared two of them would be re-deciding an
+  // ordering the server publishes, and one that compared one against `now`
+  // would be inventing a delivery state for a row that records composition and
+  // nothing else. `priority` is the card's accent *and* a value a component
+  // would plausibly rank by — three tones is one comparison away from a sort —
+  // and it is a stored enum rather than a scale.
+  "sentAt|priority";
 
 const FLAGS = "siuReview|rtwBlocked|paymentDue|fraudFlag|litigationFlag|surgeryRequired";
 
@@ -418,6 +427,18 @@ test("the scan reaches the files it claims to", () => {
   // reaches every diary surface at once — and none of the component roots would
   // see it. `ROOT_FILES` explains why the directory around it is not scanned.
   expect(scanned).toContain("api/meetings.ts");
+  // Story 4.3's three. The sub-tab is handed a list the server ordered and
+  // counted, so `.sort()` on `sentAt` and a `total` worked out from
+  // `items.length` are both one line away; the composer is handed a
+  // server-merged letter, and the single most tempting thing in this feature is
+  // to "just" substitute a claim field into it, which is the AD-1 violation the
+  // whole story is built to prevent. `api/emails.ts` joins `api/meetings.ts` in
+  // `ROOT_FILES` for that module's reason: it owns the email payload and has a
+  // `select`, so a re-derived value planted there would reach every email
+  // surface at once while every component root stayed green.
+  expect(scanned).toContain(path.join("features", "diary", "EmailsSubTab.tsx"));
+  expect(scanned).toContain(path.join("features", "diary", "EmailComposerDialog.tsx"));
+  expect(scanned).toContain("api/emails.ts");
   expect(scanned).toContain(
     path.join("features", "claim-detail", "overview", "TreatmentOverview.tsx"),
   );
@@ -535,6 +556,12 @@ test("the guard would notice a derivation if one were added", () => {
     "const ahead = today.items.filter((m) => m.status).length - 1;",
     "const left = summary.upcomingCount - 1;",
     "const stale = note.notedAt < cutoff;",
+    // Story 4.3's: re-sorting a log the server already ordered `sentAt DESC`,
+    // ranking two priorities as if the enum were a scale, and inventing a
+    // delivery state by comparing a composition instant with the clock.
+    "items.sort((a, b) => b.sentAt - a.sentAt);",
+    "const louder = a.priority > b.priority;",
+    "const late = email.sentAt < deadline;",
     // The `(?<!=)` exclusion must not have opened a hole: a genuine comparison
     // whose right-hand side is a payload field is still caught.
     "if (shown < page.total) return true;",
@@ -570,6 +597,10 @@ test("the guard does not fire on rendering the server's answers", () => {
     // `api/meetings.ts` is full of, and the false positive `(?<!=)` removes.
     "getNextPageParam: (last) => last.nextCursor ?? undefined,",
     "const pick = (page) => page.total;",
+    // Story 4.3's: reading a stored enum through a tone map, and formatting an
+    // instant. Both are presentation, and both mention a field on the list.
+    "className={EMAIL_PRIORITY_TONE[email.priority]}",
+    "<span>Sent {formatSentAt(email.sentAt)}</span>",
   ];
 
   for (const line of innocent) {

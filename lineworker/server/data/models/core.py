@@ -17,11 +17,13 @@ from sqlalchemy import (
     Enum,
     ForeignKey,
     Identity,
+    Index,
     Integer,
     Text,
     Time,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -35,6 +37,7 @@ from data.models.enums import (
     CommStatus,
     Disability,
     DocType,
+    EmailPriority,
     ExpenseCategory,
     Gender,
     LineItemStatus,
@@ -826,6 +829,136 @@ class DiaryNote(Base):
     noted_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), index=True, server_default=func.now()
     )
+
+
+class EmailTemplate(Base):
+    """One of the six claim-aware stakeholder letters (Story 4.3, FR-DIARY-3).
+
+    The prototype rebuilds these in the browser from JS template literals
+    (`loadEmailTemplate`, line 1955), so every letter is assembled client-side
+    out of claim fields the page happened to be holding. Here the text is
+    **reference data** and the merge is a server command (AD-1): the SPA asks
+    for a merged template and renders what comes back.
+
+    Read-only to the application, exactly like `GlossaryTerm`, and the same
+    three absences follow from it:
+
+    - **No `version` column.** Compare-and-swap arbitrates concurrent writers
+      and this table has none: rows arrive in seed migration 0036 and change
+      only in a later one. There is no template administration surface and the
+      story forbids inventing one.
+    - **No audit wiring.** AD-4 audits *commands*; there are none here, and a
+      migration that edits reference data is already reviewed in the diff.
+    - **No employer column and no claim FK.** A template is not about a claim —
+      it is merged *against* one, per request, and the claim it was merged
+      against is recorded on `email_log` rather than here.
+
+    `default_recipients` is JSONB holding `MeetingParticipant` values, which is
+    `Meeting.participants`' shape and its ruling: no `ARRAY` column exists
+    anywhere in this schema, the list is always read whole with its template,
+    and nothing asks a recipient-side question. The elements are validated by
+    `services/claims/emails.py` when they are decoded, because a JSONB column
+    cannot.
+
+    `subject_template` and `body_template` carry `{{placeholder}}` tokens named
+    after the column each reads (`{{claim_id}}`, `{{worker_name}}`, `{{doi}}`,
+    …). Bracketed prompts meant for the handler — `$[AMOUNT]`, `[RATING]%`,
+    `[Please add next steps]` — are **template text, not merge fields**, and
+    AD-2 is explicit that the settlement figures stay handler-filled.
+
+    `template_key` is unique for `GlossaryTerm.abbreviation`'s reason: it is the
+    stable identity the wire publishes and the SPA keys its six buttons by, so
+    the surrogate `id` never has to leave the server.
+    """
+
+    __tablename__ = "email_template"
+
+    id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+    template_key: Mapped[str] = mapped_column(Text, unique=True)
+    label: Mapped[str] = mapped_column(Text)
+    subject_template: Mapped[str] = mapped_column(Text)
+    body_template: Mapped[str] = mapped_column(Text)
+    default_recipients: Mapped[list[str]] = mapped_column(JSONB)
+
+
+class EmailLog(Base):
+    """One stakeholder email a handler composed and logged (Story 4.3).
+
+    The prototype keeps these in a browser-lifetime object (`emailsStore`) that
+    a reload erases and announces each one with `alert()`; here a send is a row
+    written by the one audited command in `services/claims/emails.py`, which
+    AD-12 names as the diary aggregate's only writer.
+
+    **A row is a log, not a delivery attempt, and that is an architecture
+    decision rather than a shortcut.** Real SMTP egress is Deferred with its own
+    compliance review, so there is no mail client, no outbox, no delivery
+    status, no bounce, no message id and no per-recipient address — the button
+    says "✉ Send Email (logged)" and this table is what it means. `sent_at` is
+    when the handler pressed it, and it claims nothing about anybody having
+    been told.
+
+    **No `version` column, and that is the AD-4 statement for this table** —
+    `DiaryNote`'s argument, one table over. Compare-and-swap arbitrates
+    concurrent writers of a mutable row; a logged email is written once and
+    never updated, because there is no edit and no delete in the design
+    contract, so nothing is ever read-modify-written and there is nothing to
+    arbitrate. The write-concurrency convention names append-only stores as
+    exempt outright.
+
+    **`app_user_id` is the sender, and it is what scopes every read** (the
+    ERD's `APP_USER ||--o{ EMAIL_LOG : sends`). The sent log is the caller's
+    own; a handler does not read another's, and neither does a supervisor over
+    the same book.
+
+    **`claim_id` is nullable**, which is the ERD's `CLAIM |o--o{ EMAIL_LOG`.
+    The six templates are claim-aware and refuse to merge without one, but free
+    composition — a subject and a body typed by hand — is legal with nothing
+    selected, and that is what the optional edge is for.
+
+    **`template_id` is nullable and is a real FK** (the ERD's
+    `EMAIL_TEMPLATE ||--o{ EMAIL_LOG : seeds`): null for a free composition, and
+    for a templated one the command resolves the key against this table rather
+    than storing the string, so an unknown key is refused instead of recorded.
+
+    AD-11: `subject`, `body` and `recipients` are PHI-class — a merged letter
+    carries the worker's name, their date of injury and their ICD-10 code.
+    Nothing about them reaches a log beyond ids and event names, and **the body
+    is deliberately absent from the audit diff** (see
+    `services/claims/emails.py::_diff`): the table is append-only with no delete
+    path, so an after-diff is never needed to reconstruct a row somebody
+    removed, and the body is the largest PHI blob this console stores. The table
+    belongs in Story 8.1's purge cascade, which does not exist yet and is not
+    invented here.
+    """
+
+    __tablename__ = "email_log"
+
+    # `(app_user_id, sent_at DESC, id DESC)` — the sent log's whole access
+    # pattern in one index, in the ordering's own direction so the keyset walk
+    # needs no sort. Declared here rather than as three `index=True` flags
+    # because that is what migration 0035 creates, and a model describing
+    # indexes the database does not have is a plan nobody can trust.
+    __table_args__ = (
+        Index(
+            "ix_email_log_app_user_id_sent_at_id",
+            "app_user_id",
+            text("sent_at DESC"),
+            text("id DESC"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+    app_user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    # Indexed on its own: PostgreSQL does not index a referencing column, so
+    # without this every `DELETE FROM claim` (Story 8.1's purge) scans this
+    # table to check the constraint.
+    claim_id: Mapped[int | None] = mapped_column(ForeignKey("claim.id"), index=True)
+    template_id: Mapped[int | None] = mapped_column(ForeignKey("email_template.id"))
+    subject: Mapped[str] = mapped_column(Text)
+    body: Mapped[str | None] = mapped_column(Text)
+    priority: Mapped[EmailPriority] = mapped_column(_enum(EmailPriority, "email_priority"))
+    recipients: Mapped[list[str]] = mapped_column(JSONB)
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class GlossaryTerm(Base):

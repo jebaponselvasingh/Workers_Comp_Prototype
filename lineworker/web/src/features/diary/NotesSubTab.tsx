@@ -456,10 +456,12 @@ export function NotesSubTab({
                     deleting={false}
                     error={refusal?.meetingId === meeting.id ? refusal.message : null}
                     onComplete={onComplete}
-                    /* Unreachable: the compact variant renders no Delete. It is
-                       required by the shared prop type, and a `() => {}` here
-                       is honest about there being nothing to do. */
+                    /* Unreachable: the compact variant renders neither Delete
+                       nor ✉. Both are required by the shared prop type, and a
+                       `() => {}` here is honest about there being nothing to
+                       do — the summary card stays a two-action card. */
                     onDelete={() => {}}
+                    onEmail={() => {}}
                     onOpenClaim={(id) => {
                       // The *meeting* half only — see `clearMeetingFeedback`.
                       clearMeetingFeedback();

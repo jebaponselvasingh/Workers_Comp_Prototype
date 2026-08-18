@@ -40,3 +40,24 @@ export const MEETING_NOTES_LENGTH_CAP = 2000;
  * which is why the server declares two numbers rather than one.
  */
 export const MEETING_LOCATION_LENGTH_CAP = 200;
+
+/**
+ * `services/claims/emails.py::MAX_SUBJECT_LENGTH` — a stakeholder email's
+ * subject line.
+ *
+ * The route declares the same number as `max_length`, so a longer value is
+ * refused by the schema with `/problems/validation-error` before the command
+ * ever sees it — which names no field and shows no limit. The composer declares
+ * it on the control and prints it beside, for the reason this module's
+ * docstring gives.
+ */
+export const EMAIL_SUBJECT_MAX = 200;
+
+/**
+ * `services/claims/emails.py::MAX_BODY_LENGTH` — the letter itself.
+ *
+ * Fifty times the subject's, because a merged settlement notice is a page of
+ * prose and a subject is a line. Both are measured **after trimming** on the
+ * server, which is why the composer trims before it sends.
+ */
+export const EMAIL_BODY_MAX = 10_000;

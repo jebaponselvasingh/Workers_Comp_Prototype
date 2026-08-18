@@ -277,4 +277,61 @@ export const queryKeys = {
      * themselves while the write is in flight. */
     writes: ["diaryNotes", "write"] as const,
   },
+  /**
+   * The handler's stakeholder emails (Story 4.3) — **a top-level group beside
+   * `meetings` and `diaryNotes`, never under `claims`**, for the reason those
+   * two record.
+   *
+   * `GET /claims-diary/emails` is scoped to the *sender*: two handlers whose
+   * books overlap read their own correspondence and not each other's, and the
+   * list is not filtered by the selected claim at all. Nesting it under a
+   * claim's segment would make an unrelated case-file edit invalidate the whole
+   * sent log — and would imply a per-claim read model the server does not have.
+   *
+   * **`writes` is this group's own**, and reusing `claims.writes` would grey out
+   * every editable control on the case file while somebody logged an email that
+   * bumps no claim version. It is not `meetings.writes` either: sending an email
+   * is not a reason a handler cannot tick a meeting done.
+   */
+  emails: {
+    /**
+     * The six quick templates — reference data, one key with nothing under it.
+     *
+     * No claim in the key, deliberately: the row of buttons is the same six for
+     * every caller and every claim. The *merged* text is a different resource
+     * and lives under `draft` below.
+     */
+    templates: ["emails", "templates"] as const,
+    /** The caller's sent log, newest first, one page at a time. No cursor in
+     * the key — `meetings.list`'s rule and its reason. */
+    list: ["emails", "list"] as const,
+    /**
+     * One server-merged composition, by what it was merged from.
+     *
+     * Two kinds share this shape because the server serves them as one payload:
+     * `draft("template", `${claimId}:${templateKey}`)` for a quick template, and
+     * `draft("meeting", meetingId)` for a meeting's confirmation letter. The
+     * claim is *inside* the template's id rather than a fourth segment because
+     * a merge is only a resource at all in combination with a claim — a key that
+     * omitted it would serve WC-20017's letter into WC-20044's composer.
+     *
+     * Nothing invalidates these, and the reason is *not* the one this comment
+     * used to give. "A merge is a pure function of rows that this story never
+     * writes" is false: the letter is cut from `stage`, `status`, `injury_type`,
+     * `cause`, `icd` and `body_part` — Story 2.3's inline-editable fields, in a
+     * pane a handler can reach without closing the composer — and from
+     * `days_open`, which moves overnight. What makes an invalidation
+     * unnecessary is that `useMergedTemplate` holds no staleness at all: every
+     * open of the composer is a fresh mount, so choosing a template re-merges
+     * against whatever the rows say *then*, and the cached copy is only ever
+     * the placeholder that keeps the form from blanking mid-request.
+     */
+    draft: (kind: "template" | "meeting", id: string | number) =>
+      ["emails", "draft", kind, id] as const,
+    /** The **mutation** key the send command carries. Nothing is cached under
+     * it; `useIsMutating` counts it so the composer's controls disable
+     * themselves while the write is in flight — an append-only table has no
+     * version to refuse a double submit with. */
+    writes: ["emails", "write"] as const,
+  },
 } as const;

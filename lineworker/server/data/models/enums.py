@@ -379,8 +379,25 @@ class MeetingParticipant(StrEnum):
     that carried either wording would make the tag and the checkbox two
     different vocabularies.
 
-    Member order is the checkbox grid's order, reading left to right.
-    [Source: docs/Workers_Comp_Prototype.html lines 555-562]
+    **Since Story 4.3 this is the shared stakeholder vocabulary, and the name
+    is now too narrow for what it names.** `email_log.recipients` holds these
+    same six values, because the story's own ruling is "one shared 6-value set
+    with 4.1's participant enum" and because convert-to-email has to map a
+    meeting's participants onto an email's recipients — with two enums that
+    mapping is a translation table, and a translation table between two lists
+    of identical strings is how they start to drift. The prototype's email modal
+    keys them `employer`/`physician` where the meeting modal says
+    `employer_hr`/`treating_physician`; those are the same six roles and the
+    longer tokens win. A rename to `Stakeholder` would be the honest fix and it
+    is deliberately not made here — it would touch this enum, `meetings.py`,
+    the router, the generated `schema.d.ts` type name and every test that
+    spells it, inside a story already shipping two tables and five endpoints.
+    Recorded in `deferred-work.md`.
+
+    Member order is the checkbox grid's order, reading left to right — the same
+    order in both modals, which is what makes the shared vocabulary's stored
+    order (`normalise_participants`, `normalise_recipients`) one order.
+    [Source: docs/Workers_Comp_Prototype.html lines 555-562, 588-593]
     """
 
     employee = "employee"
@@ -389,6 +406,28 @@ class MeetingParticipant(StrEnum):
     treating_physician = "treating_physician"
     supervisor = "supervisor"
     attorney = "attorney"
+
+
+class EmailPriority(StrEnum):
+    """How a logged stakeholder email is flagged (Story 4.3).
+
+    The composer's `<select>`, as a closed type. A native enum column holds one,
+    so the vocabulary lives here for `BodyRegion`'s reason — `data/` must not
+    import from `services/` — and the display strings stay the browser's.
+
+    **Three members and no `low`**, which is the prototype's own list rather
+    than a truncation of a general priority scale: the select offers Normal,
+    High and Urgent, and a fourth value would be a control nothing renders.
+
+    Member order is the select's option order, which is also the order the card
+    accent escalates in (none → warn → error) and the order PostgreSQL sorts the
+    type in. `normal` is first because it is the default the composer opens on.
+    [Source: docs/Workers_Comp_Prototype.html line 612]
+    """
+
+    normal = "normal"
+    high = "high"
+    urgent = "urgent"
 
 
 class BodyRegion(StrEnum):

@@ -32,9 +32,22 @@ import {
   stubApi,
 } from "@/test/api-mock";
 
-import { DiaryNavProvider } from "./DiaryNav";
-import { EMAIL_SEAM_REASON } from "./MeetingCard";
+import { DiaryNavProvider, useDiaryNav } from "./DiaryNav";
 import { MeetingsSubTab } from "./MeetingsSubTab";
+
+/**
+ * The composer state, as text — the ✉ button's observable effect from here.
+ *
+ * `DiaryTab` owns the dialog (so ✉ opens a modal over the meetings list rather
+ * than switching sub-tabs), which leaves this file with the shared state as the
+ * thing the click actually reaches.
+ */
+function ComposerProbe() {
+  const { composer } = useDiaryNav();
+  const prefill =
+    composer.prefill.kind === "meeting" ? `meeting:${composer.prefill.meetingId}` : "blank";
+  return <p data-testid="composer-state">{composer.open ? `open:${prefill}` : "closed"}</p>;
+}
 
 function requested(): Request[] {
   return vi
@@ -49,6 +62,7 @@ function renderSubTab(routes: StubRoutes = {}) {
     <QueryClientProvider client={createQueryClient()}>
       <DiaryNavProvider>
         <MeetingsSubTab claimId="WC-20017" workerName="Marcus Delgado" />
+        <ComposerProbe />
       </DiaryNavProvider>
     </QueryClientProvider>,
   );
@@ -99,17 +113,28 @@ test("a card carries its time, location, claim, agenda and participant tags", as
   ).toEqual(["employee", "employer_hr"]);
 });
 
-test("the email control ships disabled and states the story that enables it", async () => {
-  // AC 5, in full: disabled, and the reason reachable without a pointer.
+test("the email control is live, and opens the composer on that meeting", async () => {
+  // Story 4.3, AC 5. The control shipped disabled in 4.1 behind a tooltip
+  // wrapper with a `title` and an sr-only reason; enabling it was the deletion
+  // of all of that, so what is asserted here is both halves — nothing left to
+  // explain, and a click that reaches the composer with *this* meeting's id.
   renderSubTab();
   await screen.findAllByTestId("meeting-card");
 
   const email = within(card(501)).getByTestId("meeting-email");
-  expect(email).toBeDisabled();
-  expect(email).toHaveAttribute("title", EMAIL_SEAM_REASON);
-  const describedBy = email.getAttribute("aria-describedby");
-  expect(describedBy).not.toBeNull();
-  expect(document.getElementById(describedBy!)).toHaveTextContent(EMAIL_SEAM_REASON);
+  expect(email).toBeEnabled();
+  expect(email).not.toHaveAttribute("title");
+  expect(email).not.toHaveAttribute("aria-describedby");
+  expect(screen.queryByTestId("meeting-email-seam")).not.toBeInTheDocument();
+
+  await userEvent.click(email);
+
+  // The composer is mounted by `DiaryTab` rather than by this sub-tab (so the
+  // ✉ does not drag the pane to ✉ Emails), which is why the probe reads the
+  // shared state instead of looking for a modal. What belongs to *this* click is
+  // that the prefill names this meeting — the letter itself is merged on the
+  // server, and `EmailComposerDialog.test.tsx` covers the fetch.
+  expect(screen.getByTestId("composer-state")).toHaveTextContent("open:meeting:501");
 });
 
 test("a meeting already done offers no ✓, because there is no un-complete", async () => {
@@ -140,7 +165,10 @@ test("Delete sends the version in the query string, where a proxy cannot drop it
   renderSubTab({ deleteMeeting: { status: 204, body: null } });
   await screen.findAllByTestId("meeting-card");
 
+  // Two presses since Story 4.3: the first arms the inline two-step, and only
+  // the second calls the command — see `MeetingCard`.
   await userEvent.click(within(card(501)).getByTestId("meeting-delete"));
+  await userEvent.click(within(card(501)).getByTestId("meeting-delete-confirm"));
 
   await waitFor(() =>
     expect(screen.getByTestId("meetings-status")).toHaveTextContent("Meeting deleted."),

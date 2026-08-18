@@ -71,6 +71,15 @@ function attempted(edits: FieldEdits, field: EditableField): string | undefined 
  * an append-only table. Both carry a server sentence written for a person and
  * naming no PHI, so the honest answer is to show it.
  *
+ * **Story 4.3's three were missing from the set until the follow-up review**,
+ * and the omission mattered most on the one this mapper exists for. The composer
+ * routes every server refusal through here, so `/problems/email-not-readable`
+ * — the 404 that means the row *was* written and audited, and whose `detail`
+ * says "Do not send it again; reload the list." — fell through to "Could not
+ * save. Try again in a moment.", over an enabled Send pointed at a duplicate in
+ * a table with no edit and no delete. Registering a problem type here is what
+ * makes the server's sentence reach the person it was written for.
+ *
  * **It is gated on the problem `type`, not on the status**, which is the
  * correction. `isNotFound` is a bare `status === 404`, and `api/client.ts`
  * synthesises `detail = "The server answered 404."` for a response with no
@@ -89,6 +98,9 @@ const READABLE_NOT_FOUND: ReadonlySet<string> = new Set([
   "/problems/meeting-claim-not-found",
   "/problems/meeting-not-found",
   "/problems/meeting-not-readable",
+  "/problems/email-claim-not-found",
+  "/problems/email-template-not-found",
+  "/problems/email-not-readable",
 ]);
 
 export function feedbackFromError(error: unknown, attempt?: string): FieldFeedback {

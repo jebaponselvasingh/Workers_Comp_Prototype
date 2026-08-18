@@ -1438,3 +1438,89 @@ export function claimIdsOnModifiedDuty(name: string, role: string): string[] {
   }
   return claims;
 }
+
+// --- Story 4.3: the six seeded stakeholder templates ---------------------
+
+/**
+ * What migration 0036 seeds, **restated** rather than read from it.
+ *
+ * The house rule every oracle in this file follows, and it bites hardest here:
+ * the templates are *reference data*, so a fixture that imported the migration's
+ * `EMAIL_TEMPLATES` tuple — or read the six rows back off
+ * `GET /claims-diary/email-templates` — would assert that the seed equals
+ * itself. A default recipient set silently changed in the migration would then
+ * still pass, while the handler's checkbox grid quietly addressed a different
+ * set of people. Written out here, the spec can disagree.
+ *
+ * Three facts per template and no more: the key (the wire's identity), the
+ * label (the button's words, UI-owned) and the default recipient set (what the
+ * checkbox grid becomes when the button is pressed). The subject and body text
+ * is deliberately **not** restated — it is four hundred lines of prose whose
+ * merged form is `server/tests/test_emails.py`'s business, and what a browser
+ * can uniquely say about it is that no `{{…}}` survived the merge and that the
+ * claim under the cursor is named in it.
+ *
+ * The order is the composer's button order, which is the prototype's object
+ * order and the order the seed inserts in.
+ * [Source: docs/Workers_Comp_Prototype.html lines 599-604, 1955-1999]
+ */
+export const EMAIL_TEMPLATE_KEYS = [
+  "three_point_contact",
+  "rtw_offer",
+  "ncm_referral",
+  "status_update",
+  "ime_request",
+  "settlement_notice",
+] as const;
+
+export type EmailTemplateKey = (typeof EMAIL_TEMPLATE_KEYS)[number];
+
+/** The six buttons' words — `features/diary` owns labels, so these are theirs. */
+export const EMAIL_TEMPLATE_LABEL: Record<EmailTemplateKey, string> = {
+  three_point_contact: "3-Point Contact",
+  rtw_offer: "RTW Offer",
+  ncm_referral: "NCM Referral",
+  status_update: "Status Update",
+  ime_request: "IME Request",
+  settlement_notice: "Settlement Notice",
+};
+
+/**
+ * Who each letter is addressed to by default.
+ *
+ * The values are `MeetingParticipant`'s — Story 4.3 reuses Story 4.1's six-value
+ * vocabulary rather than declaring a second one, so `treating_physician` and
+ * `employer_hr` are spelled the long way here even though the prototype's email
+ * modal keyed the same two roles `physician` and `employer`.
+ *
+ * **A set, not a list.** The seed now writes every row in the vocabulary's own
+ * order — `ncm_referral` was `ncm · treating_physician · employer_hr` until the
+ * 4.3 review made the seed keep the invariant its own docstring claimed — but the
+ * composer holds the ticks in a `Set` and the server re-orders on the way in, so
+ * ordering is not part of the contract and an oracle that pinned one would be
+ * asserting an implementation detail rather than a promise.
+ * `expectedTemplateRecipients` therefore sorts, and every caller compares sorted.
+ */
+const TEMPLATE_RECIPIENTS: Record<EmailTemplateKey, readonly string[]> = {
+  three_point_contact: ["employee", "employer_hr", "treating_physician"],
+  rtw_offer: ["employee", "employer_hr", "ncm"],
+  ncm_referral: ["ncm", "treating_physician", "employer_hr"],
+  status_update: ["employer_hr", "supervisor"],
+  ime_request: ["treating_physician", "ncm"],
+  settlement_notice: ["employee", "attorney"],
+};
+
+/** One template's default recipient set, sorted — see `TEMPLATE_RECIPIENTS`. */
+export function expectedTemplateRecipients(key: EmailTemplateKey): string[] {
+  return [...TEMPLATE_RECIPIENTS[key]].sort();
+}
+
+/**
+ * What a blank composition opens with — Employee alone (UX-DR10).
+ *
+ * The one recipient almost every letter has, and the only tick the prototype's
+ * modal ships pre-set. Restated here so the spec can assert the *starting* set
+ * as well as the set a template replaces it with, which is what makes "replaced,
+ * never unioned" a real assertion.
+ */
+export const BLANK_COMPOSE_RECIPIENTS = ["employee"] as const;

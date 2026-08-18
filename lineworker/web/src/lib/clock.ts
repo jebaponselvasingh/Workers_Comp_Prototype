@@ -104,3 +104,27 @@ export function formatNotedAt(isoInstant: string): string {
     minute: "2-digit",
   })}`;
 }
+
+/**
+ * `2026-08-18T14:05:00Z` → `Aug 18, 02:05 PM` — a logged email's Sent badge.
+ *
+ * The prototype's own `toLocaleString` options, verbatim (short month, numeric
+ * day, two-digit hour and minute).
+ * [Source: docs/Workers_Comp_Prototype.html line 2015]
+ *
+ * Here rather than in `EmailsSubTab` for this module's stated reason: it is
+ * presentation of the reader's local time, and a second `new Date(...)` inside
+ * `features/diary` would be a second place that decides how an instant looks.
+ * Formatting only — the badge says *when the row was written*, and there is no
+ * delivery state anywhere behind it.
+ */
+export function formatSentAt(isoInstant: string): string {
+  const when = new Date(isoInstant);
+  if (Number.isNaN(when.getTime())) return isoInstant;
+  return when.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}

@@ -18,7 +18,8 @@
  * answer depend on where the suite runs.
  */
 import { cleanup, render, screen, within } from "@testing-library/react";
-import { expect, test } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { expect, test, vi } from "vitest";
 
 import type { Meeting } from "@/api/meetings";
 
@@ -46,7 +47,12 @@ function aMeeting(overrides: Partial<Meeting> = {}): Meeting {
 
 function renderCard(
   meeting: Meeting,
-  extra: { compact?: boolean; onOpenClaim?: (id: string) => void } = {},
+  extra: {
+    compact?: boolean;
+    onOpenClaim?: (id: string) => void;
+    onEmail?: (meeting: Meeting) => void;
+    onDelete?: (meeting: Meeting) => void;
+  } = {},
 ) {
   return render(
     <MeetingCard
@@ -57,6 +63,7 @@ function renderCard(
       error={null}
       onComplete={() => {}}
       onDelete={() => {}}
+      onEmail={() => {}}
       {...extra}
     />,
   );
@@ -137,10 +144,12 @@ test("the compact variant offers ✓ Done and Open Claim, and nothing else", asy
   expect(within(card).getByTestId("meeting-done")).toBeInTheDocument();
   expect(within(card).getByTestId("meeting-open-claim")).toBeInTheDocument();
   // No Delete: a destructive action a long way from the list that shows what
-  // else is scheduled. No ✉ seam: it belongs where Story 4.3 will enable it.
+  // else is scheduled. No ✉ either: the composer belongs where the meeting's
+  // whole context is. Both shipped as seam echoes and are **real guards** now
+  // that Story 4.3 has made the control on the full card work — the summary
+  // card stays a two-action card.
   expect(within(card).queryByTestId("meeting-delete")).not.toBeInTheDocument();
   expect(within(card).queryByTestId("meeting-email")).not.toBeInTheDocument();
-  expect(within(card).queryByTestId("meeting-email-seam")).not.toBeInTheDocument();
 });
 
 test("the compact variant drops the agenda and the participant tags", () => {
@@ -154,14 +163,157 @@ test("the compact variant drops the agenda and the participant tags", () => {
   expect(screen.getByTestId("meeting-claim-ref")).toHaveTextContent("WC-20017");
 });
 
-test("the full variant is unchanged — Delete and the 4.3 seam are still there", () => {
+test("the full variant carries Delete and a working ✉, and no Open Claim", () => {
   renderCard(aMeeting());
 
   const card = screen.getByTestId("meeting-card");
   expect(card).toHaveAttribute("data-variant", "full");
   expect(within(card).getByTestId("meeting-delete")).toBeInTheDocument();
-  expect(within(card).getByTestId("meeting-email")).toBeDisabled();
+  // **Enabled**, which is the whole of AC 5 on this side. Story 4.1 shipped it
+  // disabled inside a tooltip wrapper with a `title`, an sr-only reason and an
+  // `aria-describedby`; enabling it was the deletion of all of that, so what is
+  // asserted is that none of it survives.
+  const email = within(card).getByTestId("meeting-email");
+  expect(email).toBeEnabled();
+  expect(email).not.toHaveAttribute("title");
+  expect(email).not.toHaveAttribute("aria-describedby");
+  expect(screen.queryByTestId("meeting-email-seam")).not.toBeInTheDocument();
   expect(within(card).queryByTestId("meeting-open-claim")).not.toBeInTheDocument();
+});
+
+test("✉ hands the whole meeting back, so the caller can name it to the server", async () => {
+  const emailed: number[] = [];
+  renderCard(aMeeting({ id: 777 }), { onEmail: (meeting) => emailed.push(meeting.id) });
+
+  await userEvent.click(screen.getByTestId("meeting-email"));
+
+  expect(emailed).toEqual([777]);
+});
+
+test("the ✉ disables itself while a meeting command is in flight", () => {
+  render(
+    <MeetingCard
+      meeting={aMeeting()}
+      busy
+      completing
+      deleting={false}
+      error={null}
+      onComplete={() => {}}
+      onDelete={() => {}}
+      onEmail={() => {}}
+    />,
+  );
+
+  expect(screen.getByTestId("meeting-email")).toBeDisabled();
+});
+
+// --- Story 4.3: Delete asks first ----------------------------------------
+
+test("Delete arms rather than deletes, and the second press is what sends", async () => {
+  // There is no `update_meeting`, so delete-and-recreate is the correction path
+  // and a mis-click removes an audited PHI row with no undo. `deferred-work.md`
+  // assigned the two-step to whoever built the feedback primitive.
+  const deleted: number[] = [];
+  const confirm = vi.fn();
+  vi.stubGlobal("confirm", confirm);
+  renderCard(aMeeting({ id: 501 }), { onDelete: (meeting) => deleted.push(meeting.id) });
+
+  await userEvent.click(screen.getByTestId("meeting-delete"));
+
+  // Nothing sent, and the plain Delete has been replaced by the pair.
+  expect(deleted).toEqual([]);
+  expect(screen.queryByTestId("meeting-delete")).not.toBeInTheDocument();
+  expect(screen.getByTestId("meeting-delete-confirm")).toHaveTextContent("Delete?");
+  expect(screen.getByTestId("meeting-delete-cancel")).toHaveTextContent("Cancel");
+  // …and never a native dialog (NFR-3, UX-DR11).
+  expect(confirm).not.toHaveBeenCalled();
+
+  await userEvent.click(screen.getByTestId("meeting-delete-confirm"));
+  expect(deleted).toEqual([501]);
+
+  vi.unstubAllGlobals();
+});
+
+test("Cancel disarms Delete and sends nothing", async () => {
+  const deleted: number[] = [];
+  renderCard(aMeeting(), { onDelete: (meeting) => deleted.push(meeting.id) });
+
+  await userEvent.click(screen.getByTestId("meeting-delete"));
+  await userEvent.click(screen.getByTestId("meeting-delete-cancel"));
+
+  expect(deleted).toEqual([]);
+  expect(screen.getByTestId("meeting-delete")).toBeInTheDocument();
+  expect(screen.queryByTestId("meeting-delete-confirm")).not.toBeInTheDocument();
+});
+
+test("Cancel disarms Delete even while another card's command is in flight", async () => {
+  // `busy` is **list-wide**: `MeetingsSubTab` hands every card the same flag. So
+  // a Cancel disabled by it meant arming Delete on meeting A and then ticking ✓
+  // Done on meeting B left A holding an armed destructive control that could not
+  // be lowered until somebody else's write settled. Cancel sends nothing and
+  // touches no row; the only thing it can do is make the card safer.
+  const deleted: number[] = [];
+  const card = (busy: boolean) => (
+    <MeetingCard
+      meeting={aMeeting()}
+      busy={busy}
+      completing={busy}
+      deleting={false}
+      error={null}
+      onComplete={() => {}}
+      onDelete={(meeting) => deleted.push(meeting.id)}
+      onEmail={() => {}}
+    />
+  );
+
+  const { rerender } = render(card(false));
+  await userEvent.click(screen.getByTestId("meeting-delete"));
+
+  rerender(card(true));
+  // The confirm is disabled with everything else — it *writes*.
+  expect(screen.getByTestId("meeting-delete-confirm")).toBeDisabled();
+  const cancel = screen.getByTestId("meeting-delete-cancel");
+  expect(cancel).toBeEnabled();
+
+  await userEvent.click(cancel);
+
+  expect(screen.queryByTestId("meeting-delete-confirm")).not.toBeInTheDocument();
+  expect(deleted).toEqual([]);
+});
+
+test("the in-flight label belongs to the plain Delete, never to the confirm", () => {
+  // The confirm's own handler lowers `confirming` before it calls `onDelete`, so
+  // the pair unmounts in the same commit the mutation starts and a `deleting`
+  // branch on the confirm button was unreachable — a state a reader would take
+  // for a state the card can be in.
+  render(
+    <MeetingCard
+      meeting={aMeeting()}
+      busy
+      completing={false}
+      deleting
+      error={null}
+      onComplete={() => {}}
+      onDelete={() => {}}
+      onEmail={() => {}}
+    />,
+  );
+
+  expect(screen.getByTestId("meeting-delete")).toHaveTextContent("Deleting…");
+  expect(screen.queryByTestId("meeting-delete-confirm")).not.toBeInTheDocument();
+});
+
+test("any other action on the card disarms an armed Delete", async () => {
+  // A confirmation left armed behind a handler who thought better of it and
+  // pressed ✓ or ✉ instead is a loaded control on a row they have moved on from.
+  renderCard(aMeeting());
+
+  await userEvent.click(screen.getByTestId("meeting-delete"));
+  expect(screen.getByTestId("meeting-delete-confirm")).toBeInTheDocument();
+
+  await userEvent.click(screen.getByTestId("meeting-email"));
+  expect(screen.queryByTestId("meeting-delete-confirm")).not.toBeInTheDocument();
+  expect(screen.getByTestId("meeting-delete")).toBeInTheDocument();
 });
 
 test("a compact card for an untagged meeting offers no Open Claim", () => {
@@ -229,6 +381,7 @@ test("the compact Open Claim disables itself with the other actions", () => {
       compact
       onComplete={() => {}}
       onDelete={() => {}}
+      onEmail={() => {}}
       onOpenClaim={() => {}}
     />,
   );

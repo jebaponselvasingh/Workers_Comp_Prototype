@@ -10,6 +10,7 @@
  * a new enum member fails the build here — beside the other labels, where
  * somebody can write one — instead of rendering `undefined` in a select.
  */
+import type { EmailPriority, EmailRecipient } from "@/api/emails";
 import type { MeetingParticipant, MeetingStatus, MeetingType } from "@/api/meetings";
 
 /**
@@ -131,4 +132,78 @@ export const MEETING_STATUS_GLYPH: Record<MeetingStatus, string> = {
 export const MEETING_STATUS_TONE: Record<MeetingStatus, string> = {
   upcoming: "border-l-[3px] border-l-brand",
   done: "opacity-60",
+};
+
+// --- Story 4.3: the email composer's own vocabularies ---------------------
+
+/**
+ * The composer's six recipient checkboxes, with the prototype's emoji.
+ *
+ * **The same six tokens as `PARTICIPANT_LABEL` above, and deliberately not the
+ * same strings.** The prototype's meeting modal says "👔 My Supervisor" and its
+ * email modal says "👔 Supervisor" — the difference is real: a meeting is
+ * something the handler attends, so the possessive reads naturally, and an email
+ * is addressed to a role. Labels are UI-owned, so each modal keeps its own
+ * wording over one shared token; a token that carried either phrasing would make
+ * the two modals two vocabularies.
+ * [Source: docs/Workers_Comp_Prototype.html lines 588-593]
+ */
+export const RECIPIENT_LABEL: Record<EmailRecipient, string> = {
+  employee: "👤 Employee",
+  employer_hr: "🏭 Employer HR",
+  ncm: "🩺 Nurse Case Manager",
+  treating_physician: "👨‍⚕️ Treating Physician",
+  supervisor: "👔 Supervisor",
+  attorney: "⚖️ Attorney",
+};
+
+/**
+ * The checkbox grid's order — the prototype's, which is also the wire enum's.
+ *
+ * **`PARTICIPANT_ORDER` itself, rather than a second list with the same six
+ * tokens in it.** It shipped as a byte-identical copy with a comment explaining
+ * that the two agree, which is the shape of duplication that decays: both
+ * `normalise_recipients` and `normalise_participants` store their sets in *the*
+ * vocabulary's order so that two identical letters cannot render their chips
+ * shuffled, and that argument holds only while there is one order. Nothing
+ * enforced the equality, so a re-ordered checkbox grid on either side would have
+ * silently made "the order is the enum's" true in one modal and false in the
+ * other. The *labels* legitimately differ — see `RECIPIENT_LABEL` — and that is
+ * exactly the axis on which these two vocabularies are allowed to disagree.
+ */
+export const RECIPIENT_ORDER: readonly EmailRecipient[] = PARTICIPANT_ORDER;
+
+/**
+ * Normal · High · Urgent — the priority select's three options.
+ * [Source: docs/Workers_Comp_Prototype.html line 612]
+ */
+export const EMAIL_PRIORITY_LABEL: Record<EmailPriority, string> = {
+  normal: "Normal",
+  high: "High",
+  urgent: "Urgent",
+};
+
+/**
+ * The order the three render in, which is the prototype's and the enum's.
+ *
+ * Declared rather than derived from the label map's key order, `MEETING_TYPE_ORDER`'s
+ * rule: object key order is a language detail and a select's order is a design
+ * decision.
+ */
+export const EMAIL_PRIORITY_ORDER: readonly EmailPriority[] = ["normal", "high", "urgent"];
+
+/**
+ * The accent a logged email's card carries for its priority.
+ *
+ * `normal` is deliberately unaccented — most email is normal, and a chip on
+ * every card would say nothing. High and Urgent take the warn and error pairs,
+ * which is the story's own instruction and the console's standing semantics.
+ *
+ * A record over the whole enum rather than a lookup with a default, so a fourth
+ * priority is a build error here rather than an unstyled chip.
+ */
+export const EMAIL_PRIORITY_TONE: Record<EmailPriority, string> = {
+  normal: "bg-surface-2 text-muted-text",
+  high: "bg-warn-soft text-warn",
+  urgent: "bg-error-soft text-error",
 };

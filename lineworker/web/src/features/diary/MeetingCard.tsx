@@ -12,13 +12,22 @@
  * which is the second copy of that rule Story 4.2's today's-meetings summary
  * would have made a third of.
  *
- * **"✉ Email participants" ships disabled with a tooltip** (AC 5), reusing
- * Story 3.5's pattern verbatim: the trigger is a wrapping span rather than the
- * button (a disabled `<button>` fires no pointer events, so Radix would never
- * see the hover), the reason is also the control's `title`, and it is
- * announced through `aria-describedby`. NFR-3 asks for no dead clicks; a
- * control whose explanation only a mouse can reach is a dead click for
- * everybody else. Story 4.3 enables this same control.
+ * **"✉ Email participants" is live as of Story 4.3.** It shipped disabled in
+ * 4.1 behind a `TooltipProvider`/`Tooltip`/`TooltipTrigger` wrapper with a
+ * `tabIndex={0}` span, a `title`, an sr-only reason and an `aria-describedby`
+ * pointing at it — the house's seam pattern, and enabling the control is the
+ * *deletion* of all of it. What is left is an ordinary button that hands the
+ * meeting to `onEmail`, disabled only while a meeting command is in flight like
+ * every other action on the card. Full variant only: the compact card in the
+ * today's-meetings summary stays a two-action card (✓ Done · Open Claim), which
+ * is now a real guard rather than a seam echo.
+ *
+ * **Delete asks first, inline** (Story 4.3). There is no `update_meeting`, so
+ * delete-and-recreate is the sanctioned correction path and a mis-click deletes
+ * an audited PHI row with no undo — `deferred-work.md` assigned the two-step to
+ * whoever built the feedback primitive, and that is this story. The first click
+ * swaps the button for "Delete?" beside "Cancel"; nothing is sent until the
+ * second. No `confirm()`, no dialog, no new primitive (NFR-3, UX-DR11).
  *
  * **A refusal renders on the card that caused it**, keyed by meeting id and
  * derived during render rather than cleared by an effect — `LineItemDialog`'s
@@ -32,12 +41,7 @@
  * treatment, which the prototype *does* duplicate and consequently formats two
  * ways for one meeting.
  */
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { useState } from "react";
 
 import type { Meeting } from "@/api/meetings";
 
@@ -48,9 +52,6 @@ import {
   PARTICIPANT_TAG_LABEL,
   PARTICIPANT_TAG_TONE,
 } from "./labels";
-
-/** The sentence the ✉ control shows until Story 4.3 builds the composer. */
-export const EMAIL_SEAM_REASON = "Email composer arrives in Story 4.3";
 
 const ACTION_CLASS =
   "rounded border px-[9px] py-[4px] text-[10.5px] font-semibold disabled:cursor-not-allowed disabled:opacity-50";
@@ -93,6 +94,7 @@ export function MeetingCard({
   compact = false,
   onComplete,
   onDelete,
+  onEmail,
   onOpenClaim,
 }: {
   meeting: Meeting;
@@ -116,19 +118,38 @@ export function MeetingCard({
    * and its two cards format the same meeting differently.
    *
    * What the variant changes is the *action row*: ✓ Done and "Open Claim",
-   * with no Delete and no email seam. Deleting from a one-day summary is a
-   * destructive action a long way from the list that shows what else is
-   * scheduled, and the ✉ seam belongs where Story 4.3 will enable it — the
-   * Meetings sub-tab — rather than being a second disabled control to explain.
+   * with no Delete and no ✉. Deleting from a one-day summary is a destructive
+   * action a long way from the list that shows what else is scheduled, and the
+   * composer belongs where the meeting's whole context is — the Meetings
+   * sub-tab. Both absences shipped as seam echoes in 4.1 and 4.2 and are real
+   * guards now that the ✉ works.
    */
   compact?: boolean;
   onComplete: (meeting: Meeting) => void;
   onDelete: (meeting: Meeting) => void;
+  /**
+   * Open the composer pre-filled from this meeting (Story 4.3, AC 5).
+   *
+   * Required rather than optional, unlike `onOpenClaim`: the full card always
+   * renders the ✉, so a consumer that forgot the prop would ship a dead click.
+   * The compact variant renders no ✉ at all and passes a `() => {}` that is
+   * honest about there being nothing to do — `onDelete`'s arrangement.
+   */
+  onEmail: (meeting: Meeting) => void;
   /** Drive the workspace to this meeting's claim. Compact cards only. */
   onOpenClaim?: (claimId: string) => void;
 }) {
-  const emailReasonId = `meeting-${meeting.id}-email-seam`;
   const claimId = meeting.claimId;
+  /**
+   * Whether Delete has been asked once — the inline two-step (Story 4.3).
+   *
+   * Local to the card, because it is about *this* control on *this* row: a
+   * confirmation that outlived the card, or followed the handler onto the next
+   * one, would be worse than none. Every other action on the card lowers it in
+   * its own handler, so a handler who thought better of it and pressed ✓ or ✉
+   * instead does not leave an armed Delete behind them.
+   */
+  const [confirming, setConfirming] = useState(false);
 
   return (
     <article
@@ -191,7 +212,11 @@ export function MeetingCard({
           <button
             type="button"
             data-testid="meeting-done"
-            onClick={() => onComplete(meeting)}
+            onClick={() => {
+              // Any other action disarms Delete — see `confirming`.
+              setConfirming(false);
+              onComplete(meeting);
+            }}
             disabled={busy}
             className={`${ACTION_CLASS} border-brand bg-brand text-white hover:bg-brand-strong`}
           >
@@ -233,48 +258,78 @@ export function MeetingCard({
           )
         ) : (
           <>
-            <TooltipProvider delayDuration={0}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span data-testid="meeting-email-seam" tabIndex={0}>
-                    <button
-                      type="button"
-                      data-testid="meeting-email"
-                      disabled
-                      // Duplicated as a native tooltip so the reason survives
-                      // without a pointer — Story 3.5's note.
-                      title={EMAIL_SEAM_REASON}
-                      aria-describedby={emailReasonId}
-                      className={`${ACTION_CLASS} border-steel bg-steel-soft text-steel`}
-                    >
-                      ✉ Email participants
-                    </button>
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent data-testid="meeting-email-reason">
-                  {EMAIL_SEAM_REASON}
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-
             <button
               type="button"
-              data-testid="meeting-delete"
-              onClick={() => onDelete(meeting)}
+              data-testid="meeting-email"
+              onClick={() => {
+                setConfirming(false);
+                onEmail(meeting);
+              }}
+              // Disabled only while a meeting command is in flight, with the ✓
+              // and the Delete beside it. Story 4.1's seam wrapper — the
+              // tooltip, the `tabIndex` span, the `title` and the sr-only
+              // reason — is deleted rather than adjusted; there is nothing left
+              // to explain about a control that works.
               disabled={busy}
-              className={`${ACTION_CLASS} border-border bg-surface-2 text-muted-text hover:bg-surface`}
+              className={`${ACTION_CLASS} border-steel bg-steel-soft text-steel hover:bg-surface disabled:cursor-not-allowed`}
             >
-              {deleting ? "Deleting…" : "Delete"}
+              ✉ Email participants
             </button>
+
+            {/* **The two-step, inline.** The first press arms; the second is
+                what calls the command. Two separate controls rather than one
+                that changes meaning under the pointer, so the confirmation and
+                the way out are both reachable and neither is where "Delete"
+                just was. */}
+            {confirming ? (
+              <>
+                <button
+                  type="button"
+                  data-testid="meeting-delete-confirm"
+                  onClick={() => {
+                    setConfirming(false);
+                    onDelete(meeting);
+                  }}
+                  disabled={busy}
+                  className={`${ACTION_CLASS} border-error bg-error text-white hover:opacity-90`}
+                >
+                  {/* No in-flight label here, and there cannot be one: the
+                      handler above lowers `confirming` before it calls
+                      `onDelete`, so this pair unmounts in the same commit the
+                      mutation starts and a `deleting` branch on it was
+                      unreachable. The plain Delete below is what renders
+                      "Deleting…", which is where the handler is looking. */}
+                  Delete?
+                </button>
+                <button
+                  type="button"
+                  data-testid="meeting-delete-cancel"
+                  onClick={() => setConfirming(false)}
+                  // **Never disabled.** `busy` is list-wide — `MeetingsSubTab`
+                  // hands every card the same flag — so arming Delete on one
+                  // meeting and ticking ✓ Done on another left an armed
+                  // destructive control that could not be lowered until somebody
+                  // else's command settled. Cancel sends nothing and touches no
+                  // row; the only thing it can do is make the card safer.
+                  className={`${ACTION_CLASS} border-border bg-surface-2 text-muted-text hover:bg-surface`}
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                data-testid="meeting-delete"
+                onClick={() => setConfirming(true)}
+                disabled={busy}
+                className={`${ACTION_CLASS} border-border bg-surface-2 text-muted-text hover:bg-surface`}
+              >
+                {deleting ? "Deleting…" : "Delete"}
+              </button>
+            )}
           </>
         )}
       </div>
-
-      {!compact && (
-        <span id={emailReasonId} className="sr-only">
-          {EMAIL_SEAM_REASON}
-        </span>
-      )}
 
       {error !== null && (
         <p

@@ -1,23 +1,30 @@
-"""The diary aggregate's routes — meetings today, notes and emails next.
+"""The diary aggregate's routes — meetings, notes, emails and their templates.
 
-A router of its own rather than four more paths on `api/routers/claims.py`,
+A router of its own rather than eleven more paths on `api/routers/claims.py`,
 which is 2622 lines and is the case file's. The split is by *aggregate*: these
-endpoints read and write `meeting` (and, in Stories 4.2 and 4.3, `diary_note`
-and `email_log`), none of which is part of a claim's read model. A handler's
-diary is theirs, not the claim's — which is also why the prefix is
-`/claims-diary` rather than `/claims/{id}/meetings`: the list is scoped to the
-*caller*, and a path that nested it under a claim would publish a resource
-whose contents do not belong to that claim.
+endpoints read and write `meeting` (Story 4.1), `diary_note` (4.2) and
+`email_log`/`email_template` (4.3), none of which is part of a claim's read
+model. A handler's diary is theirs, not the claim's — which is also why the
+prefix is `/claims-diary` rather than `/claims/{id}/meetings`: the lists are
+scoped to the *caller*, and a path that nested one under a claim would publish
+a resource whose contents do not belong to that claim.
 
-Thin by AD-1: each route validates a body or four query parameters, calls one
-command, and maps its refusals onto statuses. Every number, the sort, and the
-upcoming/done status were decided in `services/claims/meetings.py` and
-`services/derivations/meeting_horizon.py`.
+Thin by AD-1: each route validates a body or a few query parameters, calls one
+command, and maps its refusals onto statuses. Every number, every sort, the
+upcoming/done status and **every merged letter** were decided in
+`services/claims/{meetings,notes,emails}.py` and `services/derivations/`. In
+particular no template text and no claim field is interpolated here — the merge
+endpoints hand back what the service composed.
 
 Thin by AD-7 in the way `/claims/queue` is — **there is no scope-shaped
 parameter here.** Not a rejected one: an absent one. Nothing on any of these
-four routes can name a user, an employer or a role, so "whose meetings?" has
-exactly one answer and it comes from the session cookie.
+routes can name a user, an employer or a role, so "whose diary?" has exactly
+one answer and it comes from the session cookie.
+
+**Nothing on this router sends anything anywhere.** `POST /emails` writes a row
+and `POST /meetings` writes a row; neither produces an email, a calendar invite
+or any other network egress — that is a Deferred architecture decision with its
+own compliance review, and `services/claims/emails.py` states it at length.
 """
 
 from datetime import date, datetime, time
@@ -31,8 +38,37 @@ from api.errors import PROBLEM_CONTENT_TYPE, ProblemDocument, ProblemException
 from api.routers.auth import UNAUTHENTICATED_RESPONSE
 from api.routers.claims import BAD_CURSOR_RESPONSE, CLAIM_ID_PATTERN, FORBIDDEN_RESPONSE
 from api.schemas import ApiModel
-from data.models.enums import MeetingParticipant, MeetingType
+from data.models.enums import EmailPriority, MeetingParticipant, MeetingType
 from services.claims.edit import EditNotPermitted, InvalidPatch
+from services.claims.emails import (
+    MAX_BODY_LENGTH,
+    MAX_SUBJECT_LENGTH,
+    EmailClaimNotVisible,
+    EmailLogNotVisible,
+    EmailLogPage,
+    EmailLogView,
+    EmailTemplateNotFound,
+    EmailTemplateSummary,
+    MergedEmail,
+    list_email_logs,
+    list_email_templates,
+    meeting_email_draft,
+    merged_template,
+    send_email,
+)
+from services.claims.emails import (
+    MAX_PAGE_LIMIT as EMAIL_MAX_PAGE_LIMIT,
+)
+from services.claims.emails import (
+    MIN_PAGE_LIMIT as EMAIL_MIN_PAGE_LIMIT,
+)
+
+# Aliased for the reason the notes list's bounds are: each list declares its own
+# page-size window and its own cursor failure, and importing either unqualified
+# would silently give one table the other's.
+from services.claims.emails import (
+    InvalidCursor as EmailInvalidCursor,
+)
 from services.claims.meetings import (
     MAX_LOCATION_LENGTH,
     MAX_NOTES_LENGTH,
@@ -1048,4 +1084,613 @@ def _conflict(exc: StaleMeeting) -> ProblemException:
             # for it explicitly.
             "meeting": _meeting(exc.fresh).model_dump(by_alias=True, mode="json")
         },
+    )
+
+
+# --- Story 4.3: stakeholder emails --------------------------------------
+
+
+class EmailTemplateResponse(ApiModel):
+    """One of the six quick templates, as the composer's button row reads it.
+
+    **The template *text* is not on the wire, deliberately.** A client that
+    received `subjectTemplate` and `bodyTemplate` would be one `replace()` away
+    from merging in the browser, which is exactly what AD-1 moves to the server;
+    the merged text arrives from `GET /email-templates/{key}/merged` instead.
+
+    **No `id`.** `templateKey` is unique and is the identity every surface uses,
+    so the surrogate never has to leave the server — `GlossaryTermResponse`'s
+    argument, and it is what makes this payload keyable by construction.
+
+    `defaultRecipients` is what the checkbox set becomes when the button is
+    pressed, and it is here as well as on the merge so the SPA can render the
+    six buttons before any claim is selected.
+    """
+
+    template_key: str = Field(description="Stable snake_case key, e.g. `rtw_offer`.")
+    label: str = Field(description="The button's text, e.g. `RTW Offer`. UI-owned wording.")
+    default_recipients: list[MeetingParticipant] = Field(
+        description=(
+            "The stakeholder roles this template addresses. The same six-value "
+            "vocabulary a meeting's `participants` uses, so convert-to-email "
+            "maps one to one."
+        ),
+    )
+
+
+class EmailTemplateListResponse(ApiModel):
+    """The six, in the composer's button order.
+
+    **Not a paged envelope**, and that is not an oversight: this is reference
+    data with a fixed cardinality of six, rendered as a row of buttons. A
+    `nextCursor` here would publish a pagination contract for a list that
+    cannot grow without a migration and a UI change in the same commit.
+    """
+
+    items: list[EmailTemplateResponse]
+
+
+class MergedEmailResponse(ApiModel):
+    """A pre-filled composition — what the modal opens holding (AD-1).
+
+    The same shape for a template merge and for a meeting's email draft, so the
+    SPA has one "fill the composer from the server" path rather than two.
+
+    **`subject` and `body` arrive merged and contain no `{{…}}`.** The merge
+    resolves every placeholder or fails; a client must not scan this text for
+    tokens to substitute. Text in *square* brackets — `$[AMOUNT]`, `[RATING]%`,
+    `[Please add next steps]` — is deliberate handler-fill prompt text and is
+    left exactly as it is (AD-2: no financial figure is auto-filled).
+
+    `claimId` is echoed back because the composer's read-only claim reference
+    renders it, and because the value the merge resolved is the one the send
+    should carry: a browser that re-read its own selection in between could
+    compose against one claim and log against another.
+    """
+
+    claim_id: str | None = Field(description="The claim this text was merged against, or null.")
+    subject: str = Field(description="Merged subject line. No `{{…}}` survives a merge.")
+    body: str = Field(description="Merged letter body. No `{{…}}` survives a merge.")
+    recipients: list[MeetingParticipant] = Field(
+        description=(
+            "The checkbox set to apply — exactly this set, not a union with "
+            "whatever is currently ticked."
+        ),
+    )
+
+
+class EmailLogResponse(ApiModel):
+    """One logged email, as the sent-log card and the 201 both read it.
+
+    **No `version` and no `status`**, unlike `MeetingResponse`, and both
+    absences are the contract: the row is append-only, so there is no
+    compare-and-swap for a version to guard, and it has no lifecycle. The "Sent"
+    badge is `sentAt` formatted in the browser — **not a delivery state**. There
+    is no delivery: `POST /emails` writes a row and nothing leaves the process.
+
+    `claimId` and `workerName` travel together and are both nullable, because
+    `claim_id` is (the ERD's `CLAIM |o--o{ EMAIL_LOG`). The card's recipients
+    line reads `To: … · {workerName}`, which is why the name is here rather than
+    fetched.
+
+    `templateKey` is null for a free composition and names one of the six
+    otherwise — the provenance of the text, not a promise that the text still
+    matches the template (the handler may have edited it before sending).
+    """
+
+    id: int
+    claim_id: str | None = Field(description="The referenced claim's `WC-nnnn`, or null.")
+    worker_name: str | None = Field(description="The referenced claim's injured worker, or null.")
+    template_key: str | None = Field(
+        description="Which of the six templates this started from, or null for a free composition."
+    )
+    subject: str = Field(description="The subject as sent. PHI — never logged.")
+    body: str | None = Field(description="The letter as sent. PHI — never logged.")
+    priority: EmailPriority
+    recipients: list[MeetingParticipant] = Field(
+        description=(
+            "Stakeholder **roles**, not addresses — there are no per-recipient "
+            "addresses in this console. Stored in the vocabulary's own order, "
+            "de-duplicated; the request's order is not preserved."
+        ),
+    )
+    sent_at: datetime = Field(
+        description=(
+            "When the handler pressed the button, UTC. The server's clock. It "
+            "records composition, not transmission."
+        ),
+    )
+
+
+class EmailLogListResponse(ApiModel):
+    """The list envelope the Lists convention fixes: `{items, nextCursor, total}`.
+
+    Ordered **newest first** — `sentAt` descending, `id` descending — which is
+    the one thing about this payload a client must not reproduce for itself.
+
+    **`total` is null on a cursor page**, which is the Lists convention's
+    optional member rather than a divergence from it: the SPA reads the count
+    from the first page alone, so re-counting the whole log on every "Show more"
+    would buy a number nothing renders. On the first page it is the size of the
+    caller's whole sent log, not of `items`.
+    """
+
+    items: list[EmailLogResponse]
+    next_cursor: str | None = None
+    total: int | None = Field(
+        default=None,
+        description=(
+            "The size of the caller's whole sent log — **present on the first "
+            "page only**, null on any page fetched with a `cursor`. Read it "
+            "from the first page and keep it; do not count `items`."
+        ),
+    )
+
+
+def _email_template(view: EmailTemplateSummary) -> EmailTemplateResponse:
+    return EmailTemplateResponse(
+        template_key=view.template_key,
+        label=view.label,
+        default_recipients=list(view.default_recipients),
+    )
+
+
+def _merged(view: MergedEmail) -> MergedEmailResponse:
+    """One merged composition → one wire object.
+
+    Written out rather than `model_validate(view)` for `_meeting`'s reason: the
+    service's `claim_business_id` is the wire's `claimId`, and an attribute
+    mapping that silently dropped it would leave the composer's claim reference
+    empty for a merge that had a claim.
+    """
+    return MergedEmailResponse(
+        claim_id=view.claim_business_id,
+        subject=view.subject,
+        body=view.body,
+        recipients=list(view.recipients),
+    )
+
+
+def _email(view: EmailLogView) -> EmailLogResponse:
+    return EmailLogResponse(
+        id=view.id,
+        claim_id=view.claim_business_id,
+        worker_name=view.worker_name,
+        template_key=view.template_key,
+        subject=view.subject,
+        body=view.body,
+        priority=view.priority,
+        recipients=list(view.recipients),
+        sent_at=view.sent_at,
+    )
+
+
+def _email_page(page: EmailLogPage) -> EmailLogListResponse:
+    return EmailLogListResponse(
+        items=[_email(view) for view in page.items],
+        next_cursor=page.next_cursor,
+        total=page.total,
+    )
+
+
+EMAIL_NOT_FOUND_RESPONSE: dict[int | str, dict[str, object]] = {
+    404: {
+        "description": (
+            "Any of three things, told apart by `type`. "
+            "`/problems/email-template-not-found` — no template with that key; "
+            "the same answer for an absent key and a malformed one. "
+            "`/problems/email-claim-not-found` — no such claim in the caller's "
+            "caseload, deliberately the same answer for a claim that does not "
+            "exist and one that belongs to somebody else; on the write path, "
+            "**nothing was written**. `/problems/email-not-readable` — the row "
+            "*was* written and audited and then could not be read back under "
+            "the caller's scope; it exists, and re-sending it would duplicate a "
+            "row in an append-only table with no delete path (RFC 9457 problem "
+            "document)."
+        ),
+        "content": {PROBLEM_CONTENT_TYPE: {"schema": ProblemDocument.model_json_schema()}},
+    }
+}
+
+EMAIL_UNPROCESSABLE_RESPONSE: dict[int | str, dict[str, object]] = {
+    422: {
+        "description": (
+            "The email cannot be logged — an empty or whitespace-only subject, "
+            "a subject carrying a line break, no recipient selected, or text "
+            "carrying characters the column cannot hold. All reach this route "
+            "as `/problems/invalid-patch`, and the SPA renders each inline at "
+            "the control it names. Text *longer* than the field allows is "
+            "caught a layer earlier: `subject` and `body` declare `maxLength`, "
+            "so an over-long value is refused by the schema with "
+            "`/problems/validation-error`, exactly as an unknown recipient "
+            "token or priority is. The command enforces every bound regardless, "
+            "for a caller that is not this schema (RFC 9457 problem document). "
+            "No refusal ever echoes the submitted value."
+        ),
+        "content": {PROBLEM_CONTENT_TYPE: {"schema": ProblemDocument.model_json_schema()}},
+    }
+}
+
+
+class NewEmailRequest(ApiModel):
+    """The composer's body — recipients, a subject, and what it is about.
+
+    `extra="forbid"` for `NewMeetingRequest`'s reason: an unknown key is a 422
+    from the contract rather than a value silently dropped on the way to a
+    command.
+
+    **`subject` and `recipients` are required and everything else is not.**
+    That is AC 2's server half twice over: a body with a blank subject or an
+    empty recipient list is refused with `/problems/invalid-patch` naming the
+    control, and the SPA renders it inline rather than in a native dialog.
+
+    **`claimId` is optional**, because free composition with nothing selected is
+    legal and logs with `claim_id` null (the ERD's optional edge). **The six
+    templates are not**: they are claim-aware by definition, so the *merge*
+    endpoint requires a claim and the composer disables the buttons with a
+    stated reason when there is none.
+
+    **`templateKey` is provenance, not a request to merge.** By the time this
+    body is sent the text has already been merged and possibly edited by the
+    handler; the key records which of the six it started from, and an unseeded
+    one is a 404 rather than a silently nulled column.
+
+    **The text is trimmed before it is measured**, `NewDiaryNoteRequest`'s fix:
+    `max_length` counts what arrives on the wire and the command counts what it
+    will store, so a full-length body ending in a newline would be refused for
+    exceeding a limit it does not exceed. Trimming first makes both layers
+    measure the same string.
+    """
+
+    model_config = ApiModel.model_config | ConfigDict(extra="forbid")
+
+    claim_id: str | None = Field(
+        default=None,
+        pattern=CLAIM_ID_PATTERN,
+        description="The claim this email is about, `WC-nnnn`. Must be in the caller's caseload.",
+        examples=["WC-20017"],
+    )
+    template_key: str | None = Field(
+        default=None,
+        max_length=64,
+        description="Which of the six templates the text started from, or null.",
+        examples=["three_point_contact"],
+    )
+    subject: Annotated[str, BeforeValidator(_trimmed)] = Field(
+        max_length=MAX_SUBJECT_LENGTH,
+        description=(
+            "The subject. Required, single line, and refused when it trims to "
+            "nothing — the prototype answers an empty one with a native "
+            "`alert()`; here it is an inline 422 at the control."
+        ),
+        examples=["3-Point Contact — WC Claim WC-20017"],
+    )
+    body: Annotated[str | None, BeforeValidator(_trimmed)] = Field(
+        default=None,
+        max_length=MAX_BODY_LENGTH,
+        description="The letter. Optional; an empty one is stored as null.",
+    )
+    priority: EmailPriority = Field(
+        default=EmailPriority.normal,
+        description="Normal, High or Urgent. Defaults to the value the composer opens on.",
+    )
+    recipients: list[MeetingParticipant] = Field(
+        description=(
+            "The stakeholder roles to address. **At least one is required** — "
+            "the prototype logs a send with none, and an email addressed to "
+            "nobody records nothing about who was told. Stored in the "
+            "vocabulary's own order, de-duplicated."
+        ),
+    )
+
+
+TEMPLATE_KEY_PATH = Annotated[
+    str,
+    Path(
+        max_length=64,
+        description="The template's stable key, e.g. `rtw_offer`.",
+        examples=["three_point_contact"],
+    ),
+]
+
+MERGE_CLAIM_QUERY = Annotated[
+    str,
+    Query(
+        alias="claimId",
+        pattern=CLAIM_ID_PATTERN,
+        description=(
+            "The claim to merge against, `WC-nnnn`. **Required** — the six "
+            "templates are claim-aware, and the prototype's claim-less render "
+            "produced letters full of holes. Must be in the caller's caseload; "
+            "one that is not answers 404, the same as one that does not exist."
+        ),
+        examples=["WC-20017"],
+    ),
+]
+
+
+@router.get(
+    "/email-templates",
+    response_model=EmailTemplateListResponse,
+    summary="The six quick email templates, in the composer's button order",
+    responses={**UNAUTHENTICATED_RESPONSE},
+)
+async def email_templates(
+    ctx: CallerContextDep,
+    db: DbDep,
+    response: Response,
+) -> EmailTemplateListResponse:
+    """Reference data: the same six rows for every authenticated caller.
+
+    Unscoped in the sense `/glossary` is — there is nothing here to scope, no
+    employer column and no PHI — and still behind the session dependency, so
+    "unscoped" means "the same answer for everyone signed in", never "public".
+    `Cache-Control: no-store` all the same, because every route on this router
+    says so and an exception would be the one somebody has to reason about.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    return EmailTemplateListResponse(
+        items=[_email_template(view) for view in await list_email_templates(db, ctx)]
+    )
+
+
+@router.get(
+    "/email-templates/{template_key}/merged",
+    response_model=MergedEmailResponse,
+    summary="One template, merged against one claim (server-side)",
+    responses={**UNAUTHENTICATED_RESPONSE, **EMAIL_NOT_FOUND_RESPONSE},
+)
+async def merged_email_template(
+    ctx: CallerContextDep,
+    db: DbDep,
+    response: Response,
+    template_key: TEMPLATE_KEY_PATH,
+    claim_id: MERGE_CLAIM_QUERY,
+) -> MergedEmailResponse:
+    """Fill the composer. **The browser does no merging** (AD-1).
+
+    Every placeholder is resolved here, against a claim read under the caller's
+    scope: `daysOpen` from the registered derivation (AD-10), `stage` and
+    `status` as prose, the worker's name from the claim's employee and the
+    signature from the caller's own persona. A `claimId` outside the caller's
+    book answers 404, deliberately the same as one that does not exist.
+
+    Omitting `claimId` is `/problems/validation-error` from the schema rather
+    than a degraded letter — the SPA disables the six buttons with a stated
+    reason instead of sending this.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        merged = await merged_template(db, ctx, template_key, claim_business_id=claim_id)
+    except EmailTemplateNotFound as exc:
+        raise _email_template_not_found() from exc
+    except EmailClaimNotVisible as exc:
+        raise _email_claim_not_found(exc.claim_business_id) from exc
+    return _merged(merged)
+
+
+@router.get(
+    "/meetings/{meeting_id}/email-draft",
+    response_model=MergedEmailResponse,
+    summary="The convert-to-email letter for one meeting",
+    responses={
+        **UNAUTHENTICATED_RESPONSE,
+        **MEETING_NOT_FOUND_RESPONSE,
+        **CLOCK_UNPROCESSABLE_RESPONSE,
+    },
+)
+async def meeting_draft(
+    ctx: CallerContextDep,
+    db: DbDep,
+    response: Response,
+    meeting_id: MEETING_ID_PATH,
+    as_of: AS_OF_QUERY = None,
+) -> MergedEmailResponse:
+    """A meeting confirmation, ready to send — the ✉ button on a meeting card.
+
+    The same payload a template merge returns, so the composer has one fill
+    path. `recipients` is that meeting's participants: both sides are the same
+    six-value vocabulary, so the mapping is the identity rather than the
+    prototype's substring match on labels.
+
+    **Read-only with respect to `meeting`** (AD-12). Converting a meeting to an
+    email changes nothing about the meeting, and this route writes nothing at
+    all — a subsequent `POST /emails` is what logs anything.
+
+    404 for a meeting that is absent, held by another handler, or whose claim
+    has left the caller's book — one answer for all three, which is the
+    meetings module's security property and not something this route relaxes.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        draft = await meeting_email_draft(db, ctx, meeting_id, as_of=as_of)
+    except MeetingNotVisible as exc:
+        raise _meeting_not_found(meeting_id) from exc
+    return _merged(draft)
+
+
+@router.get(
+    "/emails",
+    response_model=EmailLogListResponse,
+    summary="The session persona's logged emails, newest first",
+    responses={**UNAUTHENTICATED_RESPONSE, **BAD_CURSOR_RESPONSE},
+)
+async def emails(
+    ctx: CallerContextDep,
+    db: DbDep,
+    response: Response,
+    cursor: Annotated[
+        str | None,
+        Query(description="An opaque `nextCursor` from a previous response."),
+    ] = None,
+    limit: Annotated[
+        int | None,
+        Query(
+            ge=EMAIL_MIN_PAGE_LIMIT,
+            le=EMAIL_MAX_PAGE_LIMIT,
+            description="Page size. Reused from the cursor when one is supplied.",
+        ),
+    ] = None,
+) -> EmailLogListResponse:
+    """The caller's own sent log. Page it; you cannot re-scope it.
+
+    **Sender scope, not employer scope**: two handlers whose books overlap read
+    their own correspondence and not each other's, and a supervisor over both
+    reads neither.
+
+    **Not filtered by claim, and there is no parameter that could be.** The list
+    is the handler's log across their whole book — the prototype's own shape —
+    and each row carries its claim reference.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        page = await list_email_logs(db, ctx, cursor=cursor, limit=limit)
+    except EmailInvalidCursor as exc:
+        # 400 rather than 422, for the meetings list's reason: the cursor is
+        # syntactically a string and passed validation; what failed is that it
+        # does not describe a position in *this* list.
+        raise ProblemException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            title="Bad Request",
+            detail=str(exc),
+            type_="/problems/invalid-cursor",
+            headers={"Cache-Control": "no-store"},
+        ) from exc
+    return _email_page(page)
+
+
+@router.post(
+    "/emails",
+    response_model=EmailLogResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Log a stakeholder email (audited) — no message is transmitted",
+    responses={
+        **UNAUTHENTICATED_RESPONSE,
+        **FORBIDDEN_RESPONSE,
+        **EMAIL_NOT_FOUND_RESPONSE,
+        **EMAIL_UNPROCESSABLE_RESPONSE,
+    },
+)
+async def log_email(
+    ctx: CallerContextDep,
+    db: DbDep,
+    response: Response,
+    body: NewEmailRequest,
+) -> EmailLogResponse:
+    """Write one `email_log` row, and answer with it.
+
+    **Nothing is sent.** No SMTP, no queue, no webhook — the control is labelled
+    "✉ Send Email (logged)" and this is what it means. Real egress is a Deferred
+    architecture decision with its own compliance review; a client must not read
+    the 201 as a delivery receipt, and `sentAt` records composition rather than
+    transmission.
+
+    **201 with no `Location` header**, `write_diary_note`'s call: a row is
+    created, so 201 is the honest status, and there is deliberately no
+    `GET /claims-diary/emails/{id}` to point at — the log is read as a list and
+    the prototype's email card opens nothing.
+
+    The body is the created entity rather than an acknowledgement, so what the
+    SPA renders at the top of the list is what the *scoped read* returns rather
+    than an echo of what was sent.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        view = await send_email(
+            db,
+            ctx,
+            subject=body.subject,
+            body=body.body,
+            priority=body.priority,
+            recipients=body.recipients,
+            claim_business_id=body.claim_id,
+            template_key=body.template_key,
+        )
+    except EditNotPermitted as exc:
+        raise _forbidden(exc) from exc
+    except EmailTemplateNotFound as exc:
+        raise _email_template_not_found() from exc
+    except EmailClaimNotVisible as exc:
+        raise _email_claim_not_found(exc.claim_business_id) from exc
+    except EmailLogNotVisible as exc:
+        # The row was written and audited, and then the post-commit re-read
+        # could not see it — a scope narrowing landing between the two
+        # statements. Its own problem type and its own sentence, because the one
+        # thing the answer must not say is anything a caller would respond to by
+        # sending it again: `email_log` has no edit and no delete, so a retry is
+        # a duplicate nobody can remove. `_note_not_readable`'s ruling.
+        raise _email_not_readable(exc.email_id) from exc
+    except InvalidPatch as exc:
+        raise _unprocessable(exc) from exc
+    return _email(view)
+
+
+def _email_template_not_found() -> ProblemException:
+    """The 404 for a template key that is not one of the six.
+
+    **The key is not echoed**, and it used to be — on the argument that the six
+    keys are published by `GET /email-templates` anyway, so repeating one back
+    revealed nothing. That argument holds for the six and for nothing else: the
+    value quoted is whatever the *caller* put in the path, up to 64 characters
+    of it, and it lands in a problem document a browser may render and a proxy
+    may log. `normalise_recipients` refuses a submitted token without quoting it
+    for exactly this reason (AD-11), and one refusal on this router quoting
+    caller text while its neighbour does not is the inconsistency worth removing
+    rather than the echo worth keeping.
+
+    A client with six buttons still knows which is broken: it sent the request.
+
+    **No `pattern` on `TEMPLATE_KEY_PATH` to go with this.** A malformed key and
+    an absent one answer the same 404 by design — there is no enumeration to
+    protect, and a pattern would turn the malformed case into a 422, splitting
+    one documented answer into two.
+    """
+    return ProblemException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        title="Not Found",
+        detail="No email template with that key.",
+        type_="/problems/email-template-not-found",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def _email_claim_not_found(claim_business_id: str | None) -> ProblemException:
+    """The 404 for a claim reference outside the caller's book.
+
+    Its own `type` rather than the meetings or notes one, because the three name
+    different resources and a client mapping problem types to inline messages
+    should not have to know which aggregate answered. The *wording* is the case
+    file's, so a caller comparing this refusal with `GET /claims/{id}`'s learns
+    nothing.
+    """
+    return ProblemException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        title="Not Found",
+        detail=f"No claim {claim_business_id} in your caseload.",
+        type_="/problems/email-claim-not-found",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def _email_not_readable(email_id: int) -> ProblemException:
+    """The 404 for an email that was **logged** and then could not be read back.
+
+    `_note_not_readable`'s shape, and it matters more here than anywhere else on
+    this router. The row is committed and audited by the time this is raised —
+    only the scoped re-read failed — and `email_log` has no edit and no delete,
+    so a caller told the write failed re-sends it and the console's own refusal
+    is what duplicates the record of a communication. It is still a 404 rather
+    than a 500 because the row genuinely is not in the caller's sent log *now*,
+    which is a fact about scope rather than a fault.
+    """
+    return ProblemException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        title="Not Found",
+        detail=(
+            f"Email {email_id} was logged, but it can no longer be read back "
+            "from your sent log — your caseload changed while it was being "
+            "written. Do not send it again; reload the list."
+        ),
+        type_="/problems/email-not-readable",
+        headers={"Cache-Control": "no-store"},
     )

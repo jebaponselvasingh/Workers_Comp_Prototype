@@ -45,6 +45,109 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/claims-diary/email-templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The six quick email templates, in the composer's button order
+         * @description Reference data: the same six rows for every authenticated caller.
+         *
+         *     Unscoped in the sense `/glossary` is — there is nothing here to scope, no
+         *     employer column and no PHI — and still behind the session dependency, so
+         *     "unscoped" means "the same answer for everyone signed in", never "public".
+         *     `Cache-Control: no-store` all the same, because every route on this router
+         *     says so and an exception would be the one somebody has to reason about.
+         */
+        get: operations["email_templates_claims_diary_email_templates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/claims-diary/email-templates/{template_key}/merged": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One template, merged against one claim (server-side)
+         * @description Fill the composer. **The browser does no merging** (AD-1).
+         *
+         *     Every placeholder is resolved here, against a claim read under the caller's
+         *     scope: `daysOpen` from the registered derivation (AD-10), `stage` and
+         *     `status` as prose, the worker's name from the claim's employee and the
+         *     signature from the caller's own persona. A `claimId` outside the caller's
+         *     book answers 404, deliberately the same as one that does not exist.
+         *
+         *     Omitting `claimId` is `/problems/validation-error` from the schema rather
+         *     than a degraded letter — the SPA disables the six buttons with a stated
+         *     reason instead of sending this.
+         */
+        get: operations["merged_email_template_claims_diary_email_templates__template_key__merged_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/claims-diary/emails": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The session persona's logged emails, newest first
+         * @description The caller's own sent log. Page it; you cannot re-scope it.
+         *
+         *     **Sender scope, not employer scope**: two handlers whose books overlap read
+         *     their own correspondence and not each other's, and a supervisor over both
+         *     reads neither.
+         *
+         *     **Not filtered by claim, and there is no parameter that could be.** The list
+         *     is the handler's log across their whole book — the prototype's own shape —
+         *     and each row carries its claim reference.
+         */
+        get: operations["emails_claims_diary_emails_get"];
+        put?: never;
+        /**
+         * Log a stakeholder email (audited) — no message is transmitted
+         * @description Write one `email_log` row, and answer with it.
+         *
+         *     **Nothing is sent.** No SMTP, no queue, no webhook — the control is labelled
+         *     "✉ Send Email (logged)" and this is what it means. Real egress is a Deferred
+         *     architecture decision with its own compliance review; a client must not read
+         *     the 201 as a delivery receipt, and `sentAt` records composition rather than
+         *     transmission.
+         *
+         *     **201 with no `Location` header**, `write_diary_note`'s call: a row is
+         *     created, so 201 is the honest status, and there is deliberately no
+         *     `GET /claims-diary/emails/{id}` to point at — the log is read as a list and
+         *     the prototype's email card opens nothing.
+         *
+         *     The body is the created entity rather than an acknowledgement, so what the
+         *     SPA renders at the top of the list is what the *scoped read* returns rather
+         *     than an echo of what was sent.
+         */
+        post: operations["log_email_claims_diary_emails_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/claims-diary/meetings": {
         parameters: {
             query?: never;
@@ -122,6 +225,39 @@ export interface paths {
          *     owns rather than from two the browser would have to combine.
          */
         patch: operations["complete_meeting_route_claims_diary_meetings__meeting_id__patch"];
+        trace?: never;
+    };
+    "/claims-diary/meetings/{meeting_id}/email-draft": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The convert-to-email letter for one meeting
+         * @description A meeting confirmation, ready to send — the ✉ button on a meeting card.
+         *
+         *     The same payload a template merge returns, so the composer has one fill
+         *     path. `recipients` is that meeting's participants: both sides are the same
+         *     six-value vocabulary, so the mapping is the identity rather than the
+         *     prototype's substring match on labels.
+         *
+         *     **Read-only with respect to `meeting`** (AD-12). Converting a meeting to an
+         *     email changes nothing about the meeting, and this route writes nothing at
+         *     all — a subsequent `POST /emails` is what logs anything.
+         *
+         *     404 for a meeting that is absent, held by another handler, or whose claim
+         *     has left the caller's book — one answer for all three, which is the
+         *     meetings module's security property and not something this route relaxes.
+         */
+        get: operations["meeting_draft_claims_diary_meetings__meeting_id__email_draft_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/claims-diary/notes": {
@@ -1581,6 +1717,156 @@ export interface components {
             recoveryWindows: components["schemas"]["RecoveryWindow"][];
         };
         /**
+         * EmailLogListResponse
+         * @description The list envelope the Lists convention fixes: `{items, nextCursor, total}`.
+         *
+         *     Ordered **newest first** — `sentAt` descending, `id` descending — which is
+         *     the one thing about this payload a client must not reproduce for itself.
+         *
+         *     **`total` is null on a cursor page**, which is the Lists convention's
+         *     optional member rather than a divergence from it: the SPA reads the count
+         *     from the first page alone, so re-counting the whole log on every "Show more"
+         *     would buy a number nothing renders. On the first page it is the size of the
+         *     caller's whole sent log, not of `items`.
+         */
+        EmailLogListResponse: {
+            /** Items */
+            items: components["schemas"]["EmailLogResponse"][];
+            /** Nextcursor */
+            nextCursor?: string | null;
+            /**
+             * Total
+             * @description The size of the caller's whole sent log — **present on the first page only**, null on any page fetched with a `cursor`. Read it from the first page and keep it; do not count `items`.
+             */
+            total?: number | null;
+        };
+        /**
+         * EmailLogResponse
+         * @description One logged email, as the sent-log card and the 201 both read it.
+         *
+         *     **No `version` and no `status`**, unlike `MeetingResponse`, and both
+         *     absences are the contract: the row is append-only, so there is no
+         *     compare-and-swap for a version to guard, and it has no lifecycle. The "Sent"
+         *     badge is `sentAt` formatted in the browser — **not a delivery state**. There
+         *     is no delivery: `POST /emails` writes a row and nothing leaves the process.
+         *
+         *     `claimId` and `workerName` travel together and are both nullable, because
+         *     `claim_id` is (the ERD's `CLAIM |o--o{ EMAIL_LOG`). The card's recipients
+         *     line reads `To: … · {workerName}`, which is why the name is here rather than
+         *     fetched.
+         *
+         *     `templateKey` is null for a free composition and names one of the six
+         *     otherwise — the provenance of the text, not a promise that the text still
+         *     matches the template (the handler may have edited it before sending).
+         */
+        EmailLogResponse: {
+            /**
+             * Body
+             * @description The letter as sent. PHI — never logged.
+             */
+            body: string | null;
+            /**
+             * Claimid
+             * @description The referenced claim's `WC-nnnn`, or null.
+             */
+            claimId: string | null;
+            /** Id */
+            id: number;
+            priority: components["schemas"]["EmailPriority"];
+            /**
+             * Recipients
+             * @description Stakeholder **roles**, not addresses — there are no per-recipient addresses in this console. Stored in the vocabulary's own order, de-duplicated; the request's order is not preserved.
+             */
+            recipients: components["schemas"]["MeetingParticipant"][];
+            /**
+             * Sentat
+             * Format: date-time
+             * @description When the handler pressed the button, UTC. The server's clock. It records composition, not transmission.
+             */
+            sentAt: string;
+            /**
+             * Subject
+             * @description The subject as sent. PHI — never logged.
+             */
+            subject: string;
+            /**
+             * Templatekey
+             * @description Which of the six templates this started from, or null for a free composition.
+             */
+            templateKey: string | null;
+            /**
+             * Workername
+             * @description The referenced claim's injured worker, or null.
+             */
+            workerName: string | null;
+        };
+        /**
+         * EmailPriority
+         * @description How a logged stakeholder email is flagged (Story 4.3).
+         *
+         *     The composer's `<select>`, as a closed type. A native enum column holds one,
+         *     so the vocabulary lives here for `BodyRegion`'s reason — `data/` must not
+         *     import from `services/` — and the display strings stay the browser's.
+         *
+         *     **Three members and no `low`**, which is the prototype's own list rather
+         *     than a truncation of a general priority scale: the select offers Normal,
+         *     High and Urgent, and a fourth value would be a control nothing renders.
+         *
+         *     Member order is the select's option order, which is also the order the card
+         *     accent escalates in (none → warn → error) and the order PostgreSQL sorts the
+         *     type in. `normal` is first because it is the default the composer opens on.
+         *     [Source: docs/Workers_Comp_Prototype.html line 612]
+         * @enum {string}
+         */
+        EmailPriority: "normal" | "high" | "urgent";
+        /**
+         * EmailTemplateListResponse
+         * @description The six, in the composer's button order.
+         *
+         *     **Not a paged envelope**, and that is not an oversight: this is reference
+         *     data with a fixed cardinality of six, rendered as a row of buttons. A
+         *     `nextCursor` here would publish a pagination contract for a list that
+         *     cannot grow without a migration and a UI change in the same commit.
+         */
+        EmailTemplateListResponse: {
+            /** Items */
+            items: components["schemas"]["EmailTemplateResponse"][];
+        };
+        /**
+         * EmailTemplateResponse
+         * @description One of the six quick templates, as the composer's button row reads it.
+         *
+         *     **The template *text* is not on the wire, deliberately.** A client that
+         *     received `subjectTemplate` and `bodyTemplate` would be one `replace()` away
+         *     from merging in the browser, which is exactly what AD-1 moves to the server;
+         *     the merged text arrives from `GET /email-templates/{key}/merged` instead.
+         *
+         *     **No `id`.** `templateKey` is unique and is the identity every surface uses,
+         *     so the surrogate never has to leave the server — `GlossaryTermResponse`'s
+         *     argument, and it is what makes this payload keyable by construction.
+         *
+         *     `defaultRecipients` is what the checkbox set becomes when the button is
+         *     pressed, and it is here as well as on the merge so the SPA can render the
+         *     six buttons before any claim is selected.
+         */
+        EmailTemplateResponse: {
+            /**
+             * Defaultrecipients
+             * @description The stakeholder roles this template addresses. The same six-value vocabulary a meeting's `participants` uses, so convert-to-email maps one to one.
+             */
+            defaultRecipients: components["schemas"]["MeetingParticipant"][];
+            /**
+             * Label
+             * @description The button's text, e.g. `RTW Offer`. UI-owned wording.
+             */
+            label: string;
+            /**
+             * Templatekey
+             * @description Stable snake_case key, e.g. `rtw_offer`.
+             */
+            templateKey: string;
+        };
+        /**
          * EmployeeIdCardResponse
          * @description The branded ID card (FR-DET-4).
          *
@@ -2065,8 +2351,25 @@ export interface components {
          *     that carried either wording would make the tag and the checkbox two
          *     different vocabularies.
          *
-         *     Member order is the checkbox grid's order, reading left to right.
-         *     [Source: docs/Workers_Comp_Prototype.html lines 555-562]
+         *     **Since Story 4.3 this is the shared stakeholder vocabulary, and the name
+         *     is now too narrow for what it names.** `email_log.recipients` holds these
+         *     same six values, because the story's own ruling is "one shared 6-value set
+         *     with 4.1's participant enum" and because convert-to-email has to map a
+         *     meeting's participants onto an email's recipients — with two enums that
+         *     mapping is a translation table, and a translation table between two lists
+         *     of identical strings is how they start to drift. The prototype's email modal
+         *     keys them `employer`/`physician` where the meeting modal says
+         *     `employer_hr`/`treating_physician`; those are the same six roles and the
+         *     longer tokens win. A rename to `Stakeholder` would be the honest fix and it
+         *     is deliberately not made here — it would touch this enum, `meetings.py`,
+         *     the router, the generated `schema.d.ts` type name and every test that
+         *     spells it, inside a story already shipping two tables and five endpoints.
+         *     Recorded in `deferred-work.md`.
+         *
+         *     Member order is the checkbox grid's order, reading left to right — the same
+         *     order in both modals, which is what makes the shared vocabulary's stored
+         *     order (`normalise_participants`, `normalise_recipients`) one order.
+         *     [Source: docs/Workers_Comp_Prototype.html lines 555-562, 588-593]
          * @enum {string}
          */
         MeetingParticipant: "employee" | "employer_hr" | "ncm" | "treating_physician" | "supervisor" | "attorney";
@@ -2179,6 +2482,46 @@ export interface components {
          */
         MeetingType: "three_point_contact_initial" | "rtw_conference" | "ncm_care_coordination" | "ime_preparation" | "settlement_discussion" | "physician_consultation" | "employer_accommodation_review" | "litigation_prep" | "claim_review_supervisor" | "other";
         /**
+         * MergedEmailResponse
+         * @description A pre-filled composition — what the modal opens holding (AD-1).
+         *
+         *     The same shape for a template merge and for a meeting's email draft, so the
+         *     SPA has one "fill the composer from the server" path rather than two.
+         *
+         *     **`subject` and `body` arrive merged and contain no `{{…}}`.** The merge
+         *     resolves every placeholder or fails; a client must not scan this text for
+         *     tokens to substitute. Text in *square* brackets — `$[AMOUNT]`, `[RATING]%`,
+         *     `[Please add next steps]` — is deliberate handler-fill prompt text and is
+         *     left exactly as it is (AD-2: no financial figure is auto-filled).
+         *
+         *     `claimId` is echoed back because the composer's read-only claim reference
+         *     renders it, and because the value the merge resolved is the one the send
+         *     should carry: a browser that re-read its own selection in between could
+         *     compose against one claim and log against another.
+         */
+        MergedEmailResponse: {
+            /**
+             * Body
+             * @description Merged letter body. No `{{…}}` survives a merge.
+             */
+            body: string;
+            /**
+             * Claimid
+             * @description The claim this text was merged against, or null.
+             */
+            claimId: string | null;
+            /**
+             * Recipients
+             * @description The checkbox set to apply — exactly this set, not a union with whatever is currently ticked.
+             */
+            recipients: components["schemas"]["MeetingParticipant"][];
+            /**
+             * Subject
+             * @description Merged subject line. No `{{…}}` survives a merge.
+             */
+            subject: string;
+        };
+        /**
          * NewDiaryNoteRequest
          * @description The add-note input's body — a paragraph, and optionally a claim.
          *
@@ -2215,6 +2558,71 @@ export interface components {
              * @example Called the plant; light duty available from Monday.
              */
             noteText: string;
+        };
+        /**
+         * NewEmailRequest
+         * @description The composer's body — recipients, a subject, and what it is about.
+         *
+         *     `extra="forbid"` for `NewMeetingRequest`'s reason: an unknown key is a 422
+         *     from the contract rather than a value silently dropped on the way to a
+         *     command.
+         *
+         *     **`subject` and `recipients` are required and everything else is not.**
+         *     That is AC 2's server half twice over: a body with a blank subject or an
+         *     empty recipient list is refused with `/problems/invalid-patch` naming the
+         *     control, and the SPA renders it inline rather than in a native dialog.
+         *
+         *     **`claimId` is optional**, because free composition with nothing selected is
+         *     legal and logs with `claim_id` null (the ERD's optional edge). **The six
+         *     templates are not**: they are claim-aware by definition, so the *merge*
+         *     endpoint requires a claim and the composer disables the buttons with a
+         *     stated reason when there is none.
+         *
+         *     **`templateKey` is provenance, not a request to merge.** By the time this
+         *     body is sent the text has already been merged and possibly edited by the
+         *     handler; the key records which of the six it started from, and an unseeded
+         *     one is a 404 rather than a silently nulled column.
+         *
+         *     **The text is trimmed before it is measured**, `NewDiaryNoteRequest`'s fix:
+         *     `max_length` counts what arrives on the wire and the command counts what it
+         *     will store, so a full-length body ending in a newline would be refused for
+         *     exceeding a limit it does not exceed. Trimming first makes both layers
+         *     measure the same string.
+         */
+        NewEmailRequest: {
+            /**
+             * Body
+             * @description The letter. Optional; an empty one is stored as null.
+             */
+            body?: string | null;
+            /**
+             * Claimid
+             * @description The claim this email is about, `WC-nnnn`. Must be in the caller's caseload.
+             * @example WC-20017
+             */
+            claimId?: string | null;
+            /**
+             * @description Normal, High or Urgent. Defaults to the value the composer opens on.
+             * @default normal
+             */
+            priority: components["schemas"]["EmailPriority"];
+            /**
+             * Recipients
+             * @description The stakeholder roles to address. **At least one is required** — the prototype logs a send with none, and an email addressed to nobody records nothing about who was told. Stored in the vocabulary's own order, de-duplicated.
+             */
+            recipients: components["schemas"]["MeetingParticipant"][];
+            /**
+             * Subject
+             * @description The subject. Required, single line, and refused when it trims to nothing — the prototype answers an empty one with a native `alert()`; here it is an inline 422 at the control.
+             * @example 3-Point Contact — WC Claim WC-20017
+             */
+            subject: string;
+            /**
+             * Templatekey
+             * @description Which of the six templates the text started from, or null.
+             * @example three_point_contact
+             */
+            templateKey?: string | null;
         };
         /**
          * NewInjury
@@ -3141,6 +3549,281 @@ export interface operations {
             };
         };
     };
+    email_templates_claims_diary_email_templates_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmailTemplateListResponse"];
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+        };
+    };
+    merged_email_template_claims_diary_email_templates__template_key__merged_get: {
+        parameters: {
+            query: {
+                /** @description The claim to merge against, `WC-nnnn`. **Required** — the six templates are claim-aware, and the prototype's claim-less render produced letters full of holes. Must be in the caller's caseload; one that is not answers 404, the same as one that does not exist. */
+                claimId: string;
+            };
+            header?: never;
+            path: {
+                /** @description The template's stable key, e.g. `rtw_offer`. */
+                template_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MergedEmailResponse"];
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Any of three things, told apart by `type`. `/problems/email-template-not-found` — no template with that key; the same answer for an absent key and a malformed one. `/problems/email-claim-not-found` — no such claim in the caller's caseload, deliberately the same answer for a claim that does not exist and one that belongs to somebody else; on the write path, **nothing was written**. `/problems/email-not-readable` — the row *was* written and audited and then could not be read back under the caller's scope; it exists, and re-sending it would duplicate a row in an append-only table with no delete path (RFC 9457 problem document). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    emails_claims_diary_emails_get: {
+        parameters: {
+            query?: {
+                /** @description An opaque `nextCursor` from a previous response. */
+                cursor?: string | null;
+                /** @description Page size. Reused from the cursor when one is supplied. */
+                limit?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmailLogListResponse"];
+                };
+            };
+            /** @description The pagination cursor is unreadable, or belongs to a different filter, group or rules version (RFC 9457 problem document). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    log_email_claims_diary_emails_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewEmailRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmailLogResponse"];
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The caller's role does not carry the edit capability. Answered before the claim is looked up, so it says nothing about whether the claim exists (RFC 9457 problem document). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Any of three things, told apart by `type`. `/problems/email-template-not-found` — no template with that key; the same answer for an absent key and a malformed one. `/problems/email-claim-not-found` — no such claim in the caller's caseload, deliberately the same answer for a claim that does not exist and one that belongs to somebody else; on the write path, **nothing was written**. `/problems/email-not-readable` — the row *was* written and audited and then could not be read back under the caller's scope; it exists, and re-sending it would duplicate a row in an append-only table with no delete path (RFC 9457 problem document). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The email cannot be logged — an empty or whitespace-only subject, a subject carrying a line break, no recipient selected, or text carrying characters the column cannot hold. All reach this route as `/problems/invalid-patch`, and the SPA renders each inline at the control it names. Text *longer* than the field allows is caught a layer earlier: `subject` and `body` declare `maxLength`, so an over-long value is refused by the schema with `/problems/validation-error`, exactly as an unknown recipient token or priority is. The command enforces every bound regardless, for a caller that is not this schema (RFC 9457 problem document). No refusal ever echoes the submitted value. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+        };
+    };
     meetings_claims_diary_meetings_get: {
         parameters: {
             query?: {
@@ -3534,6 +4217,86 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    meeting_draft_claims_diary_meetings__meeting_id__email_draft_get: {
+        parameters: {
+            query?: {
+                /** @description The day this response's `status` and `upcomingCount` are judged against, `YYYY-MM-DD`. The **viewer's local** day: a server with no timezone for the reader cannot resolve 'today'. It narrows nothing — it is the horizon only. Omit it and `day` answers; omit both and the server's own date does, which is what left the unfiltered read disagreeing with the day-filtered one about the same meeting. Bounded to within a day of the server's date. */
+                asOf?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description The meeting's `id`, published on the list. */
+                meeting_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MergedEmailResponse"];
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description No such meeting in the caller's diary, or no such claim in their caseload. Deliberately the same answer for a row that does not exist and one that belongs to somebody else (RFC 9457 problem document). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description A caller-supplied viewer clock names a calendar date more than a day from the server's own, which is further than any timezone can explain. `asOf` answers `/problems/validation-error` (the schema refuses it, naming the parameter in `errors[].loc`); a `day` sent *without* `asOf` — where it is the horizon rather than only a filter — answers `/problems/invalid-patch` naming `day`. Both decide the `status` and `upcomingCount` on the response since Story 4.2, so an unbounded value is a request for a horizon rather than for a page (RFC 9457 problem document). */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
                 };
             };
         };

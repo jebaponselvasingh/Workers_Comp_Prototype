@@ -14,12 +14,14 @@ import { expect, test } from "../fixtures/test";
  * anything. Four things are only true in a browser and are what this spec is
  * organised around.
  *
- * 1. **The pane exists, and one of its two tabs says why it is empty.** The
- *    copilot shell ships with ⚡ Actions disabled until Epic 6 and 📓 Diary
- *    live; the Notes and Emails sub-tabs name Stories 4.2 and 4.3. A disabled
- *    control is not a missing feature here — it is the cross-story seam, and
- *    the point is that a handler can see the work exists (NFR-3, no dead
- *    clicks).
+ * 1. **The pane exists, and every tab in it goes somewhere.** The copilot shell
+ *    ships with ⚡ Actions disabled until Epic 6 and 📓 Diary live. When this
+ *    spec was written the Notes and Emails sub-tabs were placeholders naming
+ *    Stories 4.2 and 4.3 — the cross-story seam, whose point was that a handler
+ *    could see the work existed (NFR-3, no dead clicks). Both have since been
+ *    built, so the seam assertions here were **amended into their opposites**
+ *    rather than deleted (AD-15): the strip still has three tabs, each one now
+ *    mounts a real surface, and the only disabled control left is ⚡ Actions.
  *
  * 2. **A meeting survives a reload.** The prototype's `meetingsStore` is a
  *    browser-lifetime object re-seeded at every login; the whole of this story
@@ -236,14 +238,23 @@ test.describe("@story:4-1 @epic:4 meeting scheduling and management", () => {
     // first in the strip and carries the greeting.
     await expect(byTestId(page, "diary-subtab-notes")).toHaveAttribute("aria-selected", "true");
 
-    // Notes was a placeholder naming Story 4.2 when this spec was written; 4.2
-    // built it, so what is left to assert here is that the strip still has
-    // three tabs and that the *unbuilt* one still names its story. The Notes
-    // sub-tab's own behaviour is `4-2-claim-linked-diary-notes.spec.ts`'s.
+    // Both of the other two were placeholders naming their story when this
+    // spec was written — Notes said "Story 4.2", Emails said "Story 4.3" — and
+    // both stories have now built theirs, so `diary-empty-notes` and
+    // `diary-empty-emails` are gone and there is no seam left in this pane at
+    // all. What is left to assert here is the thing this test has always been
+    // about: the strip still has three tabs, each one selects, and each one
+    // mounts a real surface. Their behaviour belongs to
+    // `4-2-claim-linked-diary-notes.spec.ts` and
+    // `4-3-templated-stakeholder-emails.spec.ts`; the only disabled affordance
+    // in the panel is the ⚡ Actions tab asserted above (Epic 6).
     await byTestId(page, "diary-subtab-notes").click();
     await expect(byTestId(page, "notes-subtab")).toBeVisible();
     await byTestId(page, "diary-subtab-emails").click();
-    await expect(byTestId(page, "diary-empty-emails")).toHaveAttribute("data-story", "Story 4.3");
+    await expect(byTestId(page, "diary-subtab-emails")).toHaveAttribute("aria-selected", "true");
+    await expect(byTestId(page, "emails-subtab")).toBeVisible();
+    await expect(byTestId(page, "email-compose-open")).toBeEnabled();
+    await expect(byTestId(page, "diary-empty-emails")).toHaveCount(0);
     await byTestId(page, "diary-subtab-meetings").click();
 
     // The list renders the seeded rows, in the server's order — and each one's
@@ -262,10 +273,17 @@ test.describe("@story:4-1 @epic:4 meeting scheduling and management", () => {
       expect(item.status).toBe(expectedStatus(item, today));
     }
 
-    // --- AC 5: the email control is disabled and names Story 4.3 ---------
+    // --- AC 5: the email control, live since Story 4.3 -------------------
+    // It shipped here disabled, wrapped in a tooltip seam whose `title` named
+    // Story 4.3 — the point being that a handler could see the work existed
+    // (NFR-3, no dead clicks). 4.3 built the composer and *deleted* the wrapper,
+    // so the same intent is now the opposite assertion: the control on a full
+    // card is enabled, carries no leftover seam explanation, and there is
+    // nothing left in this pane that names an unbuilt story. What it *does*
+    // when pressed is `4-3-templated-stakeholder-emails.spec.ts`'s.
     const email = cardFor(page, seeded.items[0].id).getByTestId("meeting-email");
-    await expect(email).toBeDisabled();
-    await expect(email).toHaveAttribute("title", /Story 4\.3/);
+    await expect(email).toBeEnabled();
+    await expect(email).not.toHaveAttribute("title", /Story 4\.3/);
 
     // --- AC 2: a missing date is refused inline, not by a dialog ---------
     await byTestId(page, "meeting-schedule-open").click();
@@ -332,7 +350,28 @@ test.describe("@story:4-1 @epic:4 meeting scheduling and management", () => {
     expect(done!.version).toBe(created!.version + 1);
 
     // --- AC 4: Delete persists ------------------------------------------
+    // **Two clicks since Story 4.3**, and the extra one is the assertion.
+    // Delete used to fire the command immediately, on an audited PHI row with
+    // no undo and no `update_meeting` to correct it with; 4.3 gave the control
+    // the inline "Delete? / Cancel" two-step `deferred-work.md` assigned to
+    // whoever built the feedback primitive. The first press only arms — nothing
+    // is sent — which is checked here rather than merely clicked through, since
+    // an arming press that also deleted would pass a test that just pressed
+    // twice.
     await cardFor(page, created!.id).getByTestId("meeting-delete").click();
+    await expect(cardFor(page, created!.id).getByTestId("meeting-delete-confirm")).toBeVisible();
+    await expect(cardFor(page, created!.id).getByTestId("meeting-delete-cancel")).toBeVisible();
+    expect((await diaryOf(page)).items.some((item) => item.id === created!.id)).toBe(true);
+
+    // Cancel disarms it and leaves the meeting alone — the way out has to work
+    // or the confirmation is just a second click.
+    await cardFor(page, created!.id).getByTestId("meeting-delete-cancel").click();
+    await expect(cardFor(page, created!.id).getByTestId("meeting-delete")).toBeVisible();
+    await expect(cardFor(page, created!.id).getByTestId("meeting-delete-confirm")).toHaveCount(0);
+
+    // And the second press is what actually deletes.
+    await cardFor(page, created!.id).getByTestId("meeting-delete").click();
+    await cardFor(page, created!.id).getByTestId("meeting-delete-confirm").click();
     await expect(cardFor(page, created!.id)).toHaveCount(0);
 
     const afterDelete = await diaryOf(page);

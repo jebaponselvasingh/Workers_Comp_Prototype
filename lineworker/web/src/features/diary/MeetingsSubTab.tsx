@@ -80,7 +80,8 @@ export function MeetingsSubTab({
   // because the centre pane's `meetings` deep link has to be able to open it
   // (AC 5) — see `DiaryNav` on why the context holds the state rather than an
   // event a `useEffect` would have to react to.
-  const { schedulerOpen, schedulerSession, openScheduler, closeScheduler } = useDiaryNav();
+  const { schedulerOpen, schedulerSession, openScheduler, closeScheduler, openComposer } =
+    useDiaryNav();
 
   const [scheduled, setScheduled] = useState(false);
   // A refusal belongs to one card. Stored with the meeting it was raised
@@ -190,6 +191,15 @@ export function MeetingsSubTab({
                   error={refusal?.meetingId === meeting.id ? refusal.message : null}
                   onComplete={onComplete}
                   onDelete={onDelete}
+                  // AC 5, the convert-to-email path. The **id** travels, not
+                  // the letter: the confirmation is merged on the server
+                  // (AD-1), and the composer turns this into a request. The
+                  // pane deliberately stays on 📅 Meetings — see
+                  // `DiaryNav.openComposer`.
+                  onEmail={(target) => {
+                    clearFeedback();
+                    openComposer({ kind: "meeting", meetingId: target.id });
+                  }}
                 />
               ))}
             </div>
