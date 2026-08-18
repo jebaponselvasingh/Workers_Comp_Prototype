@@ -3,7 +3,8 @@ title: 'Story 5.1 — Portfolio KPI Cards'
 type: 'feature'
 created: '2026-08-18'
 baseline_revision: 'e5468680bd162dd5430150ca215f3f68c01ca2ce'
-status: 'in-review'
+final_revision: 'e8126b4a720c29daad8404c049e5d357c105e4ee'
+status: 'done'
 review_loop_iteration: 0
 followup_review_recommended: true # 23 patches across a shipped migration, the client-side derivation guard, the dashboard's error/announcement paths and four reformatted shared fixtures — one of them a real hole in the guard AC 4 leans on; breadth and the migration's blast radius warrant an independent look
 context:
@@ -175,3 +176,19 @@ warnings: ['oversized']
 - `cd lineworker/web && npm run generate:api` -- expected: `src/api/schema.d.ts` and `openapi.json` change once and are byte-identical on a second run.
 - `cd lineworker/web && npm test && npm run lint && npm run typecheck && npm run build` -- expected: vitest green (including `noDerivation.test.ts` over the new root), eslint no new warnings, tsc and build clean.
 - `cd lineworker && docker compose -f deploy/compose.e2e.yaml up -d --build --wait` then `cd e2e && npm run typecheck && npm test` -- expected: the full suite green against a freshly reset stack, with the new `@story:5-1` spec and the `@smoke` set included.
+
+## Auto Run Result
+
+Status: done
+
+**Implemented.** Ten portfolio KPI cards over one scoped caseload, the first `services/worklist` portfolio aggregate behind them, and the rules-tier parameter the fraud card had no way to read. `portfolio_summary` takes one `select_claim_columns` read and folds it in a pure function that asks the registry for every band and total; `GET /dashboard/summary` is parameter-free, `no-store`, audit-free, and carries both thresholds and the rules version so the two card captions quote the number the server counted at.
+
+**Files changed.** New — `rules/documents/derivation_thresholds.v5.jdm.json` (adds `fraudFlagScoreMin`), `data/versions/20260818_0037_fraud_flag_threshold.py` (inserts v5, effective-dated to v4's own date because the field is required), `services/worklist/summary.py` (`PortfolioClaim`, `PortfolioSummary`, the pure `summary_of`, `portfolio_summary`), `api/routers/dashboard.py`, `tests/test_portfolio_summary.py`, `web/src/api/dashboard.ts`, `web/src/features/dashboard/{KpiCard,DashboardPage,DashboardPage.test}.tsx`, `e2e/stories/5-1-portfolio-kpi-cards.spec.ts`. Modified — `services/derivations/queue_flags.py` (`fraud_flagged` beside `siu_review`) and its package exports, `rules/parameters.py` (the new required field), `data/versions/20260814_0028_materialize_schedules.py` (the overlay that keeps a fresh `upgrade head` alive when a later migration adds a required parameter), `api/{app,routers/__init__}.py`, `services/worklist/__init__.py`, `tests/seed_fixture.py` plus nine test modules for the version bump, `web/src/api/{queryKeys,schema.d}.ts`, `web/src/features/shell/DashboardShell.tsx`, `web/src/features/queue/noDerivation.test.ts`, `web/src/test/api-mock.ts`, `e2e/fixtures/seed.ts`.
+
+**Review findings.** 23 patches applied (10 medium, 13 low), 3 deferred, 0 rejected, 0 intent gaps, 0 spec defects. The medium ones: migration 0028's new document glob contradicting the "never glob" invariant restated twelve lines away, and its unguarded `int()` parse; a docstring promising more than the merge delivers; `highRisk` missing from the client-side derivation guard while its comment claimed otherwise; a missing scan-reaches assertion; a `staleTime` comment describing polling the app does not do; the Total Paid caption naming two of three summed columns; ~500 lines of unrelated Prettier reflow across four shared fixtures, restored to 214; a failure announced twice to screen readers; and a failed refetch rendering the dataset chip with the previous portfolio's counts above the error banner.
+
+**Deferred.** The Total Paid card excludes $335,985 of paid bills and expenses that the Bills tab shows on 38 claims with zero paid columns — the carried-over "what does the paid figure actually sum" decision, recorded with the magnitude so its owner decides against a number. `USED_THRESHOLDS` in migration 0028 is a hand-transcribed allowlist with nothing tying it to what `compute_benefit` reads, and it fails silently when it rots. And the endpoint's absent role gate, harmless for a count of your own book, is a precedent Story 5.2's peer-performance table must decide on its own terms.
+
+**Verification.** Re-run independently after the patch pass, not only reported: 1971 server tests, ruff clean, `ruff format --check` clean over 193 files, mypy clean over 193 files, `alembic check` clean plus a `downgrade 0036` → `upgrade head` round trip, `npm run generate:api` byte-identical, 504 vitest, eslint 0 errors (11 pre-existing warnings), tsc and build clean, and 150/150 Playwright against a freshly rebuilt e2e stack with all seven `@story:5-1` specs green.
+
+**Residual risks.** The three deferred items above. Two are documentation-and-decision rather than defects; the `USED_THRESHOLDS` one is the sharpest, because its failure mode is silently seeding financial data under a threshold the database does not hold, and the mechanical guard that would close it belongs beside the payment-projection tests rather than inside a migration.
