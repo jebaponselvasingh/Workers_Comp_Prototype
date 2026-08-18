@@ -547,3 +547,250 @@ def expected_meetings_for(persona_name: str) -> list[dict[str, str]]:
         {"claim_id": claim_id, "meeting_type": meeting_type}
         for claim_id, meeting_type in zip(claim_ids, DEMO_MEETING_TYPES, strict=False)
     ]
+
+
+# --- Story 5.2: handler benchmarking, restated independently -------------
+#
+# The eight parameters of the `handler_performance` document, written out here
+# rather than loaded from it — `HIGH_RISK_MIN`'s discipline over a whole rule
+# block. It matters more here than for any oracle since the queue's: a benchmark
+# row is the product of three segment averages, a substitution rule, a
+# percentage deviation, a three-way band, a weighted blend, a cap, a second
+# three-way band and a sort, and an oracle that shared any one of them with the
+# implementation would be validating the rest by accident.
+#
+# `COMPLEXITY_HIGH_MIN` is 65 and so is `HIGH_RISK_MIN`, and the two are
+# deliberately separate constants: one bands a claim's severity score, the other
+# bands a handler's blended mix. A single shared constant here would make the
+# most plausible way to get this story wrong — pointing the complexity band at
+# the risk threshold — invisible to every assertion below.
+ON_TRACK_DEVIATION_PCT_MAX = -8
+ATTENTION_DEVIATION_PCT_MIN = 8
+SEVERITY_WEIGHT_BP = 10_000
+SURGERY_RATE_WEIGHT_BP = 1_000
+LITIGATION_RATE_WEIGHT_BP = 1_500
+COMPLEXITY_SCORE_MAX = 100
+COMPLEXITY_HIGH_MIN = 65
+COMPLEXITY_MED_MIN = 40
+
+BASIS_POINTS_PER_UNIT = 10_000
+PERCENT = 100
+
+#: The three cycle-time segments a composite is the sum of, in the order the
+#: prototype adds them.
+CYCLE_SEGMENTS = ("pick", "approve", "settle")
+
+#: The precision the *composite* is published at — one decimal, which is finer
+#: than the whole days the settle tile above is displayed at. That difference is
+#: the rule this oracle exists to pin: the composite is summed from the
+#: UNROUNDED segment means and rounded once, so the ranking cannot be decided by
+#: a display convention. Summing the published tiles instead admits half a day of
+#: error, which is larger than the gap between four of the six seeded handlers
+#: and reorders two of them.
+COMPOSITE_DECIMALS = 1
+
+
+def _quantized(value: Decimal, decimals: int = 0) -> Decimal:
+    return value.quantize(Decimal(1).scaleb(-decimals), rounding=ROUND_HALF_UP)
+
+
+def _handler_ordinal(name: str) -> int:
+    """The handler's position in `app_user.id` order, restated from the seed file.
+
+    The implementation's third sort key is `handler_id`, and this oracle used to
+    stop at the second on the grounds that the seed has no two handlers sharing a
+    name. That is true and is not the point: the spec asks for **both oracles
+    carrying the same tie-break**, and a key that is merely never exercised is
+    still a key an implementation could drop without either oracle noticing.
+
+    Ids are recoverable here without querying: migration 0004 inserts
+    `app_users` in the seed file's order, so a handler's index in that list is
+    its id order. Restated rather than imported, like every other rule in this
+    file — if the migration ever stopped inserting in order, this would have to
+    be re-derived along with everything else that assumes it.
+    """
+    for index, user in enumerate(seed()["app_users"]):
+        if user["name"] == name and user["role"] == HANDLER_ROLE:
+            return index
+    raise AssertionError(f"no seeded handler {name!r}")
+
+
+def _cycle_segments(claims: list[dict[str, Any]]) -> dict[str, Decimal | None]:
+    """The three durations a composite is the sum of, **unrounded**.
+
+    The metric definitions restated from Story 1.5's story text: pick and
+    approve average over *every* claim carrying the duration, settle averages
+    over *settled* claims carrying it. `None` for an empty segment, never zero.
+
+    Exact quotients rather than the tiles' rounded figures. `expected_sla_strip`
+    above rounds each one to its own display precision because that is what a
+    tile shows and what its verdict is decided on; a composite is a quantity
+    rows are *compared* by, and rounding before comparing hands the ordering to
+    the renderer.
+    """
+    settled = [c for c in claims if c["stage"] == "settled"]
+    values = {
+        "pick": [c["sla_pick_days"] for c in claims if c["sla_pick_days"] is not None],
+        "approve": [c["sla_approve_days"] for c in claims if c["sla_approve_days"] is not None],
+        "settle": [c["settlement_days"] for c in settled if c["settlement_days"] is not None],
+    }
+    return {
+        key: (Decimal(sum(members)) / Decimal(len(members))) if members else None
+        for key, members in values.items()
+    }
+
+
+def _composite(
+    segments: dict[str, Decimal | None], fallback: dict[str, Decimal | None]
+) -> Decimal | None:
+    """The three unrounded segments added up, substituting the portfolio's for a gap.
+
+    The generalised rule, restated: `renderSV` substitutes only the settle
+    average and lets a missing pick or approve fall through as zero. `None` when
+    a segment is missing from both, which never happens on the seeded book.
+    """
+    total = Decimal(0)
+    for key in CYCLE_SEGMENTS:
+        value = segments[key] if segments[key] is not None else fallback[key]
+        if value is None:
+            return None
+        total += value
+    return total
+
+
+def _rtw_pct(claims: list[dict[str, Any]]) -> float | None:
+    """Settled claims that came back fully recovered, over all settled claims."""
+    settled = [c for c in claims if c["stage"] == "settled"]
+    if not settled:
+        return None
+    return _mean([100 if c["return_status"] == FULLY_RECOVERED else 0 for c in settled], 0)
+
+
+def _complexity(claims: list[dict[str, Any]]) -> dict[str, Any]:
+    """The prototype's blend (line 1022), restated in basis points.
+
+    `min(100, round(avgSev + 10 * surgeryRate + 15 * litigationRate))`, with the
+    two rates as fractions of the book — written here as one exact quotient so
+    the oracle cannot disagree with the implementation about float ordering.
+    """
+    count = len(claims)
+    weighted = (
+        SEVERITY_WEIGHT_BP * sum(c["severity_score"] for c in claims)
+        + SURGERY_RATE_WEIGHT_BP * sum(1 for c in claims if c["surgery_required"]) * PERCENT
+        + LITIGATION_RATE_WEIGHT_BP * sum(1 for c in claims if c["litigation_flag"]) * PERCENT
+    )
+    score = min(
+        COMPLEXITY_SCORE_MAX,
+        int(_quantized(Decimal(weighted) / Decimal(count * BASIS_POINTS_PER_UNIT))),
+    )
+    if score >= COMPLEXITY_HIGH_MIN:
+        band = "high"
+    elif score >= COMPLEXITY_MED_MIN:
+        band = "med"
+    else:
+        band = "low"
+    return {"complexityScore": score, "complexityBand": band}
+
+
+def _cycle_status(deviation_pct: int) -> str:
+    """The prototype's `statusOf` (line 1032), restated — both edges inclusive."""
+    if deviation_pct <= ON_TRACK_DEVIATION_PCT_MAX:
+        return "on_track"
+    if deviation_pct >= ATTENTION_DEVIATION_PCT_MIN:
+        return "attention"
+    return "watch"
+
+
+def expected_handler_benchmarks(persona_name: str, role: str) -> dict[str, Any]:
+    """The ranked handler table for a persona's seeded book, as the wire keys it.
+
+    **Grouped over the persona's scoped claims, never over the roster**, which is
+    the property the whole story turns on: Kaya Johnson is assigned John Deere in
+    `user_employer_assignment` and handles none of its seven claims, so Ken
+    Stoker's table must not contain her. An oracle built from `employers_of`
+    would list her with an empty book and would agree with the wrong
+    implementation.
+
+    Ordering is `(composite, handlerName, handlerId)` ascending on the **exact**
+    composite — fastest first, ties broken by name and then by id — and `rank` is
+    the 1-based position in that order. All three keys, matching the
+    implementation's: the seed has no two handlers sharing a display name, so the
+    third never decides anything here, but an oracle that carried two keys would
+    agree with an implementation that had quietly dropped the third. Ids come
+    from `_handler_ordinal`, which restates the seed file's `app_users` order.
+
+    `rank` is `None` wherever `compositeDays` is, which the seeded book never
+    reaches (every seeded handler has settled claims) and which is restated here
+    anyway so the oracle would disagree with an implementation that numbered
+    unrankable rows.
+    """
+    visible = claims_for(persona_name, role)
+    portfolio_segments = _cycle_segments(visible)
+    portfolio_composite = _composite(portfolio_segments, portfolio_segments)
+
+    by_handler: dict[str, list[dict[str, Any]]] = {}
+    for claim in visible:
+        by_handler.setdefault(claim["handler"], []).append(claim)
+
+    rows: list[tuple[Decimal | None, str, int, dict[str, Any]]] = []
+    for handler, claims in by_handler.items():
+        composite = _composite(_cycle_segments(claims), portfolio_segments)
+        if composite is None or portfolio_composite is None:
+            deviation: int | None = None
+        elif portfolio_composite == 0:
+            deviation = 0
+        else:
+            deviation = int(
+                _quantized((composite - portfolio_composite) / portfolio_composite * PERCENT)
+            )
+        rows.append(
+            (
+                composite,
+                handler,
+                _handler_ordinal(handler),
+                {
+                    "handlerName": handler,
+                    "caseCount": len(claims),
+                    "compositeDays": (
+                        None
+                        if composite is None
+                        else float(_quantized(composite, COMPOSITE_DECIMALS))
+                    ),
+                    "rtwPct": _rtw_pct(claims),
+                    "pendingApprovals": sum(
+                        1 for c in claims if c["status"] in PENDING_APPROVAL_STATUSES
+                    ),
+                    "deviationPct": deviation,
+                    "cycleStatus": None if deviation is None else _cycle_status(deviation),
+                    **_complexity(claims),
+                },
+            )
+        )
+
+    rows.sort(key=lambda row: (row[0] is None, row[0] or Decimal(0), row[1], row[2]))
+    composites = [composite for composite, _handler, _id, _row in rows if composite is not None]
+    slowest = max(composites, default=None)
+
+    items = []
+    ordinal = 0
+    for composite, _handler, _id, row in rows:
+        if composite is None or slowest is None:
+            # No composite, no ordinal: a `#` beside a row of em dashes would be
+            # a ranking claim over rows that are in name order.
+            items.append({"rank": None, "cycleSpeedPct": None, **row})
+            continue
+        ordinal += 1
+        bar = PERCENT if slowest == 0 else int(_quantized(composite / slowest * PERCENT))
+        items.append({"rank": ordinal, "cycleSpeedPct": bar, **row})
+
+    rankable = [item for item in items if item["rank"] is not None]
+    return {
+        "items": items,
+        "portfolioCompositeDays": (
+            None
+            if portfolio_composite is None
+            else float(_quantized(portfolio_composite, COMPOSITE_DECIMALS))
+        ),
+        "leader": rankable[0]["handlerName"] if rankable else None,
+        "laggard": rankable[-1]["handlerName"] if rankable else None,
+    }

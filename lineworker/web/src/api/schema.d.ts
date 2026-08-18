@@ -699,6 +699,38 @@ export interface paths {
         patch: operations["edit_severity_claims__claim_business_id__severity_patch"];
         trace?: never;
     };
+    "/dashboard/handler-benchmarks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Handlers in the session's scope, ranked by composite cycle time
+         * @description The handler performance table, for whoever holds the session cookie.
+         *
+         *     `summary`'s signature with one parameter more, and the extra one is
+         *     `Settings` rather than anything a caller could send: the SLA targets the
+         *     cycle-time segments are measured against are deployment configuration, and
+         *     `sla.targets_for` is the one place they become targets. There is still
+         *     nowhere in this signature to put a scope (AD-7).
+         *
+         *     No role branch appears in any *figure*. The 403 below is a gate on the whole
+         *     surface, not a variation within it, so the only difference between a
+         *     supervisor's response and an analyst's is the scope predicate the repository
+         *     applied — which is the property this endpoint keeps by having nothing else
+         *     in it.
+         */
+        get: operations["benchmarks_dashboard_handler_benchmarks_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/dashboard/summary": {
         parameters: {
             query?: never;
@@ -1514,6 +1546,17 @@ export interface components {
             expectedVersion: number;
         };
         /**
+         * ComplexityBand
+         * @description Snake_case values per the enum convention — the UI owns the labels.
+         *
+         *     `med` rather than `medium`, matching `RiskBand`: the two are different rules
+         *     over different subjects (see `HandlerPerformance`), but a console that spelt
+         *     one band two ways would invite exactly the confusion this docstring exists
+         *     to prevent.
+         * @enum {string}
+         */
+        ComplexityBand: "low" | "med" | "high";
+        /**
          * CoordinationStatus
          * @description Snake_case values per the enum convention — the UI owns labels.
          * @enum {string}
@@ -1543,6 +1586,13 @@ export interface components {
             /** Medicalpct */
             medicalPct: number;
         };
+        /**
+         * CycleStatus
+         * @description Snake_case values per the enum convention — the UI owns the labels
+         *     ("On Track", "Watch", "Attention").
+         * @enum {string}
+         */
+        CycleStatus: "on_track" | "watch" | "attention";
         /**
          * DiaryNoteListResponse
          * @description The list envelope the Lists convention fixes: `{items, nextCursor, total}`.
@@ -2080,6 +2130,117 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /**
+         * HandlerBenchmarkResponse
+         * @description One row of the handler performance table, in the columns' own order.
+         *
+         *     Every field is rendered verbatim: the SPA formats and colours, and computes
+         *     nothing (AD-1). `rank` in particular is the server's, because the ordering is
+         *     a function of a rule document's thresholds and a scope predicate the browser
+         *     holds neither of.
+         *
+         *     **Five nullable fields, two different reasons.** `rtwPct` is null when the
+         *     handler has settled nothing — ordinary, and drawn as an em dash exactly as
+         *     the SLA strip draws a `no_data` tile. `rank`, `compositeDays`,
+         *     `cycleSpeedPct`, `deviationPct` and `cycleStatus` are null *together*, and
+         *     only when the caller's whole scope has no data for one of the three
+         *     cycle-time segments; see `services.worklist.benchmarks` on why a partial sum
+         *     is refused instead of published.
+         *
+         *     `rank` is on that list rather than always present because it is the
+         *     composite's ordinal: numbering rows that could not be ranked — and that are
+         *     therefore in name order — would publish a ranking claim the response's own
+         *     `compositeDays: null` contradicts one field away.
+         *
+         *     `compositeDays` is published to one decimal and **ranked at full
+         *     precision**. The Avg Days column therefore shows the figure to a finer
+         *     precision than any of the three segments it sums, which is deliberate: the
+         *     order is decided at that precision, and a column showing less of the number
+         *     than the sort used would leave a reader unable to tell a real gap from a
+         *     rounding artefact.
+         *
+         *     The three segment averages behind `compositeDays` are deliberately **not** on
+         *     the wire. They are already published, for the same scope, by `/stats/sla` —
+         *     the strip this table's arithmetic comes from — and a second copy per row
+         *     would be three more numbers a client could find disagreeing with the tiles
+         *     above it.
+         */
+        HandlerBenchmarkResponse: {
+            /** Casecount */
+            caseCount: number;
+            complexityBand: components["schemas"]["ComplexityBand"];
+            /** Complexityscore */
+            complexityScore: number;
+            /** Compositedays */
+            compositeDays: number | null;
+            /** Cyclespeedpct */
+            cycleSpeedPct: number | null;
+            cycleStatus: components["schemas"]["CycleStatus"] | null;
+            /** Deviationpct */
+            deviationPct: number | null;
+            /** Handlername */
+            handlerName: string;
+            /** Pendingapprovals */
+            pendingApprovals: number;
+            /** Rank */
+            rank: number | null;
+            /** Rtwpct */
+            rtwPct: number | null;
+        };
+        /**
+         * HandlerBenchmarksResponse
+         * @description The ranked rows, the book they were ranked against, and the live bands.
+         *
+         *     **No `total` and no `nextCursor`, deliberately.** `items` is the whole list
+         *     and its length is already the answer — the number of handlers with claims
+         *     inside the caller's scope, which is bounded by the size of a desk rather than
+         *     by the size of the portfolio (six on the full seeded book, two for a scoped
+         *     supervisor). `ClaimActionsResponse` is the precedent and gives the reason a
+         *     second count would be worse than none: it is a number a client could find
+         *     disagreeing with what it is rendering. A cursor would be worse still — the
+         *     ranking is a total order over the whole set, so a page of it would have to
+         *     re-rank on every request to stay meaningful.
+         *
+         *     **The four thresholds ride along** for the reason the KPI cards' two do: the
+         *     table's footnote quotes the deviation bands and the two complexity
+         *     cut-points, so a client holding any of those numbers would be a second copy
+         *     of a rule it cannot see change, and superseding `handler_performance` has to
+         *     move the chips *and* the sentence under them together.
+         *
+         *     **`rulesVersion` rides along and is currently rendered nowhere**, which is
+         *     said plainly here rather than dressed up: the footnote quotes the four
+         *     thresholds and not the version they came from. It is on the wire because it
+         *     is the only thing that makes a *stored or forwarded* response
+         *     self-describing — two captures of this table taken either side of a
+         *     supersession are otherwise indistinguishable — and because a client that
+         *     wanted to invalidate a cache on a rules change has nothing else to key on.
+         *     Story 5.1's `/dashboard/summary` publishes its `rulesVersion` unrendered for
+         *     the same reason. What would be wrong is claiming the screen states it.
+         *
+         *     `portfolioCompositeDays` is here because every `deviationPct` is a percentage
+         *     *of* it. Without it the column is uninterpretable and unrecoverable — the SPA
+         *     cannot add three scoped averages of its own.
+         */
+        HandlerBenchmarksResponse: {
+            /** Attentiondeviationpctmin */
+            attentionDeviationPctMin: number;
+            /** Complexityhighmin */
+            complexityHighMin: number;
+            /** Complexitymedmin */
+            complexityMedMin: number;
+            /** Items */
+            items: components["schemas"]["HandlerBenchmarkResponse"][];
+            /** Laggard */
+            laggard: string | null;
+            /** Leader */
+            leader: string | null;
+            /** Ontrackdeviationpctmax */
+            onTrackDeviationPctMax: number;
+            /** Portfoliocompositedays */
+            portfolioCompositeDays: number | null;
+            /** Rulesversion */
+            rulesVersion: number;
         };
         /**
          * IndemnityType
@@ -6077,6 +6238,62 @@ export interface operations {
             };
             /** @description The claim's jurisdiction has no `state_rate_schedule` row, so its weekly benefit cannot be calculated and no default is substituted (RFC 9457 problem document). Unreachable against a correctly migrated database — 0023 refuses to complete otherwise. */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+        };
+    };
+    benchmarks_dashboard_handler_benchmarks_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HandlerBenchmarksResponse"];
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The caller's role does not carry the oversight capability. Answered before any claim is read, so it says nothing about what is in the caller's scope (RFC 9457 problem document). */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

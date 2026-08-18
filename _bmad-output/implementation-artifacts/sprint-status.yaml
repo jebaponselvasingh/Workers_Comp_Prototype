@@ -89,7 +89,7 @@ development_status:
   # Epic 5: Supervisor Portfolio Dashboard
   epic-5: in-progress
   5-1-portfolio-kpi-cards: done
-  5-2-handler-performance-benchmarking: ready-for-dev
+  5-2-handler-performance-benchmarking: done
   5-3-portfolio-analytics-charts: ready-for-dev
   5-4-priority-claims-worklist-top-30: ready-for-dev
   5-5-dashboard-drill-through: ready-for-dev

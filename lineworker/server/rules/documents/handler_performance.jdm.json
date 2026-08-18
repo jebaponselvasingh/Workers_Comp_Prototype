@@ -1,0 +1,83 @@
+{
+  "contentType": "application/vnd.gorules.decision",
+  "name": "handler_performance",
+  "description": "Every tunable behind the supervisor dashboard's handler-benchmarking table (Story 5.2, AD-8). A document of its own for reserve_bands' reason: services/worklist owns the benchmark aggregate, and derivation_thresholds is the single argument every REGISTERED DERIVATION is BUILT from — these parameters reach their two derivations through .of() instead, exactly as the payment batch calendar's weekdays do, so folding them into that block would make the registry's contract mean 'whatever anybody needed a number for'. TWO DEVIATION BANDS. onTrackDeviationPctMax is the percentage a handler's composite cycle time may sit BELOW the scoped portfolio's and still count as ahead of the desk; it is negative because faster is less. attentionDeviationPctMin is the percentage above it that asks for a workload check-in. Between them is Watch. Both are the prototype's statusOf (line 1032), ported exactly: at or below -8 is On Track, at or above +8 is Attention. Inclusive on both edges, and a handler sitting exactly on either one lands in the outer band rather than in Watch, which is the prototype's reading and the one that surfaces a drift rather than hiding it. THE COMPLEXITY BLEND IS BASIS POINTS over three inputs each expressed on a 0-100 scale: the handler's average severity score, the percentage of their book that needed surgery, and the percentage carrying litigation. severityWeightBp 10000 is 1.00x average severity, surgeryRateWeightBp 1000 is 0.10x the surgery percentage (so a book that is entirely surgical adds 10), litigationRateWeightBp 1500 is 0.15x the litigation percentage (entirely litigated adds 15). Those are the prototype's 10*(surgCt/n) and 15*(litCt/n) (line 1022) with the fraction rescaled to a percentage and the multiplier moved into basis points, for benefit_params' reason applied to a weighted sum: the score is a whole number on screen, and with basis points over integer counts the arithmetic is exact integer division rather than three floats accumulated in whichever order the loop happened to add them. complexityScoreMax 100 is the prototype's Math.min(100, ...) — the blend can exceed the severity scale it is read against, and a chip reading 'High (108)' beside a caption promising a 0-100 score would be a number nobody can interpret. complexityHighMin 65 and complexityMedMin 40 band the capped score. THE 65 HERE IS NOT riskHighMin, and the coincidence is worth stating because the two will otherwise be collapsed by a later reader: riskHighMin bands ONE CLAIM's severity score, this bands A HANDLER's blended mix of average severity, surgery rate and litigation rate. Different subjects, different questions, and they must be able to move independently — which is the argument for this document rather than three more expressions in derivation_thresholds.",
+  "nodes": [
+    {
+      "id": "request",
+      "type": "inputNode",
+      "name": "request",
+      "position": { "x": 0, "y": 0 }
+    },
+    {
+      "id": "benchmarks",
+      "type": "expressionNode",
+      "name": "benchmarks",
+      "position": { "x": 240, "y": 0 },
+      "content": {
+        "expressions": [
+          {
+            "id": "onTrackDeviationPctMax",
+            "key": "onTrackDeviationPctMax",
+            "value": "-8"
+          },
+          {
+            "id": "attentionDeviationPctMin",
+            "key": "attentionDeviationPctMin",
+            "value": "8"
+          },
+          {
+            "id": "severityWeightBp",
+            "key": "severityWeightBp",
+            "value": "10000"
+          },
+          {
+            "id": "surgeryRateWeightBp",
+            "key": "surgeryRateWeightBp",
+            "value": "1000"
+          },
+          {
+            "id": "litigationRateWeightBp",
+            "key": "litigationRateWeightBp",
+            "value": "1500"
+          },
+          {
+            "id": "complexityScoreMax",
+            "key": "complexityScoreMax",
+            "value": "100"
+          },
+          {
+            "id": "complexityHighMin",
+            "key": "complexityHighMin",
+            "value": "65"
+          },
+          {
+            "id": "complexityMedMin",
+            "key": "complexityMedMin",
+            "value": "40"
+          }
+        ]
+      }
+    },
+    {
+      "id": "response",
+      "type": "outputNode",
+      "name": "response",
+      "position": { "x": 480, "y": 0 }
+    }
+  ],
+  "edges": [
+    {
+      "id": "request-benchmarks",
+      "type": "edge",
+      "sourceId": "request",
+      "targetId": "benchmarks"
+    },
+    {
+      "id": "benchmarks-response",
+      "type": "edge",
+      "sourceId": "benchmarks",
+      "targetId": "response"
+    }
+  ]
+}

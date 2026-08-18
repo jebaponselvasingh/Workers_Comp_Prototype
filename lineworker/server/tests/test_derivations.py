@@ -461,7 +461,23 @@ def test_risk_is_registered_under_its_canonical_name() -> None:
 
 
 @pytest.mark.parametrize(
-    "name", ["days_open", "siu_review", "fraud_flagged", "rtw_blocked", "payment_due"]
+    "name",
+    [
+        "days_open",
+        "siu_review",
+        "fraud_flagged",
+        "rtw_blocked",
+        "payment_due",
+        # Story 5.2's two. Both are registered although neither reads a
+        # `DerivationThresholds` field — their tunables live in the
+        # `handler_performance` document and arrive at `.of()` — which is
+        # exactly why registration by *name* is what this asserts: the
+        # benchmark aggregate reaches them through `get`/the package attribute,
+        # and a builder that quietly stopped registering one would leave the
+        # aggregate free to construct the class itself.
+        "handler_complexity",
+        "cycle_time_status",
+    ],
 )
 def test_the_queue_derivations_are_registered_under_their_canonical_names(name: str) -> None:
     """AC 5: the queue's flags come only from registered functions.

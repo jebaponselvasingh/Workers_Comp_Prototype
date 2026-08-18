@@ -45,9 +45,18 @@ derivations rather than each counting a portfolio their own way. That the
 supervisor's dashboard and the handler's top bar cannot disagree about "high
 risk" is not a coincidence of two correct implementations; it is that there is
 one, and both call it.
+
+Story 5.2 adds `benchmarks`, and it is the entry this package's Story 1.5
+paragraph promised by name: "the dashboard (5.3), handler benchmarking (5.2) …
+reach `sla.strip_of` rather than re-deriving an average beside it". It is also
+the first aggregate here to **gate on role** rather than on scope alone — a
+count of your own book is your own data in another shape, but a table of peers'
+cycle times is information about colleagues, and `BenchmarksNotPermitted` says
+so before the read. Everything else about it is `summary`'s shape: one scoped
+projection read, one pure fold, the derivations passed in.
 """
 
-from services.worklist import actions, approvals, priority, queue, sla, summary
+from services.worklist import actions, approvals, benchmarks, priority, queue, sla, summary
 from services.worklist.actions import (
     Action,
     ClaimActions,
@@ -61,6 +70,15 @@ from services.worklist.approvals import (
     ApprovalNotPermitted,
     ApprovalResult,
     approve_payment,
+)
+from services.worklist.benchmarks import (
+    BenchmarkClaim,
+    BenchmarksNotPermitted,
+    HandlerBenchmark,
+    HandlerBenchmarks,
+    benchmarks_of,
+    handler_benchmarks,
+    require_benchmarks_access,
 )
 from services.worklist.priority import (
     QueueClaim,
@@ -101,10 +119,14 @@ __all__ = [
     "ApprovalKind",
     "ApprovalNotPermitted",
     "ApprovalResult",
+    "BenchmarkClaim",
+    "BenchmarksNotPermitted",
     "ClaimActions",
     "ClaimFlags",
     "ClaimQueue",
     "Cursor",
+    "HandlerBenchmark",
+    "HandlerBenchmarks",
     "InvalidCursor",
     "PortfolioClaim",
     "PortfolioSummary",
@@ -121,17 +143,21 @@ __all__ = [
     "actions",
     "approvals",
     "approve_payment",
+    "benchmarks",
+    "benchmarks_of",
     "claim_actions",
     "claim_queue",
     "decode_cursor",
     "encode_cursor",
     "generate_actions",
+    "handler_benchmarks",
     "matches",
     "portfolio_summary",
     "priority",
     "priority_markers",
     "priority_score",
     "queue",
+    "require_benchmarks_access",
     "sla",
     "sla_strip",
     "strip_of",

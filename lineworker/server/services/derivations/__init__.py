@@ -41,7 +41,16 @@ is `siu_review` with a different threshold, so the one thing standing between
 the dashboard's Fraud Flags card and the queue's referral count is that they
 ask for different names. Reusing `siu_review` there would have been a one-word
 change that showed 9 claims under a caption promising 13, and nothing in the
-type system would have objected.
+type system would have objected. Story 5.2 adds the epic's two *new* derived
+values, `handler_complexity` and `cycle_time_status`, and they are the first
+entries whose subject is a **handler's book** rather than a claim, a meeting or
+a date. They are also the first to take their tunables at `.of()` from a
+document that is not `derivation_thresholds` — `next_batch_date` set that
+precedent for deployment config, and these extend it to a rules-tier block that
+belongs to one aggregate (see `rules/parameters.HandlerPerformance`). The reason
+either of them is registered at all is the reason every entry above is: the
+prototype computes both inside the function that draws the dashboard table row,
+where Epic 7's fraud workspace would have written each of them a second time.
 
 **Naming rule for the modules below** (code review, 2026-08-10): a module
 is named after the *rule* (`risk_band`, `open_duration`, `queue_flags`),
@@ -90,6 +99,18 @@ from services.derivations.claim_money import (
     split_of,
     total_paid,
 )
+from services.derivations.complexity_blend import (
+    ComplexityBand,
+    HandlerComplexity,
+    HandlerComplexityDerivation,
+    HandlerMix,
+    handler_complexity,
+)
+from services.derivations.cycle_deviation import (
+    CycleStatus,
+    CycleTimeStatusDerivation,
+    cycle_time_status,
+)
 from services.derivations.indemnity_classification import (
     IndemnityType,
     IndemnityTypeDerivation,
@@ -133,13 +154,19 @@ from services.derivations.treatment_progress import (
 __all__ = [
     "BillsOnFileDerivation",
     "ClaimPathDerivation",
+    "ComplexityBand",
     "CoordinationDerivation",
     "CoordinationResult",
     "CoordinationStatus",
     "CostSplit",
     "CostSplitDerivation",
+    "CycleStatus",
+    "CycleTimeStatusDerivation",
     "Derivation",
     "FraudFlaggedDerivation",
+    "HandlerComplexity",
+    "HandlerComplexityDerivation",
+    "HandlerMix",
     "IndemnityType",
     "IndemnityTypeDerivation",
     "InstallmentsPaidDerivation",
@@ -169,10 +196,12 @@ __all__ = [
     "claim_path",
     "coordination_status",
     "cost_split",
+    "cycle_time_status",
     "days_open",
     "days_to_settlement",
     "fraud_flagged",
     "get",
+    "handler_complexity",
     "hash_bucket",
     "indemnity_type",
     "installments_paid",

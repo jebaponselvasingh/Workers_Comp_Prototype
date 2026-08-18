@@ -21,13 +21,25 @@
  * **What this page does not render.** Caseload, Active Tx, High Risk and the
  * SLA strip are already in the shared top bar (`TopBar`, `SlaStrip`) for every
  * role; repeating them here would be two components showing one number, which
- * is the disagreement Epic 5 is most exposed to. The handler table (5.2), the
- * charts (5.3), the top-30 worklist (5.4) and drill-through (5.5) are the rest
- * of the epic and are deliberately absent.
+ * is the disagreement Epic 5 is most exposed to. The charts (5.3), the top-30
+ * worklist (5.4) and drill-through (5.5) are the rest of the epic and are
+ * deliberately absent.
+ *
+ * **Story 5.2's table is a second query, deliberately.** Two server answers with
+ * two costs, so they get two cache entries, two loading states and two failure
+ * modes — a benchmark request that 500s leaves the ten KPI cards standing rather
+ * than blanking the page, which is the whole reason the sections are not folded
+ * into one endpoint. That makes `aria-busy` a decision rather than an accident:
+ * see the attribute below.
  */
-import { useDashboardSummary, type PortfolioSummary } from "@/api/dashboard";
+import {
+  useDashboardSummary,
+  useHandlerBenchmarks,
+  type PortfolioSummary,
+} from "@/api/dashboard";
 import { formatCents } from "@/lib/money";
 
+import { HandlerBenchmarkTable } from "./HandlerBenchmarkTable";
 import { KpiCard, KpiCardSkeleton, type KpiTone } from "./KpiCard";
 
 /** The response's money fields, by the `*Cents` suffix the contract guarantees. */
@@ -225,6 +237,7 @@ function DatasetChip({ summary }: { summary: PortfolioSummary }) {
 
 export function DashboardPage() {
   const summary = useDashboardSummary();
+  const benchmarks = useHandlerBenchmarks();
 
   return (
     <div
@@ -232,6 +245,15 @@ export function DashboardPage() {
       // The whole surface, not the rows alone: the chip's counts are as absent
       // as the cards' figures while the request is in flight, and a live region
       // that announced only half of it would be describing a screen nobody sees.
+      //
+      // **`summary.isPending` alone, and that is a decision rather than an
+      // oversight.** With two independent queries there are two defensible
+      // readings — "something on this page is loading" (an OR) and "the page's
+      // primary content is loading" — and they differ in the case that actually
+      // happens: the cards land first and the table a moment later, and an OR
+      // would keep the whole region busy while ten figures sat on screen fully
+      // readable. The table carries its own `aria-busy` for its own rows, so
+      // the second half is announced where it is, not by a flag on the first.
       aria-busy={summary.isPending}
     >
       <h2 className="mb-[13px] flex flex-wrap items-center gap-2 font-display text-[15px] font-bold text-text">
@@ -293,6 +315,16 @@ export function DashboardPage() {
           />
         </>
       )}
+
+      {/* Outside the summary's error branch on purpose: the two sections are
+          two server answers, and a failed portfolio request says nothing about
+          whether the handler table loaded. Nesting it inside would have made
+          one endpoint's outage blank the other's content for no reason. */}
+      <HandlerBenchmarkTable
+        data={benchmarks.data}
+        isPending={benchmarks.isPending}
+        isError={benchmarks.isError}
+      />
     </div>
   );
 }

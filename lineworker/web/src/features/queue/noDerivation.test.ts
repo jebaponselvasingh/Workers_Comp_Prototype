@@ -332,7 +332,38 @@ const DERIVED_FIELDS =
   // here.)
   "totalClaims|underTreatment|settledClosed|highRisk|totalReserveCents|" +
   "fraudFlagged|oshaRecordable|litigation|employerCount|plantCount|" +
-  "highRiskSeverityMin|fraudScoreMin";
+  "highRiskSeverityMin|fraudScoreMin|" +
+  // Story 5.2's. A whole ranked table of them, and the pull is stronger than
+  // anywhere else in the console because the browser is handed a *list* it
+  // could plausibly re-order: `rank` and `compositeDays` are one `.sort()`
+  // away from a client-side ranking of a list the server ordered under a rules
+  // version it has never seen, and `cycleSpeedPct` is one division away from a
+  // peer ratio recomputed against whichever rows happen to be on screen.
+  // `deviationPct`, `complexityScore`, `complexityBand` and `cycleStatus` are
+  // the four a component would most plausibly *re-band*: the response carries
+  // the deviation, the score and the four cut-offs that produced the two chips,
+  // so all the material for a second opinion is on the same object.
+  // `portfolioCompositeDays` is on the list beside them because it is the
+  // denominator every deviation was computed from — dividing by it in the
+  // browser is the recomputation, not a formatting choice.
+  //
+  // **`rank` is first on the list and is the one that matters most.** Rendering
+  // `{index + 1}` in the `#` column instead of `row.rank` is the single most
+  // likely way to get this table wrong: it looks identical on every fixture
+  // where the server ranked every row, and it silently invents a ranking the
+  // moment one row cannot be ranked — the response publishes `rank: null`
+  // alongside `compositeDays: null` precisely so the column can decline to
+  // answer. Being honest about the limit: a literal `{index + 1}` mentions no
+  // payload field at all, so no textual guard can see it — what this entry buys
+  // is that every *other* shape of the same mistake fails the scan (`.sort()`
+  // on `rank`, `row.rank - 1`, a comparison against a rank), and the component
+  // test pins the rendered numbers to the fixture's so the index version fails
+  // there. A guard that claimed more than it does would be worse than one that
+  // says where it stops.
+  "rank|handlerName|caseCount|cycleSpeedPct|compositeDays|rtwPct|" +
+  "complexityScore|complexityBand|pendingApprovals|deviationPct|cycleStatus|" +
+  "portfolioCompositeDays|onTrackDeviationPctMax|attentionDeviationPctMin|" +
+  "complexityHighMin|complexityMedMin|leader|laggard";
 
 const FLAGS = "siuReview|rtwBlocked|paymentDue|fraudFlag|litigationFlag|surgeryRequired";
 
@@ -471,6 +502,14 @@ test("the scan reaches the files it claims to", () => {
   // threshold produced. A scan that stopped at Epic 4's surfaces would leave
   // the whole supervisor half of the console unguarded.
   expect(scanned).toContain(path.join("features", "dashboard", "DashboardPage.tsx"));
+  // Story 5.2's table, and it is the strongest pull on this page: the component
+  // holds nine ranked rows, the thresholds the two chips were banded by, and the
+  // portfolio composite every deviation is a percentage of — so re-sorting the
+  // list, re-banding a chip and recomputing a bar ratio are each one line away,
+  // in one file. `DashboardPage.tsx` being scanned says nothing about this file.
+  expect(scanned).toContain(
+    path.join("features", "dashboard", "HandlerBenchmarkTable.tsx"),
+  );
   expect(scanned).toContain("api/emails.ts");
   expect(scanned).toContain(
     path.join("features", "claim-detail", "overview", "TreatmentOverview.tsx"),
@@ -598,6 +637,21 @@ test("the guard would notice a derivation if one were added", () => {
     // The `(?<!=)` exclusion must not have opened a hole: a genuine comparison
     // whose right-hand side is a payload field is still caught.
     "if (shown < page.total) return true;",
+    // Story 5.2's two. Re-ranking the table the server ranked — the temptation
+    // a nine-column table with a numeric first column creates all by itself —
+    // and dividing a composite by the portfolio's to draw the bar, which is the
+    // server's `cycleSpeedPct` recomputed with the browser's own rounding
+    // against whichever rows are on screen.
+    "rows.sort((a, b) => a.compositeDays - b.compositeDays);",
+    "const ratio = (row.compositeDays / data.portfolioCompositeDays) * 100;",
+    // …and the third: re-banding a chip from the score and the cut-off the
+    // response publishes side by side.
+    'const band = row.complexityScore >= data.complexityHighMin ? "high" : "med";',
+    // …and the fourth and fifth, which are why `rank` joined the field list:
+    // re-sorting the table on the very column that records the server's order,
+    // and doing arithmetic on a rank to turn it back into an index.
+    "rows.sort((a, b) => a.rank - b.rank);",
+    "const position = row.rank - 1;",
   ];
 
   for (const smell of smells) {

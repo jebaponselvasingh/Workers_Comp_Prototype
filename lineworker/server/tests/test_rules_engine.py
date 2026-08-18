@@ -31,6 +31,7 @@ from rules.engine import LoadedDocument, RuleDocumentMissing, evaluate, load
 from rules.parameters import (
     BENEFIT_PARAMS_KEY,
     DERIVATION_THRESHOLDS_KEY,
+    HANDLER_PERFORMANCE_KEY,
     INJURY_CAPTURE_KEY,
     INTAKE_REQUIRED_DOCUMENTS_KEY,
     PRIORITY_WEIGHTS_KEY,
@@ -38,11 +39,13 @@ from rules.parameters import (
     WORKLIST_ACTIONS_KEY,
     BenefitParams,
     DerivationThresholds,
+    HandlerPerformance,
     IntakeRequirements,
     PriorityWeights,
     ReserveBands,
     WorklistActions,
     benefit_params_for,
+    handler_performance_for,
     intake_requirements_for,
     reserve_bands_for,
     thresholds_for,
@@ -80,6 +83,10 @@ EFFECTIVE_DOCUMENTS: tuple[tuple[str, int, str], ...] = (
     (RESERVE_BANDS_KEY, 1, "reserve_bands.jdm.json"),
     # Story 3.5's, and the first owned by `services/worklist`.
     (WORKLIST_ACTIONS_KEY, 1, "worklist_actions.jdm.json"),
+    # Story 5.2's, the second owned by `services/worklist` — and the first whose
+    # parameters reach a *registered derivation* from outside
+    # `derivation_thresholds`, through `.of()` rather than through `build`.
+    (HANDLER_PERFORMANCE_KEY, 1, "handler_performance.jdm.json"),
 )
 
 # **Every** seeded (key, version, file), not only the effective ones.
@@ -132,6 +139,27 @@ EXPECTED_BENEFIT_PARAMS: dict[str, Any] = {
     "defaultCompRateBp": 6667,
     "ptdCompRateBp": 10_000,
     "waitingPeriodDays": 7,
+}
+
+# Story 5.2's document, restated. The two deviation bands are whole
+# percentages and one of them is negative — faster than the desk is *less* cycle
+# time — and the three blend weights are BASIS POINTS over inputs expressed on a
+# 0-100 scale: 10000 is one times the average severity, 1000 is 0.10 times the
+# surgery percentage, 1500 is 0.15 times the litigation percentage.
+#
+# `complexityHighMin` is 65 and so is `riskHighMin` above. Restated separately
+# rather than shared, because they are different rules over different subjects
+# (one claim's severity score against one handler's blended mix) and the
+# coincidence is exactly what a later reader would collapse.
+EXPECTED_HANDLER_PERFORMANCE: dict[str, Any] = {
+    "onTrackDeviationPctMax": -8,
+    "attentionDeviationPctMin": 8,
+    "severityWeightBp": 10_000,
+    "surgeryRateWeightBp": 1_000,
+    "litigationRateWeightBp": 1_500,
+    "complexityScoreMax": 100,
+    "complexityHighMin": 65,
+    "complexityMedMin": 40,
 }
 
 # Story 3.2's document, restated. Ratios are BASIS POINTS: 11500 is 115%.
@@ -377,6 +405,12 @@ async def test_the_worklist_actions_document_evaluates_to_the_story_values(
     assert evaluate(await load(db, WORKLIST_ACTIONS_KEY)) == EXPECTED_WORKLIST_ACTIONS
 
 
+async def test_the_handler_performance_document_evaluates_to_the_story_values(
+    db: AsyncSession,
+) -> None:
+    assert evaluate(await load(db, HANDLER_PERFORMANCE_KEY)) == EXPECTED_HANDLER_PERFORMANCE
+
+
 async def test_every_trigger_rule_has_an_urgency_in_the_document(db: AsyncSession) -> None:
     """The eleven rules and the eleven parameters are the same eleven.
 
@@ -434,6 +468,17 @@ async def test_the_typed_blocks_carry_the_evaluated_values(db: AsyncSession) -> 
         version=1,
         light_ratio_bp=EXPECTED_RESERVE_BANDS["lightRatioBp"],
         heavy_ratio_bp=EXPECTED_RESERVE_BANDS["heavyRatioBp"],
+    )
+    assert await handler_performance_for(db) == HandlerPerformance(
+        version=1,
+        on_track_deviation_pct_max=EXPECTED_HANDLER_PERFORMANCE["onTrackDeviationPctMax"],
+        attention_deviation_pct_min=EXPECTED_HANDLER_PERFORMANCE["attentionDeviationPctMin"],
+        severity_weight_bp=EXPECTED_HANDLER_PERFORMANCE["severityWeightBp"],
+        surgery_rate_weight_bp=EXPECTED_HANDLER_PERFORMANCE["surgeryRateWeightBp"],
+        litigation_rate_weight_bp=EXPECTED_HANDLER_PERFORMANCE["litigationRateWeightBp"],
+        complexity_score_max=EXPECTED_HANDLER_PERFORMANCE["complexityScoreMax"],
+        complexity_high_min=EXPECTED_HANDLER_PERFORMANCE["complexityHighMin"],
+        complexity_med_min=EXPECTED_HANDLER_PERFORMANCE["complexityMedMin"],
     )
     assert await worklist_actions_for(db) == WorklistActions(
         version=1,

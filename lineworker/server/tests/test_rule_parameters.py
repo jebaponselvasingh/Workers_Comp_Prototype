@@ -26,6 +26,7 @@ from rules.engine import LoadedDocument
 from rules.parameters import (
     BenefitParams,
     DerivationThresholds,
+    HandlerPerformance,
     IntakeRequirements,
     PriorityWeights,
     RuleParameterError,
@@ -39,6 +40,7 @@ WEIGHTS_DOC = LoadedDocument(key="priority_weights", version=7, content={})
 REQUIREMENTS_DOC = LoadedDocument(key="intake_required_documents", version=3, content={})
 BENEFIT_DOC = LoadedDocument(key="benefit_params", version=2, content={})
 ACTIONS_DOC = LoadedDocument(key="worklist_actions", version=5, content={})
+BENCHMARKS_DOC = LoadedDocument(key="handler_performance", version=2, content={})
 
 VALID_THRESHOLDS = {
     "riskHighMin": 65,
@@ -100,6 +102,24 @@ VALID_WORKLIST_ACTIONS: dict[str, object] = {
 }
 
 
+#: Story 5.2's block. The deviation bands are whole percentages, one of them
+#: negative; the three weights are basis points over 0-100 inputs.
+VALID_HANDLER_PERFORMANCE = {
+    "onTrackDeviationPctMax": -8,
+    "attentionDeviationPctMin": 8,
+    "severityWeightBp": 10_000,
+    "surgeryRateWeightBp": 1_000,
+    "litigationRateWeightBp": 1_500,
+    "complexityScoreMax": 100,
+    "complexityHighMin": 65,
+    "complexityMedMin": 40,
+}
+
+
+def benchmarks(**changes: object) -> HandlerPerformance:
+    return HandlerPerformance.of(BENCHMARKS_DOC, {**VALID_HANDLER_PERFORMANCE, **changes})
+
+
 def actions(**changes: object) -> WorklistActions:
     return WorklistActions.of(ACTIONS_DOC, {**VALID_WORKLIST_ACTIONS, **changes})
 
@@ -128,6 +148,7 @@ def test_the_valid_blocks_are_valid() -> None:
     assert requirements().version == 3
     assert benefit().version == 2
     assert actions().version == 5
+    assert benchmarks().version == 2
 
 
 # --- types --------------------------------------------------------------
@@ -313,6 +334,11 @@ def test_every_parameter_is_required() -> None:
         block = {k: v for k, v in VALID_INTAKE_REQUIREMENTS.items() if k != key}
         with pytest.raises(RuleParameterError, match=key):
             IntakeRequirements.of(REQUIREMENTS_DOC, block)
+
+    for key in VALID_HANDLER_PERFORMANCE:
+        block = {k: v for k, v in VALID_HANDLER_PERFORMANCE.items() if k != key}
+        with pytest.raises(RuleParameterError, match=key):
+            HandlerPerformance.of(BENCHMARKS_DOC, block)
 
 
 # --- Story 2.2: the treatment-phase parameters --------------------------
@@ -594,3 +620,180 @@ def test_the_urgency_mapping_cannot_be_edited_by_a_consumer() -> None:
     block = actions()
     with pytest.raises(TypeError):
         block.urgencies[ActionKey.bill_review] = ActionUrgency.high  # type: ignore[index]
+
+
+# --- the handler-benchmark parameters (Story 5.2) ------------------------
+
+
+@pytest.mark.parametrize(
+    "weight_key",
+    ["severityWeightBp", "surgeryRateWeightBp", "litigationRateWeightBp"],
+)
+def test_a_negative_blend_weight_is_refused_because_it_inverts_the_term(weight_key: str) -> None:
+    """A negative weight does not merely re-tune the blend, it reverses a term.
+
+    `surgeryRateWeightBp: -1000` makes an all-surgical desk *less* complex than a
+    desk of sprains, the chip still renders a confident band, and nothing
+    anywhere says the sign is wrong — the same class of silent inversion
+    `severityFactor` is refused for on the queue.
+    """
+    with pytest.raises(RuleParameterError, match="must not be negative"):
+        benchmarks(**{weight_key: -1})
+
+
+def test_a_zero_blend_weight_switches_a_term_off_rather_than_failing() -> None:
+    """Zero is a policy, not a mistake — `_status_set`'s empty-list argument.
+
+    "Litigation does not enter the blend" is a legitimate thing for an operator
+    to say, and switching a term off from the document is what the parameter is
+    for.
+    """
+    assert benchmarks(litigationRateWeightBp=0).litigation_rate_weight_bp == 0
+
+
+def test_two_zero_blend_weights_still_leave_a_working_blend() -> None:
+    """Severity alone is a coherent complexity rule, and must stay loadable.
+
+    The refusal below is about the blend having *nothing* in it, not about it
+    being simple: an operator who decides complexity is average severity and
+    nothing else has expressed a policy, and the column still separates one desk
+    from another.
+    """
+    block = benchmarks(surgeryRateWeightBp=0, litigationRateWeightBp=0)
+    assert (block.surgery_rate_weight_bp, block.litigation_rate_weight_bp) == (0, 0)
+
+
+def test_all_three_blend_weights_zero_is_refused_because_it_bands_the_whole_desk() -> None:
+    """The silent failure the individual zeros are allowed *because* it is caught.
+
+    Every term switched off scores every handler 0, puts every score below
+    `complexityMedMin`, and renders a single Low chip on every row of a column
+    whose only job is to tell desks apart — with no request failing and nothing
+    logged. `cap: 0` is refused for the same shape of silence; this is that
+    mistake spread across three parameters instead of one.
+    """
+    with pytest.raises(RuleParameterError, match="are all zero"):
+        benchmarks(severityWeightBp=0, surgeryRateWeightBp=0, litigationRateWeightBp=0)
+
+
+@pytest.mark.parametrize("cap", [0, -1])
+def test_a_complexity_cap_below_one_is_refused(cap: int) -> None:
+    """A cap of zero grades every desk in the console identically, in silence."""
+    with pytest.raises(RuleParameterError, match="complexityScoreMax must be at least 1"):
+        benchmarks(complexityScoreMax=cap)
+
+
+@pytest.mark.parametrize(
+    ("band_key", "value"),
+    [
+        ("complexityHighMin", 101),
+        ("complexityHighMin", -1),
+        ("complexityMedMin", 200),
+        ("complexityMedMin", -5),
+    ],
+)
+def test_a_complexity_band_outside_the_capped_scale_is_refused(band_key: str, value: int) -> None:
+    """A cut-off above the cap is a band that can never be reached.
+
+    `complexityHighMin: 101` against a cap of 100 means no handler is ever
+    graded High, however severe, however surgical and however litigated their
+    book — silently, with a Medium chip on every row.
+    """
+    with pytest.raises(RuleParameterError, match="complexityScoreMax"):
+        benchmarks(**{band_key: value})
+
+
+def test_a_complexity_band_may_sit_on_either_end_of_the_capped_scale() -> None:
+    """The bounds are inclusive, and both ends are meaningful policies: a floor
+    of zero grades the whole desk Medium or above, a cut-off at the cap reserves
+    High for a book that maxes the blend."""
+    assert benchmarks(complexityMedMin=0).complexity_med_min == 0
+    assert benchmarks(complexityHighMin=100).complexity_high_min == 100
+
+
+def test_inverted_complexity_bands_are_refused() -> None:
+    """`riskMedMin > riskHighMin`'s refusal over the complexity pair.
+
+    `handler_complexity` tests High first, so an inverted pair makes `med`
+    unreachable and grades a middling book High.
+    """
+    with pytest.raises(RuleParameterError, match="complexityMedMin"):
+        benchmarks(complexityHighMin=40, complexityMedMin=60)
+
+
+def test_equal_complexity_bands_are_refused_because_they_delete_a_band() -> None:
+    """Equality is not the boundary between two policies; it is the loss of one.
+
+    `complexityMedMin == complexityHighMin` does not invert anything, which is
+    exactly why it is easy to wave through — and it makes `med` unreachable, so
+    every desk grades Low or High and the chip two thirds of a desk normally
+    wears simply stops appearing. The table publishes a three-band scale (the
+    footnote quotes both cut-points, the UI ships three tones); a document that
+    wants two bands is asking for a different rule.
+    """
+    with pytest.raises(RuleParameterError, match="complexityMedMin"):
+        benchmarks(complexityHighMin=50, complexityMedMin=50)
+
+
+def test_complexity_bands_one_apart_are_the_tightest_allowed() -> None:
+    """The refusal is `>=`, so the narrowest legal `med` band is a single score.
+
+    Asserted beside the refusal because "strictly below" has to mean *one* apart
+    is fine — a check that demanded a gap would be a tuning constraint nobody
+    wrote down.
+    """
+    assert benchmarks(complexityHighMin=51, complexityMedMin=50).complexity_med_min == 50
+
+
+def test_inverted_deviation_bands_are_refused() -> None:
+    """The refusal that matters most on this block.
+
+    `cycle_time_status` tests On Track first, so `onTrackDeviationPctMax` above
+    `attentionDeviationPctMin` reports a handler running far slower than the desk
+    as On Track — the opposite of what the table exists to surface.
+    """
+    with pytest.raises(RuleParameterError, match="onTrackDeviationPctMax"):
+        benchmarks(onTrackDeviationPctMax=20, attentionDeviationPctMin=-20)
+
+
+def test_deviation_bands_may_both_be_positive_or_both_negative() -> None:
+    """Neither band is required to sit on its own side of zero.
+
+    "On track means no slower than the desk" (`0`) and "attention starts at any
+    slippage at all" are both real policies, and a check that assumed a sign
+    would forbid them while protecting against nothing — the ordering is the
+    property that matters, and it is checked above.
+    """
+    strict = benchmarks(onTrackDeviationPctMax=0, attentionDeviationPctMin=1)
+    lenient = benchmarks(onTrackDeviationPctMax=-20, attentionDeviationPctMin=-10)
+
+    assert strict.on_track_deviation_pct_max == 0
+    assert lenient.attention_deviation_pct_min == -10
+
+
+def test_equal_deviation_bands_are_refused_because_their_edges_overlap() -> None:
+    """Both edges are inclusive, so equal bands do not merely squeeze Watch out.
+
+    They make the two conditions *both true* on their shared value, and which
+    one wins is then decided by the order `cycle_time_status` happens to test
+    them in — a rule set by a line number rather than by the document. Refused
+    at load, where a tuning mistake is still a tuning mistake, rather than
+    resolved silently at every call.
+    """
+    with pytest.raises(RuleParameterError, match="onTrackDeviationPctMax"):
+        benchmarks(onTrackDeviationPctMax=0, attentionDeviationPctMin=0)
+
+
+def test_deviation_bands_one_apart_are_the_tightest_allowed() -> None:
+    """`-1` / `0` is a legal, very strict policy: everything at or above the
+    desk average asks for attention. The refusal is equality, not proximity."""
+    assert benchmarks(onTrackDeviationPctMax=-1, attentionDeviationPctMin=0).version == 2
+
+
+@pytest.mark.parametrize("value", [1.5, "8", None, True])
+def test_a_non_integer_deviation_band_is_refused(value: object) -> None:
+    """A percentage band is compared against a rounded whole percentage, so a
+    fractional one could never be reached exactly and a string could not be
+    compared at all."""
+    with pytest.raises(RuleParameterError, match="attentionDeviationPctMin"):
+        benchmarks(attentionDeviationPctMin=value)

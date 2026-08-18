@@ -35,6 +35,8 @@ export interface StubRoutes {
   glossary?: StubRoute;
   /** `GET /dashboard/summary` (Story 5.1) — the portfolio KPI cards. */
   dashboardSummary?: StubRoute;
+  /** `GET /dashboard/handler-benchmarks` (Story 5.2) — the ranked handler table. */
+  handlerBenchmarks?: StubRoute;
   claimsQueue?: StubRouteFor;
   /**
    * `GET /claims/{id}` (Story 2.2). A function so a test can answer
@@ -237,6 +239,424 @@ export const DASHBOARD_SUMMARY_RETUNED = {
   },
 };
 
+
+/**
+ * The handler performance table over David Bline's real seeded book — six
+ * handlers, their real ranking, their real composites and their real bars.
+ *
+ * `DASHBOARD_SUMMARY`'s argument, with one addition that matters more on a
+ * table than on a card. Component tests do not verify these numbers (that is
+ * `test_handler_benchmarks.py`'s job against the real database); they verify
+ * that whatever the server sends is what the row shows. Using the real book
+ * keeps a reader from mistaking a stub for a computation — and **every figure
+ * in a row is distinct from every other figure in that row, and from the same
+ * figure in every other row**, which a table needs and the seed does not
+ * provide, so a cell wired to the wrong column or the wrong row cannot
+ * coincidentally match.
+ *
+ * **Everything that diverges from the seed, named — all four of them.** A
+ * fixture docstring that says figures were "nudged" while a band was flipped is
+ * worse than no docstring, because the next reader trusts it:
+ *
+ * 1. `pendingApprovals` on **every** row. The seed's six, counted from
+ *    `seed_data.json` over the statuses `priority_weights` calls pending
+ *    (`initial`, `ch_assessment_process`) and listed in this fixture's rank
+ *    order — Liam · Kaya · Marcus · Fatima · Sarah · Dante — are
+ *    **1 · 2 · 1 · 0 · 1 · 3**, and they become 5 · 9 · 7 · 2 · 6 · 11. Three
+ *    seeded handlers carry exactly one, one carries none, and 1 · 2 · 3 collide
+ *    with the rank column, so the real figures cannot tell a mis-wired cell
+ *    from a correct one. (An earlier draft of this list named five numbers for
+ *    six handlers, dropping Sarah's 1 — the failure mode a mandated docstring
+ *    has, and the reason this one is counted rather than recalled.)
+ * 2. `caseCount` on **Fatima Al-Mansoori's** row (seed: 4 → 11). Her real case
+ *    count is her real rank, which is precisely the coincidence this fixture
+ *    exists to remove. Every other case count is the seed's — 7 · 38 · 19 · 8 ·
+ *    24 — and the server tests assert the real one.
+ * 3. `complexityScore` on **Fatima Al-Mansoori's** row (seed: 48 → 38), which
+ *    4. **flips her `complexityBand` from `med` to `low`** — a band change, not
+ *    a nudge. The seeded portfolio produces only `med` and `high`, so without
+ *    this the `low` tone would render in no test at all. The flip is consistent
+ *    with the published cut-points (38 is below `complexityMedMin: 40`), which
+ *    is the property the retuned fixture below turns into an assertion.
+ *
+ * Everything else is the seed's: the six names, the rank order, the composites,
+ * the bar percentages, the RTW rates, the deviations, the statuses, the
+ * portfolio composite and the four thresholds. All three statuses appear
+ * (On Track · Watch · Attention) and, thanks to (4), all three complexity bands.
+ */
+export const HANDLER_BENCHMARKS = {
+  status: 200,
+  body: {
+    items: [
+      {
+        rank: 1,
+        handlerName: "Liam O'Sullivan",
+        caseCount: 7,
+        cycleSpeedPct: 82,
+        compositeDays: 64.1,
+        rtwPct: 75,
+        complexityScore: 64,
+        complexityBand: "med",
+        pendingApprovals: 5,
+        deviationPct: -11,
+        cycleStatus: "on_track",
+      },
+      {
+        rank: 2,
+        handlerName: "Kaya Johnson",
+        caseCount: 38,
+        cycleSpeedPct: 88,
+        compositeDays: 68.8,
+        rtwPct: 77,
+        complexityScore: 62,
+        complexityBand: "med",
+        pendingApprovals: 9,
+        deviationPct: -4,
+        cycleStatus: "watch",
+      },
+      {
+        rank: 3,
+        handlerName: "Marcus Chen",
+        caseCount: 19,
+        cycleSpeedPct: 92,
+        compositeDays: 72.0,
+        rtwPct: 79,
+        complexityScore: 60,
+        complexityBand: "med",
+        pendingApprovals: 7,
+        deviationPct: 0,
+        cycleStatus: "watch",
+      },
+      {
+        rank: 4,
+        handlerName: "Fatima Al-Mansoori",
+        caseCount: 11,
+        cycleSpeedPct: 93,
+        compositeDays: 72.7,
+        rtwPct: 100,
+        complexityScore: 38,
+        complexityBand: "low",
+        pendingApprovals: 2,
+        deviationPct: 1,
+        cycleStatus: "watch",
+      },
+      {
+        rank: 5,
+        handlerName: "Sarah Williams",
+        caseCount: 8,
+        cycleSpeedPct: 95,
+        compositeDays: 74.2,
+        rtwPct: 67,
+        complexityScore: 65,
+        complexityBand: "high",
+        pendingApprovals: 6,
+        deviationPct: 3,
+        cycleStatus: "watch",
+      },
+      {
+        rank: 6,
+        handlerName: "Dante Reyes",
+        caseCount: 24,
+        cycleSpeedPct: 100,
+        compositeDays: 78.0,
+        rtwPct: 69,
+        complexityScore: 57,
+        complexityBand: "med",
+        pendingApprovals: 11,
+        deviationPct: 8,
+        cycleStatus: "attention",
+      },
+    ],
+    portfolioCompositeDays: 71.9,
+    leader: "Liam O'Sullivan",
+    laggard: "Dante Reyes",
+    onTrackDeviationPctMax: -8,
+    attentionDeviationPctMin: 8,
+    complexityHighMin: 65,
+    complexityMedMin: 40,
+    rulesVersion: 1,
+  },
+};
+
+/**
+ * The same six handlers under a different scope and a superseded rule document
+ * — a different ranking, different chips, different bands.
+ *
+ * Its whole purpose is to be asserted *against* `HANDLER_BENCHMARKS`. A table
+ * that rendered the server's order reads differently under the two; one that
+ * re-sorted on any figure of its own would read the same, and so would a
+ * footnote holding constants instead of quoting the response. That is the
+ * difference a fixture pair can show and a single fixture cannot.
+ *
+ * **Written out in full rather than spread-and-mapped from the fixture above,
+ * because the point of it is internal coherence.** Every row here is reachable
+ * from the cut-points the same object publishes:
+ *
+ * - The complexity cut-points move to `complexityMedMin: 45` /
+ *   `complexityHighMin: 60`, which flips **three** complexity chips against the
+ *   fixture above — Liam (64), Kaya (62) and Marcus (60) all go `med` → `high`
+ *   — while Fatima (38 → `low`) and Sarah (65 → `high`) stay put and Dante
+ *   (57 → `med`) stays too. A contrast fixture that moved only status chips
+ *   would leave AC 2's complexity half with no component-level coverage at all.
+ * - The deviation bands narrow to `-3` / `3`. Under them Sarah's -4 is On Track
+ *   and Kaya's +4 is Attention, where the same two handlers wear Watch chips in
+ *   the fixture above (-4 and +3 against bands of -8 / +8). Every chip here is
+ *   the band its own `deviationPct` falls in, so the footnote and the chips
+ *   agree — which is the thing a reader checks and the first version of this
+ *   fixture got wrong.
+ * - **It is a genuinely different scope, not the same rows reversed.** Every
+ *   composite is new (48.6 · 52.9 · 55.0 · 55.6 · 57.2 · 61.4 against the
+ *   fixture above's 64.1 · 68.8 · 72.0 · 72.7 · 74.2 · 78.0), the portfolio they
+ *   are measured against is new (55.0d against 71.9d), and the case counts and
+ *   pending-approval counts are a different desk's. So the bar denominator, the
+ *   deviation denominator and the ranking are all exercised on figures the
+ *   other fixture never produces — which is the point of a contrast fixture
+ *   whose job is proving the page follows the wire. An earlier version carried
+ *   the *identical* six composites, bars, deviations and portfolio composite
+ *   with the names reversed, and claimed in this sentence to be a different
+ *   scope; it was six labels moved around one set of numbers.
+ * - Every derived figure is recomputed from those composites rather than
+ *   carried over: `deviationPct` is `(composite − 55.0) / 55.0` as a whole
+ *   percentage rounded half away from zero, and `cycleSpeedPct` is
+ *   `composite / 61.4` the same way. A reader can check any row with a
+ *   calculator, which is what "internally reachable" has to mean.
+ *
+ * Liam's row also carries `rtwPct: null` — the handler who has settled nothing
+ * — which is the one nullable field reachable on a healthy scope and the only
+ * place the em dash is drawn.
+ */
+export const HANDLER_BENCHMARKS_RERANKED = {
+  status: 200,
+  body: {
+    items: [
+      {
+        rank: 1,
+        handlerName: "Dante Reyes",
+        caseCount: 12,
+        cycleSpeedPct: 79,
+        compositeDays: 48.6,
+        rtwPct: 69,
+        complexityScore: 57,
+        complexityBand: "med",
+        pendingApprovals: 4,
+        deviationPct: -12,
+        cycleStatus: "on_track",
+      },
+      {
+        rank: 2,
+        handlerName: "Sarah Williams",
+        caseCount: 5,
+        cycleSpeedPct: 86,
+        compositeDays: 52.9,
+        rtwPct: 67,
+        complexityScore: 65,
+        complexityBand: "high",
+        pendingApprovals: 1,
+        deviationPct: -4,
+        cycleStatus: "on_track",
+      },
+      {
+        rank: 3,
+        handlerName: "Fatima Al-Mansoori",
+        caseCount: 9,
+        cycleSpeedPct: 90,
+        compositeDays: 55.0,
+        rtwPct: 100,
+        complexityScore: 38,
+        complexityBand: "low",
+        pendingApprovals: 6,
+        deviationPct: 0,
+        cycleStatus: "watch",
+      },
+      {
+        rank: 4,
+        handlerName: "Marcus Chen",
+        caseCount: 14,
+        cycleSpeedPct: 91,
+        compositeDays: 55.6,
+        rtwPct: 79,
+        complexityScore: 60,
+        complexityBand: "high",
+        pendingApprovals: 8,
+        deviationPct: 1,
+        cycleStatus: "watch",
+      },
+      {
+        rank: 5,
+        handlerName: "Kaya Johnson",
+        caseCount: 21,
+        cycleSpeedPct: 93,
+        compositeDays: 57.2,
+        rtwPct: 77,
+        complexityScore: 62,
+        complexityBand: "high",
+        pendingApprovals: 10,
+        deviationPct: 4,
+        cycleStatus: "attention",
+      },
+      {
+        rank: 6,
+        handlerName: "Liam O'Sullivan",
+        caseCount: 3,
+        cycleSpeedPct: 100,
+        compositeDays: 61.4,
+        rtwPct: null,
+        complexityScore: 64,
+        complexityBand: "high",
+        pendingApprovals: 2,
+        deviationPct: 12,
+        cycleStatus: "attention",
+      },
+    ],
+    portfolioCompositeDays: 55.0,
+    leader: "Dante Reyes",
+    laggard: "Liam O'Sullivan",
+    onTrackDeviationPctMax: -3,
+    attentionDeviationPctMin: 3,
+    complexityHighMin: 60,
+    complexityMedMin: 45,
+    rulesVersion: 2,
+  },
+};
+
+/**
+ * A scope whose *portfolio* has no data for one of the three cycle-time
+ * segments — the state in which nothing can be ranked.
+ *
+ * The only response the server can send with `rank: null` on a row, and the one
+ * fixture that makes the `#` column's contract testable. Every other fixture
+ * here is a healthy scope, where the server ranks every row and `items[i].rank`
+ * is therefore `i + 1` — so on every one of them a component rendering
+ * `{index + 1}` in that column is indistinguishable from one rendering
+ * `row.rank`, which is exactly the substitution `noDerivation.test.ts` names as
+ * the most likely way to get this table wrong and explicitly delegates to a
+ * component test. Here the ranks are `null`, the cells read the em dash, and the
+ * index version renders "1" through "3".
+ *
+ * Coherent with `benchmarks.py`'s contract rather than invented: `rank`,
+ * `compositeDays`, `cycleSpeedPct`, `deviationPct` and `cycleStatus` are null
+ * *together* — they are one condition on the wire — while `caseCount`,
+ * `rtwPct`, the complexity pair and `pendingApprovals` are unaffected, because
+ * none of them is derived from a composite. `portfolioCompositeDays` is null for
+ * the same reason the rows are, and `leader`/`laggard` are null because the
+ * server picks them from the rankable rows and there are none.
+ *
+ * Three rows rather than six, in **name order** — which is the order the server
+ * falls back to when there is no composite to sort on, and another thing an
+ * index-based `#` column would silently number as though it were a ranking.
+ */
+export const HANDLER_BENCHMARKS_UNRANKED = {
+  status: 200,
+  body: {
+    ...HANDLER_BENCHMARKS.body,
+    items: [
+      {
+        rank: null,
+        handlerName: "Dante Reyes",
+        caseCount: 24,
+        cycleSpeedPct: null,
+        compositeDays: null,
+        rtwPct: 69,
+        complexityScore: 57,
+        complexityBand: "med",
+        pendingApprovals: 11,
+        deviationPct: null,
+        cycleStatus: null,
+      },
+      {
+        rank: null,
+        handlerName: "Fatima Al-Mansoori",
+        caseCount: 11,
+        cycleSpeedPct: null,
+        compositeDays: null,
+        rtwPct: 100,
+        complexityScore: 38,
+        complexityBand: "low",
+        pendingApprovals: 2,
+        deviationPct: null,
+        cycleStatus: null,
+      },
+      {
+        rank: null,
+        handlerName: "Marcus Chen",
+        caseCount: 19,
+        cycleSpeedPct: null,
+        compositeDays: null,
+        rtwPct: 79,
+        complexityScore: 60,
+        complexityBand: "med",
+        pendingApprovals: 7,
+        deviationPct: null,
+        cycleStatus: null,
+      },
+    ],
+    portfolioCompositeDays: null,
+    leader: null,
+    laggard: null,
+  },
+};
+
+/**
+ * A scope with exactly one ranked handler — the callout's other branch.
+ *
+ * `leader` and `laggard` name the same person, which is what the server sends
+ * whenever the rankable set has one member, and the sentence the table draws
+ * for it says so rather than claiming a headcount it cannot know. No fixture
+ * covered this branch before, so the single-handler wording was rendered by
+ * nothing and asserted by nothing.
+ *
+ * The one row is its own portfolio, so its composite *is* the portfolio
+ * composite, its deviation is 0 and its bar is full — the only self-consistent
+ * answer for a desk of one, and the numbers a reader would check first.
+ */
+export const HANDLER_BENCHMARKS_SINGLE = {
+  status: 200,
+  body: {
+    ...HANDLER_BENCHMARKS.body,
+    items: [
+      {
+        rank: 1,
+        handlerName: "Fatima Al-Mansoori",
+        caseCount: 4,
+        cycleSpeedPct: 100,
+        compositeDays: 66.5,
+        rtwPct: 100,
+        complexityScore: 48,
+        complexityBand: "med",
+        pendingApprovals: 0,
+        deviationPct: 0,
+        cycleStatus: "watch",
+      },
+    ],
+    portfolioCompositeDays: 66.5,
+    leader: "Fatima Al-Mansoori",
+    laggard: "Fatima Al-Mansoori",
+  },
+};
+
+/**
+ * A scope with no handlers — the table's defined empty state.
+ *
+ * The four thresholds and `rulesVersion` are spread through from the fixture
+ * above rather than nulled with everything else, because that is what the
+ * server sends: "nothing in this book" says nothing about which rules were in
+ * force. The **thresholds** are what the band footnote quotes, and they are the
+ * only statement of the rules on a screen with no rows to explain — a fixture
+ * that emptied them too would have let the component drop the footnote and
+ * still pass. `rulesVersion` rides along unrendered, here as everywhere else on
+ * this table (and as `/dashboard/summary`'s does): it makes a *stored* response
+ * self-describing, and no cell shows it.
+ */
+export const HANDLER_BENCHMARKS_EMPTY = {
+  status: 200,
+  body: {
+    ...HANDLER_BENCHMARKS.body,
+    items: [],
+    portfolioCompositeDays: null,
+    leader: null,
+    laggard: null,
+  },
+};
 
 /**
  * Jennifer Park's real seed strip: three missed targets and one made one,
@@ -2263,6 +2683,12 @@ export function stubApi(routes: StubRoutes): void {
       }
       if (url.includes("/api/dashboard/summary")) {
         return answer(routes.dashboardSummary ?? DASHBOARD_SUMMARY);
+      }
+      // Story 5.2's. Order against the summary above is not load-bearing — the
+      // two paths are disjoint, unlike the `/api/claims…` block below — but it
+      // keeps the dashboard's two routes readable together.
+      if (url.includes("/api/dashboard/handler-benchmarks")) {
+        return answer(routes.handlerBenchmarks ?? HANDLER_BENCHMARKS);
       }
       // Story 4.1's four, before every `/api/claims` case below. **Not because
       // the case file would swallow them**: the catch-all tests `/api/claims/`

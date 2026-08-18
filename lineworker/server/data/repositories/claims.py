@@ -108,6 +108,48 @@ async def select_claim_columns(
     return rows.all()
 
 
+async def select_claim_columns_with_handler(
+    db: AsyncSession,
+    ctx: CallerContext,
+    columns: Sequence[InstrumentedAttribute[Any]],
+) -> Sequence[sa.Row[Any]]:
+    """`select_claim_columns`, plus the assigned handler's display name.
+
+    Story 5.2's handler-benchmark table groups the caller's claims by their
+    assigned handler and shows each handler's *name*, which is on `app_user`
+    rather than on `claim` — and no list surface in the console resolves it
+    today. `select_queue_rows` joins the worker and the employer for the queue
+    card and deliberately not the handler (a handler's own queue does not need
+    to be told whose it is); `select_claim_detail` joins all three for one
+    claim. This is the first read that needs the join over a *set*, so it sets
+    the precedent, and it mirrors `select_claim_detail`'s aliasing exactly.
+
+    **Aliased, for that function's reason.** `AppUser` is reachable from
+    `claim` by more than one foreign key over the life of this schema, and an
+    un-aliased join to it would collide the first time a second one is added —
+    silently, by widening a join condition rather than by failing.
+
+    An **inner** join: `Claim.handler_id` is a non-nullable foreign key, so an
+    outer join would only add a `None` branch that cannot happen and that every
+    consumer would then have to reason about. A handler row is guaranteed.
+
+    `columns` is still the service's business and the scope predicate is still
+    this module's — the join adds a labelled column, never a row. Grouping by
+    handler over a *roster* rather than over these rows would be the AD-7 error
+    this signature makes hard to write: there is no way to ask this function
+    for a handler who has no claim in the caller's book.
+    """
+    handler = sa.orm.aliased(AppUser)
+    rows = await db.execute(
+        sa.select(*columns, handler.name.label("handler_name"))
+        .select_from(Claim)
+        .join(handler, Claim.handler_id == handler.id)
+        .where(employer_scope(ctx))
+        .order_by(Claim.claim_id)
+    )
+    return rows.all()
+
+
 async def select_queue_rows(
     db: AsyncSession,
     ctx: CallerContext,

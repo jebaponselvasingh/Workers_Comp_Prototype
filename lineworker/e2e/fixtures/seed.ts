@@ -37,6 +37,12 @@ const FULLY_RECOVERED = "returned_and_fully_recovered";
 interface SeedClaim {
   claim_id: string;
   employer: string;
+  // Story 5.2's: the handler-benchmark table groups the scoped claim set by the
+  // assigned handler, so the oracle has to group the *seed* the same way. Read
+  // from the claim rather than from `app_users[].employers` on purpose — that is
+  // the roster, and the roster is exactly what this table must not be built
+  // from (Kaya Johnson is assigned John Deere and handles none of its claims).
+  handler: string;
   stage: string;
   status: string;
   severity_score: number;
@@ -1619,3 +1625,343 @@ export const EXPECTED_KPI_CAPTIONS = {
   "kpi-high-risk": `Severity ≥ ${HIGH_RISK_MIN}/100`,
   "kpi-fraud-flags": `Score ≥ ${FRAUD_FLAG_SCORE_MIN} — review needed`,
 } as const;
+
+/**
+ * Story 5.2 — the handler performance table, restated independently.
+ *
+ * `expectedPortfolioSummaryFor`'s discipline over a much larger rule: a
+ * benchmark row is the product of three segment averages, a substitution rule,
+ * a percentage deviation, a three-way band, a weighted blend, a cap, a second
+ * three-way band and a sort. Every one of those is written out here from the
+ * story text and the prototype (`renderSV`, lines 1015-1050) rather than read
+ * off the response, because an oracle sharing any one of them with the
+ * implementation would be validating the rest by accident.
+ *
+ * The eight constants below are the deployed `handler_performance` document. A
+ * stack migrated with different ones would legitimately fail these specs, which
+ * is the point of writing them down here rather than reading them off the
+ * response.
+ *
+ * `COMPLEXITY_HIGH_MIN` is 65 and so is `HIGH_RISK_MIN` at the top of this
+ * file. Two constants, deliberately: one bands a claim's severity score, the
+ * other bands a handler's blended mix, and sharing them here would hide the
+ * most plausible way to get this story wrong.
+ */
+const ON_TRACK_DEVIATION_PCT_MAX = -8;
+const ATTENTION_DEVIATION_PCT_MIN = 8;
+const SEVERITY_WEIGHT_BP = 10_000;
+const SURGERY_RATE_WEIGHT_BP = 1_000;
+const LITIGATION_RATE_WEIGHT_BP = 1_500;
+const COMPLEXITY_SCORE_MAX = 100;
+const COMPLEXITY_HIGH_MIN = 65;
+const COMPLEXITY_MED_MIN = 40;
+
+const BASIS_POINTS_PER_UNIT_BLEND = 10_000;
+const PERCENT = 100;
+/** The precision the composite is *published* at — see `compositeOf`. */
+const COMPOSITE_TENTHS = 10;
+/** …and the same precision as a digit count, which is what the cell shows. */
+const COMPOSITE_DECIMALS = 1;
+
+/** The UI's complexity labels — `HandlerBenchmarkTable.tsx`, restated. */
+const COMPLEXITY_LABEL: Record<string, string> = {
+  low: "Low",
+  med: "Medium",
+  high: "High",
+};
+
+/** The UI's status labels, likewise. */
+const CYCLE_STATUS_LABEL: Record<string, string> = {
+  on_track: "On Track",
+  watch: "Watch",
+  attention: "Attention",
+};
+
+/**
+ * Half away from zero, matching the server's `ROUND_HALF_UP` on a `Decimal`.
+ *
+ * `Math.round` alone rounds -8.5 to -8 (half toward +∞), which would disagree
+ * with the server at exactly one point on the negative half of the deviation
+ * scale — reachable, and the kind of failure that reads as a defect in the code
+ * rather than in the oracle.
+ *
+ * A second rounding helper beside Story 3.1's `roundHalfUp(value, divisor)`,
+ * which takes an integer numerator and an integer divisor and is the *benefit*
+ * engine's convention. This one rounds an already-divided signed ratio, which
+ * that one cannot express — and merging them would mean one of the two call
+ * sites converting its arguments to suit the other's shape.
+ */
+function roundHalfAwayFromZero(value: number): number {
+  return value < 0 ? -Math.round(-value) : Math.round(value);
+}
+
+/**
+ * One segment average as an exact fraction — a sum over a count, undivided.
+ *
+ * `null` for an empty segment, never zero.
+ *
+ * **Why a fraction and not `mean(values, decimals)`.** The composite is the sum
+ * of the three segment averages *unrounded*, and it is what the table is ranked
+ * on. `mean` above rounds to the precision a tile is displayed at (whole days,
+ * for settle), and summing three of those admits half a day of error — larger
+ * than the gap between four of the six seeded handlers, and enough to swap two
+ * of them. That is the defect this story was re-derived to fix, so the oracle
+ * has to be able to see it: keeping the sum and the count lets the three
+ * averages be added exactly and rounded exactly once, in `compositeOf`.
+ */
+interface Segment {
+  sum: number;
+  count: number;
+}
+
+function segmentAverages(claims: SeedClaim[]): (Segment | null)[] {
+  const settled = claims.filter((claim) => claim.stage === "settled");
+  const picks = claims.map((c) => c.sla_pick_days).filter((d): d is number => d !== null);
+  const approves = claims.map((c) => c.sla_approve_days).filter((d): d is number => d !== null);
+  const settles = settled.map((c) => c.settlement_days).filter((d): d is number => d !== null);
+
+  return [picks, approves, settles].map((values) =>
+    values.length === 0
+      ? null
+      : { sum: values.reduce((total, value) => total + value, 0), count: values.length },
+  );
+}
+
+/**
+ * The composite as an exact fraction, substituting the scoped portfolio's
+ * average for any segment the handler has none of.
+ *
+ * The generalised rule: `renderSV` substitutes only the settle average and lets
+ * a missing pick or approve fall through as `0`. `null` when a segment is
+ * missing from both, which never happens on the seeded book.
+ *
+ * The three fractions are added over a common denominator rather than as
+ * floats. The denominators are claim counts (at most 100 here), so the products
+ * stay whole integers well inside `Number.MAX_SAFE_INTEGER` and the total is
+ * exact — which is what lets the published figure be rounded once, from the
+ * true value, exactly as the server does it.
+ */
+function compositeOf(
+  segments: (Segment | null)[],
+  fallback: (Segment | null)[],
+): Segment | null {
+  let sum = 0;
+  let count = 1;
+  for (let i = 0; i < segments.length; i += 1) {
+    const segment = segments[i] ?? fallback[i];
+    if (segment === null) return null;
+    sum = sum * segment.count + segment.sum * count;
+    count *= segment.count;
+  }
+  return { sum, count };
+}
+
+/** A fraction as the number it is, for comparisons and percentages. */
+function value(fraction: Segment): number {
+  return fraction.sum / fraction.count;
+}
+
+/**
+ * The composite as the Avg Days column *reads* — one decimal, trailing zero and
+ * all.
+ *
+ * Rounded from the exact fraction, once, after the order was decided on the
+ * fraction itself, and then formatted to a fixed decimal rather than stringified
+ * as a number. That last step is the whole point: `String(78)` is `"78"`, so a
+ * composite that lands on a whole day used to render beside a neighbour's
+ * `"72.7"` with no way for a reader to tell whether the gap was six tenths or
+ * six days — reintroducing exactly the ambiguity the composite is computed at
+ * full precision to remove. The component formats to `COMPOSITE_DECIMALS`
+ * places for the same reason, so the oracle states the same string.
+ */
+function publishedComposite(fraction: Segment): string {
+  return (
+    roundHalfAwayFromZero((fraction.sum * COMPOSITE_TENTHS) / fraction.count) / COMPOSITE_TENTHS
+  ).toFixed(COMPOSITE_DECIMALS);
+}
+
+function complexityOf(claims: SeedClaim[]): { score: number; band: string } {
+  const weighted =
+    SEVERITY_WEIGHT_BP * claims.reduce((sum, c) => sum + c.severity_score, 0) +
+    SURGERY_RATE_WEIGHT_BP * claims.filter((c) => c.surgery_required).length * PERCENT +
+    LITIGATION_RATE_WEIGHT_BP * claims.filter((c) => c.litigation_flag).length * PERCENT;
+  const score = Math.min(
+    COMPLEXITY_SCORE_MAX,
+    roundHalfAwayFromZero(weighted / (claims.length * BASIS_POINTS_PER_UNIT_BLEND)),
+  );
+  const band =
+    score >= COMPLEXITY_HIGH_MIN ? "high" : score >= COMPLEXITY_MED_MIN ? "med" : "low";
+  return { score, band };
+}
+
+/**
+ * The handler's position in `app_user.id` order, restated from the seed file.
+ *
+ * The server's third sort key is `handler_id`, and the ids are recoverable here
+ * without a query: migration 0004 inserts `app_users` in the seed file's order,
+ * so a handler's index in that list is its id order. Restated rather than
+ * fetched, like every other rule in this file.
+ */
+function handlerOrdinal(name: string): number {
+  const index = seed.app_users.findIndex((u) => u.name === name && u.role === "handler");
+  if (index < 0) throw new Error(`no seeded handler ${name}`);
+  return index;
+}
+
+/**
+ * Two names compared the way the server compares them — by code point.
+ *
+ * Not `localeCompare`: that applies ICU collation, which folds case and
+ * diacritics, while the server sorts Python `str`, which walks code points. The
+ * seeded names never reach a pair the two disagree about, and an oracle whose
+ * tie-break is "whatever this Node build's locale data says" would be one
+ * accented handler name away from disagreeing with the server for reasons
+ * nobody could reproduce.
+ */
+function byCodePoint(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function cycleStatusOf(deviationPct: number): string {
+  if (deviationPct <= ON_TRACK_DEVIATION_PCT_MAX) return "on_track";
+  if (deviationPct >= ATTENTION_DEVIATION_PCT_MIN) return "attention";
+  return "watch";
+}
+
+/** The signed deviation as the Status chip prints it — `Intl`'s `exceptZero`. */
+function signedPct(deviationPct: number): string {
+  return new Intl.NumberFormat("en-US", { signDisplay: "exceptZero" }).format(deviationPct);
+}
+
+export interface ExpectedHandlerRow {
+  /** The row's `data-handler` attribute. */
+  handler: string;
+  /**
+   * The nine cells' text, in the columns' order.
+   *
+   * The Cycle Speed cell is **not** empty: the bar is `aria-hidden` and the
+   * cell's accessible name — the composite and what the fill is a percentage of
+   * — is screen-reader text inside it, so a `<td>` under a header promising a
+   * figure is not an unnamed empty cell. The fill's width is asserted
+   * separately, off `barWidths`.
+   */
+  cells: string[];
+}
+
+export interface ExpectedHandlerBenchmarks {
+  rows: ExpectedHandlerRow[];
+  leader: string;
+  laggard: string;
+  /** Each row's bar width, as the style attribute renders it. */
+  barWidths: string[];
+  /** The footnote's two deviation bands and the portfolio it compares against. */
+  footnote: { portfolio: string; onTrack: number; attention: number };
+}
+
+/**
+ * What the table's cells read for a persona's seeded book.
+ *
+ * **Grouped over the persona's scoped claims, never over the roster.** That is
+ * the property AD-7 names the straddle case for: Kaya Johnson is assigned John
+ * Deere and handles none of its seven claims, so Ken Stoker's table contains
+ * Liam O'Sullivan and Fatima Al-Mansoori and not her. An oracle built from the
+ * employer assignments would agree with the wrong implementation.
+ *
+ * Ordering is `(composite, handler, handlerId)` ascending on the **exact**
+ * composite — fastest first, ties broken by name and then by id — and the rank
+ * is the 1-based position in that order. All three keys, matching the server's:
+ * the seed has no two handlers sharing a display name, so the third never
+ * decides anything, but an oracle carrying two keys would agree with a server
+ * that had quietly dropped the third. Ids come from `handlerOrdinal`.
+ *
+ * **The name comparison is by code point, not `localeCompare`.** The server
+ * sorts Python strings, which compares code point by code point; `localeCompare`
+ * applies ICU collation, which folds case and diacritics and orders `"a"` before
+ * `"B"` where Python orders `"B"` first. The seeded names never reach a pair the
+ * two disagree about — but the divergence would surface as an unreproducible
+ * ordering the first time a handler was named with an accent, so the oracle
+ * states the server's rule rather than a locale's.
+ *
+ * Ranking on the exact composite rather than on the published one is the whole
+ * point of `compositeOf` returning a fraction: David Bline's table puts Marcus
+ * Chen (72.036 days) above Fatima Al-Mansoori (72.667), and summing the SLA
+ * strip's whole-day settle tiles instead makes 72.4 look slower than 72.3 and
+ * swaps them.
+ */
+export function expectedHandlerBenchmarksFor(persona: {
+  name: string;
+  role: string;
+}): ExpectedHandlerBenchmarks {
+  const visible = claimsFor(persona.name, persona.role);
+  const portfolioSegments = segmentAverages(visible);
+  const portfolio = compositeOf(portfolioSegments, portfolioSegments);
+  if (portfolio === null) {
+    throw new Error(`${persona.name} has no cycle-time data — the seed has moved`);
+  }
+  const portfolioDays = value(portfolio);
+
+  const byHandler = new Map<string, SeedClaim[]>();
+  for (const claim of visible) {
+    byHandler.set(claim.handler, [...(byHandler.get(claim.handler) ?? []), claim]);
+  }
+
+  const rows = [...byHandler.entries()]
+    .map(([handler, claims]) => {
+      const composite = compositeOf(segmentAverages(claims), portfolioSegments);
+      if (composite === null) throw new Error(`${handler} has no composite — the seed has moved`);
+      const days = value(composite);
+      const published = publishedComposite(composite);
+      const handlerId = handlerOrdinal(handler);
+      const settled = claims.filter((c) => c.stage === "settled");
+      const recovered = settled.map((c) => (c.return_status === FULLY_RECOVERED ? 100 : 0));
+      const { score, band } = complexityOf(claims);
+      const deviation = roundHalfAwayFromZero(
+        ((days - portfolioDays) / portfolioDays) * PERCENT,
+      );
+
+      return {
+        handler,
+        handlerId,
+        days,
+        published,
+        cells: [
+          "", // the rank, filled in once the order is known
+          handler,
+          String(claims.length),
+          "", // the cycle-speed cell, filled in once the slowest peer is known
+          `${published}d`,
+          settled.length === 0 ? "—" : `${String(mean(recovered, 0))}%`,
+          `${COMPLEXITY_LABEL[band]} (${String(score)})`,
+          String(claims.filter((c) => PENDING_APPROVAL_STATUSES.includes(c.status)).length),
+          `${CYCLE_STATUS_LABEL[cycleStatusOf(deviation)]} ${signedPct(deviation)}%`,
+        ],
+      };
+    })
+    .sort(
+      (a, b) => a.days - b.days || byCodePoint(a.handler, b.handler) || a.handlerId - b.handlerId,
+    );
+
+  const slowest = Math.max(...rows.map((row) => row.days));
+  const bars = rows.map((row) => roundHalfAwayFromZero((row.days / slowest) * PERCENT));
+
+  return {
+    rows: rows.map((row, index) => ({
+      handler: row.handler,
+      cells: [
+        String(index + 1),
+        ...row.cells.slice(1, 3),
+        // The cell's accessible name, as `CycleSpeedBar` composes it.
+        `${row.published} days, ${String(bars[index])}% of the slowest cycle time in this portfolio`,
+        ...row.cells.slice(4),
+      ],
+    })),
+    leader: rows[0].handler,
+    laggard: rows[rows.length - 1].handler,
+    barWidths: bars.map((bar) => `${String(bar)}%`),
+    footnote: {
+      portfolio: `${publishedComposite(portfolio)}d`,
+      onTrack: ON_TRACK_DEVIATION_PCT_MAX,
+      attention: ATTENTION_DEVIATION_PCT_MIN,
+    },
+  };
+}

@@ -29,14 +29,27 @@ Two deliberate structural choices, both for Story 5.3's benefit:
 - Status is decided on the **rounded** value, the one the user can see. A
   mean of 29.6 days displays as `30d`, and a tile reading `30d ✓ <30d`
   would be indefensible whatever the unrounded arithmetic said.
+
+**Rounding is for display and for a verdict, never for an ordering.** That
+distinction is what `segment_means_of` exists to keep. A tile is a single
+figure with a single target beside it, so deciding its status on the
+rounded number is the honest choice; a *ranking* is a comparison between
+figures, and rounding before comparing lets a display convention decide the
+order. `strip_of` and `segment_means_of` therefore compute the same three
+averages once, in `_segment_values`, and differ only in whether they
+quantize — so a consumer that needs to compare cannot accidentally acquire
+a second definition of "average settle" along with the precision it needs.
 """
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
+from typing import Any, Final
 
+import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import InstrumentedAttribute
 
 from config import Settings
 from data.context import CallerContext
@@ -128,6 +141,58 @@ class SlaSample:
     fully_recovered: bool
 
 
+#: The claim columns one `SlaSample` is built from — the projection any scoped
+#: read must include for `sample_of` to work.
+#:
+#: **This tuple is the whole reason a second aggregate can exist at all.**
+#: `test_nothing_outside_the_worklist_aggregation_reads_the_sla_source_columns`
+#: greps every server module — comments and docstrings included — for the three
+#: duration column names and allowlists this file, the model, `open_duration`
+#: and the tests. Story 5.2's handler benchmarking needs the same five columns
+#: per handler, and there is no way to write `[Claim.sla_pick_days, …]` in
+#: `benchmarks.py` that the guard would tolerate. Exporting the projection and
+#: its mapper is not a way around that rule; it is the rule enforced properly.
+#: A caller composes `[*sla.SAMPLE_COLUMNS, …its own columns…]`, hands each row
+#: back to `sample_of`, and folds the result through `strip_of` — so the second
+#: consumer gets the columns *and* the definitions, and cannot acquire one
+#: without the other.
+#:
+#: Order is not load-bearing (`sample_of` reads the row by label), but it is
+#: kept in the tiles' left-to-right order so the projection reads like the
+#: strip it feeds.
+SAMPLE_COLUMNS: Final[tuple[InstrumentedAttribute[Any], ...]] = (
+    Claim.sla_pick_days,
+    Claim.sla_approve_days,
+    Claim.settlement_days,
+    Claim.stage,
+    Claim.return_status,
+)
+
+
+def sample_of(row: sa.Row[Any]) -> SlaSample:
+    """One projected claim row, reduced to the five facts the strip needs.
+
+    By label rather than by position (`SlaSample(*row)`), which would work and
+    would be one reordered projection away from averaging approval durations as
+    pick-up times: both columns are nullable integers, so a swap type-checks,
+    runs, and produces two wrong numbers with nothing to say so. It also lets a
+    caller widen the projection — `[*SAMPLE_COLUMNS, Claim.handler_id, …]` —
+    without this function caring where the extra columns landed.
+
+    The two derived booleans are decided here rather than by the caller for the
+    grep guard's reason and for a better one: "settled" and "fully recovered"
+    are what the strip's denominators *mean*, and a caller that computed them
+    would own half of two metric definitions.
+    """
+    return SlaSample(
+        pick_days=row.sla_pick_days,
+        approve_days=row.sla_approve_days,
+        settlement_days=row.settlement_days,
+        is_settled=row.stage is Stage.settled,
+        fully_recovered=row.return_status is ReturnStatus.returned_and_fully_recovered,
+    )
+
+
 def targets_for(settings: Settings) -> Mapping[SlaMetricKey, SlaTarget]:
     """The four targets, read from configuration by name (AD-8, AC 3).
 
@@ -165,6 +230,65 @@ def _rounded(numerator: int, denominator: int, decimals: int) -> float:
         quantum, rounding=ROUND_HALF_UP
     )
     return float(quantized)
+
+
+#: The three tiles that are *durations*, in the order a composite adds them.
+#:
+#: `rtw_rate` is deliberately absent: it is a rate, and the one thing a caller
+#: may do with this tuple is sum the segments it names.
+DURATION_SEGMENTS: Final[tuple[SlaMetricKey, ...]] = (
+    SlaMetricKey.pick,
+    SlaMetricKey.approve,
+    SlaMetricKey.settle,
+)
+
+
+def _segment_values(caseload: Sequence[SlaSample]) -> Mapping[SlaMetricKey, Sequence[int]]:
+    """The numbers behind each duration tile — the definitions, in one place.
+
+    Both `strip_of` and `segment_means_of` read this, which is the whole point:
+    the three denominators (pick and approve over every claim carrying the
+    duration, settle over *settled* claims carrying it) are stated once, so the
+    rounded figure on a tile and the unrounded figure a ranking is decided on
+    can only ever be two precisions of the same average.
+    """
+    settled = [sample for sample in caseload if sample.is_settled]
+    return {
+        SlaMetricKey.pick: [s.pick_days for s in caseload if s.pick_days is not None],
+        SlaMetricKey.approve: [s.approve_days for s in caseload if s.approve_days is not None],
+        SlaMetricKey.settle: [s.settlement_days for s in settled if s.settlement_days is not None],
+    }
+
+
+def segment_means_of(caseload: Sequence[SlaSample]) -> Mapping[SlaMetricKey, Decimal | None]:
+    """The three duration averages **unrounded**, or `None` for an empty segment.
+
+    `strip_of` with the quantization left off, and it exists for exactly one
+    consumer: `benchmarks.py`, which adds the three together and *ranks* on the
+    total.
+
+    **Why a ranking may not be decided on the published figures.** The strip
+    publishes pick and approve to one decimal and settle to whole days, because
+    that is the precision a tile is read and its verdict decided at. Summing
+    those three admits up to half a day of error into the total — and on the
+    seeded portfolio that is larger than the gap between four of the six
+    handlers, which is enough to swap two of them. A display convention would
+    then be deciding who a supervisor is told to check in with. So the composite
+    is computed here, exactly, and rounded once at the end for display.
+
+    Still `Decimal` rather than `float`: `sum/len` in binary floating point
+    turns a true 29.5 into 29.499999999999996, and three of those added together
+    would put the ordering back in the hands of representation error — a smaller
+    error than rounding, but the same class of defect.
+
+    This is not a second averaging (AD-2). It is `_segment_values`, which
+    `strip_of` folds through `_rounded` and this returns as it is; the two
+    cannot disagree about what an average is without disagreeing here first.
+    """
+    return {
+        key: (Decimal(sum(values)) / Decimal(len(values))) if values else None
+        for key, values in _segment_values(caseload).items()
+    }
 
 
 def _metric(values: Sequence[int], target: SlaTarget) -> SlaMetric:
@@ -220,11 +344,7 @@ def strip_of(
       outcome, and sharing one denominator would drop it from the rate.
     """
     settled = [sample for sample in caseload if sample.is_settled]
-    values: Mapping[SlaMetricKey, Sequence[int]] = {
-        SlaMetricKey.pick: [s.pick_days for s in caseload if s.pick_days is not None],
-        SlaMetricKey.approve: [s.approve_days for s in caseload if s.approve_days is not None],
-        SlaMetricKey.settle: [s.settlement_days for s in settled if s.settlement_days is not None],
-    }
+    values = _segment_values(caseload)
     metrics = {key: _metric(values[key], targets[key]) for key in values}
 
     rtw_target = targets[SlaMetricKey.rtw_rate]
@@ -255,26 +375,12 @@ async def sla_strip(
     take the identical scoped route through the repository, which is the
     whole of FR-SLA-1 (the prototype recomputed the strip on handler flows
     only, so everyone else read a stale default).
+
+    Built on `SAMPLE_COLUMNS` and `sample_of` rather than on an inline
+    projection since Story 5.2, with no behaviour change: this call and the
+    handler-benchmark aggregate now read the same five columns through the same
+    mapper, so the two can only disagree about what "settled" means by
+    disagreeing here first.
     """
-    rows = await claim_repo.select_claim_columns(
-        db,
-        ctx,
-        [
-            Claim.sla_pick_days,
-            Claim.sla_approve_days,
-            Claim.settlement_days,
-            Claim.stage,
-            Claim.return_status,
-        ],
-    )
-    caseload = [
-        SlaSample(
-            pick_days=pick_days,
-            approve_days=approve_days,
-            settlement_days=settlement_days,
-            is_settled=stage is Stage.settled,
-            fully_recovered=return_status is ReturnStatus.returned_and_fully_recovered,
-        )
-        for pick_days, approve_days, settlement_days, stage, return_status in rows
-    ]
-    return strip_of(caseload, targets_for(settings))
+    rows = await claim_repo.select_claim_columns(db, ctx, SAMPLE_COLUMNS)
+    return strip_of([sample_of(row) for row in rows], targets_for(settings))

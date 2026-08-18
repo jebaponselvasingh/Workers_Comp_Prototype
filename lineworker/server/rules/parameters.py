@@ -56,6 +56,7 @@ INJURY_CAPTURE_KEY = "injury_capture"
 BENEFIT_PARAMS_KEY = "benefit_params"
 RESERVE_BANDS_KEY = "reserve_bands"
 WORKLIST_ACTIONS_KEY = "worklist_actions"
+HANDLER_PERFORMANCE_KEY = "handler_performance"
 
 
 class RuleParameterError(ValueError):
@@ -868,3 +869,178 @@ async def worklist_actions_for(db: AsyncSession, as_of: date | None = None) -> W
     """Load and validate the action-checklist parameters effective on `as_of`."""
     document = await load(db, WORKLIST_ACTIONS_KEY, as_of)
     return WorklistActions.of(document, evaluate(document))
+
+
+@dataclass(frozen=True)
+class HandlerPerformance:
+    """Every tunable behind the handler-benchmarking table (Story 5.2, AD-8).
+
+    A block of its own, in a document of its own, for `WorklistActions`' reason
+    with one extra twist. `services/worklist` owns the benchmark aggregate, so
+    its knobs belong beside the action checklist's rather than inside
+    `DerivationThresholds` — but *two* of the values here parameterise
+    registered derivations (`handler_complexity` and `cycle_time_status`), which
+    is normally the argument for putting them in that block.
+
+    They are here anyway, and the reason is a signature: `Derivation.build`
+    takes `DerivationThresholds` and nothing else, so a derivation whose
+    parameters live elsewhere receives them at `.of()` instead. That is not a
+    workaround invented here — `batch_calendar.NextBatchDateDerivation.of(as_of,
+    weekdays)` already does it for the disbursement cadence. The rule the two
+    cases share is that `DerivationThresholds` is the block every derivation is
+    *built* from, not the block every derivation *reads*; a value used by one
+    aggregate and its two derivations belongs with the aggregate.
+
+    **The deviation bands are percentages, and one of them is negative.**
+    `on_track_deviation_pct_max` is how far *below* the scoped portfolio's
+    composite cycle time a handler must sit to count as ahead of the desk, so it
+    is naturally negative; `attention_deviation_pct_min` is how far above it
+    asks for a check-in. Both edges are inclusive, which is the prototype's
+    reading (`statusOf`, line 1032) and the one that surfaces a drift sitting
+    exactly on a boundary rather than filing it as Watch.
+
+    **The complexity blend is basis points over three 0-100 inputs.** Average
+    severity, surgery rate as a percentage and litigation rate as a percentage,
+    each multiplied by its weight and divided by ten thousand. `BenefitParams`'
+    argument for a comparison turned into one for a weighted sum: the score is a
+    whole number on a chip, and integer counts over basis points make it exact
+    rather than three floats accumulated in whichever order a loop added them.
+
+    **`complexity_high_min` is not `risk_high_min`, whatever the two happen to
+    be set to.** `risk_high_min` bands one claim's severity score;
+    `complexity_high_min` bands a handler's blended mix. Different subjects,
+    different questions, and the whole reason they are two parameters in two
+    documents is that they must be able to move apart. This block never reads
+    the other one, and nothing here may start.
+    """
+
+    version: int
+    on_track_deviation_pct_max: int
+    attention_deviation_pct_min: int
+    severity_weight_bp: int
+    surgery_rate_weight_bp: int
+    litigation_rate_weight_bp: int
+    complexity_score_max: int
+    complexity_high_min: int
+    complexity_med_min: int
+
+    def __post_init__(self) -> None:
+        # A negative weight inverts the term it weights, silently and
+        # plausibly: a negative `surgeryRateWeightBp` makes an all-surgical
+        # book *less* complex than a book of sprains, the chip still renders a
+        # confident band, and nothing anywhere says the sign is wrong. Zero is
+        # accepted and is a real policy — "litigation does not enter the blend"
+        # is a legitimate thing for an operator to say, and switching a term off
+        # from the document is what the parameter is for (`_status_set`'s
+        # argument over an empty list).
+        for name, weight in (
+            ("severityWeightBp", self.severity_weight_bp),
+            ("surgeryRateWeightBp", self.surgery_rate_weight_bp),
+            ("litigationRateWeightBp", self.litigation_rate_weight_bp),
+        ):
+            if weight < 0:
+                raise RuleParameterError(f"{name} must not be negative, got {weight}")
+        # …but not *all three* at once. Each zero on its own switches one term
+        # off, which is policy; all three together switch the blend off, and the
+        # failure that follows is the quietest one this document can produce.
+        # Every handler in the console scores exactly 0, every score is below
+        # `complexityMedMin`, and the whole desk bands into a single Low chip —
+        # on a column whose entire purpose is to separate the desks carrying
+        # severe, surgical and litigated books from the ones that are not. No
+        # request fails, no log line appears, and the table still renders six
+        # confident rows. `cap: 0` and `complexityScoreMax: 0` are refused for
+        # exactly this shape of silence; a blend with nothing in it is the same
+        # mistake spread over three parameters instead of one.
+        if not any(
+            (self.severity_weight_bp, self.surgery_rate_weight_bp, self.litigation_rate_weight_bp)
+        ):
+            raise RuleParameterError(
+                "severityWeightBp, surgeryRateWeightBp and litigationRateWeightBp are all "
+                "zero — the blend then scores every handler 0 and bands the whole desk into "
+                "one chip; switch a term off individually, or retire the column"
+            )
+        # The cap is the top of the scale the two band cut-offs are read
+        # against, so a cap below one collapses every handler's score to the
+        # same number and files the whole desk in one band — `cap: 0`'s failure
+        # on the action checklist, over a score rather than a list length.
+        if self.complexity_score_max < 1:
+            raise RuleParameterError(
+                f"complexityScoreMax must be at least 1, got {self.complexity_score_max}"
+            )
+        # A cut-off outside the capped scale is not a tuning choice: it is a
+        # band that can never be reached. `complexityHighMin` above the cap
+        # means no handler is ever High however severe, however surgical and
+        # however litigated their book — silently, with a Medium chip on every
+        # row. The bound is expressed against the cap rather than against a
+        # literal hundred, so retuning the scale retunes the check with it.
+        for name, bound in (
+            ("complexityHighMin", self.complexity_high_min),
+            ("complexityMedMin", self.complexity_med_min),
+        ):
+            if not 0 <= bound <= self.complexity_score_max:
+                raise RuleParameterError(
+                    f"{name} must be between 0 and complexityScoreMax "
+                    f"({self.complexity_score_max}), got {bound}"
+                )
+        # `riskMedMin > riskHighMin`'s refusal over the complexity pair, and the
+        # same failure: `handler_complexity` tests the bands in order, high
+        # first, so an inverted pair does not re-tune them — it makes `med`
+        # unreachable and grades a middling book High.
+        #
+        # **Strictly less than, so equality is refused too**, which is the one
+        # place this block is harder on its document than `ReserveBands` is.
+        # Equal cut-points do not invert anything — they delete a band. A
+        # document with `complexityMedMin == complexityHighMin` grades every
+        # desk Low or High and never Medium, and the chip that vanishes is the
+        # one two thirds of a desk normally wears, so nobody notices until
+        # somebody asks why nothing is Medium any more. A three-band scale is
+        # what this table publishes (the footnote quotes both cut-points and the
+        # UI ships three tones); a document that wants two bands is asking for a
+        # different rule, not for these two numbers to coincide.
+        if self.complexity_med_min >= self.complexity_high_min:
+            raise RuleParameterError(
+                f"complexityMedMin ({self.complexity_med_min}) must be below "
+                f"complexityHighMin ({self.complexity_high_min}) — equal cut-points make "
+                "the med band unreachable rather than re-tuning it"
+            )
+        # The second inversion, over the deviation bands, and it is the one
+        # worth reading twice because the numbers are on opposite sides of zero.
+        # `cycle_time_status` tests On Track first, so an `onTrackDeviationPctMax`
+        # above `attentionDeviationPctMin` would report a handler running far
+        # slower than the desk as On Track — the single most consequential thing
+        # this table can get wrong, since the whole point of it is to surface a
+        # workload check-in before an SLA slips.
+        #
+        # Equality is refused here for the complexity pair's reason and one
+        # sharper: both edges are *inclusive*, so equal bands do not merely
+        # squeeze Watch out, they make the two conditions overlap on a single
+        # reachable value and leave which one wins to the order the derivation
+        # happens to test them in. That is a rule decided by a line number.
+        if self.on_track_deviation_pct_max >= self.attention_deviation_pct_min:
+            raise RuleParameterError(
+                f"onTrackDeviationPctMax ({self.on_track_deviation_pct_max}) must be below "
+                f"attentionDeviationPctMin ({self.attention_deviation_pct_min}) — equal bands "
+                "overlap on their shared edge and leave the watch band unreachable"
+            )
+
+    @classmethod
+    def of(cls, document: LoadedDocument, result: dict[str, Any]) -> "HandlerPerformance":
+        return cls(
+            version=document.version,
+            on_track_deviation_pct_max=_integer(document, result, "onTrackDeviationPctMax"),
+            attention_deviation_pct_min=_integer(document, result, "attentionDeviationPctMin"),
+            severity_weight_bp=_integer(document, result, "severityWeightBp"),
+            surgery_rate_weight_bp=_integer(document, result, "surgeryRateWeightBp"),
+            litigation_rate_weight_bp=_integer(document, result, "litigationRateWeightBp"),
+            complexity_score_max=_integer(document, result, "complexityScoreMax"),
+            complexity_high_min=_integer(document, result, "complexityHighMin"),
+            complexity_med_min=_integer(document, result, "complexityMedMin"),
+        )
+
+
+async def handler_performance_for(
+    db: AsyncSession, as_of: date | None = None
+) -> HandlerPerformance:
+    """Load and validate the handler-benchmark parameters effective on `as_of`."""
+    document = await load(db, HANDLER_PERFORMANCE_KEY, as_of)
+    return HandlerPerformance.of(document, evaluate(document))

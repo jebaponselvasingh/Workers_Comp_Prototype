@@ -52,6 +52,23 @@ export const queryKeys = {
    */
   dashboard: {
     summary: ["dashboard", "summary"] as const,
+    /**
+     * The handler performance table (Story 5.2) — the sibling the group's
+     * docstring above pre-authorised.
+     *
+     * Its own key rather than a field on `summary` for the reason recorded
+     * there: it is a separate server answer with a separate cost (a scoped read
+     * grouped by handler, against ten counted columns), and it fails and
+     * refetches on its own. That separation is load-bearing on the page as well
+     * as in the cache — `DashboardPage` renders the two behind independent
+     * states so a benchmark failure leaves the KPI cards standing.
+     *
+     * No persona and no role segment, although this endpoint *does* gate on
+     * role: a 403 is the absence of an answer rather than a different answer,
+     * and a handler never reaches this route. Putting a role here would imply
+     * the client picks which version of the table it sees.
+     */
+    handlerBenchmarks: ["dashboard", "handler-benchmarks"] as const,
   },
   claims: {
     /**
