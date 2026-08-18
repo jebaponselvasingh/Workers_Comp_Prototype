@@ -3,6 +3,7 @@ title: 'Story 5.3 — Portfolio Analytics Charts'
 type: 'feature'
 created: '2026-08-18'
 baseline_revision: 'd155ce91a536c87ca10155bd455ac76ce4593d3e'
+final_revision: 'd6717cd478b0009c52c26aee80f9cbc90a920f79'
 status: 'done'
 review_loop_iteration: 0
 followup_review_recommended: true # 19 patches across server, web, fixtures and both oracles — three of them high, two of them tests and a fixture that did not test or model what they claimed. Breadth plus a hand-finished patch pass after two agent failures makes an independent look worthwhile
