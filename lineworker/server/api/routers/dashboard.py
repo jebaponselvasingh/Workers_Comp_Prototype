@@ -35,22 +35,34 @@ handler**, before any read. The two routes sitting in one file with opposite
 answers is the point rather than an inconsistency — what separates them is what
 the rows are *about*, not which router they live in. See
 `services.worklist.benchmarks.BenchmarksNotPermitted` for the argument in full.
+
+**Story 5.3's `/dashboard/charts` follows `/summary` and not the benchmarks**,
+and the discriminator that decides between the two precedents is written out at
+that route rather than inherited by proximity: it is whether the response
+reveals a *named other person's* performance. It does not — see `charts` below.
 """
+
+from collections.abc import Mapping
+from typing import Final
 
 from fastapi import APIRouter, Response, status
 
 from api.deps import CallerContextDep, DbDep, SettingsDep
 from api.errors import PROBLEM_CONTENT_TYPE, ProblemDocument, ProblemException
 from api.routers.auth import UNAUTHENTICATED_RESPONSE
+from api.routers.stats import SlaMetricResponse, SlaStripResponse
 from api.schemas import ApiModel
 from rules.parameters import handler_performance_for, thresholds_for, weights_for
 from services.derivations import ComplexityBand, CycleStatus
 from services.worklist import (
     BenchmarksNotPermitted,
     handler_benchmarks,
+    portfolio_charts,
     portfolio_summary,
     require_benchmarks_access,
 )
+from services.worklist.charts import CategoryCount, Distribution, EmployerPaid, LabelCount
+from services.worklist.sla import SlaMetric, SlaMetricKey
 
 router = APIRouter(tags=["dashboard"])
 
@@ -355,4 +367,312 @@ async def benchmarks(
         complexity_high_min=params.complexity_high_min,
         complexity_med_min=params.complexity_med_min,
         rules_version=params.version,
+    )
+
+
+class CategoryCountResponse(ApiModel):
+    """One slice of an enum-keyed distribution.
+
+    `key` is the enum's wire value — `settled`, `high`, `returned_and_fully_recovered`
+    — and never a display label, per the Enums convention: the UI owns "Settled
+    & Closed" and "Fully Recovered", and a server that shipped those strings
+    would be deciding copy over a contract.
+
+    A category the caller's scope does not contain is **absent from `items`**
+    rather than present with a zero. See `PortfolioChartsResponse`.
+    """
+
+    key: str
+    count: int
+
+
+class LabelCountResponse(ApiModel):
+    """One bar of a free-text distribution — an injury type or a US state.
+
+    `label` rather than `key` because there is no enum behind it and nothing to
+    look up: both columns are free text with no reference table, so the stored
+    value *is* the label. It is grouped exactly as stored, with no trimming,
+    case-folding or merging of near-duplicates.
+    """
+
+    label: str
+    count: int
+
+
+class EmployerPaidResponse(ApiModel):
+    """One bar of the total-paid-by-employer chart, in integer cents.
+
+    Money crosses the wire as integer cents on a `*Cents`-suffixed field and is
+    formatted only by `web/src/lib/money.ts`, like every other amount in this
+    console.
+
+    `employerId` rides along because the label is a `short_name` and a name is
+    not an identity. Nothing renders it today; Story 5.5's drill-through needs
+    something that cannot collide, and adding it later would be a contract
+    change on a surface that already has consumers.
+    """
+
+    employer_id: int
+    label: str
+    paid_cents: int
+
+
+class DistributionResponse[ItemT](ApiModel):
+    """A finished series: the items to draw, and everything a caption needs.
+
+    Generic over its item type so the four scalar fields are declared once and
+    each series still publishes its own concrete item shape in the contract. The
+    three item types are not interchangeable — a donut slice, a labelled bar and
+    an employer's spend answer different questions — but "how many of how many,
+    and was it cut" is the same question for all of them.
+
+    `items` arrive **in the order they are drawn**, decided by
+    `services.worklist.charts`: enum-keyed series in their enum's declaration
+    order, ranked series count descending then label ascending. A client that
+    re-sorted would be re-deciding an ordering computed over a scope it does not
+    hold (AD-1), which is why the order is a property of the response rather
+    than a suggestion.
+
+    **`limit`, `totalCategories` and `truncated` exist so no truncation is
+    silent.** A top-8 chart drawn from a scope with twenty injury types is a
+    statement about twenty things showing eight of them, and the caption has to
+    be able to say so — from these fields, never from a constant the client
+    holds. `truncated` is computed here rather than left to a client comparing
+    the other two, for the same reason every other comparison on this dashboard
+    is: it is arithmetic over a scoped set, and the browser does none.
+
+    `total` is the total of the quantity the series distributes — a claim count
+    for the five counted series and **cents** for the employer series, which
+    distributes money. That is the one field on this model whose unit varies,
+    so it is stated rather than left to be inferred.
+
+    `limit` is `null` for a series that has no cap (the three enum-keyed ones and
+    the employer chart). `null` rather than a large sentinel: "never cut" is a
+    different fact from "cut at a thousand", and a caption quoting a sentinel
+    would be quoting a number nobody chose.
+    """
+
+    items: list[ItemT]
+    total: int
+    total_categories: int
+    truncated: bool
+    limit: int | None
+
+
+class PortfolioChartsResponse(ApiModel):
+    """The seven analytics surfaces for one scoped book (FR-SUP-4/C, UX-DR7).
+
+    One payload rather than seven endpoints, which is the choice the story text
+    left open and this is the argument for it: the seven surfaces are folded
+    from **one** scoped read in one pass, so serving them separately would mean
+    seven scans of the same rows and seven chances for two of them to describe
+    slightly different sets if a claim changed in between. They also appear and
+    disappear together on the page — a partial dashboard of three charts is not
+    a state the design has — so one request, one cache entry, one failure mode.
+
+    **`sla` is `SlaStripResponse`, imported from `api.routers.stats` rather
+    than redeclared.** That is the whole of AC 3 expressed in the type system:
+    the dashboard tiles and the top-bar strip are two renderings of one server
+    value, and a second model here — however faithfully copied — would be a
+    second contract that could drift a field at a time. It is populated from
+    `sla.strip_of` over the same scoped rows, so the two surfaces cannot
+    disagree without disagreeing inside `services/worklist/sla.py` first.
+
+    **`highRiskSeverityMin` and `medRiskSeverityMin` are on the wire
+    deliberately**, for the reason `PortfolioSummaryResponse` publishes its two:
+    the severity donut's legend quotes the band boundaries, and a client holding
+    either number would be a second copy of a rule it cannot see change —
+    superseding the document would move the slice and leave the caption claiming
+    the old cut-off. They arrive from the derivation that did the banding, so
+    the published numbers are provably the ones the counts were produced at.
+
+    `rulesVersion` names the document those two came from. As on the two
+    endpoints above it rides along unrendered: it is what makes a *stored or
+    forwarded* response self-describing, and the only thing a client wanting to
+    invalidate on a rules change could key on. What would be wrong is claiming
+    the screen states it.
+
+    **A category the scope does not contain is absent, not zero.** Jennifer
+    Park's book has no `intake` stage, so her `byStage` has three items and not
+    four. Emitting a zero row would put an invisible slice in a donut and a
+    zero-length bar in a chart; omitting it means each series lists exactly what
+    the scope contains. A consumer therefore cannot assume a fixed row count —
+    the UI's label maps are lookups over whatever arrived.
+    """
+
+    by_stage: DistributionResponse[CategoryCountResponse]
+    by_severity: DistributionResponse[CategoryCountResponse]
+    by_recovery_status: DistributionResponse[CategoryCountResponse]
+    by_injury_type: DistributionResponse[LabelCountResponse]
+    by_employer: DistributionResponse[EmployerPaidResponse]
+    by_state: DistributionResponse[LabelCountResponse]
+    sla: SlaStripResponse
+    high_risk_severity_min: int
+    med_risk_severity_min: int
+    rules_version: int
+
+
+#: The four SLA tiles in the order `SlaStripResponse` declares them, so the
+#: mapping the service returns becomes that model without a field being spelled
+#: twice. `SlaMetricKey`'s own members rather than a literal tuple: a fifth
+#: metric would fail here loudly instead of being dropped from the dashboard
+#: while `/stats/sla` grew it.
+_SLA_FIELDS: Final[tuple[SlaMetricKey, ...]] = tuple(SlaMetricKey)
+
+# Every metric key is a field on the model, and every field is a metric key.
+#
+# `_sla_strip` builds the response from `**{key.value: ...}`, and Pydantic
+# ignores a keyword that is not a field: add a fifth `SlaMetricKey` member and
+# the new tile would vanish from this dashboard *quietly*, while `/stats/sla` —
+# which names its four fields in source — kept publishing four. An import-time
+# equality is the cheapest place to make that loud, and it costs nothing at
+# request time. Asserted against `model_fields` rather than a written-out tuple
+# so neither side can be updated alone.
+assert {key.value for key in _SLA_FIELDS} == set(SlaStripResponse.model_fields), (
+    "SlaMetricKey and SlaStripResponse have diverged: "
+    f"{ {key.value for key in _SLA_FIELDS} ^ set(SlaStripResponse.model_fields) }"
+)
+
+
+def _sla_strip(strip: Mapping[SlaMetricKey, SlaMetric]) -> SlaStripResponse:
+    """`sla.strip_of`'s mapping as the model `/stats/sla` already publishes.
+
+    `model_validate` per metric, which is that route's own line — the two
+    endpoints serialise one service value through one model, so a change to
+    what a tile carries reaches both or neither.
+    """
+    return SlaStripResponse(
+        **{key.value: SlaMetricResponse.model_validate(strip[key]) for key in _SLA_FIELDS}
+    )
+
+
+def _categories(
+    series: Distribution[CategoryCount],
+) -> DistributionResponse[CategoryCountResponse]:
+    """An enum-keyed series, field by field.
+
+    Field by field rather than `model_validate` on the dataclass, for the reason
+    every other route in this codebase constructs explicitly: the mapping from a
+    service value to a wire model is the place a renamed field should fail to
+    compile, and a structural coercion is the place it silently would not.
+    """
+    return DistributionResponse[CategoryCountResponse](
+        items=[CategoryCountResponse(key=item.key, count=item.count) for item in series.items],
+        total=series.total,
+        total_categories=series.total_categories,
+        truncated=series.truncated,
+        limit=series.limit,
+    )
+
+
+def _labels(
+    series: Distribution[LabelCount],
+) -> DistributionResponse[LabelCountResponse]:
+    """A free-text series, field by field — `_categories`' reasoning."""
+    return DistributionResponse[LabelCountResponse](
+        items=[LabelCountResponse(label=item.label, count=item.count) for item in series.items],
+        total=series.total,
+        total_categories=series.total_categories,
+        truncated=series.truncated,
+        limit=series.limit,
+    )
+
+
+def _employers(
+    series: Distribution[EmployerPaid],
+) -> DistributionResponse[EmployerPaidResponse]:
+    """The employer spend series, field by field — `_categories`' reasoning."""
+    return DistributionResponse[EmployerPaidResponse](
+        items=[
+            EmployerPaidResponse(
+                employer_id=item.employer_id, label=item.label, paid_cents=item.paid_cents
+            )
+            for item in series.items
+        ],
+        total=series.total,
+        total_categories=series.total_categories,
+        truncated=series.truncated,
+        limit=series.limit,
+    )
+
+
+@router.get(
+    "/dashboard/charts",
+    response_model=PortfolioChartsResponse,
+    summary="Portfolio distribution charts for the session's persona",
+    responses=UNAUTHENTICATED_RESPONSE,
+)
+async def charts(
+    ctx: CallerContextDep,
+    db: DbDep,
+    response: Response,
+    settings: SettingsDep,
+) -> PortfolioChartsResponse:
+    """The seven chart surfaces, for whoever holds the session cookie.
+
+    `benchmarks`' signature — `ctx`, `db`, `response`, `settings` — and nothing
+    else. The extra parameter is `Settings` rather than anything a caller could
+    send: the SLA targets the four tiles are judged against are deployment
+    configuration, and `sla.targets_for` is the one place they become targets.
+    There is still nowhere in this signature to put a scope (AD-7), which is
+    what makes `test_query_parameters_cannot_widen_or_change_the_scope` a
+    property of the shape rather than of a validator.
+
+    ## This endpoint is ungated, and the decision is deliberate
+
+    The two routes above disagree, so a third one cannot pick a precedent by
+    proximity. `/dashboard/summary` serves any authenticated caller;
+    `/dashboard/handler-benchmarks` refuses everyone outside a
+    supervisor/analyst allowlist. **The discriminator is whether the aggregate
+    reveals a named other person's performance.**
+
+    The benchmark table ranks colleagues by name and speed and says whose desk
+    needs a check-in. That is oversight — a capability a handler does not carry
+    — and scope cannot narrow it to the caller, because a handler shares
+    employers with the peers she would be reading about.
+
+    These seven series describe the caller's **scope** by stage, severity band,
+    recovery status, injury type, employer and state. "Scope", not "own book",
+    and the distinction is worth the words: `employer_scope` is employer-based
+    for every role, so a handler's charts aggregate every claim at her
+    employers, including her colleagues' — the same rows her queue filters
+    differently, not a narrower set. They name **nobody**: there is no handler
+    dimension on this payload, deliberately, and every figure is a count or a
+    sum over claims the caller is already entitled to read one by one. Scope
+    gates visibility, role gates capability (AD-7), and there is
+    no capability here to gate — so a role check would buy nothing and cost the
+    property this endpoint is built on, that the only thing separating two
+    callers' responses is the scope predicate.
+
+    `test_a_handler_may_read_the_charts_for_her_employers` pins that as a
+    contract
+    rather than leaving it as an omission a later reader would have to guess
+    about. If a dimension that names people is ever added here — a per-handler
+    series for Epic 7 — this argument stops applying and the gate has to be
+    reconsidered on that day, which is why it is stated as a rule and not as an
+    answer.
+    """
+    # `/stats/topbar`'s reasoning: this response is specific to one persona's
+    # scope, so it must never be served to another from a cache upstream. First
+    # statement in the body, so no early return can skip it.
+    response.headers["Cache-Control"] = "no-store"
+    # Loaded here rather than inside the aggregate, so the aggregate stays a
+    # pure composition of scope and parameters — `portfolio_summary`'s rule.
+    # One document, not three: the severity donut is the only surface here that
+    # reaches a rule, and it reaches the same `DerivationThresholds` the High
+    # Risk card above it was counted from.
+    thresholds = await thresholds_for(db)
+    series = await portfolio_charts(db, ctx, thresholds, settings)
+
+    return PortfolioChartsResponse(
+        by_stage=_categories(series.by_stage),
+        by_severity=_categories(series.by_severity),
+        by_recovery_status=_categories(series.by_recovery_status),
+        by_injury_type=_labels(series.by_injury_type),
+        by_employer=_employers(series.by_employer),
+        by_state=_labels(series.by_state),
+        sla=_sla_strip(series.sla),
+        high_risk_severity_min=series.high_risk_severity_min,
+        med_risk_severity_min=series.med_risk_severity_min,
+        rules_version=thresholds.version,
     )

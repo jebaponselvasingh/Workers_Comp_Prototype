@@ -363,7 +363,41 @@ const DERIVED_FIELDS =
   "rank|handlerName|caseCount|cycleSpeedPct|compositeDays|rtwPct|" +
   "complexityScore|complexityBand|pendingApprovals|deviationPct|cycleStatus|" +
   "portfolioCompositeDays|onTrackDeviationPctMax|attentionDeviationPctMin|" +
-  "complexityHighMin|complexityMedMin|leader|laggard";
+  "complexityHighMin|complexityMedMin|leader|laggard|" +
+  // Story 5.3's. Six finished distributions and the four fields that describe
+  // each one, and the pull here is different in kind from 5.2's: the browser is
+  // handed a *series* together with the total it was counted out of and the
+  // number of categories it was cut from, which is every ingredient of a
+  // percentage, an "other" bucket and a re-ranking, on one object.
+  //
+  // - The six series names are on the list because a `.filter` or a `.sort`
+  //   over one of them is the shape the guard's fourth and sixth rules catch,
+  //   and neither fires without the field name.
+  // - `totalCategories`, `truncated` and `limit` are the truncation contract.
+  //   `limit` is guarded as `\.limit` — the *property* — not as a bare word.
+  //   A bare `limit` would fail the build on ordinary pagination: `offset +
+  //   limit` and `limit - 1` are page arithmetic, not a band cut-off, and
+  //   `queryKeys`/list surfaces are free to write them. Guarding the property
+  //   access still catches the thing worth catching, which is a component doing
+  //   arithmetic on the server's published cut.
+  //   `series.totalCategories - series.limit` is one line and reads as
+  //   arithmetic on a caption; it is in fact the client deciding how much of a
+  //   scope it cannot see was left out, which is a question only the server can
+  //   answer — the categories beyond the cut were never sent.
+  // - `paidCents` is the money on the employer bars. Dividing it by the
+  //   series' `total` to draw a share is the single most plausible
+  //   recomputation on this page, and `total` is already on this list.
+  // - `medRiskSeverityMin` joins `highRiskSeverityMin` from 5.1 for that
+  //   field's reason: it is a rule-document value the severity legend sits
+  //   beside, so a comparison against it would be the browser re-banding a
+  //   portfolio the server already banded.
+  // - `employerLabel` is the server-side projection's name for the joined
+  //   `employer.short_name`; the wire spells it `label`, which is far too
+  //   common a word in this codebase to put on a textual guard. It is listed so
+  //   the guard still fires if a later story ships the field under its
+  //   server-side name.
+  "byStage|bySeverity|byRecoveryStatus|byInjuryType|byEmployer|byState|" +
+  "paidCents|totalCategories|truncated|\\.limit|medRiskSeverityMin|employerLabel";
 
 const FLAGS = "siuReview|rtwBlocked|paymentDue|fraudFlag|litigationFlag|surgeryRequired";
 
@@ -510,6 +544,28 @@ test("the scan reaches the files it claims to", () => {
   expect(scanned).toContain(
     path.join("features", "dashboard", "HandlerBenchmarkTable.tsx"),
   );
+  // Story 5.3's chart surfaces, all six of them. `DashboardPage.tsx` being
+  // scanned says nothing about a nested folder, and this is the folder with the
+  // strongest pull on the page: each component is handed a finished series
+  // *plus* the total it was counted out of and the number of categories it was
+  // cut from, so a percentage, an "other" bucket and a re-ranking are each one
+  // line away — and `chartTheme.ts` is where a threshold would most plausibly
+  // be smuggled in as a colour rule ("red above 65").
+  for (const file of [
+    "PortfolioCharts.tsx",
+    "DistributionDonut.tsx",
+    "DistributionBars.tsx",
+    "SlaTiles.tsx",
+    "ChartFrame.tsx",
+    "chartTheme.ts",
+  ]) {
+    expect(scanned).toContain(path.join("features", "dashboard", "charts", file));
+  }
+  // The SLA tile vocabulary Story 5.3 lifted out of `SlaStrip.tsx` so both
+  // surfaces render one server value through one spec. It holds the tone map
+  // and both formatters, which is precisely where a client-side verdict would
+  // go if anybody decided to compute one from `value` and `target`.
+  expect(scanned).toContain(path.join("features", "shell", "slaTiles.ts"));
   expect(scanned).toContain("api/emails.ts");
   expect(scanned).toContain(
     path.join("features", "claim-detail", "overview", "TreatmentOverview.tsx"),
@@ -652,6 +708,18 @@ test("the guard would notice a derivation if one were added", () => {
     // and doing arithmetic on a rank to turn it back into an index.
     "rows.sort((a, b) => a.rank - b.rank);",
     "const position = row.rank - 1;",
+    // Story 5.3's four, and they are the four things a chart component is most
+    // tempted by. Rolling the truncated tail into an "other" slice from a total
+    // the categories behind it were never sent for; turning a count into a
+    // share of the scope; re-ranking a series the server ordered under a
+    // tie-break the browser has never seen; and re-banding the severity donut
+    // from the cut-off published beside it.
+    "const other = series.total - series.items.reduce((s, i) => s + i.count, 0);",
+    "const share = (item.count / series.total) * 100;",
+    "items.sort((a, b) => b.paidCents - a.paidCents);",
+    "const hidden = series.totalCategories - series.limit;",
+    'const band = item.count >= data.medRiskSeverityMin ? "med" : "low";',
+    "const top = charts.byState.filter((s) => s.count > 5);",
   ];
 
   for (const smell of smells) {
@@ -666,6 +734,12 @@ test("the guard does not fire on rendering the server's answers", () => {
   // The other half of a blunt check: it must leave legitimate presentation
   // alone, or the next person turns it off instead of fixing their code.
   const innocent = [
+    // Page arithmetic, which is not a band cut-off. These are the lines that
+    // made `limit` too broad a token to guard as a bare word: a list surface is
+    // free to compute its next offset, and only arithmetic on the *property* —
+    // the server's published cut — is the thing worth failing over.
+    "const nextOffset = offset + limit;",
+    "const lastIndex = limit - 1;",
     "{card.daysOpen}d",
     "className={RISK_DOT[card.risk]}",
     "{card.priorityMarker && <span>🔺</span>}",
@@ -688,6 +762,14 @@ test("the guard does not fire on rendering the server's answers", () => {
     // instant. Both are presentation, and both mention a field on the list.
     "className={EMAIL_PRIORITY_TONE[email.priority]}",
     "<span>Sent {formatSentAt(email.sentAt)}</span>",
+    // Story 5.3's: reading the truncation contract in order to *state* it, and
+    // handing an accessor to a chart component. Neither computes anything, and
+    // both are the shape `DistributionBars.tsx` is full of — a guard that fired
+    // on them would be the guard training the code.
+    "series?.truncated === true && series.limit !== null",
+    "{truncationCaption(series.limit, series.totalCategories)}",
+    "value={(item) => item.paidCents}",
+    "series={data?.byInjuryType}",
   ];
 
   for (const line of innocent) {

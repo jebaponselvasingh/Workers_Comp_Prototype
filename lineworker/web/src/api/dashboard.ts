@@ -82,3 +82,52 @@ export function useHandlerBenchmarks() {
     staleTime: 30_000,
   });
 }
+
+export type PortfolioCharts =
+  components["schemas"]["PortfolioChartsResponse"];
+/**
+ * An enum-keyed distribution — the two donuts and the recovery bars.
+ *
+ * Read off `PortfolioCharts` rather than named directly, because the generated
+ * schema name for a Pydantic generic is
+ * `DistributionResponse_CategoryCountResponse_` — a mangling that is stable but
+ * unreadable, and one that would put the code generator's naming convention in
+ * every consuming component's import list.
+ */
+export type CategoryDistribution = PortfolioCharts["byStage"];
+/** A free-text distribution — injury types and states. */
+export type LabelDistribution = PortfolioCharts["byInjuryType"];
+/** The employer spend series, whose items carry cents rather than a count. */
+export type EmployerDistribution = PortfolioCharts["byEmployer"];
+
+/**
+ * Server state for the seven analytics surfaces (FR-SUP-4/C).
+ *
+ * `useDashboardSummary`'s shape and its emptiness, for the same reason: every
+ * figure in every chart — each count, the orderings, the two top-N cuts, the
+ * employer totals and the four SLA verdicts — is decided by `services/worklist`
+ * over the caller's scope, and this hook exists to fetch them and nothing else.
+ *
+ * **No `select`**, deliberately, and it matters more here than on either
+ * sibling: a `select` over this payload is the single most plausible home for a
+ * re-sorted series, an "other" bucket rolled up from the truncated tail, or a
+ * percentage worked out from `items` and `total` — the three things AD-1
+ * forbids and the three things the response is shaped to make unnecessary. With
+ * no transform there is nothing for `noDerivation.test.ts` to have to read, and
+ * `api/dashboard.ts` stays out of its `ROOT_FILES`.
+ *
+ * The same `staleTime` as the two hooks above, so the three halves of the
+ * dashboard go stale together rather than one of them refetching under the
+ * others. Nothing polls; the window only decides whether the *next* mount
+ * refetches or serves the cache.
+ */
+export function useDashboardCharts() {
+  return useQuery({
+    queryKey: queryKeys.dashboard.charts,
+    queryFn: async (): Promise<PortfolioCharts> => {
+      const { data } = await api.GET("/dashboard/charts");
+      return data!;
+    },
+    staleTime: 30_000,
+  });
+}

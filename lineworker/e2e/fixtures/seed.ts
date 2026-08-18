@@ -71,6 +71,10 @@ interface SeedClaim {
   litigation_flag: boolean;
   fraud_flag: boolean;
   fraud_score: number;
+  // Story 5.3's: the injury-type chart ranks the free-text column as stored,
+  // with no trimming, case-folding or merging of near-duplicates — grouping
+  // identity is a data-quality decision, not something a chart may invent.
+  injury_type: string;
   // Story 5.1's: the dataset chip counts distinct plants over the scoped set,
   // because the prototype's "15 US plants" is a literal that is wrong for the
   // one portfolio it was written for and scope-blind for every other persona.
@@ -87,9 +91,22 @@ interface SeedUser {
   employers: string[];
 }
 
+/**
+ * Story 5.3's: the employer bars are labelled with `employer.short_name` — the
+ * column `select_claim_columns_with_employer` joins — rather than with the full
+ * name the claim rows carry. The prototype derives these labels by stripping
+ * four suffixes off the full name with a chain of `String.replace`; the short
+ * name is a column, and this is what it is for.
+ */
+interface SeedEmployer {
+  name: string;
+  short_name: string;
+}
+
 interface Seed {
   claims: SeedClaim[];
   app_users: SeedUser[];
+  employers: SeedEmployer[];
 }
 
 const seed = JSON.parse(readFileSync(SEED_PATH, "utf8")) as Seed;
@@ -1962,6 +1979,213 @@ export function expectedHandlerBenchmarksFor(persona: {
       portfolio: `${publishedComposite(portfolio)}d`,
       onTrack: ON_TRACK_DEVIATION_PCT_MAX,
       attention: ATTENTION_DEVIATION_PCT_MIN,
+    },
+  };
+}
+
+/**
+ * Story 5.3 — the seven analytics surfaces, restated independently.
+ *
+ * `expectedHandlerBenchmarksFor`'s discipline over six distributions, two
+ * orderings and two limits: every rule below is written out from the story text
+ * and the prototype (`renderSV`, lines 1003-1010) rather than read off the
+ * response, because an oracle sharing any one of them with the implementation
+ * would be validating the rest by accident.
+ *
+ * The oracle returns **what each surface reads** — the exact strings, in render
+ * order — rather than what the endpoint answers, for `expectedPortfolioSummaryFor`'s
+ * reason: a spec comparing numbers would still pass if the employer chart
+ * divided cents by a hundred twice.
+ *
+ * Two rules deserve naming because they are the ones a re-derivation would drop:
+ *
+ * - **Enum-keyed series publish in their enum's declaration order, not in count
+ *   order.** A legend has a fixed reading order and must not reshuffle when two
+ *   categories cross. `STAGES` above is already that tuple for the stage donut;
+ *   the other two are written out here.
+ * - **Free-text series rank count descending, then label ascending, then cut.**
+ *   Both cuts land inside a tie on the full seeded portfolio — injury ranks 7-11
+ *   all count five and state ranks 9-11 all count five — so an oracle without
+ *   the tie-break would disagree with a correct implementation about which five
+ *   claims are on screen.
+ */
+
+/** The two chart caps. Module constants on the server, restated here. */
+const INJURY_TYPE_LIMIT = 8;
+const STATE_LIMIT = 10;
+
+/** `RiskBand`'s declaration order, and the legend copy `PortfolioCharts.tsx` owns. */
+const RISK_BAND_ORDER = ["high", "med", "low"] as const;
+/** `ReturnStatus`'s declaration order, likewise. */
+const RECOVERY_ORDER = [
+  "under_treatment",
+  "returned_and_under_therapy",
+  "returned_and_fully_recovered",
+] as const;
+
+/**
+ * The settlement donut's legend copy — the prototype's chart wording, which is
+ * deliberately not the case file's stage pill ("Settled", "Treatment").
+ */
+const STAGE_CHART_LABEL: Record<string, string> = {
+  intake: "Intake",
+  investigation: "Investigation",
+  treatment: "Under Treatment",
+  settled: "Settled & Closed",
+};
+
+const RECOVERY_CHART_LABEL: Record<string, string> = {
+  under_treatment: "Under Treatment",
+  returned_and_under_therapy: "Under Therapy",
+  returned_and_fully_recovered: "Fully Recovered",
+};
+
+/** The dashboard SLA tiles' testids — `chart-` prefixed, unlike the top bar's. */
+export const CHART_SLA_TILES = {
+  pick: "chart-sla-pick",
+  approve: "chart-sla-approve",
+  settle: "chart-sla-settle",
+  rtwRate: "chart-sla-rtw-rate",
+} as const;
+
+function countBy<T extends string>(
+  claims: SeedClaim[],
+  key: (claim: SeedClaim) => T,
+): Map<T, number> {
+  const counts = new Map<T, number>();
+  for (const claim of claims) counts.set(key(claim), (counts.get(key(claim)) ?? 0) + 1);
+  return counts;
+}
+
+/** A donut legend row, as the component concatenates it: `"Intake:6"`. */
+function legendRows(
+  counts: Map<string, number>,
+  order: readonly string[],
+  label: Record<string, string>,
+): string[] {
+  return order
+    .filter((key) => counts.has(key))
+    .map((key) => `${label[key]}:${String(counts.get(key))}`);
+}
+
+/** A bar chart's screen-reader row, as the component writes it: `"MN: 11"`. */
+function barRows(
+  entries: [string, number][],
+  format: (value: number) => string,
+): string[] {
+  return entries.map(([label, value]) => `${label}: ${format(value)}`);
+}
+
+/** Count descending, then label ascending — the server's tie-break, restated. */
+function ranked(counts: Map<string, number>, limit: number): [string, number][] {
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || byCodePoint(a[0], b[0]))
+    .slice(0, limit);
+}
+
+/** The `short_name` a seeded employer is labelled with on the employer bars. */
+function employerShortName(name: string): string {
+  const employer = seed.employers.find((row) => row.name === name);
+  if (!employer) throw new Error(`no seeded employer ${name}`);
+  return employer.short_name;
+}
+
+export interface ExpectedPortfolioCharts {
+  /** The settlement donut's legend rows and its centre total. */
+  stage: { legend: string[]; total: string };
+  /** The severity donut's, with the High row quoting the seeded band. */
+  severity: { legend: string[]; total: string };
+  recoveryBars: string[];
+  injuryBars: string[];
+  employerBars: string[];
+  stateBars: string[];
+  /**
+   * The truncation caption each ranked chart should show, or `null` where the
+   * scope was not cut and no caption may appear.
+   */
+  truncation: { injury: string | null; state: string | null; employer: string | null };
+  /** `chart-sla-*` testid → the text that tile must read. */
+  slaTiles: Record<string, string>;
+}
+
+export function expectedPortfolioChartsFor(persona: {
+  name: string;
+  role: string;
+}): ExpectedPortfolioCharts {
+  const visible = claimsFor(persona.name, persona.role);
+  const total = String(visible.length);
+
+  const stages = countBy(visible, (claim) => claim.stage);
+  const severities = countBy(visible, (claim) => riskBand(claim.severity_score));
+  const recoveries = countBy(visible, (claim) => claim.return_status);
+  const injuries = countBy(visible, (claim) => claim.injury_type);
+  const states = countBy(visible, (claim) => claim.state);
+
+  // Paid descending, then label ascending, on the employer's *short* name —
+  // the column the repository joins and the label the ties are broken by. The
+  // prototype produces these labels by stripping four suffixes off the full
+  // name with a chain of `String.replace`; the short name is a column and this
+  // is what it is for.
+  const paid = new Map<string, number>();
+  for (const claim of visible) {
+    const label = employerShortName(claim.employer);
+    paid.set(
+      label,
+      (paid.get(label) ?? 0) +
+        claim.paid_indemnity +
+        claim.paid_medical +
+        claim.paid_expense,
+    );
+  }
+  const employers = [...paid.entries()].sort(
+    (a, b) => b[1] - a[1] || byCodePoint(a[0], b[0]),
+  );
+
+  const sla = expectedSlaFor(persona.name, persona.role);
+
+  const caption = (noun: string, shown: number, categories: number): string | null =>
+    categories > shown ? `Showing ${String(shown)} of ${String(categories)} ${noun}.` : null;
+
+  return {
+    stage: {
+      legend: legendRows(stages, STAGES, STAGE_CHART_LABEL),
+      total,
+    },
+    severity: {
+      legend: legendRows(severities, RISK_BAND_ORDER, {
+        // The one legend row that quotes a rule value. Restated from
+        // `HIGH_RISK_MIN` at the top of this file rather than read off the
+        // page, so a caption holding its own constant and one reading the
+        // response are told apart by the *component* test, and this spec
+        // asserts only that the number on screen is the seeded rule's.
+        high: `High (≥ ${String(HIGH_RISK_MIN)})`,
+        med: "Medium",
+        low: "Low",
+      }),
+      total,
+    },
+    recoveryBars: barRows(
+      RECOVERY_ORDER.filter((key) => recoveries.has(key)).map((key) => [
+        RECOVERY_CHART_LABEL[key],
+        recoveries.get(key) ?? 0,
+      ]),
+      String,
+    ),
+    injuryBars: barRows(ranked(injuries, INJURY_TYPE_LIMIT), String),
+    employerBars: barRows(employers, (cents) => DOLLARS.format(cents / 100)),
+    stateBars: barRows(ranked(states, STATE_LIMIT), String),
+    truncation: {
+      injury: caption("injury types", INJURY_TYPE_LIMIT, injuries.size),
+      state: caption("states", STATE_LIMIT, states.size),
+      // The employer chart is uncapped: the employers in a book are bounded by
+      // the assignment, so there is never a cut to caption.
+      employer: null,
+    },
+    slaTiles: {
+      [CHART_SLA_TILES.pick]: sla.pick.text,
+      [CHART_SLA_TILES.approve]: sla.approve.text,
+      [CHART_SLA_TILES.settle]: sla.settle.text,
+      [CHART_SLA_TILES.rtwRate]: sla.rtwRate.text,
     },
   };
 }

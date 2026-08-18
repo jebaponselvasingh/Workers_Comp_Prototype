@@ -150,6 +150,51 @@ async def select_claim_columns_with_handler(
     return rows.all()
 
 
+async def select_claim_columns_with_employer(
+    db: AsyncSession,
+    ctx: CallerContext,
+    columns: Sequence[InstrumentedAttribute[Any]],
+) -> Sequence[sa.Row[Any]]:
+    """`select_claim_columns`, plus the employer's short name.
+
+    Story 5.3's total-paid-by-employer chart ranks the caller's employers by
+    spend and labels each bar, and the label is on `employer` rather than on
+    `claim`. `select_claim_columns` cannot supply it and `select_queue_rows`
+    supplies it only alongside nine columns a chart does not want, so this is
+    the third member of the projection family: same scope predicate, same
+    `claim_id` ordering, one labelled column added.
+
+    **Un-aliased, and that is the difference from
+    `select_claim_columns_with_handler` rather than an oversight.** That
+    function aliases because `AppUser` is reachable from `claim` by more than
+    one foreign key over the life of this schema — a second one would silently
+    widen an un-aliased join condition rather than fail. `Employer` is not in
+    that position: `claim.employer_id` is the only foreign key from a claim to
+    an employer, `employer_scope` narrows on that same column, and
+    `select_queue_rows` already joins `Employer` un-aliased two functions down.
+    Aliasing here would mean two spellings of one join in one module, which is
+    how the next reader learns the wrong rule about which one is required.
+
+    An **inner** join: `Claim.employer_id` is a non-nullable foreign key, so an
+    outer join would only add a `None` branch that cannot happen and that every
+    consumer would then have to reason about. An employer row is guaranteed.
+
+    `columns` is still the service's business and the scope predicate is still
+    this module's — the join adds a labelled column, never a row. Which is what
+    keeps the chart's employer list derived from *claims in scope* rather than
+    from a roster: there is no way to ask this function for an employer that has
+    no claim in the caller's book.
+    """
+    rows = await db.execute(
+        sa.select(*columns, Employer.short_name.label("employer_short_name"))
+        .select_from(Claim)
+        .join(Employer, Claim.employer_id == Employer.id)
+        .where(employer_scope(ctx))
+        .order_by(Claim.claim_id)
+    )
+    return rows.all()
+
+
 async def select_queue_rows(
     db: AsyncSession,
     ctx: CallerContext,

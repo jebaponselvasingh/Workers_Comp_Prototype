@@ -37,6 +37,8 @@ export interface StubRoutes {
   dashboardSummary?: StubRoute;
   /** `GET /dashboard/handler-benchmarks` (Story 5.2) — the ranked handler table. */
   handlerBenchmarks?: StubRoute;
+  /** `GET /dashboard/charts` (Story 5.3) — the seven analytics surfaces. */
+  dashboardCharts?: StubRoute;
   claimsQueue?: StubRouteFor;
   /**
    * `GET /claims/{id}` (Story 2.2). A function so a test can answer
@@ -682,6 +684,324 @@ export const SLA_NO_DATA = {
     approve: { value: null, target: 5, direction: "below", decimals: 1, status: "no_data" },
     settle: { value: null, target: 30, direction: "below", decimals: 0, status: "no_data" },
     rtwRate: { value: null, target: 80, direction: "above", decimals: 0, status: "no_data" },
+  },
+};
+
+/**
+ * The seven analytics surfaces over David Bline's real seeded portfolio
+ * (Story 5.3).
+ *
+ * `DASHBOARD_SUMMARY`'s argument: component tests do not verify these numbers
+ * (that is `test_portfolio_charts.py`'s job against the real database), they
+ * verify that whatever the server sends is what each chart draws. Using the
+ * real book keeps a reader from mistaking a stub for a computation.
+ *
+ * **`sla` is `SLA_STRIP.body` by reference, and that is load-bearing.** AC 3
+ * says the dashboard tiles and the top-bar strip show one value; the fixture
+ * says so too, so `the dashboard tiles read what the top bar reads` is a test
+ * about the two components rather than about two hand-copied literals that
+ * happen to agree. A future edit to the strip fixture moves both surfaces.
+ *
+ * **Everything that diverges from the seed, named.** A fixture docstring that
+ * claims "real numbers" while a series was rewritten is worse than no
+ * docstring, because the next reader trusts it:
+ *
+ * 1. `byRecoveryStatus` — the seed is 36 · 17 · 47 and this is **36 · 18 · 46**.
+ *    The real 17 is also the severity donut's `low` count, and both are the
+ *    *third item of their series*, on the same row of the grid — the single
+ *    strongest coincidence available for a mis-wired series to hide behind.
+ *    `returned_and_fully_recovered` drops by one so the three still sum to the
+ *    scope's hundred.
+ * 2. `byInjuryType` — the seed is 13 · 11 · 9 · 7 · 7 · 7 · 5 · 5 and this is
+ *    **13 · 12 · 11 · 10 · 9 · 8 · 7 · 5**. Three real bars are tied at seven
+ *    and two at five, so a chart that rendered bars 4-6 in the wrong order
+ *    would be indistinguishable from a correct one. The eight labels and their
+ *    order are the seed's.
+ * 3. `byState` — the seed is 11 · 11 · 10 · 8 · 8 · 8 · 7 · 6 · 5 · 5 and this
+ *    is **11 · 10 · 9 · 8 · 7 · 6 · 5 · 4 · 3 · 1**, for (2)'s reason: the real
+ *    series has three separate ties, including one across the top two rows. The
+ *    ten labels and their order are the seed's.
+ *
+ * **How far the "every figure distinct" rule actually reaches, stated rather
+ * than over-claimed.** Every count is distinct *within* its own series, and the
+ * ten counts across the two donuts and the recovery bars — the three surfaces
+ * that share a row and a shape — are pairwise distinct. Full distinctness
+ * across all thirty-one counts is arithmetically impossible here: eighteen
+ * distinct positive integers whose two subset sums must each stay under a
+ * hundred already consume 1-18, and the row above claims four of those. So the
+ * injury and state charts share some integers, and what separates them is the
+ * labels — every assertion in `PortfolioCharts.test.tsx` reads label/value
+ * *pairs* off each surface's list, so a swapped series fails on the labels
+ * before the counts are compared at all.
+ *
+ * Everything else is the seed's: the stage and severity donuts, all ten
+ * employer totals and their order, every label, every `totalCategories`, both
+ * truncation flags, both limits and the two published bands.
+ */
+export const DASHBOARD_CHARTS = {
+  status: 200,
+  body: {
+    byStage: {
+      items: [
+        { key: "intake", count: 6 },
+        { key: "investigation", count: 4 },
+        { key: "treatment", count: 28 },
+        { key: "settled", count: 62 },
+      ],
+      total: 100,
+      totalCategories: 4,
+      truncated: false,
+      limit: null,
+    },
+    bySeverity: {
+      items: [
+        { key: "high", count: 32 },
+        { key: "med", count: 51 },
+        { key: "low", count: 17 },
+      ],
+      total: 100,
+      totalCategories: 3,
+      truncated: false,
+      limit: null,
+    },
+    byRecoveryStatus: {
+      items: [
+        { key: "under_treatment", count: 36 },
+        { key: "returned_and_under_therapy", count: 18 },
+        { key: "returned_and_fully_recovered", count: 46 },
+      ],
+      total: 100,
+      totalCategories: 3,
+      truncated: false,
+      limit: null,
+    },
+    byInjuryType: {
+      items: [
+        { label: "Amputation", count: 13 },
+        { label: "Fracture", count: 12 },
+        { label: "Carpal Tunnel Syndrome", count: 11 },
+        { label: "Crushing", count: 10 },
+        { label: "Fall from Height", count: 9 },
+        { label: "Vibration White Finger (HAVS)", count: 8 },
+        { label: "Eye Injury", count: 7 },
+        { label: "Laceration", count: 5 },
+      ],
+      total: 100,
+      totalCategories: 20,
+      truncated: true,
+      limit: 8,
+    },
+    byEmployer: {
+      items: [
+        { employerId: 3, label: "Caterpillar", paidCents: 43502900 },
+        { employerId: 9, label: "Toyota", paidCents: 30393700 },
+        { employerId: 5, label: "GM", paidCents: 19433300 },
+        { employerId: 4, label: "GE", paidCents: 17024800 },
+        { employerId: 7, label: "John Deere", paidCents: 14950400 },
+        { employerId: 1, label: "3M", paidCents: 13466700 },
+        { employerId: 10, label: "Whirlpool", paidCents: 12319200 },
+        { employerId: 2, label: "Boeing", paidCents: 8154800 },
+        { employerId: 6, label: "Honeywell", paidCents: 4663400 },
+        { employerId: 8, label: "Lockheed", paidCents: 3140500 },
+      ],
+      total: 167049700,
+      totalCategories: 10,
+      truncated: false,
+      limit: null,
+    },
+    byState: {
+      items: [
+        { label: "MN", count: 11 },
+        { label: "OH", count: 10 },
+        { label: "IL", count: 9 },
+        { label: "MA", count: 8 },
+        { label: "TX", count: 7 },
+        { label: "WA", count: 6 },
+        { label: "IA", count: 5 },
+        { label: "MI", count: 4 },
+        { label: "AL", count: 3 },
+        { label: "KY", count: 1 },
+      ],
+      total: 100,
+      totalCategories: 17,
+      truncated: true,
+      limit: 10,
+    },
+    sla: SLA_STRIP.body,
+    highRiskSeverityMin: 65,
+    medRiskSeverityMin: 35,
+    rulesVersion: 5,
+  },
+};
+
+/**
+ * A genuinely different scope: Jennifer Park's real 27-claim book, under a
+ * **superseded** rule document.
+ *
+ * Its whole purpose is to be asserted *against* `DASHBOARD_CHARTS`. A component
+ * that renders what it was sent reads differently under the two; one that
+ * sorted, banded or captioned from constants of its own reads the same. Three
+ * properties only this fixture can exercise:
+ *
+ * - **An absent category.** Park's book contains no `intake` claim, so
+ *   `byStage` has *three* items rather than four. A component laying out four
+ *   fixed rows and looking each up would draw an empty fourth here.
+ * - **A ranked series that was not cut.** Her seven states are seven of seven,
+ *   so `truncated` is false and the truncation caption must not appear — while
+ *   her fourteen injury types still cut to eight and it must. One fixture,
+ *   both sides of the same conditional.
+ * - **A moved band.** `highRiskSeverityMin` is 70 against the base fixture's
+ *   65, and the severity slices are what her book actually splits into at that
+ *   cut-off (8 · 13 · 6, against 10 · 15 · 2 under the seeded document) — so
+ *   the legend caption and the slice move together, which is what a caption
+ *   holding its own constant would fail to do.
+ *
+ * The one divergence from the seed: `byInjuryType`'s counts are **8 · 7 · 6 ·
+ * 5 · 4 · 3 · 2 · 1** where her book has 5 · 4 · 3 · 2 · 2 · 2 · 2 · 1 — four
+ * of her eight bars are tied at two, and a fixture cannot tell a mis-ordered
+ * render from a correct one through a tie. Labels and order are hers.
+ * `byState` keeps its real ties, deliberately: nothing about it is being
+ * ordered by this fixture, and its job is `truncated: false`.
+ *
+ * `sla` is her real strip, and the RTW tile is the reason it is spelled out
+ * rather than shared: at 75% against an 80% target it *misses*, and RTW is the
+ * one metric whose miss is drawn in the error tone — a colour `SLA_STRIP`'s
+ * passing tile never renders.
+ */
+export const DASHBOARD_CHARTS_SCOPED = {
+  status: 200,
+  body: {
+    byStage: {
+      items: [
+        { key: "investigation", count: 2 },
+        { key: "treatment", count: 5 },
+        { key: "settled", count: 20 },
+      ],
+      total: 27,
+      totalCategories: 3,
+      truncated: false,
+      limit: null,
+    },
+    bySeverity: {
+      items: [
+        { key: "high", count: 8 },
+        { key: "med", count: 13 },
+        { key: "low", count: 6 },
+      ],
+      total: 27,
+      totalCategories: 3,
+      truncated: false,
+      limit: null,
+    },
+    byRecoveryStatus: {
+      items: [
+        { key: "under_treatment", count: 7 },
+        { key: "returned_and_under_therapy", count: 5 },
+        { key: "returned_and_fully_recovered", count: 15 },
+      ],
+      total: 27,
+      totalCategories: 3,
+      truncated: false,
+      limit: null,
+    },
+    byInjuryType: {
+      items: [
+        // Jennifer Park's real book, recounted from `seed_data.json`: 27 claims
+        // across 14 injury types, of which the top eight are shown. The eight
+        // counts sum to 21, leaving 6 in the six categories the cut dropped —
+        // the invariant `test_every_series_accounts_for_every_claim_in_the_
+        // caseload` enforces server-side, and one no fixture may violate.
+        //
+        // An earlier draft ran 8,7,6,5,4,3,2,1 to make every figure distinct.
+        // That sums to 36 against a total of 27, which is a payload the server
+        // cannot produce: any later work reading `total` for a share or an
+        // "other" remainder would have been developed against an impossibility
+        // and would ship computing over 100%. Distinctness is worth having, but
+        // not at the price of a fixture that lies about arithmetic — the labels
+        // do the disambiguating where the counts have to repeat.
+        { label: "Fracture", count: 5 },
+        { label: "Crushing", count: 4 },
+        { label: "Carpal Tunnel Syndrome", count: 3 },
+        { label: "Amputation", count: 2 },
+        { label: "Burn — Thermal", count: 2 },
+        { label: "Robotic Cell Injury", count: 2 },
+        { label: "Strain or Tear — Shoulder", count: 2 },
+        { label: "Burn — Arc Flash", count: 1 },
+      ],
+      total: 27,
+      totalCategories: 14,
+      truncated: true,
+      limit: 8,
+    },
+    byEmployer: {
+      items: [
+        { employerId: 9, label: "Toyota", paidCents: 30393700 },
+        { employerId: 5, label: "GM", paidCents: 19433300 },
+        { employerId: 1, label: "3M", paidCents: 13466700 },
+      ],
+      total: 63293700,
+      totalCategories: 3,
+      truncated: false,
+      limit: null,
+    },
+    byState: {
+      items: [
+        { label: "AL", count: 5 },
+        { label: "KY", count: 5 },
+        { label: "MN", count: 4 },
+        { label: "SD", count: 4 },
+        { label: "IN", count: 3 },
+        { label: "MI", count: 3 },
+        { label: "TX", count: 3 },
+      ],
+      total: 27,
+      totalCategories: 7,
+      truncated: false,
+      limit: 10,
+    },
+    sla: {
+      pick: { value: 2.7, target: 1, direction: "below", decimals: 1, status: "warn" },
+      approve: { value: 8.1, target: 5, direction: "below", decimals: 1, status: "warn" },
+      settle: { value: 62, target: 30, direction: "below", decimals: 0, status: "warn" },
+      rtwRate: { value: 75, target: 80, direction: "above", decimals: 0, status: "warn" },
+    },
+    highRiskSeverityMin: 70,
+    medRiskSeverityMin: 40,
+    rulesVersion: 6,
+  },
+};
+
+/**
+ * A persona with no claim in scope — the NFR-3 zero state for all seven
+ * surfaces at once.
+ *
+ * Every counted series is `items: []` with `total: 0`, **not** a set of zero
+ * rows: that is the omission contract taken to its limit, and it is the state
+ * the fixed-height empty branch exists for. The SLA tiles are the one surface
+ * that still renders four of something — `SLA_NO_DATA`'s em dashes — because a
+ * segment with nothing behind it is a `no_data` tile rather than an absent one,
+ * which is Story 1.5's ruling and not this story's to revisit.
+ *
+ * The two bands are still populated. "Nothing in this book" says nothing about
+ * which rules were in force, and the server sends them for that reason.
+ */
+export const DASHBOARD_CHARTS_EMPTY = {
+  status: 200,
+  body: {
+    ...DASHBOARD_CHARTS.body,
+    byStage: { items: [], total: 0, totalCategories: 0, truncated: false, limit: null },
+    bySeverity: { items: [], total: 0, totalCategories: 0, truncated: false, limit: null },
+    byRecoveryStatus: {
+      items: [],
+      total: 0,
+      totalCategories: 0,
+      truncated: false,
+      limit: null,
+    },
+    byInjuryType: { items: [], total: 0, totalCategories: 0, truncated: false, limit: 8 },
+    byEmployer: { items: [], total: 0, totalCategories: 0, truncated: false, limit: null },
+    byState: { items: [], total: 0, totalCategories: 0, truncated: false, limit: 10 },
+    sla: SLA_NO_DATA.body,
   },
 };
 
@@ -2689,6 +3009,11 @@ export function stubApi(routes: StubRoutes): void {
       // keeps the dashboard's two routes readable together.
       if (url.includes("/api/dashboard/handler-benchmarks")) {
         return answer(routes.handlerBenchmarks ?? HANDLER_BENCHMARKS);
+      }
+      // Story 5.3's. Disjoint from both dashboard paths above, so the order is
+      // readability rather than routing.
+      if (url.includes("/api/dashboard/charts")) {
+        return answer(routes.dashboardCharts ?? DASHBOARD_CHARTS);
       }
       // Story 4.1's four, before every `/api/claims` case below. **Not because
       // the case file would swallow them**: the catch-all tests `/api/claims/`

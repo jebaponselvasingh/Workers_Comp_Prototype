@@ -54,9 +54,37 @@ count of your own book is your own data in another shape, but a table of peers'
 cycle times is information about colleagues, and `BenchmarksNotPermitted` says
 so before the read. Everything else about it is `summary`'s shape: one scoped
 projection read, one pure fold, the derivations passed in.
+
+Story 5.3 adds `charts`, the second half of the sentence above and the last
+consumer Story 1.5 named: seven distribution surfaces over the same scoped book
+— stage, severity band, recovery status, injury type, employer spend and state,
+plus the SLA strip itself. It is where the package's whole argument becomes
+checkable on one screen. Its severity donut counts the *same*
+`derivations.risk` the KPI card above it counts, its stage donut groups on the
+*same* column the card beside it groups on, its employer bars sum the *same*
+`derivations.total_paid`, and its four tiles are the *same* `sla.strip_of` the
+top bar renders — none of which is a claim about two implementations agreeing,
+because in each case there is one and both surfaces call it. The tests assert
+those equalities between the two aggregates rather than against restated
+numbers, which is the only form of the assertion that survives a retune.
+
+Structurally it is `summary`'s shape again, widened: one scoped projection read
+(`sla.SAMPLE_COLUMNS` plus seven columns), one pure fold, every parameter block
+and the settings injected by the router. It gates on scope and **not** on role,
+unlike `benchmarks` — seven distributions over your own book name nobody, so
+there is no capability to gate; the route's docstring carries the argument.
 """
 
-from services.worklist import actions, approvals, benchmarks, priority, queue, sla, summary
+from services.worklist import (
+    actions,
+    approvals,
+    benchmarks,
+    charts,
+    priority,
+    queue,
+    sla,
+    summary,
+)
 from services.worklist.actions import (
     Action,
     ClaimActions,
@@ -79,6 +107,18 @@ from services.worklist.benchmarks import (
     benchmarks_of,
     handler_benchmarks,
     require_benchmarks_access,
+)
+from services.worklist.charts import (
+    INJURY_TYPE_LIMIT,
+    STATE_LIMIT,
+    CategoryCount,
+    ChartClaim,
+    Distribution,
+    EmployerPaid,
+    LabelCount,
+    PortfolioCharts,
+    charts_of,
+    portfolio_charts,
 )
 from services.worklist.priority import (
     QueueClaim,
@@ -112,22 +152,30 @@ from services.worklist.summary import (
 
 __all__ = [
     "APPROVAL_KINDS",
+    "INJURY_TYPE_LIMIT",
     "MAX_PAGE_LIMIT",
     "MIN_PAGE_LIMIT",
     "STAGE_ORDER",
+    "STATE_LIMIT",
     "Action",
     "ApprovalKind",
     "ApprovalNotPermitted",
     "ApprovalResult",
     "BenchmarkClaim",
     "BenchmarksNotPermitted",
+    "CategoryCount",
+    "ChartClaim",
     "ClaimActions",
     "ClaimFlags",
     "ClaimQueue",
     "Cursor",
+    "Distribution",
+    "EmployerPaid",
     "HandlerBenchmark",
     "HandlerBenchmarks",
     "InvalidCursor",
+    "LabelCount",
+    "PortfolioCharts",
     "PortfolioClaim",
     "PortfolioSummary",
     "QueueCard",
@@ -145,6 +193,8 @@ __all__ = [
     "approve_payment",
     "benchmarks",
     "benchmarks_of",
+    "charts",
+    "charts_of",
     "claim_actions",
     "claim_queue",
     "decode_cursor",
@@ -152,6 +202,7 @@ __all__ = [
     "generate_actions",
     "handler_benchmarks",
     "matches",
+    "portfolio_charts",
     "portfolio_summary",
     "priority",
     "priority_markers",

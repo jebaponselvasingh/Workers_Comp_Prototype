@@ -794,3 +794,171 @@ def expected_handler_benchmarks(persona_name: str, role: str) -> dict[str, Any]:
         "leader": rankable[0]["handlerName"] if rankable else None,
         "laggard": rankable[-1]["handlerName"] if rankable else None,
     }
+
+
+# --- Story 5.3: the portfolio analytics charts, restated independently ----
+#
+# Six distributions, two orderings and two limits, all written out here from the
+# story text and the prototype (`renderSV`, lines 1003-1010) rather than
+# imported from `services/worklist/charts.py`. `HIGH_RISK_MIN`'s discipline, and
+# it earns its keep twice over on this story:
+#
+# - The severity donut bands on the *same* rule as the High Risk card, so the
+#   oracle deliberately reuses `risk_band` above — the assertion that matters is
+#   an equality between two aggregates, and an oracle with its own third
+#   banding rule would be checking neither of them against the document.
+# - The two ranked series cut *inside a tie* on the seeded portfolio (injury
+#   ranks 7-11 all count five, state ranks 9-11 all count five), so an oracle
+#   without the tie-break would disagree with a correct implementation about
+#   which five claims are on screen — which is precisely the failure the
+#   tie-break exists to prevent, reproduced in the test.
+
+#: The two chart caps, restated. Module constants on the service side rather
+#: than rule-document parameters — a chart's category count is UX-DR7's shape,
+#: not a business rule — so they are written out here rather than loaded, the
+#: same way `SLA_TARGETS` restates deployment configuration.
+INJURY_TYPE_LIMIT = 8
+STATE_LIMIT = 10
+
+#: The declaration order of the three enums the donuts and the recovery bars
+#: group on, restated from `data/models/enums.py`. Enum-keyed series publish in
+#: this order rather than in count order: a legend has a fixed reading order and
+#: must not reshuffle when two categories cross. `STAGE_ORDER` above is the same
+#: tuple for `Stage` and is reused rather than restated a second time.
+RISK_BAND_ORDER = ("high", "med", "low")
+RECOVERY_STATUS_ORDER = (
+    "under_treatment",
+    "returned_and_under_therapy",
+    "returned_and_fully_recovered",
+)
+
+
+def employer_short_names() -> dict[str, str]:
+    """`{employer name: short_name}` from the seed file.
+
+    The employer bars are labelled with `employer.short_name` — "Toyota", not
+    "Toyota Motor Manufacturing" — because that is the column
+    `select_claim_columns_with_employer` joins and `select_queue_rows` already
+    uses. The prototype produces the same labels by stripping four suffixes off
+    the full name with a chain of `String.replace` calls (`renderSV`, line
+    1005), which is a client-side canonicalization of exactly the kind AD-1
+    removes; the short name is a column and this is what it is for.
+    """
+    return {row["name"]: row["short_name"] for row in seed()["employers"]}
+
+
+def _employer_id(employer_name: str) -> int:
+    """The `employer.id` a seeded employer holds, restated from the file's order.
+
+    `_handler_ordinal`'s argument for a surrogate key: migration 0004 inserts
+    `employers` in the seed file's order against an identity column, so the
+    id is the 1-based index. Restated rather than queried, because an oracle
+    that read the id back from the database would agree with an implementation
+    that had joined the wrong row.
+    """
+    for index, row in enumerate(seed()["employers"], start=1):
+        if row["name"] == employer_name:
+            return index
+    raise AssertionError(f"no seeded employer {employer_name!r}")
+
+
+def _declared_series(counts: dict[str, int], order: tuple[str, ...]) -> dict[str, Any]:
+    """An enum-keyed distribution: declaration order, absent categories omitted.
+
+    Omitted rather than zeroed, which is the contract the UI is built against:
+    Jennifer Park's book has no `intake` stage, and a zero row would put an
+    invisible slice in a donut. `truncated` is False and `limit` is None —
+    an enum series shows every category it has.
+    """
+    return {
+        "items": [{"key": key, "count": counts[key]} for key in order if key in counts],
+        "total": sum(counts.values()),
+        "totalCategories": len(counts),
+        "truncated": False,
+        "limit": None,
+    }
+
+
+def _ranked_series(counts: dict[str, int], limit: int) -> dict[str, Any]:
+    """A free-text distribution: count descending, then label ascending, then cut.
+
+    The tie-break is restated rather than shared with the implementation because
+    it is the rule most likely to be quietly dropped — a sort on the count alone
+    passes every "the top three are right" assertion and reorders the tail on a
+    different Python build.
+    """
+    ordered = sorted(counts.items(), key=lambda entry: (-entry[1], entry[0]))
+    return {
+        "items": [{"label": label, "count": count} for label, count in ordered[:limit]],
+        "total": sum(counts.values()),
+        "totalCategories": len(counts),
+        "truncated": len(counts) > limit,
+        "limit": limit,
+    }
+
+
+def expected_portfolio_charts(persona_name: str, role: str) -> dict[str, Any]:
+    """The six distributions for a persona's seeded book, as the wire keys them.
+
+    The SLA strip is deliberately **not** here: it is `expected_sla_strip`
+    above, unchanged, because the dashboard tiles and the top-bar strip are two
+    renderings of one server value and the oracle says so by having one entry
+    for them. A second copy in this function would let the two drift in the
+    expectations even while the implementation kept them identical.
+
+    Money is `paid_indemnity + paid_medical + paid_expense`, matching
+    `expected_portfolio_summary`'s `totalPaidCents` term deliberately: the
+    employer bars sum the same derivation as the Total Paid card, including its
+    recorded exclusion of `status = paid` bills, and the test that the two agree
+    is only meaningful if the oracle computes them the same way.
+    """
+    visible = claims_for(persona_name, role)
+    short_names = employer_short_names()
+
+    stages: dict[str, int] = {}
+    severities: dict[str, int] = {}
+    recoveries: dict[str, int] = {}
+    injuries: dict[str, int] = {}
+    states: dict[str, int] = {}
+    paid: dict[str, int] = {}
+
+    for claim in visible:
+        stages[claim["stage"]] = stages.get(claim["stage"], 0) + 1
+        band = risk_band(claim["severity_score"])
+        severities[band] = severities.get(band, 0) + 1
+        recoveries[claim["return_status"]] = recoveries.get(claim["return_status"], 0) + 1
+        injuries[claim["injury_type"]] = injuries.get(claim["injury_type"], 0) + 1
+        states[claim["state"]] = states.get(claim["state"], 0) + 1
+        paid[claim["employer"]] = (
+            paid.get(claim["employer"], 0)
+            + claim["paid_indemnity"]
+            + claim["paid_medical"]
+            + claim["paid_expense"]
+        )
+
+    # Paid descending, then label ascending — the employer series' ordering, on
+    # the *short* name, because that is the label the ties are broken by on the
+    # wire. Uncapped: the employers in a book are bounded by the assignment.
+    by_employer = sorted(paid.items(), key=lambda entry: (-entry[1], short_names[entry[0]]))
+
+    return {
+        "byStage": _declared_series(stages, STAGE_ORDER),
+        "bySeverity": _declared_series(severities, RISK_BAND_ORDER),
+        "byRecoveryStatus": _declared_series(recoveries, RECOVERY_STATUS_ORDER),
+        "byInjuryType": _ranked_series(injuries, INJURY_TYPE_LIMIT),
+        "byEmployer": {
+            "items": [
+                {
+                    "employerId": _employer_id(name),
+                    "label": short_names[name],
+                    "paidCents": cents,
+                }
+                for name, cents in by_employer
+            ],
+            "total": sum(paid.values()),
+            "totalCategories": len(paid),
+            "truncated": False,
+            "limit": None,
+        },
+        "byState": _ranked_series(states, STATE_LIMIT),
+    }

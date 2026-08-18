@@ -33,12 +33,14 @@
  * see the attribute below.
  */
 import {
+  useDashboardCharts,
   useDashboardSummary,
   useHandlerBenchmarks,
   type PortfolioSummary,
 } from "@/api/dashboard";
 import { formatCents } from "@/lib/money";
 
+import { PortfolioCharts } from "./charts/PortfolioCharts";
 import { HandlerBenchmarkTable } from "./HandlerBenchmarkTable";
 import { KpiCard, KpiCardSkeleton, type KpiTone } from "./KpiCard";
 
@@ -238,6 +240,7 @@ function DatasetChip({ summary }: { summary: PortfolioSummary }) {
 export function DashboardPage() {
   const summary = useDashboardSummary();
   const benchmarks = useHandlerBenchmarks();
+  const charts = useDashboardCharts();
 
   return (
     <div
@@ -324,6 +327,16 @@ export function DashboardPage() {
         data={benchmarks.data}
         isPending={benchmarks.isPending}
         isError={benchmarks.isError}
+      />
+
+      {/* Outside the summary's error branch for the table's reason, one section
+          further down: three server answers, three failure modes. A charts
+          request that 404s shows its seven inline alerts and leaves the ten KPI
+          cards and the ranked table exactly as they were (NFR-3). */}
+      <PortfolioCharts
+        data={charts.data}
+        isPending={charts.isPending}
+        isError={charts.isError}
       />
     </div>
   );

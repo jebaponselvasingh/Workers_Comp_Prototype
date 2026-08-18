@@ -1,7 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 
 import { cleanup } from "@testing-library/react";
-import { afterAll, afterEach } from "vitest";
+import { afterAll, afterEach, beforeEach } from "vitest";
 
 // vitest runs with globals:false, so testing-library's auto-cleanup
 // never registers — do it explicitly.
@@ -51,7 +51,59 @@ if (!Element.prototype.hasPointerCapture) {
   Element.prototype.releasePointerCapture = () => {};
 }
 if (!Element.prototype.scrollIntoView) {
-  Element.prototype.scrollIntoView = () => {};
+  Element.prototype.scrollIntoView = () => {}
+
+/**
+ * Fourth jsdom gap, and the one Story 5.3 opened: **nothing has a size.**
+ *
+ * jsdom implements no layout, so `getBoundingClientRect()` answers an all-zero
+ * box for every element however it is styled. Recharts 3.10's
+ * `ResponsiveContainer` calls `getBoundingClientRect()` on mount, refuses to
+ * render at a non-positive width or height, and returns `null` — so every chart
+ * in every component test would render *nothing*, silently, while working
+ * perfectly in a browser. A suite in that state does not fail; it passes over an
+ * empty `<div>` and proves nothing about seven surfaces. `PortfolioCharts.test`
+ * asserts an `<svg>` exists under each surface so this stub cannot go stale
+ * without a test saying so.
+ *
+ * The box is deliberately crude, for the `ResizeObserver` stub's reason: the
+ * tests assert that a chart's *values* reached the DOM — through each surface's
+ * visible legend or its `sr-only` list — never where a bar was drawn or how wide
+ * it came out. Geometry is the browser's business and the e2e suite's to check.
+ *
+ * Applied to `Element.prototype` because the measured node is Recharts' own
+ * internal `<div>`, which a test has no handle on. **Restored after every test**,
+ * for the `Request` patch's reason two blocks down: this is a process-wide
+ * global, and the file's own `ResizeObserver` stub exists precisely because
+ * Radix's floating layer positions itself from rects — so leaving a 1024x768
+ * world behind would quietly move every popper placement and pointer hit-test in
+ * the other thirty-three test files. An earlier draft claimed "nothing else in
+ * this suite reads a rect", which was never true.
+ */
+const JSDOM_VIEWPORT = { width: 1024, height: 768 };
+
+const REAL_BOUNDING_RECT = Element.prototype.getBoundingClientRect;
+
+beforeEach(() => {
+  Element.prototype.getBoundingClientRect = function boundingBox(): DOMRect {
+    return {
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: JSDOM_VIEWPORT.width,
+      bottom: JSDOM_VIEWPORT.height,
+      width: JSDOM_VIEWPORT.width,
+      height: JSDOM_VIEWPORT.height,
+      toJSON: () => ({}),
+    } as DOMRect;
+  };
+});
+
+afterEach(() => {
+  Element.prototype.getBoundingClientRect = REAL_BOUNDING_RECT;
+});
+;
 }
 
 const NodeRequest = globalThis.Request;

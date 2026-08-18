@@ -69,6 +69,24 @@ export const queryKeys = {
      * the client picks which version of the table it sees.
      */
     handlerBenchmarks: ["dashboard", "handler-benchmarks"] as const,
+    /**
+     * The seven analytics surfaces (Story 5.3) — the third sibling the group's
+     * docstring above pre-authorised.
+     *
+     * One key for all seven, matching the one endpoint behind them: the six
+     * distributions and the SLA strip are folded from one scoped read in one
+     * pass, and splitting them into seven cache entries would mean seven
+     * requests over the same hundred rows, seven loading states, and a
+     * dashboard that could render three charts describing slightly different
+     * sets if a claim changed in between.
+     *
+     * Its own key rather than a field on `summary` for that key's recorded
+     * reason: it is a separate server answer with a separate cost, and it
+     * fails and refetches on its own. The page renders the three sections
+     * behind independent states so a chart outage leaves the KPI cards and the
+     * handler table standing.
+     */
+    charts: ["dashboard", "charts"] as const,
   },
   claims: {
     /**
