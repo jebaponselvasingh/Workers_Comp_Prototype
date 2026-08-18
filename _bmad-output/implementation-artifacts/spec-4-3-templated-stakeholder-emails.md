@@ -2,8 +2,9 @@
 title: 'Story 4.3 — Templated Stakeholder Emails'
 type: 'feature'
 created: '2026-08-18'
-status: 'in-review'
+status: 'done'
 baseline_revision: '1c87448ca3c71a96e686188d6485d6469ac28336'
+final_revision: 'e5b1ebf7b90e9405da70b733a012f57a30ac9bb8'
 review_loop_iteration: 0
 followup_review_recommended: true # 32 patches across schema, migration indexes, seed data, API refusals, cache policy and three test suites — one of them a duplicate-write hazard; breadth and volume warrant an independent look
 context:
