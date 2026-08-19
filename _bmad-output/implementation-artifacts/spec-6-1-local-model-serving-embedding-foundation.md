@@ -3,6 +3,7 @@ title: 'Story 6.1 — Local Model Serving & Embedding Foundation'
 type: 'feature'
 created: '2026-08-19'
 baseline_revision: '5bb502593d82545f0e225ded8e3b5d6239ae76c7'
+final_revision: '6aa87c74796d6eb1c09ff865ef26ac0dda5fdc8a'
 status: 'done'
 review_loop_iteration: 0
 followup_review_recommended: true # the review pass added a schema column with a concurrency guard, restructured the refresh's transaction into per-half savepoints, added a 503 path and a field to a published response, and changed twelve tests — breadth across data model, API contract and transaction semantics is worth an independent look
