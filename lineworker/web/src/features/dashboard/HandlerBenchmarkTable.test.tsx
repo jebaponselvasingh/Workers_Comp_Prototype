@@ -1,3 +1,5 @@
+import { MemoryRouter } from "react-router";
+
 import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
@@ -33,12 +35,26 @@ import { DashboardPage } from "./DashboardPage";
  * blank the KPI cards" assertable at all.
  */
 
+/**
+ * Inside a `MemoryRouter` since Story 5.5.
+ *
+ * Not a formality: every KPI card, every chart legend row, every handler cell
+ * and every claim id on this page is now a `<Link>` or calls `useNavigate`, and
+ * a router hook outside a router throws rather than degrading — so a render
+ * without one does not fail *an assertion*, it fails to mount. `MemoryRouter`
+ * rather than the real route table for the reason these tests render
+ * `DashboardPage` rather than `App`: the subject is what the page draws from a
+ * payload, and mounting the whole shell would drag a session, a top bar and two
+ * more queries into it.
+ */
 function renderPage(routes: Parameters<typeof stubApi>[0]) {
   stubApi(routes);
   return render(
-    <QueryClientProvider client={createQueryClient()}>
-      <DashboardPage />
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={createQueryClient()}>
+        <DashboardPage />
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
 }
 
@@ -494,4 +510,28 @@ test("a scope with one ranked handler says what it can know, not a headcount", a
   expect(callout).not.toHaveTextContent("leads the desk");
   expect(callout).not.toHaveTextContent("workload check-in");
   expect(screen.getAllByTestId("handler-row")).toHaveLength(1);
+});
+
+// --- Story 5.5: the row's drill-through link (AC 3) ---------------------
+
+test("each handler cell links to that handler's caseload by id", async () => {
+  renderPage({ handlerBenchmarks: HANDLER_BENCHMARKS });
+
+  await screen.findAllByTestId("handler-row");
+
+  const links = screen.getAllByTestId("benchmark-handler-link");
+  expect(links).toHaveLength(HANDLER_BENCHMARKS.body.items.length);
+
+  // **By id, never by name.** The whole reason `benchmarks.py` groups on
+  // `handler_id` is that two handlers may share a display name, and a link
+  // built from the name would merge two desks into one list while looking
+  // perfectly correct on this fixture. Asserted pairwise against the payload so
+  // a link pointing at the *neighbouring* row's id fails here.
+  for (const [index, row] of HANDLER_BENCHMARKS.body.items.entries()) {
+    expect(links[index]).toHaveTextContent(row.handlerName);
+    expect(links[index]).toHaveAttribute(
+      "href",
+      `/dashboard/claims?filter%5BhandlerId%5D=${String(row.handlerId)}`,
+    );
+  }
 });

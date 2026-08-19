@@ -43,7 +43,11 @@ import type {
   HandlerBenchmarks,
 } from "@/api/dashboard";
 
+import { Link } from "react-router";
+
 import { CHIP_CLASS } from "../claim-detail/bills/statusTone";
+
+import { drillHref } from "./drill/filters";
 
 /** The em dash the console draws wherever a figure is genuinely unknown. */
 const EM_DASH = "—";
@@ -254,7 +258,23 @@ const COLUMNS: readonly ColumnSpec[] = [
     key: "handler",
     header: "Handler",
     align: "text-left",
-    cell: (row) => <span className="font-semibold">{row.handlerName}</span>,
+    // **The link filters on `handlerId`, never on the name** (Story 5.5, AC 3).
+    // The id is what `benchmarks.py` has grouped on since this table was
+    // written, precisely because two handlers may share a display name — and a
+    // drill-through keyed on the name would merge two desks into one list while
+    // looking perfectly correct. A `<Link>` rather than a row `onClick`: it is a
+    // navigation to a URL a supervisor can copy, and it keeps the rest of the
+    // row selectable text.
+    cell: (row) => (
+      <Link
+        data-testid="benchmark-handler-link"
+        data-handler-id={row.handlerId}
+        to={drillHref({ handlerId: String(row.handlerId) })}
+        className="rounded font-semibold text-text hover:underline focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none"
+      >
+        {row.handlerName}
+      </Link>
+    ),
   },
   {
     key: "cases",

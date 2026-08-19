@@ -432,7 +432,28 @@ const DERIVED_FIELDS =
   //   grouping or counting rows by one — "how many of these are Kaya's?" — is
   //   the aggregate this table deliberately does not publish. **Not repeated
   //   below either**: Story 5.2 put it on this list for the benchmark table.
-  "nextBestAction|severityBand|truncated|fraudFlagScoreMin";
+  "nextBestAction|severityBand|truncated|fraudFlagScoreMin|" +
+  // Story 5.5's two. Read the alternation above before adding to it: 5.4's
+  // review caught exactly the mistake of appending tokens that were already
+  // alternatives, in a guard block three lines below a comment stating the
+  // discipline. `total`, `risk`, `priorityScore`, `priorityMarker`, `daysOpen`
+  // and the five queue flags are all already here — a drill row is the queue
+  // card's field set, so it adds no field name of its own — and `handlerName`
+  // arrived with 5.2. These two are genuinely new.
+  //
+  // - `appliedFilters` is the server's reading of the URL, and it is the single
+  //   most plausible place for a second one: the browser holds the query string
+  //   *and* the list the server made of it, so `params.filter(…)` beside it
+  //   looks like the same answer and is not — the server ignored what it did not
+  //   recognise, and a client re-parsing would draw a chip for a narrowing that
+  //   never happened. Counting it to decide whether to show "Clear all" is the
+  //   other half, which is why the count comparison in `FilterChips` is written
+  //   as an equality.
+  // - `handlerId` is the identity a row's drill-through link filters on, and it
+  //   is on this list beside `handlerName` for the reason that field is: any
+  //   arithmetic on it — an index recovered from it, a comparison against
+  //   another — would be the browser treating a surrogate key as a position.
+  "appliedFilters|handlerId";
 
 const FLAGS = "siuReview|rtwBlocked|paymentDue|fraudFlag|litigationFlag|surgeryRequired";
 
@@ -619,6 +640,26 @@ test("the scan reaches the files it claims to", () => {
   expect(scanned).toContain(
     path.join("features", "dashboard", "PriorityClaimsTable.tsx"),
   );
+  // Story 5.5's four, in a nested folder `DashboardPage.tsx` being scanned says
+  // nothing about — and the folder with the strongest pull on the page after
+  // 5.2's, because it is the first surface where the browser holds a *filter*.
+  // `filters.ts` is the one that matters most: it owns the vocabulary, it is
+  // pure, and it looks like plumbing, which is exactly the shape of file where a
+  // "just narrow it here" would be least noticed. `DrillClaimsPage.tsx` holds a
+  // page of a server-filtered, server-ranked list beside the filter set that
+  // produced it and the population count, so re-filtering, re-sorting and
+  // re-counting are each one line. `FilterChips.tsx` decides how many chips to
+  // draw, which is where a count comparison would go. `ReadOnlyClaimPage.tsx`
+  // renders four stage variants' money side by side, which is the strongest pull
+  // in the console towards adding two cent figures together.
+  for (const file of [
+    "filters.ts",
+    "FilterChips.tsx",
+    "DrillClaimsPage.tsx",
+    "ReadOnlyClaimPage.tsx",
+  ]) {
+    expect(scanned).toContain(path.join("features", "dashboard", "drill", file));
+  }
   // The SLA tile vocabulary Story 5.3 lifted out of `SlaStrip.tsx` so both
   // surfaces render one server value through one spec. It holds the tone map
   // and both formatters, which is precisely where a client-side verdict would
@@ -788,6 +829,12 @@ test("the guard would notice a derivation if one were added", () => {
     "const shown = rows.slice(0, data.cap);",
     "rows.sort((a, b) => a.severityBand - b.severityBand);",
     'const urgent = rows.filter((r) => r.nextBestAction);',
+    // Story 5.5's two, and they are the two this surface is most tempted by.
+    // Re-parsing the URL the server has already told you what it made of — the
+    // chip row drawn from a second reading rather than from `appliedFilters` —
+    // and re-cutting a page of a filtered list at a count the server published.
+    "const chips = params.filter((p) => p.appliedFilters);",
+    "const shown = rows.slice(0, data.total);",
   ];
 
   for (const smell of smells) {
@@ -852,6 +899,11 @@ test("the guard does not fire on rendering the server's answers", () => {
     // already do and which mentions no payload field at all.
     "const snippet = characters.slice(0, SNIPPET_LENGTH).join(\"\");",
     "const initials = name.split(\" \").slice(0, 2);",
+    // Story 5.5's: reading the server's chip list to draw it, and handing a
+    // handler's id to a link builder. Neither computes anything, and both are
+    // the shape `FilterChips.tsx` and `HandlerBenchmarkTable.tsx` are full of.
+    "const applied = list.data?.appliedFilters ?? [];",
+    "to={drillHref({ handlerId: String(row.handlerId) })}",
   ];
 
   for (const line of innocent) {

@@ -1,18 +1,23 @@
 /**
- * Supervisor / analyst shell — the layout frame around the portfolio dashboard.
+ * Supervisor / analyst shell — the layout frame around the dashboard routes.
  *
  * Story 1.3 proved that "Enter Console →" lands the right roles here; Story 5.1
- * fills the section it left holding a placeholder. The shell still owns only
- * the frame: `TopBar` (identity, caseload tiles, SLA strip) above,
- * `DashboardPage` inside, and nothing about either in here.
+ * filled the section it left holding a placeholder; **Story 5.5 makes it a
+ * layout route**. The shell still owns only the frame: `TopBar` (identity,
+ * caseload tiles, SLA strip) above, and whichever dashboard route matched
+ * inside — the portfolio overview, a drill-through list, or a read-only claim.
  *
- * **`aria-label="Portfolio dashboard"` is load-bearing.** It is the section's
- * accessible name, it is how `App.test.tsx` identifies this shell three times
- * over, and it is what makes the dashboard a named landmark rather than an
- * anonymous div. It survives whatever fills the section.
+ * **The `aria-label="Portfolio dashboard"` section moved into `DashboardPage`,
+ * and that is the point of the change rather than a side effect of it.** It is
+ * that page's accessible name, not the shell's: with a child route showing, a
+ * landmark here called "Portfolio dashboard" would be naming a region that is
+ * currently a filtered claim list or one claim's case file. Each routed view now
+ * carries its own name, so the label stays true whatever matched — and
+ * `App.test.tsx`, which identifies this shell by that label, still finds it on
+ * the index route because that is where the portfolio dashboard actually is.
  *
  * The width cap is gone with the placeholder: six KPI cards in a row need the
- * viewport, and Epic 5's charts and tables will need more of it.
+ * viewport, and Epic 5's charts and tables need more of it.
  *
  * **`h-screen` plus `min-h-0`, exactly as `WorkspaceShell` has it.** The pair
  * is what makes `overflow-y-auto` on `<main>` mean anything: with `min-h-screen`
@@ -22,7 +27,7 @@
  * off the top. The two shells scroll identically now, and a supervisor keeps
  * the caseload tiles and SLA strip in view the way a handler does.
  */
-import { DashboardPage } from "@/features/dashboard/DashboardPage";
+import { Outlet } from "react-router";
 
 import { TopBar } from "./TopBar";
 
@@ -31,9 +36,7 @@ export function DashboardShell() {
     <div className="flex h-screen flex-col">
       <TopBar />
       <main className="min-h-0 flex-1 overflow-y-auto px-[18px] pt-4 pb-10">
-        <section aria-label="Portfolio dashboard" className="w-full">
-          <DashboardPage />
-        </section>
+        <Outlet />
       </main>
     </div>
   );

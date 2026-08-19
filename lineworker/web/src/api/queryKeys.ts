@@ -126,6 +126,48 @@ export const queryKeys = {
      */
     priorityClaimPages: (firstCursor: string | null) =>
       ["dashboard", "priority-claims", "pages", firstCursor] as const,
+    /**
+     * A drill-through list, keyed by **the filter set that produced it**
+     * (Story 5.5).
+     *
+     * The filter is in the key for `claims.queue`'s reason, one surface up: a
+     * filtered list is a different server answer, computed under the caller's
+     * scope over data the client does not hold in full, so two filter sets are
+     * two resources and therefore two cache entries. Going back to a filter
+     * already fetched is then instant, which is what a supervisor clearing a
+     * chip and re-applying it expects.
+     *
+     * It takes the *serialised* filter set rather than the object, because a
+     * TanStack key is compared structurally and a fresh object literal per
+     * render would be a fresh key per render. `toFilterKey` in
+     * `features/dashboard/drill/filters.ts` is the one place that serialisation
+     * happens, so the key, the URL and the request cannot disagree about which
+     * facets are set.
+     *
+     * No persona and no scope segment, for the group's recorded reason: the
+     * server answers `/dashboard/claims` for whoever holds the session cookie
+     * (AD-7), and `filter[employerId]` narrows that answer rather than choosing
+     * whose it is.
+     */
+    drillClaims: (filterKey: string) => ["dashboard", "claims", filterKey] as const,
+    /**
+     * The pages a drill-through list has been walked through ("Show more").
+     *
+     * `priorityClaimPages`' shape and its whole argument, with the filter set
+     * added ahead of the cursor: keyed by the accumulation's **first** cursor
+     * but not by the ones after it, which are the infinite query's own page
+     * params and live inside the entry.
+     *
+     * Both parts are load-bearing. The first cursor encodes the offset the
+     * accumulation is anchored at *and* the two rule versions that ranked it,
+     * so a base query that refetched onto a new one must not hand its pages to
+     * the old accumulation. The filter set is beside it because the server
+     * refuses a cursor replayed under different filters — a cache entry shared
+     * across two filter sets would be pages the server would 400 if they were
+     * ever requested again.
+     */
+    drillClaimPages: (filterKey: string, firstCursor: string | null) =>
+      ["dashboard", "claims", filterKey, "pages", firstCursor] as const,
   },
   claims: {
     /**

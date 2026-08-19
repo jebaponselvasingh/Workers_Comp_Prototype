@@ -14,6 +14,12 @@
  */
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 
+import {
+  toFilterKey,
+  toQueryParams,
+  type DrillFilters,
+} from "@/features/dashboard/drill/filters";
+
 import { api } from "./client";
 import { queryKeys } from "./queryKeys";
 import type { components } from "./schema";
@@ -197,6 +203,87 @@ export function usePriorityClaimPages(firstCursor: string | null, enabled: boole
       return data!;
     },
     getNextPageParam: (last: PriorityClaims) => last.nextCursor ?? undefined,
+    enabled: enabled && firstCursor !== null,
+    staleTime: 15_000,
+  });
+}
+
+export type DrillClaims = components["schemas"]["DrillClaimsResponse"];
+export type DrillClaimRow = components["schemas"]["DrillClaimRowResponse"];
+export type AppliedFilter = components["schemas"]["AppliedFilterResponse"];
+
+/**
+ * Server state for one drill-through list (FR-SUP-D).
+ *
+ * `usePriorityClaims`' shape and its emptiness, for the same reason: the
+ * population, the ordering, the marker, every risk band and every badge on
+ * every row are decided by `services/worklist` over the caller's scope, and
+ * this hook exists to fetch them and nothing else.
+ *
+ * **The filter set is in the key and in the request, from one source.**
+ * `toFilterKey` and `toQueryParams` both read the same `DrillFilters` object,
+ * so the cache entry and the query string cannot describe different questions —
+ * which they would the first time somebody keyed on `JSON.stringify` and sent
+ * an ordered `URLSearchParams`.
+ *
+ * **No `select`**, deliberately, and it matters as much here as on the four
+ * hooks above: a `select` over this payload is the single most plausible home
+ * for a client-side re-filter — the browser holds a *page of a filtered list*
+ * and the filter set that produced it, so "just narrow it a bit more here"
+ * looks like one line and is the AD-1 violation this whole endpoint exists to
+ * make unnecessary. With no transform there is nothing for
+ * `noDerivation.test.ts` to have to read, and `api/dashboard.ts` stays out of
+ * its `ROOT_FILES`.
+ *
+ * The same `staleTime` as the four hooks above, so the dashboard and the list
+ * it opens go stale on one schedule. Nothing polls.
+ */
+export function useDrillClaims(filters: DrillFilters) {
+  return useQuery({
+    queryKey: queryKeys.dashboard.drillClaims(toFilterKey(filters)),
+    queryFn: async (): Promise<DrillClaims> => {
+      const { data } = await api.GET("/dashboard/claims", {
+        params: { query: toQueryParams(filters) },
+      });
+      return data!;
+    },
+    staleTime: 30_000,
+  });
+}
+
+/**
+ * The pages "Show more" has walked, accumulated — `usePriorityClaimPages`' shape.
+ *
+ * Copied deliberately rather than reinvented: `initialPageParam` is the cursor
+ * the base query already holds, `getNextPageParam` reads the server's
+ * `nextCursor`, and nothing computes an offset. `enabled` is the caller's, so
+ * the request goes out on the first "Show more" rather than on mount — the
+ * first page is already in `useDrillClaims`' entry, and fetching it twice would
+ * be a second read of the whole scoped book.
+ *
+ * **The filter set travels with the cursor**, both in the key and in the
+ * request. The server refuses a cursor replayed under a different filter set
+ * (see `Cursor`), so sending the cursor alone would 400 every "Show more" on
+ * every filtered list — and keying without the filters would hand one filter's
+ * accumulated pages to another.
+ */
+export function useDrillClaimPages(
+  filters: DrillFilters,
+  firstCursor: string | null,
+  enabled: boolean,
+) {
+  return useInfiniteQuery({
+    queryKey: queryKeys.dashboard.drillClaimPages(toFilterKey(filters), firstCursor),
+    initialPageParam: firstCursor,
+    queryFn: async ({ pageParam }): Promise<DrillClaims> => {
+      const { data } = await api.GET("/dashboard/claims", {
+        params: {
+          query: { ...toQueryParams(filters), cursor: pageParam ?? undefined },
+        },
+      });
+      return data!;
+    },
+    getNextPageParam: (last: DrillClaims) => last.nextCursor ?? undefined,
     enabled: enabled && firstCursor !== null,
     staleTime: 15_000,
   });

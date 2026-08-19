@@ -38,15 +38,17 @@
  * as a departure in this story's spec, beside the task that asked for the
  * library.
  *
- * **Rows are inert, and no `onRowClick` is declared.** The story's task asks
- * for a component that "accepts a future `onRowClick`", and this is that,
- * read as a shape requirement rather than a signature one: props in, nothing
- * out, no row handler and no row state — so Story 5.5 adds the prop and wires
- * the drill-through by changing this file and none of its callers. Declaring it
- * now and passing it nowhere would be worse than absent: an optional handler
- * that type-checks, is called by nothing, and silently does nothing for the
- * first caller who supplies it. Nothing on this surface writes — it offers no
- * command, so there is no toast and no audit event on the other end.
+ * **Story 5.5 declared the row affordance 5.4 deliberately withheld, and it is
+ * a `<Link>` rather than the `onRowClick` that was withheld.** The reasoning
+ * that kept the prop out still holds — an optional handler that type-checks and
+ * silently does nothing is worse than its absence — and it also answers what to
+ * put in its place: the destination is a *URL*, so the control is an anchor on
+ * the claim-id cell rather than a click handler on a `<tr>`. That gets keyboard
+ * focus, middle-click and a copyable address for free, and it leaves the other
+ * nine cells selectable rather than swallowing every click in the row. The
+ * heading gains a "View all" link to the same population without the cap.
+ * Nothing on this surface writes — it offers no command, so there is no toast
+ * and no audit event on the other end.
  *
  * **Truncation is CSS, and the full string is in `title`.** The prototype cuts
  * the injury type at 22 characters and the action at 48 inside its render
@@ -66,9 +68,15 @@ import type {
 import { usePriorityClaimPages } from "@/api/dashboard";
 import { queryKeys } from "@/api/queryKeys";
 
+import { Link } from "react-router";
+
 import { CHIP_CLASS } from "../claim-detail/bills/statusTone";
 import { RISK_LABEL } from "../claim-detail/labels";
 import { STAGE_LABEL } from "../queue/stageLabels";
+
+import { DASHBOARD_ROUTE } from "@/features/shell/routes";
+
+import { claimHref, drillHref, type DrillOrigin } from "./drill/filters";
 
 /** How many placeholder rows are held open while the request is in flight. */
 const SKELETON_ROWS = 10;
@@ -178,7 +186,20 @@ const COLUMNS: readonly ColumnSpec[] = [
     align: "text-left",
     // Monospace, the prototype's JetBrains Mono cell — a business id is read
     // character by character and compared against others in the column.
-    cell: (row) => <span className="font-mono text-faint">{row.claimId}</span>,
+    cell: (row) => (
+      <Link
+        data-testid="priority-claim-link"
+        data-claim-id={row.claimId}
+        to={claimHref(row.claimId)}
+        // This row lives on the dashboard, not in a filtered list, so that is
+        // where its claim view's Back belongs — sending it to the unfiltered
+        // drill list would answer a question nobody asked.
+        state={{ from: DASHBOARD_ROUTE } satisfies DrillOrigin}
+        className="rounded font-mono text-faint hover:text-text hover:underline focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none"
+      >
+        {row.claimId}
+      </Link>
+    ),
   },
   {
     key: "worker",
@@ -390,7 +411,20 @@ export function PriorityClaimsTable({
         className="mb-2 font-display text-[10.5px] font-bold tracking-[0.4px] text-muted-text uppercase"
       >
         Priority claims — active treatment, litigation &amp; fraud flags
-        <Caption data={data} />
+        <Caption data={data} />{" "}
+        {/* The same population, **without the cap** — `filter[priority]` is the
+            worklist's own predicate, imported by the server rather than
+            restated, so this link opens all 38 of a book whose table shows the
+            top 30. That is the one place on this dashboard where the list is
+            deliberately longer than the surface that opened it, and it is why
+            the caption quotes both numbers. */}
+        <Link
+          data-testid="priority-view-all"
+          to={drillHref({ priority: "true" })}
+          className="rounded font-sans text-[10px] font-semibold text-steel normal-case hover:underline focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none"
+        >
+          View all →
+        </Link>
       </h3>
 
       {isError ? (

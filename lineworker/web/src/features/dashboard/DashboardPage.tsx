@@ -40,6 +40,8 @@ import {
 } from "@/api/dashboard";
 import { formatCents } from "@/lib/money";
 
+import type { DrillFilters } from "./drill/filters";
+
 import { PortfolioCharts } from "./charts/PortfolioCharts";
 import { HandlerBenchmarkTable } from "./HandlerBenchmarkTable";
 import { KpiCard, KpiCardSkeleton, type KpiTone } from "./KpiCard";
@@ -56,6 +58,21 @@ interface CardSpecBase {
   label: string;
   caption: (summary: PortfolioSummary) => string;
   tone: KpiTone;
+  /**
+   * The claims behind this figure, as a drill-through filter set (Story 5.5).
+   *
+   * Every one of the ten is navigable, and each set is the **card's own
+   * predicate**: High Risk opens `severityBand=high`, which is the registered
+   * band the server counted the card with, and Fraud Flags opens
+   * `fraudFlagged=true`, which is the review rule and not the queue's SIU one.
+   * That correspondence is what makes the list reconcile with the number, and
+   * the server has a test per card asserting the two are equal.
+   *
+   * `null` is available and unused: a future card whose figure has no claim
+   * list behind it should say so rather than link somewhere that does not
+   * answer it.
+   */
+  drill: DrillFilters | null;
 }
 
 /**
@@ -96,6 +113,10 @@ const ROW_ONE: readonly CardSpec[] = [
     label: "Total Claims",
     caption: () => "Manufacturing portfolio",
     tone: "steel",
+    // **The unfiltered scoped list.** Total Claims counts the whole book, so
+    // the claims behind it are the whole book — no facet, and the chip row is
+    // empty because nothing was narrowed.
+    drill: {},
   },
   {
     testId: "kpi-under-treatment",
@@ -103,6 +124,9 @@ const ROW_ONE: readonly CardSpec[] = [
     label: "Under Treatment",
     caption: () => "Active — awaiting RTW",
     tone: "warn",
+    // The stage, never the status — Story 5.1's ruling, which the drill-
+    // through's `filter[stage]` inherits.
+    drill: { stage: "treatment" },
   },
   {
     testId: "kpi-settled-closed",
@@ -110,6 +134,9 @@ const ROW_ONE: readonly CardSpec[] = [
     label: "Settled & Closed",
     caption: () => "Fully resolved",
     tone: "ok",
+    // The stage again: 62 seeded claims, where `status = settled_closed` is
+    // 54. The card counts the first and so does the list it opens.
+    drill: { stage: "settled" },
   },
   {
     testId: "kpi-high-risk",
@@ -118,6 +145,9 @@ const ROW_ONE: readonly CardSpec[] = [
     // The band's boundary, from the document that decided the count.
     caption: (summary) => `Severity ≥ ${summary.highRiskSeverityMin}/100`,
     tone: "error",
+    // The registered `risk` band, which is what this card was counted with —
+    // the boundary is never in the URL, only the band.
+    drill: { severityBand: "high" },
   },
   {
     testId: "kpi-total-paid",
@@ -134,6 +164,15 @@ const ROW_ONE: readonly CardSpec[] = [
     caption: () => "Indemnity + medical",
     tone: "brand",
     money: true,
+    // **The unfiltered list, and that is honest rather than lazy.** This card
+    // is a sum of cents over the whole scoped book, not a count of a subset, so
+    // the claims behind it are the same ones Total Claims opens. Ruling it
+    // non-navigable would make two of ten cards dead ends for no gain; a
+    // "filter" naming the card would invent a URL concept that is not a filter
+    // and cannot be cleared. One caveat, recorded and not fixed here:
+    // `totalPaid` excludes bills in `status = paid`, a known product gap, so a
+    // future per-claim paid column on that list would not sum to this figure.
+    drill: {},
   },
   {
     testId: "kpi-total-reserve",
@@ -142,6 +181,9 @@ const ROW_ONE: readonly CardSpec[] = [
     caption: () => "Active case exposure",
     tone: "plain",
     money: true,
+    // The unfiltered list, for Total Paid's reason one line up: a sum over the
+    // whole book opens the whole book.
+    drill: {},
   },
 ];
 
@@ -155,6 +197,9 @@ const ROW_TWO: readonly CardSpec[] = [
     // over one column pair, and the server counted at this one.
     caption: (summary) => `Score ≥ ${summary.fraudScoreMin} — review needed`,
     tone: "error",
+    // The *review* rule the card was counted with, and deliberately not the
+    // queue's SIU referral one — 13 claims against 9.
+    drill: { fraudFlagged: "true" },
   },
   {
     testId: "kpi-osha-recordable",
@@ -162,6 +207,7 @@ const ROW_TWO: readonly CardSpec[] = [
     label: "OSHA Recordable",
     caption: () => "Form 300/301 filed",
     tone: "warn",
+    drill: { oshaRecordable: "true" },
   },
   {
     testId: "kpi-litigation",
@@ -169,6 +215,9 @@ const ROW_TWO: readonly CardSpec[] = [
     label: "Litigation",
     caption: () => "Attorney representation",
     tone: "error",
+    // `litigationFlag`, the column this card counts — not `attorneyRep`, which
+    // agrees with it on all 100 seeded claims and is a different fact.
+    drill: { litigation: "true" },
   },
   {
     testId: "kpi-surgery-required",
@@ -176,6 +225,7 @@ const ROW_TWO: readonly CardSpec[] = [
     label: "Surgery Required",
     caption: () => "Operative cases",
     tone: "warn",
+    drill: { surgery: "true" },
   },
 ];
 
@@ -211,6 +261,7 @@ function Row({
             label={spec.label}
             caption={spec.caption(summary)}
             tone={spec.tone}
+            drill={spec.drill}
           />
         ),
       )}
@@ -245,7 +296,13 @@ export function DashboardPage() {
   const priority = usePriorityClaims();
 
   return (
-    <div
+    <section
+      // The landmark that used to live in `DashboardShell`, moved here by
+      // Story 5.5 when the shell became a layout route: it names *this* view,
+      // and a shell-level label would keep calling a filtered claim list "the
+      // portfolio dashboard". `App.test.tsx` identifies the supervisor shell by
+      // this label and still finds it, because the index route is this page.
+      aria-label="Portfolio dashboard"
       data-testid="portfolio-dashboard"
       // The whole surface, not the rows alone: the chip's counts are as absent
       // as the cards' figures while the request is in flight, and a live region
@@ -352,6 +409,6 @@ export function DashboardPage() {
         isPending={priority.isPending}
         isError={priority.isError}
       />
-    </div>
+    </section>
   );
 }

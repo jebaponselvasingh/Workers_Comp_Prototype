@@ -95,6 +95,27 @@ the forty a page of ten would cost through the single-claim reads, and
 `charts` it gates on scope and not on role, and the route's docstring carries an
 argument that had to be *applied* rather than inherited: this payload names a
 handler in every row, as the owner of a claim the caller can already read.
+
+Story 5.5 adds `drill_through`, and it is the entry that makes the four
+aggregates above *openable*. It answers one question — "which claims are behind
+this number?" — for every one of them, and the way it answers is the whole
+design: each of its twelve filter facets calls the same symbol the counting
+surface called. `severityBand` is `derivations.risk`, the High Risk card's own
+band; `fraudFlagged` is the registered fraud rule and deliberately not
+`siu_review`; `stage` is the column `summary` and `charts` both group on and not
+`status`; `priority` is `priority_claims.qualifies_for_worklist`, imported,
+which is why that predicate stopped being private in this story. So "the list a
+KPI opens reconciles with the number on the card" is not two implementations
+agreeing — it is one predicate with two callers, twelve times over, and the
+tests read both endpoints on one scope and assert the equality rather than
+comparing either against a constant.
+
+Structurally it is `charts`' shape with `priority_claims`' cursor: one scoped
+read (`select_drill_rows`), one pure fold, every parameter block injected by the
+router — and, like both of them, no role branch anywhere on the path. What it
+does *not* share with `priority_claims` is the cap: a drill-through shows all of
+its population, because a list that showed thirty of a card's ninety-two while
+reporting ninety-two would be the one failure this module exists to prevent.
 """
 
 # **`priority_claims` is deliberately missing from this list**, and it is the
@@ -111,6 +132,7 @@ from services.worklist import (
     approvals,
     benchmarks,
     charts,
+    drill_through,
     priority,
     queue,
     sla,
@@ -151,6 +173,17 @@ from services.worklist.charts import (
     charts_of,
     portfolio_charts,
 )
+from services.worklist.drill_through import (
+    FILTER_KEYS,
+    AppliedFilter,
+    DrillClaim,
+    DrillClaims,
+    DrillFilters,
+    DrillFlags,
+    DrillRow,
+    RankedClaim,
+    drill_through_claims,
+)
 from services.worklist.priority import (
     QueueClaim,
     QueueFilter,
@@ -167,6 +200,7 @@ from services.worklist.priority_claims import (
     PriorityFlags,
     PriorityRow,
     priority_claims,
+    qualifies_for_worklist,
     rank,
 )
 from services.worklist.queue import (
@@ -197,6 +231,7 @@ __all__ = [
     "ApprovalKind",
     "ApprovalNotPermitted",
     "ApprovalResult",
+    "AppliedFilter",
     "BenchmarkClaim",
     "BenchmarksNotPermitted",
     "CategoryCount",
@@ -206,7 +241,13 @@ __all__ = [
     "ClaimQueue",
     "Cursor",
     "Distribution",
+    "DrillClaim",
+    "DrillClaims",
+    "DrillFilters",
+    "DrillFlags",
+    "DrillRow",
     "EmployerPaid",
+    "FILTER_KEYS",
     "HandlerBenchmark",
     "HandlerBenchmarks",
     "INJURY_TYPE_LIMIT",
@@ -226,6 +267,7 @@ __all__ = [
     "QueueClaim",
     "QueueFilter",
     "QueueFlags",
+    "RankedClaim",
     "STAGE_ORDER",
     "STATE_LIMIT",
     "SlaMetric",
@@ -244,6 +286,8 @@ __all__ = [
     "claim_actions",
     "claim_queue",
     "decode_cursor",
+    "drill_through",
+    "drill_through_claims",
     "encode_cursor",
     "generate_actions",
     "handler_benchmarks",
@@ -255,6 +299,7 @@ __all__ = [
     "priority_claims",
     "priority_markers",
     "priority_score",
+    "qualifies_for_worklist",
     "queue",
     "rank",
     "require_benchmarks_access",

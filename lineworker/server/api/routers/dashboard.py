@@ -63,7 +63,7 @@ from api.errors import PROBLEM_CONTENT_TYPE, ProblemDocument, ProblemException
 from api.routers.auth import UNAUTHENTICATED_RESPONSE
 from api.routers.stats import SlaMetricResponse, SlaStripResponse
 from api.schemas import ApiModel
-from data.models.enums import Stage
+from data.models.enums import ReturnStatus, Stage
 from rules.parameters import (
     handler_performance_for,
     thresholds_for,
@@ -73,7 +73,9 @@ from rules.parameters import (
 from services.derivations import ComplexityBand, CycleStatus, RiskBand
 from services.worklist import (
     BenchmarksNotPermitted,
+    DrillFilters,
     InvalidCursor,
+    drill_through_claims,
     handler_benchmarks,
     portfolio_charts,
     portfolio_summary,
@@ -259,6 +261,15 @@ class HandlerBenchmarkResponse(ApiModel):
     above it.
     """
 
+    # Published so Story 5.5's drill-through can filter on something that cannot
+    # collide. `benchmarks.py` has grouped on this id since 5.2 — two handlers
+    # sharing a display name are two rows, not one merged one — and until now
+    # only the name crossed the wire, which would have made a row click open
+    # *both* their caseloads. `EmployerPaidResponse.employerId` carries the same
+    # field for the same reason on the same dashboard, and its comment already
+    # names this story. An additive publish: nothing that reads this response
+    # today asserts its field set is closed.
+    handler_id: int
     rank: int | None
     handler_name: str
     case_count: int
@@ -384,6 +395,7 @@ async def benchmarks(
     return HandlerBenchmarksResponse(
         items=[
             HandlerBenchmarkResponse(
+                handler_id=row.handler_id,
                 rank=row.rank,
                 handler_name=row.handler_name,
                 case_count=row.case_count,
@@ -956,4 +968,420 @@ async def worklist(
         med_risk_severity_min=page.med_risk_severity_min,
         fraud_flag_score_min=page.fraud_flag_score_min,
         rules_version=page.rules_version,
+    )
+
+
+#: `BAD_CURSOR_RESPONSE`'s shape, with the drill-through's own reason.
+#:
+#: A second copy in one file, and the argument is `FORBIDDEN_RESPONSE`'s: the
+#: constant above describes a cursor into a list that "has neither a filter nor
+#: a group", which is true of the worklist and exactly wrong here — this list is
+#: *defined* by its filter set, and a cursor minted under a different one is the
+#: most likely way to reach this refusal. Same structure, same problem type, one
+#: accurate description each. A shared constant would have to describe both
+#: lists and would end up describing neither, which is the failure that kept
+#: `claims.BAD_CURSOR_RESPONSE` out of this file in the first place.
+DRILL_BAD_CURSOR_RESPONSE: dict[int | str, dict[str, object]] = {
+    400: {
+        "description": (
+            "The pagination cursor is unreadable, was minted under a different "
+            "filter set, names a position past the end of the filtered list, or "
+            "was cut under a rules version that has since been superseded "
+            "(RFC 9457 problem document)."
+        ),
+        "content": {PROBLEM_CONTENT_TYPE: {"schema": ProblemDocument.model_json_schema()}},
+    }
+}
+
+
+class DrillClaimRowResponse(ApiModel):
+    """One claim in a drill-through list — **`ClaimCardResponse`, field for field**.
+
+    Not "the queue card's shape": its field set, in its spelling, so the SPA
+    renders a drill result and a queue group with the *same* component and the
+    two cannot come to disagree about what a claim looks like.
+    `test_the_drill_row_is_the_queue_card_field_for_field` asserts the equality
+    between the two models rather than between two fixtures, which is where a
+    divergence would actually appear.
+
+    That equality is a real constraint and it is worth naming what it costs:
+    this payload publishes no employer id, no handler name and no state — three
+    of the things the caller may have filtered on. A row is a claim as the
+    console draws it, not a record of the query that found it, and what was
+    filtered is on `appliedFilters`, once, where a chip row reads it.
+
+    Nothing here is a hint the client finishes. `risk` is a band rather than a
+    score to compare, `priorityMarker` is a decision rather than a rank to
+    threshold, and `priorityScore` is published for `ClaimCardResponse`'s
+    recorded reason — it makes the ordering explainable to a supervisor asking
+    why a claim is third — and never as an invitation to re-sort a list ranked
+    under two rule versions the browser does not hold.
+    """
+
+    claim_id: str
+    days_open: int
+    risk: RiskBand
+    worker_name: str
+    injury_type: str
+    stage: Stage
+    employer_short_name: str
+    fraud_flag: bool
+    litigation_flag: bool
+    payment_due: bool
+    siu_review: bool
+    rtw_blocked: bool
+    priority_score: float
+    priority_marker: bool
+
+
+class AppliedFilterResponse(ApiModel):
+    """One narrowing the server applied, as a clearable chip draws it.
+
+    `key` is the facet (`stage`, `severityBand`, `handlerId`, …), `value` is the
+    wire form the caller sent, and `display` is a human label **or null**.
+
+    **`display` is resolved for exactly two of the twelve facets.** Ten of them
+    carry a value the UI already owns copy for — the three enums are snake_case
+    wire values whose labels belong to the client per the Enums convention, the
+    four booleans are the KPI cards' own names, and `injuryType`/`state` are
+    free text where the stored value *is* the label. Shipping those strings
+    would be the server deciding copy over a contract.
+
+    The other two are ids, and an id is not a label: nothing in the browser can
+    turn `handlerId=4` into a name on a cold URL load, because the dashboard
+    that published the id may never have been rendered. So those two are
+    resolved here, off rows the aggregate had already read, and the client's
+    rule is `display ?? UI_LABEL[key][value] ?? value`.
+
+    `display` is also null for an id the caller's **scope** does not contain — a
+    smuggled `filter[employerId]`. That is deliberate rather than incidental: a
+    resolved name would make the chip an oracle for the existence of an employer
+    the caller cannot see, which is the leak `select_claim_detail` answers
+    `None` twice over to prevent (AD-7).
+
+    This list is what makes "the chips, the request and the result agree" a
+    property rather than a hope: it is the server's reading of the URL, so an
+    unknown parameter name produces no chip because it narrowed nothing.
+    """
+
+    key: str
+    value: str
+    display: str | None
+
+
+class DrillClaimsResponse(ApiModel):
+    """One page of the claims behind a dashboard figure (FR-SUP-D, AC 1).
+
+    `{items, nextCursor, total}` — the list convention — plus the filters that
+    produced it and the two rule documents that ranked it.
+
+    **`total` is the whole filtered population and every one of it is reachable
+    by paging.** There is no cap on this list, which is the difference from
+    `PriorityClaimsResponse` and is the point rather than an omission: the whole
+    promise of a drill-through is that its count equals the number that opened
+    it, and a capped list would report ninety-two while showing thirty. `total`
+    is stable across every page of a walk, for `StageGroupResponse.total`'s
+    reason — a count that shrank as the page moved would misdescribe the book.
+
+    **`appliedFilters` is the chip row, in the server's order**, and it exists so
+    the chips are a rendering of the server's reading of the URL rather than a
+    second parse of it in the browser. `filter[banana]=1` produces no chip
+    because it narrowed nothing; `filter[stage]=settled` produces exactly one
+    because it narrowed exactly once.
+
+    **Two rule versions, and each names a document that decided something
+    visible.** `rulesVersion` is `priority_weights` — the ordering and the 🔺
+    marker. `thresholdsVersion` is `derivation_thresholds` — the band on every
+    row, and the populations behind the severity, fraud and priority facets.
+    Both are what the cursor is validated against, which is why they are
+    resolved at today's date and never at the cursor's: a comparison against the
+    versions effective on the cursor's own date could only ever succeed. As on
+    the four sibling payloads they ride along unrendered; what would be wrong is
+    claiming the screen states them.
+
+    **No thresholds on this payload**, unlike its four siblings, and the absence
+    is deliberate: nothing here quotes one. The severity band arrives banded per
+    row, the fraud flag arrives decided, and a caption saying "Severity ≥ N"
+    belongs to the card that was clicked rather than to the list it opened.
+    Publishing them anyway would be putting every ingredient of a re-banding on
+    an object whose rows are already banded.
+
+    `nextCursor` is null exactly when the list is finished — never "null because
+    this page came back short", which would strand a tail `total` has already
+    told the reader is there.
+    """
+
+    items: list[DrillClaimRowResponse]
+    next_cursor: str | None
+    total: int
+    applied_filters: list[AppliedFilterResponse]
+    rules_version: int
+    thresholds_version: int
+
+
+@router.get(
+    "/dashboard/claims",
+    response_model=DrillClaimsResponse,
+    summary="The claims behind a dashboard figure, filtered, ranked and paged",
+    responses={**UNAUTHENTICATED_RESPONSE, **FORBIDDEN_RESPONSE, **DRILL_BAD_CURSOR_RESPONSE},
+)
+async def drill_claims(  # noqa: PLR0913 - one parameter per published facet; see below
+    ctx: CallerContextDep,
+    db: DbDep,
+    response: Response,
+    stage: Annotated[
+        Stage | None,
+        Query(alias="filter[stage]", description="The claim's lifecycle stage."),
+    ] = None,
+    severity_band: Annotated[
+        RiskBand | None,
+        Query(
+            alias="filter[severityBand]",
+            description="The registered `risk` band the High Risk card counts with.",
+        ),
+    ] = None,
+    fraud_flagged: Annotated[
+        bool | None,
+        Query(
+            alias="filter[fraudFlagged]",
+            description=(
+                "The Fraud Flags card's *review* rule — deliberately not the "
+                "queue's higher SIU referral cut."
+            ),
+        ),
+    ] = None,
+    litigation: Annotated[
+        bool | None,
+        Query(alias="filter[litigation]", description="The Litigation card's flag."),
+    ] = None,
+    surgery: Annotated[
+        bool | None,
+        Query(alias="filter[surgery]", description="The Surgery Required card's flag."),
+    ] = None,
+    osha_recordable: Annotated[
+        bool | None,
+        Query(alias="filter[oshaRecordable]", description="The OSHA Recordable card's flag."),
+    ] = None,
+    recovery_status: Annotated[
+        ReturnStatus | None,
+        Query(
+            alias="filter[recoveryStatus]",
+            description="The recovery-status chart's fold key.",
+        ),
+    ] = None,
+    injury_type: Annotated[
+        str | None,
+        Query(
+            alias="filter[injuryType]",
+            description=(
+                "The injury-type chart's bar label, matched as the exact stored "
+                "string — no trimming, case-folding or merging."
+            ),
+        ),
+    ] = None,
+    state: Annotated[
+        str | None,
+        Query(
+            alias="filter[state]",
+            description="The claims-by-state chart's bar label, matched exactly.",
+        ),
+    ] = None,
+    employer_id: Annotated[
+        int | None,
+        Query(
+            alias="filter[employerId]",
+            description=(
+                "An employer's id, as published by the employer spend chart. "
+                "Intersects the caller's scope and can never widen it."
+            ),
+        ),
+    ] = None,
+    handler_id: Annotated[
+        int | None,
+        Query(
+            alias="filter[handlerId]",
+            description=(
+                "A handler's id, as published by the handler benchmark table. "
+                "Intersects the caller's scope and can never widen it."
+            ),
+        ),
+    ] = None,
+    priority: Annotated[
+        bool | None,
+        Query(
+            alias="filter[priority]",
+            description="The priority worklist's population, before its cap.",
+        ),
+    ] = None,
+    cursor: Annotated[
+        str | None,
+        Query(description="An opaque `nextCursor` from a previous response."),
+    ] = None,
+) -> DrillClaimsResponse:
+    """The claims behind a KPI card, a chart segment, a handler row or a worklist.
+
+    ## Thirteen parameters, and not one of them is a scope
+
+    Twelve facets and a cursor. Every facet is a *narrowing* applied after
+    `employer_scope(ctx)` has already decided which rows exist, so
+    `filter[employerId]` and `filter[handlerId]` intersect the caller's book and
+    can never widen it: a scoped supervisor naming an employer outside hers gets
+    an empty page, never a 403 and never a row. There is still nowhere in this
+    signature to put a scope (AD-7), which is what keeps
+    `test_query_parameters_cannot_widen_or_change_the_scope` a property of the
+    shape rather than of a validator — and `?scopeAll=true` remains an unknown
+    parameter FastAPI ignores, exactly as it is on the four routes above.
+
+    **There is deliberately no `limit` and no `sort`.** The page size is
+    `priority_weights.pageLimit`, a published rule; the order is
+    `priority.order_key`, the queue's own. A `sort` parameter would make every
+    outstanding cursor ambiguous, because an offset into a ranking means nothing
+    against a different one.
+
+    ## Why `filter[…]` here and a scalar `filter` on `/claims/queue`
+
+    The two spellings mean different things, and the next reader's first
+    question will be why they differ.
+
+    `/claims/queue` takes `filter=high_risk`: one of **eight operational
+    modes**. `high_risk` and `payment_due` are not independent dimensions a
+    handler intersects — they are alternative ways to look at one queue, and
+    choosing two of them at once is not a question that surface asks.
+
+    This route intersects **independent facets**: a supervisor drills into High
+    Risk, then narrows to one employer, then to litigated claims, and each is a
+    separate dimension of the same set. That is what the architecture's list
+    convention spells with brackets, and it is why the twelve arrive as twelve
+    parameters rather than as one enum.
+
+    ## This endpoint is ungated, and the argument is re-applied rather than
+    inherited
+
+    This file's discriminator, settled by Story 5.3 and re-applied by 5.4:
+    role-gate when the payload puts a **named other person's performance** on
+    the wire. `/dashboard/handler-benchmarks` ranks colleagues by speed and says
+    whose desk needs a check-in, which is oversight — a capability a handler
+    does not carry.
+
+    This payload is a list of claims the caller can already open one at a time:
+    `employer_scope` is the same predicate here as in the queue and in
+    `GET /claims/{id}`, so every row is a claim the session could have read
+    singly. The rows name **nobody** — the row is the queue card's field set,
+    which carries no handler at all. So the route is ungated by default.
+
+    **One facet is gated, and the reason is that it crosses the line the
+    paragraph above draws.** `filter[handlerId]` was first written as ungated on
+    the argument that narrowing a list to one person's claims attributes no
+    *metric* to that person. That argument was wrong, and the way it was wrong
+    is worth keeping: the response publishes `total`, and `total` under a sole
+    `handlerId` facet **is** a count about that person — the same figure
+    `/dashboard/handler-benchmarks` publishes as `caseCount` and 403s a handler
+    for reading. `AppliedFilter.display` supplies the name beside it, and
+    handler ids are small integers, so a handler could walk the range and
+    rebuild the gated column one colleague at a time. A figure beside a name is
+    a fact about the person; that is the line, and `total` was already over it.
+
+    So a caller asking about **somebody else's** book must carry the oversight
+    capability, checked with `handler_benchmarks`' own gate rather than a second
+    copy of the role list. Asking about **your own** book is not oversight and
+    stays open: a handler filtering her own queue learns nothing she cannot
+    already count. The check reads nothing and runs before the two rule
+    documents, so the refusal precedes every read on this route — the property
+    `require_benchmarks_access`' docstring exists to make true.
+
+    ## Two documents, loaded here
+
+    Both blocks are loaded in the route and handed down, so the aggregate stays
+    a composition of scope and parameters — `portfolio_summary`'s rule.
+    `derivation_thresholds` decides the band on every row and the populations
+    behind three of the twelve facets; `priority_weights` decides the ordering,
+    the marker and the page size. Both are what the cursor is validated against,
+    which is why they are resolved at today's date and never at the cursor's.
+    """
+    # `/stats/topbar`'s reasoning: this response is specific to one persona's
+    # scope, so it must never be served to another from a cache upstream. First
+    # statement in the body, so neither the refusal below nor any early return
+    # can skip it.
+    response.headers["Cache-Control"] = "no-store"
+    # Before the two rule-document reads, so "the refusal happens before any
+    # read" is true of this route the way it is true of `/handler-benchmarks`.
+    # `is not None` rather than a truthiness test: handler ids are integers and
+    # a falsy one would silently skip the gate.
+    if handler_id is not None and handler_id != ctx.user_id:
+        try:
+            require_benchmarks_access(ctx)
+        except BenchmarksNotPermitted as exc:
+            raise _forbidden(exc) from exc
+    thresholds = await thresholds_for(db)
+    weights = await weights_for(db)
+    # Built field by field, like every response model in this file and for the
+    # same reason: the mapping from the route's twelve parameters to the
+    # service's twelve fields is the place a renamed facet should fail to
+    # compile, and a `**locals()`-shaped shortcut is the place it silently
+    # would not.
+    filters = DrillFilters(
+        stage=stage,
+        severity_band=severity_band,
+        fraud_flagged=fraud_flagged,
+        litigation=litigation,
+        surgery=surgery,
+        osha_recordable=osha_recordable,
+        recovery_status=recovery_status,
+        injury_type=injury_type,
+        state=state,
+        employer_id=employer_id,
+        handler_id=handler_id,
+        priority=priority,
+    )
+    try:
+        page = await drill_through_claims(db, ctx, thresholds, weights, filters, cursor=cursor)
+    except InvalidCursor as exc:
+        # 400 rather than 422, `claims.queue`'s ruling: the cursor is
+        # syntactically a string and passed validation. What failed is that it
+        # does not describe a position in *this* list — a fact only the service
+        # knows. 400 stays reserved for this one refusal here: an unknown enum
+        # *value* is the global handler's 422 `/problems/validation-error`, and
+        # an unknown parameter *name* is ignored, as it is everywhere else.
+        #
+        # The header is re-stated because raising abandons `response`: the
+        # exception handler builds a fresh `JSONResponse` and the injected one is
+        # never sent. A 400 that names a caller's list length is as
+        # persona-specific as the 200 above it, and it is the response most
+        # likely to be retried.
+        raise ProblemException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            title="Bad Request",
+            detail=str(exc),
+            type_="/problems/invalid-cursor",
+            headers={"Cache-Control": "no-store"},
+        ) from exc
+
+    return DrillClaimsResponse(
+        items=[
+            DrillClaimRowResponse(
+                claim_id=row.claim_id,
+                days_open=row.days_open,
+                risk=row.risk,
+                worker_name=row.worker_name,
+                injury_type=row.injury_type,
+                stage=row.stage,
+                employer_short_name=row.employer_short_name,
+                fraud_flag=row.fraud_flag,
+                litigation_flag=row.litigation_flag,
+                payment_due=row.payment_due,
+                siu_review=row.siu_review,
+                rtw_blocked=row.rtw_blocked,
+                priority_score=row.priority_score,
+                priority_marker=row.priority_marker,
+            )
+            for row in page.items
+        ],
+        next_cursor=page.next_cursor,
+        total=page.total,
+        applied_filters=[
+            AppliedFilterResponse(key=item.key, value=item.value, display=item.display)
+            for item in page.applied_filters
+        ],
+        rules_version=page.rules_version,
+        thresholds_version=page.thresholds_version,
     )

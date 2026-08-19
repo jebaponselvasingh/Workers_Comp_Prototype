@@ -761,6 +761,104 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/dashboard/claims": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The claims behind a dashboard figure, filtered, ranked and paged
+         * @description The claims behind a KPI card, a chart segment, a handler row or a worklist.
+         *
+         *     ## Thirteen parameters, and not one of them is a scope
+         *
+         *     Twelve facets and a cursor. Every facet is a *narrowing* applied after
+         *     `employer_scope(ctx)` has already decided which rows exist, so
+         *     `filter[employerId]` and `filter[handlerId]` intersect the caller's book and
+         *     can never widen it: a scoped supervisor naming an employer outside hers gets
+         *     an empty page, never a 403 and never a row. There is still nowhere in this
+         *     signature to put a scope (AD-7), which is what keeps
+         *     `test_query_parameters_cannot_widen_or_change_the_scope` a property of the
+         *     shape rather than of a validator — and `?scopeAll=true` remains an unknown
+         *     parameter FastAPI ignores, exactly as it is on the four routes above.
+         *
+         *     **There is deliberately no `limit` and no `sort`.** The page size is
+         *     `priority_weights.pageLimit`, a published rule; the order is
+         *     `priority.order_key`, the queue's own. A `sort` parameter would make every
+         *     outstanding cursor ambiguous, because an offset into a ranking means nothing
+         *     against a different one.
+         *
+         *     ## Why `filter[…]` here and a scalar `filter` on `/claims/queue`
+         *
+         *     The two spellings mean different things, and the next reader's first
+         *     question will be why they differ.
+         *
+         *     `/claims/queue` takes `filter=high_risk`: one of **eight operational
+         *     modes**. `high_risk` and `payment_due` are not independent dimensions a
+         *     handler intersects — they are alternative ways to look at one queue, and
+         *     choosing two of them at once is not a question that surface asks.
+         *
+         *     This route intersects **independent facets**: a supervisor drills into High
+         *     Risk, then narrows to one employer, then to litigated claims, and each is a
+         *     separate dimension of the same set. That is what the architecture's list
+         *     convention spells with brackets, and it is why the twelve arrive as twelve
+         *     parameters rather than as one enum.
+         *
+         *     ## This endpoint is ungated, and the argument is re-applied rather than
+         *     inherited
+         *
+         *     This file's discriminator, settled by Story 5.3 and re-applied by 5.4:
+         *     role-gate when the payload puts a **named other person's performance** on
+         *     the wire. `/dashboard/handler-benchmarks` ranks colleagues by speed and says
+         *     whose desk needs a check-in, which is oversight — a capability a handler
+         *     does not carry.
+         *
+         *     This payload is a list of claims the caller can already open one at a time:
+         *     `employer_scope` is the same predicate here as in the queue and in
+         *     `GET /claims/{id}`, so every row is a claim the session could have read
+         *     singly. The rows name **nobody** — the row is the queue card's field set,
+         *     which carries no handler at all. So the route is ungated by default.
+         *
+         *     **One facet is gated, and the reason is that it crosses the line the
+         *     paragraph above draws.** `filter[handlerId]` was first written as ungated on
+         *     the argument that narrowing a list to one person's claims attributes no
+         *     *metric* to that person. That argument was wrong, and the way it was wrong
+         *     is worth keeping: the response publishes `total`, and `total` under a sole
+         *     `handlerId` facet **is** a count about that person — the same figure
+         *     `/dashboard/handler-benchmarks` publishes as `caseCount` and 403s a handler
+         *     for reading. `AppliedFilter.display` supplies the name beside it, and
+         *     handler ids are small integers, so a handler could walk the range and
+         *     rebuild the gated column one colleague at a time. A figure beside a name is
+         *     a fact about the person; that is the line, and `total` was already over it.
+         *
+         *     So a caller asking about **somebody else's** book must carry the oversight
+         *     capability, checked with `handler_benchmarks`' own gate rather than a second
+         *     copy of the role list. Asking about **your own** book is not oversight and
+         *     stays open: a handler filtering her own queue learns nothing she cannot
+         *     already count. The check reads nothing and runs before the two rule
+         *     documents, so the refusal precedes every read on this route — the property
+         *     `require_benchmarks_access`' docstring exists to make true.
+         *
+         *     ## Two documents, loaded here
+         *
+         *     Both blocks are loaded in the route and handed down, so the aggregate stays
+         *     a composition of scope and parameters — `portfolio_summary`'s rule.
+         *     `derivation_thresholds` decides the band on every row and the populations
+         *     behind three of the twelve facets; `priority_weights` decides the ordering,
+         *     the marker and the page size. Both are what the cursor is validated against,
+         *     which is why they are resolved at today's date and never at the cursor's.
+         */
+        get: operations["drill_claims_dashboard_claims_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/dashboard/handler-benchmarks": {
         parameters: {
             query?: never;
@@ -1185,6 +1283,44 @@ export interface components {
          * @enum {string}
          */
         ActionUrgency: "high" | "medium" | "low";
+        /**
+         * AppliedFilterResponse
+         * @description One narrowing the server applied, as a clearable chip draws it.
+         *
+         *     `key` is the facet (`stage`, `severityBand`, `handlerId`, …), `value` is the
+         *     wire form the caller sent, and `display` is a human label **or null**.
+         *
+         *     **`display` is resolved for exactly two of the twelve facets.** Ten of them
+         *     carry a value the UI already owns copy for — the three enums are snake_case
+         *     wire values whose labels belong to the client per the Enums convention, the
+         *     four booleans are the KPI cards' own names, and `injuryType`/`state` are
+         *     free text where the stored value *is* the label. Shipping those strings
+         *     would be the server deciding copy over a contract.
+         *
+         *     The other two are ids, and an id is not a label: nothing in the browser can
+         *     turn `handlerId=4` into a name on a cold URL load, because the dashboard
+         *     that published the id may never have been rendered. So those two are
+         *     resolved here, off rows the aggregate had already read, and the client's
+         *     rule is `display ?? UI_LABEL[key][value] ?? value`.
+         *
+         *     `display` is also null for an id the caller's **scope** does not contain — a
+         *     smuggled `filter[employerId]`. That is deliberate rather than incidental: a
+         *     resolved name would make the chip an oracle for the existence of an employer
+         *     the caller cannot see, which is the leak `select_claim_detail` answers
+         *     `None` twice over to prevent (AD-7).
+         *
+         *     This list is what makes "the chips, the request and the result agree" a
+         *     property rather than a hope: it is the server's reading of the URL, so an
+         *     unknown parameter name produces no chip because it narrowed nothing.
+         */
+        AppliedFilterResponse: {
+            /** Display */
+            display: string | null;
+            /** Key */
+            key: string;
+            /** Value */
+            value: string;
+        };
         /**
          * BenefitResponse
          * @description The statutory weekly indemnity benefit, decided server-side (Story 3.1).
@@ -1969,6 +2105,114 @@ export interface components {
             requiredForms: components["schemas"]["RequiredFormResponse"][];
         };
         /**
+         * DrillClaimRowResponse
+         * @description One claim in a drill-through list — **`ClaimCardResponse`, field for field**.
+         *
+         *     Not "the queue card's shape": its field set, in its spelling, so the SPA
+         *     renders a drill result and a queue group with the *same* component and the
+         *     two cannot come to disagree about what a claim looks like.
+         *     `test_the_drill_row_is_the_queue_card_field_for_field` asserts the equality
+         *     between the two models rather than between two fixtures, which is where a
+         *     divergence would actually appear.
+         *
+         *     That equality is a real constraint and it is worth naming what it costs:
+         *     this payload publishes no employer id, no handler name and no state — three
+         *     of the things the caller may have filtered on. A row is a claim as the
+         *     console draws it, not a record of the query that found it, and what was
+         *     filtered is on `appliedFilters`, once, where a chip row reads it.
+         *
+         *     Nothing here is a hint the client finishes. `risk` is a band rather than a
+         *     score to compare, `priorityMarker` is a decision rather than a rank to
+         *     threshold, and `priorityScore` is published for `ClaimCardResponse`'s
+         *     recorded reason — it makes the ordering explainable to a supervisor asking
+         *     why a claim is third — and never as an invitation to re-sort a list ranked
+         *     under two rule versions the browser does not hold.
+         */
+        DrillClaimRowResponse: {
+            /** Claimid */
+            claimId: string;
+            /** Daysopen */
+            daysOpen: number;
+            /** Employershortname */
+            employerShortName: string;
+            /** Fraudflag */
+            fraudFlag: boolean;
+            /** Injurytype */
+            injuryType: string;
+            /** Litigationflag */
+            litigationFlag: boolean;
+            /** Paymentdue */
+            paymentDue: boolean;
+            /** Prioritymarker */
+            priorityMarker: boolean;
+            /** Priorityscore */
+            priorityScore: number;
+            risk: components["schemas"]["RiskBand"];
+            /** Rtwblocked */
+            rtwBlocked: boolean;
+            /** Siureview */
+            siuReview: boolean;
+            stage: components["schemas"]["Stage"];
+            /** Workername */
+            workerName: string;
+        };
+        /**
+         * DrillClaimsResponse
+         * @description One page of the claims behind a dashboard figure (FR-SUP-D, AC 1).
+         *
+         *     `{items, nextCursor, total}` — the list convention — plus the filters that
+         *     produced it and the two rule documents that ranked it.
+         *
+         *     **`total` is the whole filtered population and every one of it is reachable
+         *     by paging.** There is no cap on this list, which is the difference from
+         *     `PriorityClaimsResponse` and is the point rather than an omission: the whole
+         *     promise of a drill-through is that its count equals the number that opened
+         *     it, and a capped list would report ninety-two while showing thirty. `total`
+         *     is stable across every page of a walk, for `StageGroupResponse.total`'s
+         *     reason — a count that shrank as the page moved would misdescribe the book.
+         *
+         *     **`appliedFilters` is the chip row, in the server's order**, and it exists so
+         *     the chips are a rendering of the server's reading of the URL rather than a
+         *     second parse of it in the browser. `filter[banana]=1` produces no chip
+         *     because it narrowed nothing; `filter[stage]=settled` produces exactly one
+         *     because it narrowed exactly once.
+         *
+         *     **Two rule versions, and each names a document that decided something
+         *     visible.** `rulesVersion` is `priority_weights` — the ordering and the 🔺
+         *     marker. `thresholdsVersion` is `derivation_thresholds` — the band on every
+         *     row, and the populations behind the severity, fraud and priority facets.
+         *     Both are what the cursor is validated against, which is why they are
+         *     resolved at today's date and never at the cursor's: a comparison against the
+         *     versions effective on the cursor's own date could only ever succeed. As on
+         *     the four sibling payloads they ride along unrendered; what would be wrong is
+         *     claiming the screen states them.
+         *
+         *     **No thresholds on this payload**, unlike its four siblings, and the absence
+         *     is deliberate: nothing here quotes one. The severity band arrives banded per
+         *     row, the fraud flag arrives decided, and a caption saying "Severity ≥ N"
+         *     belongs to the card that was clicked rather than to the list it opened.
+         *     Publishing them anyway would be putting every ingredient of a re-banding on
+         *     an object whose rows are already banded.
+         *
+         *     `nextCursor` is null exactly when the list is finished — never "null because
+         *     this page came back short", which would strand a tail `total` has already
+         *     told the reader is there.
+         */
+        DrillClaimsResponse: {
+            /** Appliedfilters */
+            appliedFilters: components["schemas"]["AppliedFilterResponse"][];
+            /** Items */
+            items: components["schemas"]["DrillClaimRowResponse"][];
+            /** Nextcursor */
+            nextCursor: string | null;
+            /** Rulesversion */
+            rulesVersion: number;
+            /** Thresholdsversion */
+            thresholdsVersion: number;
+            /** Total */
+            total: number;
+        };
+        /**
          * EditOptionsResponse
          * @description What the editable selects may offer (Story 2.3).
          *
@@ -2394,6 +2638,8 @@ export interface components {
             cycleStatus: components["schemas"]["CycleStatus"] | null;
             /** Deviationpct */
             deviationPct: number | null;
+            /** Handlerid */
+            handlerId: number;
             /** Handlername */
             handlerName: string;
             /** Pendingapprovals */
@@ -6707,6 +6953,116 @@ export interface operations {
                         /** Type */
                         type: string;
                     };
+                };
+            };
+        };
+    };
+    drill_claims_dashboard_claims_get: {
+        parameters: {
+            query?: {
+                /** @description The claim's lifecycle stage. */
+                "filter[stage]"?: components["schemas"]["Stage"] | null;
+                /** @description The registered `risk` band the High Risk card counts with. */
+                "filter[severityBand]"?: components["schemas"]["RiskBand"] | null;
+                /** @description The Fraud Flags card's *review* rule — deliberately not the queue's higher SIU referral cut. */
+                "filter[fraudFlagged]"?: boolean | null;
+                /** @description The Litigation card's flag. */
+                "filter[litigation]"?: boolean | null;
+                /** @description The Surgery Required card's flag. */
+                "filter[surgery]"?: boolean | null;
+                /** @description The OSHA Recordable card's flag. */
+                "filter[oshaRecordable]"?: boolean | null;
+                /** @description The recovery-status chart's fold key. */
+                "filter[recoveryStatus]"?: components["schemas"]["ReturnStatus"] | null;
+                /** @description The injury-type chart's bar label, matched as the exact stored string — no trimming, case-folding or merging. */
+                "filter[injuryType]"?: string | null;
+                /** @description The claims-by-state chart's bar label, matched exactly. */
+                "filter[state]"?: string | null;
+                /** @description An employer's id, as published by the employer spend chart. Intersects the caller's scope and can never widen it. */
+                "filter[employerId]"?: number | null;
+                /** @description A handler's id, as published by the handler benchmark table. Intersects the caller's scope and can never widen it. */
+                "filter[handlerId]"?: number | null;
+                /** @description The priority worklist's population, before its cap. */
+                "filter[priority]"?: boolean | null;
+                /** @description An opaque `nextCursor` from a previous response. */
+                cursor?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DrillClaimsResponse"];
+                };
+            };
+            /** @description The pagination cursor is unreadable, was minted under a different filter set, names a position past the end of the filtered list, or was cut under a rules version that has since been superseded (RFC 9457 problem document). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The caller's role does not carry the oversight capability. Answered before any claim is read, so it says nothing about what is in the caller's scope (RFC 9457 problem document). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

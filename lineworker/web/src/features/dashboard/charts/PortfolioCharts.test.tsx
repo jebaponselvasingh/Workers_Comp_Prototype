@@ -1,3 +1,6 @@
+import { MemoryRouter, useLocation } from "react-router";
+import userEvent from "@testing-library/user-event";
+
 import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
@@ -42,12 +45,39 @@ import { DashboardPage } from "../DashboardPage";
  * KPI cards and the handler table standing" would not be assertable at all.
  */
 
+/**
+ * Inside a `MemoryRouter` since Story 5.5.
+ *
+ * Not a formality: every KPI card, every chart legend row, every handler cell
+ * and every claim id on this page is now a `<Link>` or calls `useNavigate`, and
+ * a router hook outside a router throws rather than degrading — so a render
+ * without one does not fail *an assertion*, it fails to mount. `MemoryRouter`
+ * rather than the real route table for the reason these tests render
+ * `DashboardPage` rather than `App`: the subject is what the page draws from a
+ * payload, and mounting the whole shell would drag a session, a top bar and two
+ * more queries into it.
+ */
 function renderPage(routes: Parameters<typeof stubApi>[0]) {
   stubApi(routes);
   return render(
-    <QueryClientProvider client={createQueryClient()}>
-      <DashboardPage />
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={createQueryClient()}>
+        <DashboardPage />
+        {/* Story 5.5: every chart segment is now a click target, and what a
+            click *does* is a navigation. Rendering the current location beside
+            the page is the smallest way to assert that without mounting the
+            real route table — the subject is which URL a segment opens, not
+            what renders at it. */}
+        <LocationProbe />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  );
+}
+
+function LocationProbe() {
+  const location = useLocation();
+  return (
+    <span data-testid="location">{`${location.pathname}${location.search}`}</span>
   );
 }
 
@@ -416,4 +446,109 @@ test("a truncated surface is the same height before and after its data lands", a
   expect(screen.getByTestId("chart-injury-type").lastElementChild?.className).toBe(
     skeletonRow,
   );
+});
+
+
+// --- Story 5.5: every segment opens the claims behind it ----------------
+
+/**
+ * The six navigable surfaces, each with the segment a click should open.
+ *
+ * Written out rather than derived from the components under test, and both
+ * halves matter: the **facet** is the chart's dimension (a settlement segment
+ * opens `filter[stage]`, not `filter[severityBand]`) and the **value** is the
+ * segment's own key — the enum's wire value for the three enum-keyed series,
+ * the exact stored string for the two free-text ones, and the employer *id* for
+ * the spend bars, because a short name is not an identity.
+ */
+const SEGMENT_LINKS: readonly {
+  testId: string;
+  control: string;
+  key: string;
+  href: string;
+}[] = [
+  {
+    testId: "chart-settlement-status",
+    control: "chart-settlement-status-legend-link",
+    key: "settled",
+    href: "/dashboard/claims?filter%5Bstage%5D=settled",
+  },
+  {
+    testId: "chart-severity",
+    control: "chart-severity-legend-link",
+    key: "high",
+    href: "/dashboard/claims?filter%5BseverityBand%5D=high",
+  },
+  {
+    testId: "chart-recovery-status",
+    control: "chart-recovery-status-value-link",
+    key: "under_treatment",
+    href: "/dashboard/claims?filter%5BrecoveryStatus%5D=under_treatment",
+  },
+  {
+    testId: "chart-injury-type",
+    control: "chart-injury-type-value-link",
+    key: "Amputation",
+    href: "/dashboard/claims?filter%5BinjuryType%5D=Amputation",
+  },
+  {
+    testId: "chart-employer-paid",
+    control: "chart-employer-paid-value-link",
+    key: "2",
+    href: "/dashboard/claims?filter%5BemployerId%5D=2",
+  },
+  {
+    testId: "chart-state",
+    control: "chart-state-value-link",
+    key: "WA",
+    href: "/dashboard/claims?filter%5Bstate%5D=WA",
+  },
+];
+
+test.each(SEGMENT_LINKS)(
+  "$testId opens the claims behind the segment that was clicked",
+  async ({ control, key, href }) => {
+    const { container } = renderPage({ dashboardCharts: DASHBOARD_CHARTS });
+
+    await screen.findByTestId("chart-settlement-status-legend");
+
+    const target = container.querySelector<HTMLButtonElement>(
+      `[data-testid='${control}'][data-key='${key}']`,
+    );
+    expect(target, `${control} has no segment keyed ${key}`).not.toBeNull();
+    // A real `<button>`: an SVG path cannot take focus, cannot be reached by
+    // keyboard and has no accessible name, so the control is the legend row and
+    // the arc's own `onClick` is pointer parity beside it.
+    expect(target?.tagName).toBe("BUTTON");
+
+    await userEvent.click(target!);
+
+    expect(screen.getByTestId("location")).toHaveTextContent(href);
+  },
+);
+
+test("a segment's control names the segment and its figure", async () => {
+  renderPage({ dashboardCharts: DASHBOARD_CHARTS });
+
+  await screen.findByTestId("chart-settlement-status-legend");
+
+  // Discernible text is the accessibility requirement the UX notes state for
+  // chart-segment clicks: a control announced as "button" beside a swatch
+  // nobody can see is unusable, so the name carries the segment *and* the
+  // number the reader is drilling into.
+  expect(
+    screen.getByRole("button", { name: /Settled & Closed: \d+\. Show these claims\./ }),
+  ).toBeInTheDocument();
+});
+
+test("the four SLA tiles are deliberately not click targets", () => {
+  renderPage({ dashboardCharts: DASHBOARD_CHARTS });
+
+  // Ruled non-navigable with a reason rather than forgotten — see
+  // `PortfolioCharts`: the three SLA duration columns are confined to `sla.py`
+  // by a server-side guard, so a `filter[slaBreach]` would need a second scoped
+  // read on a route whose whole discipline is one, and the tile UI cannot say
+  // *which* clock a cohort belongs to. Asserted so the omission is a decision a
+  // reader finds rather than a gap they close by accident.
+  expect(screen.queryByTestId("chart-sla-value-link")).not.toBeInTheDocument();
 });

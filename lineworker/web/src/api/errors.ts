@@ -109,6 +109,24 @@ export function isNotFound(error: unknown): boolean {
  * values that have since changed, and re-sending it would overwrite
  * somebody's work without either of them knowing.
  */
+/**
+ * The server refused the request's own parameters — a 422 the caller must
+ * change something to escape, never retry.
+ *
+ * `queryClient` never retries a status below 500, so this is final for the life
+ * of that query key: a surface offering "try again in a moment" on one is
+ * promising a recovery its own client has already ruled out. What the caller
+ * can do is fix the request — which, on a filtered list, means dropping the
+ * facet that was refused.
+ *
+ * Keyed on the problem type rather than on the status, because "the request is
+ * malformed" and "there is nothing at that address" want different sentences
+ * and only the type tells them apart.
+ */
+export function isValidationError(error: unknown): boolean {
+  return problemType(error) === "/problems/validation-error";
+}
+
 export function isConflict(error: unknown): boolean {
   return error instanceof ApiError && error.status === 409;
 }

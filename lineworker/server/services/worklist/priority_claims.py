@@ -123,6 +123,7 @@ import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
+from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -499,13 +500,59 @@ def _flags_of(claim: PriorityClaim, computers: _Computers) -> PriorityFlags:
     )
 
 
-def _qualifies(claim: PriorityClaim, flags: PriorityFlags) -> bool:
+class _Qualifiable(Protocol):
+    """What `qualifies_for_worklist` reads off a claim: a stage and a flag.
+
+    A structural protocol rather than `PriorityClaim`, because this predicate
+    now has a second caller whose projection is a different shape —
+    `drill_through.DrillClaim`, which carries the queue card's facts and the
+    four filter columns and none of the five the action generator reads. Both
+    satisfy this by field name, the way `PriorityClaim` satisfies
+    `actions.ActionClaim`, so the rule stays one function without either
+    module importing the other's projection.
+    """
+
+    @property
+    def stage(self) -> Stage: ...
+
+    @property
+    def litigation_flag(self) -> bool: ...
+
+
+class _Flaggable(Protocol):
+    """The one derived value the population's fraud arm reads.
+
+    `PriorityFlags` and `drill_through.DrillFlags` both satisfy it. Narrow on
+    purpose: a predicate that took the whole flag bundle would be able to grow
+    a fourth arm out of a value nobody argued for.
+    """
+
+    @property
+    def fraud_flagged(self) -> bool: ...
+
+
+def qualifies_for_worklist(claim: _Qualifiable, flags: _Flaggable) -> bool:
     """Is this claim in the worklist's population? The union, spelled as one.
 
     Three arms joined by `or`, in one expression, so that "union" is a property
     of the code a reader can check rather than an invariant three separate
     filters would have to be trusted to preserve. A claim satisfying two of them
     satisfies this once, which is the whole of the dedupe rule.
+
+    **Public since Story 5.5, and it now has two callers.** The dashboard's
+    drill-through offers `filter[priority]`, which opens "the claims behind the
+    priority worklist" — and that filter **is** this predicate rather than a
+    restatement of it. A restated union would be three `or`-ed conditions that
+    agreed with this one on the seeded book and would disagree the first time an
+    arm moved: the treatment arm is `stage` rather than `status` (Story 5.1's
+    ruling, worth eight claims), and the fraud arm is the registered
+    `fraud_flagged` rule rather than `siu_review`'s higher cut (worth four). Both
+    are exactly the near-misses this project has already recorded, so the second
+    surface imports the symbol.
+
+    What it does **not** decide is the cap. The worklist shows the top N of this
+    population; the drill-through shows all of it, because a drill list has a
+    cursor and no cap. That difference is `priority_claims`', one level up.
     """
     return claim.stage is Stage.treatment or flags.fraud_flagged or claim.litigation_flag
 
@@ -574,7 +621,7 @@ def rank(
 
     1. Derive every claim's flags through the registry (AD-10). Before the
        population, because one of the three arms *is* a derived value.
-    2. Select the union (`_qualifies`).
+    2. Select the union (`qualifies_for_worklist`).
     3. Sort with `priority.order_key` over `priority.priority_score` — the
        queue's ordering and the queue's scorer, imported. Not "the same
        arithmetic": the same two functions.
@@ -605,7 +652,7 @@ def rank(
     scored: list[tuple[PriorityClaim, PriorityFlags, QueueClaim, float]] = []
     for claim in caseload:
         flags = _flags_of(claim, computers)
-        if not _qualifies(claim, flags):
+        if not qualifies_for_worklist(claim, flags):
             continue
         queue_claim = _queue_claim(claim)
         scored.append(
@@ -885,5 +932,6 @@ __all__ = [
     "decode_cursor",
     "encode_cursor",
     "priority_claims",
+    "qualifies_for_worklist",
     "rank",
 ]

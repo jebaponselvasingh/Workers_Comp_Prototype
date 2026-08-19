@@ -35,9 +35,13 @@
  * independent server answers on the page and must fail on its own without
  * blanking the other two.
  */
+import { useNavigate } from "react-router";
+
 import type { PortfolioCharts as PortfolioChartsData } from "@/api/dashboard";
 import type { ReturnStatus, RiskBand, Stage } from "@/api/claims";
 import { formatCents } from "@/lib/money";
+
+import { drillHref, RECOVERY_LABEL_BY_STATUS, type FilterKey } from "../drill/filters";
 
 import { CATEGORICAL_FILLS, RECOVERY_FILL, RISK_FILL, SERIES_FILL, STAGE_FILL } from "./chartTheme";
 import { DistributionBars } from "./DistributionBars";
@@ -60,12 +64,15 @@ const STAGE_LABEL: Record<Stage, string> = {
   investigation: "Investigation",
 };
 
-/** The recovery bars' copy (`renderSV`, line 1094). */
-const RECOVERY_LABEL: Record<ReturnStatus, string> = {
-  returned_and_fully_recovered: "Fully Recovered",
-  under_treatment: "Under Treatment",
-  returned_and_under_therapy: "Under Therapy",
-};
+/**
+ * The recovery bars' copy (`renderSV`, line 1094) — imported since Story 5.5.
+ *
+ * It moved to `drill/filters.ts` when the bars became click targets: a
+ * supervisor who clicks "Under Therapy" lands on a filter chip, and the chip
+ * and the bar have to say the same words or the drill-through looks like it
+ * opened something else. One map, two renderings.
+ */
+const RECOVERY_LABEL = RECOVERY_LABEL_BY_STATUS;
 
 /**
  * The severity legend, with the High band's boundary read off the response.
@@ -116,6 +123,26 @@ export function PortfolioCharts({
   // the thing that holds the layout open (NFR-3).
   const state = { isPending, isError };
 
+  const navigate = useNavigate();
+  /**
+   * One chart's click handler: open the claims behind a segment (Story 5.5).
+   *
+   * The **filter key is the chart's**, and the value is whatever the segment's
+   * own `keyOf`/`key` produced — the enum's wire value for the three enum-keyed
+   * series, the exact stored string for injury type and state, and the employer
+   * *id* for the spend bars. That correspondence is what makes the list
+   * reconcile with the segment: the server's facet for each of the six is the
+   * same fold key `services/worklist/charts.py` grouped on.
+   *
+   * Curried per chart so each surface is handed a function that already knows
+   * its dimension, rather than every surface being handed the same one and
+   * having to name its own key at the call site — where a copy-pasted chart
+   * would inherit the neighbour's.
+   */
+  function openClaims(key: FilterKey): (value: string) => void {
+    return (value) => void navigate(drillHref({ [key]: value }));
+  }
+
   return (
     <section
       data-testid="portfolio-charts"
@@ -142,6 +169,7 @@ export function PortfolioCharts({
           centreCaption="Claims in this portfolio"
           emptyMessage="No claims in this portfolio yet."
           errorMessage="⚠ Settlement status could not be loaded."
+          onSelect={openClaims("stage")}
           {...state}
         />
 
@@ -154,9 +182,22 @@ export function PortfolioCharts({
           centreCaption="Claims in this portfolio"
           emptyMessage="No claims in this portfolio yet."
           errorMessage="⚠ Severity distribution could not be loaded."
+          onSelect={openClaims("severityBand")}
           {...state}
         />
 
+        {/* **Nothing is passed to `SlaTiles`, and the four tiles are ruled
+            non-navigable.** Two reasons, both structural rather than
+            preferences. `test_nothing_outside_the_worklist_aggregation_reads_
+            the_sla_source_columns` confines the three duration columns to
+            `sla.py`, so a `filter[slaBreach]` would have to be evaluated inside
+            that module over rows the drill-through aggregate does not read — a
+            second scoped read on a route whose whole discipline is one. And the
+            tile UI does not distinguish *which* clock a cohort belongs to, so
+            the filter would need a vocabulary this surface cannot express. The
+            honest fix is a cohort predicate exported from `sla.py` and a
+            thirteenth facet, made once; it is recorded in `deferred-work.md`
+            with that recommendation rather than half-built here. */}
         <SlaTiles strip={data?.sla} {...state} />
 
         <DistributionBars
@@ -176,6 +217,7 @@ export function PortfolioCharts({
           truncationCaption={() => ""}
           emptyMessage="No claims in this portfolio yet."
           errorMessage="⚠ Recovery status could not be loaded."
+          onSelect={openClaims("recoveryStatus")}
           {...state}
         />
       </div>
@@ -201,6 +243,9 @@ export function PortfolioCharts({
             `Showing ${String(shown)} of ${String(total)} injury types.`
           }
           emptyMessage="No claims in this portfolio yet."
+          // The exact stored string, which is what `keyOf` returns here and
+          // what the server matches on — no trim, no case-fold, no merge.
+          onSelect={openClaims("injuryType")}
           errorMessage="⚠ Injury type distribution could not be loaded."
           {...state}
         />
@@ -227,6 +272,20 @@ export function PortfolioCharts({
           // all-zero-spend case has its own sentence below.
           emptyMessage="No claims in this portfolio yet."
           zeroMessage="No spend recorded against these employers yet."
+          // The id, matching `keyOf` above: two employers may share a short
+          // name, and a drill-through must filter on something that cannot
+          // collide.
+          //
+          // **This is the one navigable segment whose bar is not a count**, the
+          // same asymmetry the Total Paid and Total Reserve cards carry: the bar
+          // distributes *cents*, so clicking "$1.2M" opens the list of Boeing's
+          // claims and the two numbers are about different things. The list is
+          // still exactly the segment's claim set — which is what the drill
+          // promises — but a supervisor reading "24 in view" under a bar she
+          // read as money is owed the note, and the server's own
+          // `test_the_employer_drill_through_covers_the_employer_series` says
+          // the same thing from the other side.
+          onSelect={openClaims("employerId")}
           errorMessage="⚠ Employer spend could not be loaded."
           {...state}
         />
@@ -244,6 +303,7 @@ export function PortfolioCharts({
             `Showing ${String(shown)} of ${String(total)} states.`
           }
           emptyMessage="No claims in this portfolio yet."
+          onSelect={openClaims("state")}
           errorMessage="⚠ Claims by state could not be loaded."
           {...state}
         />

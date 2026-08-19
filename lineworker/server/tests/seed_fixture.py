@@ -749,6 +749,11 @@ def expected_handler_benchmarks(persona_name: str, role: str) -> dict[str, Any]:
                 handler,
                 _handler_ordinal(handler),
                 {
+                    # Story 5.5 publishes the id a drill-through link filters
+                    # on. `_app_user_id` rather than `_handler_ordinal`: the
+                    # ordinal is the 0-based sort tie-break above, and the wire
+                    # carries the 1-based surrogate key.
+                    "handlerId": _app_user_id(handler, HANDLER_ROLE),
                     "handlerName": handler,
                     "caseCount": len(claims),
                     "compositeDays": (
@@ -1053,4 +1058,144 @@ def expected_priority_claims(
         "population": [c["claim_id"] for c in ordered],
         "total": len(population),
         "claimIds": [c["claim_id"] for c in ordered[:cap]],
+    }
+
+
+# --- Story 5.5: the dashboard drill-through, restated independently -------
+#
+# Twelve predicates, an ordering and a page size, built on blocks already in
+# this file rather than restated a second time — `expected_priority_claims`'
+# departure from `HIGH_RISK_MIN`'s discipline, and here the argument is the
+# *whole story* rather than an exception to it.
+#
+# What this endpoint promises is that the list a KPI card opens holds exactly
+# the claims that card counted. An oracle that wrote its own twelfth banding
+# rule could not check that: it would agree with a drill-through that had
+# quietly banded differently from the card, so long as this file had banded the
+# same way. So every predicate below reuses the block that already restates the
+# surface it reconciles with — `risk_band` for the severity donut and the High
+# Risk card, `FRAUD_FLAG_SCORE_MIN` for the Fraud Flags card (deliberately
+# **not** `SIU_FRAUD_SCORE_MIN`: 13 seeded claims against 9),
+# `qualifies_for_worklist` for the priority worklist's population, and the stage
+# column for the settlement donut (62 seeded claims against `status`'s 54).
+#
+# The ordering reuses Story 2.1's `expected_score` and its `(-score, claim_id)`
+# key for `expected_priority_claims`' reason, sharpened: this list is ungrouped
+# *and* uncapped, so every tie in the whole filtered book competes in one
+# sequence and the cursor's stability depends on the key being total.
+#
+# The two id-valued facets need surrogate keys, and both are recoverable from
+# the file's own order — see `_employer_id` above and `_app_user_id` below.
+
+#: The drill-through's page size: `priority_weights.pageLimit`, restated.
+#:
+#: Written out here rather than loaded for `HIGH_RISK_MIN`'s reason, and it is
+#: load-bearing on the full portfolio: 100 claims at 50 a page is a two-page
+#: walk, which is what exercises the cursor end to end. The worklist's own
+#: `SUPERVISOR_WORKLIST_PAGE_LIMIT` above is a *different* number from a
+#: different document, and the two must not be confused — that is why this one
+#: carries the surface's name.
+DRILL_PAGE_LIMIT = 50
+
+
+def _app_user_id(name: str, role: str) -> int:
+    """An `app_user.id`, restated from the seed file's order.
+
+    `_employer_id`'s argument: migration 0004 inserts `app_users` in the seed
+    file's order against an identity column, so the id is the 1-based index.
+    Restated rather than queried, because an oracle that read the id back from
+    the database would agree with an implementation that had joined the wrong
+    row.
+
+    Note the off-by-one against `_handler_ordinal` above, which is deliberate
+    and not a duplicate: that helper returns a *position* used as a sort
+    tie-break and is 0-based; this one returns the surrogate key a
+    `filter[handlerId]` carries.
+    """
+    for index, user in enumerate(seed()["app_users"], start=1):
+        if user["name"] == name and user["role"] == role:
+            return index
+    raise AssertionError(f"no seeded persona {name!r}/{role!r}")
+
+
+def handler_id_of(handler_name: str) -> int:
+    """The `filter[handlerId]` value for a seeded handler, by name."""
+    return _app_user_id(handler_name, HANDLER_ROLE)
+
+
+def employer_id_of(employer_name: str) -> int:
+    """The `filter[employerId]` value for a seeded employer, by its full name."""
+    return _employer_id(employer_name)
+
+
+def _drill_matches(claim: dict[str, Any], key: str, value: Any) -> bool:
+    """One facet, restated — each against the surface it has to reconcile with.
+
+    A mapping rather than a chain of `if`s so the twelve read as one table, the
+    way the service's `_PREDICATES` does: an oracle that expressed the same
+    twelve as branches would be checkable a facet at a time and never as a set.
+    """
+    answers: dict[str, bool] = {
+        # The stage column, never `status` — Story 5.1's ruling.
+        "stage": claim["stage"] == value,
+        # `risk_band`, the same restatement the High Risk card's oracle uses.
+        "severity_band": risk_band(claim["severity_score"]) == value,
+        # The *review* threshold, never the SIU referral one.
+        "fraud_flagged": (
+            bool(claim["fraud_flag"]) and claim["fraud_score"] >= FRAUD_FLAG_SCORE_MIN
+        )
+        == value,
+        "litigation": bool(claim["litigation_flag"]) == value,
+        "surgery": bool(claim["surgery_required"]) == value,
+        "osha_recordable": bool(claim["osha_recordable"]) == value,
+        "recovery_status": claim["return_status"] == value,
+        # The exact stored string, with no trim, case-fold or merge — the
+        # ruling the injury-type and state bars are folded under.
+        "injury_type": claim["injury_type"] == value,
+        "state": claim["state"] == value,
+        "employer_id": _employer_id(claim["employer"]) == value,
+        "handler_id": handler_id_of(claim["handler"]) == value,
+        # The worklist's population, before its cap.
+        "priority": qualifies_for_worklist(claim) == value,
+    }
+    if key not in answers:
+        raise AssertionError(f"no seeded oracle for filter {key!r}")
+    return answers[key]
+
+
+def expected_drill_claims(
+    persona_name: str,
+    role: str,
+    as_of: date | None = None,
+    **filters: Any,
+) -> dict[str, Any]:
+    """`{total, claimIds, pages}` for one persona's book under one filter set.
+
+    `total` is the whole filtered population — there is **no cap on this list**,
+    which is the difference from `expected_priority_claims` and the property the
+    reconciliation tests rest on: a drill-through's count has to equal the
+    number on the card that opened it. `claimIds` is every one of them in
+    ranked order, and `pages` is that sequence cut into `DRILL_PAGE_LIMIT`-sized
+    pages, so a walk can be asserted page by page rather than only in aggregate.
+
+    Filters arrive as snake_case keyword arguments matching the service's field
+    names (`severity_band=...`, `employer_id=...`), and an unknown one raises
+    rather than being ignored: an oracle that silently dropped a facet would
+    agree with an implementation that had dropped the same one.
+    """
+    today = as_of or datetime.now(UTC).date()
+    visible = [
+        claim
+        for claim in claims_for(persona_name, role)
+        if all(_drill_matches(claim, key, value) for key, value in filters.items())
+    ]
+    ordered = sorted(visible, key=lambda c: (-expected_score(c, today), c["claim_id"]))
+    claim_ids = [claim["claim_id"] for claim in ordered]
+    return {
+        "total": len(claim_ids),
+        "claimIds": claim_ids,
+        "pages": [
+            claim_ids[start : start + DRILL_PAGE_LIMIT]
+            for start in range(0, max(len(claim_ids), 1), DRILL_PAGE_LIMIT)
+        ],
     }

@@ -116,6 +116,10 @@ PENDING = frozenset({ClaimStatus.initial, ClaimStatus.ch_assessment_process})
 #: comparison instead of failing it.
 ROW_KEYS = frozenset(
     {
+        # Story 5.5's addition: the id a drill-through filters on. It is on the
+        # wire beside the name and never instead of it — the column shows a
+        # person, and the link under it points at an identity.
+        "handlerId",
         "rank",
         "handlerName",
         "caseCount",
@@ -1258,3 +1262,51 @@ async def test_only_settled_claims_reach_the_settle_segment(db: AsyncSession) ->
     )
     # And the join answered a name for every row rather than dropping any.
     assert all(row.handler_name for row in rows)
+
+
+# --- Story 5.5: the id a row's drill-through link filters on -------------
+
+
+@requires_db
+async def test_every_row_publishes_the_handler_id_the_drill_through_filters_on(
+    seeded_db_url: str,
+) -> None:
+    """`handlerId`, present, integral and distinct per row.
+
+    Distinct is the assertion that matters: this table's whole reason for
+    grouping on an id rather than on a display name is that two handlers may
+    share one, and a response that published the same id twice would collapse
+    two desks into one drill-through list.
+    """
+    payload = await benchmarks_for(seeded_db_url, *BLINE)
+    ids = [row["handlerId"] for row in payload["items"]]
+
+    assert ids, "the full portfolio has handlers"
+    assert all(isinstance(handler_id, int) for handler_id in ids)
+    assert all(not isinstance(handler_id, bool) for handler_id in ids)
+    assert len(set(ids)) == len(ids)
+
+
+@requires_db
+async def test_the_published_handler_id_is_the_one_whose_claims_the_drill_returns(
+    seeded_db_url: str,
+) -> None:
+    """The link's target, checked against the number the row shows.
+
+    `caseCount` is that handler's claims inside the caller's scope, and
+    `filter[handlerId]` narrows the caller's scope to that handler — so the two
+    are the same set counted twice. An id published for the wrong row would
+    still be an integer and would still be distinct; only this equality notices.
+    """
+    async with make_client(seeded_db_url) as client:
+        await login_as(client, *PARK)
+        payload = (await client.get(BENCHMARKS)).json()
+        for row in payload["items"]:
+            drill = (
+                await client.get(
+                    "/dashboard/claims",
+                    params={"filter[handlerId]": str(row["handlerId"])},
+                )
+            ).json()
+            assert drill["total"] == row["caseCount"], row["handlerName"]
+            assert seed_fixture.handler_id_of(row["handlerName"]) == row["handlerId"]

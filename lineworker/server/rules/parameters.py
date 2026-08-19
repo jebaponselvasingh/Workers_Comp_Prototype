@@ -372,6 +372,18 @@ class DerivationThresholds:
         )
 
 
+#: The largest page size any cursor in this codebase will decode.
+#:
+#: Restated here rather than imported, deliberately: `rules` sits below
+#: `services` and importing a list service's constant upwards would invert the
+#: layering for one integer. The duplication is made safe by a test rather than
+#: by a comment — `test_priority_claims.py::
+#: test_the_rules_tier_page_ceiling_is_the_one_the_cursor_enforces` pins this
+#: against `services.worklist.queue.MAX_PAGE_LIMIT`, so the two cannot drift
+#: apart without a failure that names both.
+CURSOR_PAGE_CEILING: Final[int] = 200
+
+
 @dataclass(frozen=True)
 class PriorityWeights:
     """Every constant the queue's priority score is built from.
@@ -420,6 +432,20 @@ class PriorityWeights:
         # for ever: the queue would render nothing and never stop asking.
         if self.page_limit < 1:
             raise RuleParameterError(f"pageLimit must be at least 1, got {self.page_limit}")
+        # The ceiling `WorklistActions` already enforces on its own page size,
+        # applied to the field that governs two cursors rather than one. The
+        # queue has paged on `page_limit` since Story 2.1 and Story 5.5's
+        # drill-through now does too, so a document raising it past what a
+        # cursor will decode serves a first page on both surfaces and then 400s
+        # every "Show more" — a rules migration switching off a working control
+        # with nothing deployed and no error until the second click. Refused at
+        # load, which is where a rule that cannot be honoured belongs.
+        if self.page_limit > CURSOR_PAGE_CEILING:
+            raise RuleParameterError(
+                f"pageLimit ({self.page_limit}) must not exceed {CURSOR_PAGE_CEILING}, the "
+                "largest page any cursor in this codebase will decode — a wider page mints "
+                "cursors that are refused on arrival"
+            )
         # The two *factors* multiply a magnitude that only ever grows, so a
         # negative one inverts the ordering rather than merely re-weighting
         # it: the worst-injured claim would sink below the least, and the
@@ -796,18 +822,6 @@ def _urgencies(
                 f"{[member.value for member in ActionUrgency]}"
             ) from exc
     return MappingProxyType(urgencies)
-
-
-#: The largest page size any cursor in this codebase will decode.
-#:
-#: Restated here rather than imported, deliberately: `rules` sits below
-#: `services` and importing a list service's constant upwards would invert the
-#: layering for one integer. The duplication is made safe by a test rather than
-#: by a comment — `test_priority_claims.py::
-#: test_the_rules_tier_page_ceiling_is_the_one_the_cursor_enforces` pins this
-#: against `services.worklist.queue.MAX_PAGE_LIMIT`, so the two cannot drift
-#: apart without a failure that names both.
-CURSOR_PAGE_CEILING: Final[int] = 200
 
 
 @dataclass(frozen=True)

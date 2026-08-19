@@ -87,12 +87,12 @@ development_status:
   epic-4-retrospective: optional
 
   # Epic 5: Supervisor Portfolio Dashboard
-  epic-5: in-progress
+  epic-5: done
   5-1-portfolio-kpi-cards: done
   5-2-handler-performance-benchmarking: done
   5-3-portfolio-analytics-charts: done
   5-4-priority-claims-worklist-top-30: done
-  5-5-dashboard-drill-through: ready-for-dev
+  5-5-dashboard-drill-through: done
   epic-5-retrospective: optional
 
   # Epic 6: AI Adjuster Copilot & RAG

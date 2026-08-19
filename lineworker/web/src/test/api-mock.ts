@@ -49,6 +49,15 @@ export interface StubRoutes {
    * URL. `claimDetail`'s form, for `claimDetail`'s reason.
    */
   priorityClaims?: StubRouteFor;
+  /**
+   * `GET /dashboard/claims` (Story 5.5) — one drill-through list.
+   *
+   * A `StubRouteFor` for `priorityClaims`' reason *and* one more: this route is
+   * cursor-paged **and** filtered, so a stub has to be able to tell page one
+   * from page two *and* the High Risk list from the unfiltered one. Both live
+   * in the query string, which is what the function form can see.
+   */
+  drillClaims?: StubRouteFor;
   claimsQueue?: StubRouteFor;
   /**
    * `GET /claims/{id}` (Story 2.2). A function so a test can answer
@@ -302,6 +311,7 @@ export const HANDLER_BENCHMARKS = {
     items: [
       {
         rank: 1,
+        handlerId: 1,
         handlerName: "Liam O'Sullivan",
         caseCount: 7,
         cycleSpeedPct: 82,
@@ -315,6 +325,7 @@ export const HANDLER_BENCHMARKS = {
       },
       {
         rank: 2,
+        handlerId: 2,
         handlerName: "Kaya Johnson",
         caseCount: 38,
         cycleSpeedPct: 88,
@@ -328,6 +339,7 @@ export const HANDLER_BENCHMARKS = {
       },
       {
         rank: 3,
+        handlerId: 3,
         handlerName: "Marcus Chen",
         caseCount: 19,
         cycleSpeedPct: 92,
@@ -341,6 +353,7 @@ export const HANDLER_BENCHMARKS = {
       },
       {
         rank: 4,
+        handlerId: 4,
         handlerName: "Fatima Al-Mansoori",
         caseCount: 11,
         cycleSpeedPct: 93,
@@ -354,6 +367,7 @@ export const HANDLER_BENCHMARKS = {
       },
       {
         rank: 5,
+        handlerId: 5,
         handlerName: "Sarah Williams",
         caseCount: 8,
         cycleSpeedPct: 95,
@@ -367,6 +381,7 @@ export const HANDLER_BENCHMARKS = {
       },
       {
         rank: 6,
+        handlerId: 6,
         handlerName: "Dante Reyes",
         caseCount: 24,
         cycleSpeedPct: 100,
@@ -443,6 +458,7 @@ export const HANDLER_BENCHMARKS_RERANKED = {
     items: [
       {
         rank: 1,
+        handlerId: 6,
         handlerName: "Dante Reyes",
         caseCount: 12,
         cycleSpeedPct: 79,
@@ -456,6 +472,7 @@ export const HANDLER_BENCHMARKS_RERANKED = {
       },
       {
         rank: 2,
+        handlerId: 5,
         handlerName: "Sarah Williams",
         caseCount: 5,
         cycleSpeedPct: 86,
@@ -469,6 +486,7 @@ export const HANDLER_BENCHMARKS_RERANKED = {
       },
       {
         rank: 3,
+        handlerId: 4,
         handlerName: "Fatima Al-Mansoori",
         caseCount: 9,
         cycleSpeedPct: 90,
@@ -482,6 +500,7 @@ export const HANDLER_BENCHMARKS_RERANKED = {
       },
       {
         rank: 4,
+        handlerId: 3,
         handlerName: "Marcus Chen",
         caseCount: 14,
         cycleSpeedPct: 91,
@@ -495,6 +514,7 @@ export const HANDLER_BENCHMARKS_RERANKED = {
       },
       {
         rank: 5,
+        handlerId: 2,
         handlerName: "Kaya Johnson",
         caseCount: 21,
         cycleSpeedPct: 93,
@@ -508,6 +528,7 @@ export const HANDLER_BENCHMARKS_RERANKED = {
       },
       {
         rank: 6,
+        handlerId: 1,
         handlerName: "Liam O'Sullivan",
         caseCount: 3,
         cycleSpeedPct: 100,
@@ -564,6 +585,7 @@ export const HANDLER_BENCHMARKS_UNRANKED = {
     items: [
       {
         rank: null,
+        handlerId: 6,
         handlerName: "Dante Reyes",
         caseCount: 24,
         cycleSpeedPct: null,
@@ -577,6 +599,7 @@ export const HANDLER_BENCHMARKS_UNRANKED = {
       },
       {
         rank: null,
+        handlerId: 4,
         handlerName: "Fatima Al-Mansoori",
         caseCount: 11,
         cycleSpeedPct: null,
@@ -590,6 +613,7 @@ export const HANDLER_BENCHMARKS_UNRANKED = {
       },
       {
         rank: null,
+        handlerId: 3,
         handlerName: "Marcus Chen",
         caseCount: 19,
         cycleSpeedPct: null,
@@ -628,6 +652,7 @@ export const HANDLER_BENCHMARKS_SINGLE = {
     items: [
       {
         rank: 1,
+        handlerId: 4,
         handlerName: "Fatima Al-Mansoori",
         caseCount: 4,
         cycleSpeedPct: 100,
@@ -1354,6 +1379,279 @@ export const PRIORITY_CLAIMS_UNDER_CAP = {
     nextCursor: null,
     total: 8,
     truncated: false,
+  },
+};
+
+/**
+ * One page of a drill-through list — Story 5.5's default answer.
+ *
+ * **The High Risk card's list**, because that is the story's own smoke path and
+ * because it is the one drill whose count a reader can check against a KPI
+ * fixture: `DASHBOARD_SUMMARY.highRisk` is a scoped supervisor's ten, and this
+ * is the full portfolio's thirty-two, walked over two pages.
+ *
+ * The rows are `ClaimCardResponse`s — the drill row is that model field for
+ * field, which the server asserts — so these are the queue's own cards and the
+ * same component renders both. Six of them rather than the server's fifty,
+ * because a fixture's job is to be checkable by eye: the walk's *shape* is what
+ * the tests read, and fifty rows would bury the three that carry a marker.
+ *
+ * **Every number in every numeric column is distinct**, `PRIORITY_CLAIMS`'
+ * discipline: `daysOpen` and `priorityScore` never repeat, so a component that
+ * read the wrong row's age or score would be distinguishable from a correct one
+ * on every row rather than on four of six. `risk` and `stage` repeat and cannot
+ * not — they are three- and four-valued — which is why the assertions compare
+ * pairs keyed on `claimId`.
+ *
+ * `appliedFilters` carries the one chip the URL asked for, with `display: null`
+ * because `severityBand` is an enum the UI owns copy for. The two id-valued
+ * facets are the only ones the server labels; see `DRILL_CLAIMS_FILTERED`.
+ */
+export const DRILL_CLAIMS = {
+  status: 200,
+  body: {
+    items: [
+      {
+        claimId: "WC-21139",
+        daysOpen: 143,
+        risk: "high",
+        workerName: "Jeremy Baker",
+        injuryType: "Amputation",
+        stage: "treatment",
+        employerShortName: "Whirlpool",
+        fraudFlag: false,
+        litigationFlag: true,
+        paymentDue: true,
+        siuReview: false,
+        rtwBlocked: true,
+        priorityScore: 118.6,
+        priorityMarker: true,
+      },
+      {
+        claimId: "WC-20646",
+        daysOpen: 130,
+        risk: "high",
+        workerName: "Gina Hamilton",
+        injuryType: "Myocardial Infarction",
+        stage: "treatment",
+        employerShortName: "GE",
+        fraudFlag: false,
+        litigationFlag: true,
+        paymentDue: true,
+        siuReview: false,
+        rtwBlocked: true,
+        priorityScore: 111.4,
+        priorityMarker: true,
+      },
+      {
+        claimId: "WC-20816",
+        daysOpen: 121,
+        risk: "high",
+        workerName: "Kenneth Hughes",
+        injuryType: "Myocardial Infarction",
+        stage: "treatment",
+        employerShortName: "Honeywell",
+        fraudFlag: true,
+        litigationFlag: false,
+        paymentDue: true,
+        siuReview: true,
+        rtwBlocked: false,
+        priorityScore: 97.2,
+        priorityMarker: true,
+      },
+      {
+        claimId: "WC-20034",
+        daysOpen: 78,
+        risk: "high",
+        workerName: "Michelle Cox",
+        injuryType: "Fall from Height",
+        stage: "treatment",
+        employerShortName: "Boeing",
+        fraudFlag: false,
+        litigationFlag: false,
+        paymentDue: false,
+        siuReview: false,
+        rtwBlocked: true,
+        priorityScore: 63.5,
+        priorityMarker: false,
+      },
+      {
+        claimId: "WC-21530",
+        daysOpen: 41,
+        risk: "high",
+        workerName: "Lucinda Davis",
+        injuryType: "Conveyor Entanglement",
+        stage: "investigation",
+        employerShortName: "John Deere",
+        fraudFlag: false,
+        litigationFlag: false,
+        paymentDue: false,
+        siuReview: false,
+        rtwBlocked: false,
+        priorityScore: 44.9,
+        priorityMarker: false,
+      },
+      {
+        claimId: "WC-20459",
+        daysOpen: 12,
+        risk: "high",
+        workerName: "Priya Raman",
+        injuryType: "Crushing",
+        stage: "settled",
+        employerShortName: "3M",
+        fraudFlag: false,
+        litigationFlag: false,
+        paymentDue: false,
+        siuReview: false,
+        rtwBlocked: false,
+        priorityScore: -70.3,
+        priorityMarker: false,
+      },
+    ],
+    nextCursor: "drill-cursor-page-2",
+    total: 32,
+    appliedFilters: [{ key: "severityBand", value: "high", display: null }],
+    rulesVersion: 1,
+    thresholdsVersion: 5,
+  },
+};
+
+/**
+ * The second page of the same list — what "Show more" appends.
+ *
+ * Three rows rather than six, and `nextCursor: null`, so a walk ends where the
+ * fixture says it does and a test asserts "nine rows" rather than "these six,
+ * twice". The three claim ids are new: a page-two fixture that repeated page
+ * one's would make a component that ignored the cursor and re-rendered the base
+ * page indistinguishable from one that appended.
+ *
+ * `total` and `appliedFilters` repeat page one's, which is the contract: the
+ * population is counted before the page is cut and is stable across every page
+ * of a walk, and the filter set is what the cursor was minted under.
+ */
+export const DRILL_CLAIMS_PAGE_TWO = {
+  status: 200,
+  body: {
+    ...DRILL_CLAIMS.body,
+    items: [
+      {
+        claimId: "WC-20102",
+        daysOpen: 137,
+        risk: "high",
+        workerName: "George Lee",
+        injuryType: "Strain or Tear — Shoulder",
+        stage: "treatment",
+        employerShortName: "Boeing",
+        fraudFlag: true,
+        litigationFlag: false,
+        paymentDue: true,
+        siuReview: true,
+        rtwBlocked: false,
+        priorityScore: 88.1,
+        priorityMarker: false,
+      },
+      {
+        claimId: "WC-21275",
+        daysOpen: 55,
+        risk: "high",
+        workerName: "Monique Allen",
+        injuryType: "Crushing",
+        stage: "treatment",
+        employerShortName: "Whirlpool",
+        fraudFlag: false,
+        litigationFlag: true,
+        paymentDue: false,
+        siuReview: false,
+        rtwBlocked: true,
+        priorityScore: 71.8,
+        priorityMarker: false,
+      },
+      {
+        claimId: "WC-20907",
+        daysOpen: 9,
+        risk: "high",
+        workerName: "Tomas Vega",
+        injuryType: "Burn — Chemical",
+        stage: "intake",
+        employerShortName: "Toyota",
+        fraudFlag: false,
+        litigationFlag: false,
+        paymentDue: false,
+        siuReview: false,
+        rtwBlocked: false,
+        priorityScore: 33.7,
+        priorityMarker: false,
+      },
+    ],
+    nextCursor: null,
+  },
+};
+
+/**
+ * A filter set that matches nothing — the defined empty state (NFR-3).
+ *
+ * Jennifer Park has no litigated claims, which is a fact about her book rather
+ * than a failure. `appliedFilters` is still populated, and that is the whole
+ * point of the fixture: the empty message has to **name the active filter**, so
+ * a payload that emptied the chip list too would let the view render "no
+ * claims" and still pass.
+ */
+export const DRILL_CLAIMS_EMPTY = {
+  status: 200,
+  body: {
+    ...DRILL_CLAIMS.body,
+    items: [],
+    nextCursor: null,
+    total: 0,
+    appliedFilters: [{ key: "litigation", value: "true", display: null }],
+  },
+};
+
+/**
+ * Two facets at once, one of them id-valued — the chip row's other shape.
+ *
+ * High Risk narrowed to one employer. It exists for three things no
+ * single-chip fixture can show: that chips render in the server's order, that
+ * removing one leaves the other, and that the **server's `display`** is what an
+ * id-valued chip reads — "Employer: Boeing" rather than "Employer: 2", which is
+ * what a client resolving the label itself would have to render on a cold load.
+ *
+ * `total` is deliberately not a round number and not either of the other
+ * fixtures': a component quoting the wrong payload's count is then visible.
+ */
+export const DRILL_CLAIMS_FILTERED = {
+  status: 200,
+  body: {
+    ...DRILL_CLAIMS.body,
+    items: DRILL_CLAIMS.body.items.slice(0, 2),
+    nextCursor: null,
+    total: 7,
+    appliedFilters: [
+      { key: "severityBand", value: "high", display: null },
+      { key: "employerId", value: "2", display: "Boeing" },
+    ],
+  },
+};
+
+/**
+ * `DRILL_CLAIMS`' six rows, in a **different order**.
+ *
+ * Its whole purpose is to be asserted *against* `DRILL_CLAIMS`. A view that
+ * renders what it was sent reads differently under the two; one that sorted —
+ * by score, by days open, by claim id, by anything — reads the same. The order
+ * here is the reverse of the server's, which is the one permutation every
+ * plausible client-side sort would *undo*: a list that re-imposed the priority
+ * ranking would produce `DRILL_CLAIMS`' order from this payload, and the test
+ * would catch it.
+ *
+ * `total` and `appliedFilters` are unchanged, because re-ordering a page does
+ * not change how many claims matched.
+ */
+export const DRILL_CLAIMS_REORDERED = {
+  status: 200,
+  body: {
+    ...DRILL_CLAIMS.body,
+    items: [...DRILL_CLAIMS.body.items].reverse(),
   },
 };
 
@@ -3374,6 +3672,17 @@ export function stubApi(routes: StubRoutes): void {
       // is what every test that does not walk the table wants.
       if (url.includes("/api/dashboard/priority-claims")) {
         return answerFor(routes.priorityClaims ?? PRIORITY_CLAIMS, url);
+      }
+      // Story 5.5's. **Before the generic `/api/claims` branch far below**,
+      // which is not a coincidence of ordering but the same rule the queue and
+      // the case file already obey: the more specific path is matched first. It
+      // happens that `/api/dashboard/claims` does not contain `/api/claims/`, so
+      // the catch-all would not swallow it today — the placement is here because
+      // that is a fact about two strings and not a property anybody is
+      // maintaining, and because the four dashboard routes read together.
+      // `answerFor`, because this route is both filtered and paged.
+      if (url.includes("/api/dashboard/claims")) {
+        return answerFor(routes.drillClaims ?? DRILL_CLAIMS, url);
       }
       // Story 4.1's four, before every `/api/claims` case below. **Not because
       // the case file would swallow them**: the catch-all tests `/api/claims/`

@@ -1,3 +1,5 @@
+import { MemoryRouter } from "react-router";
+
 import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -36,12 +38,26 @@ import { DashboardPage } from "./DashboardPage";
  * assertable at all.
  */
 
+/**
+ * Inside a `MemoryRouter` since Story 5.5.
+ *
+ * Not a formality: every KPI card, every chart legend row, every handler cell
+ * and every claim id on this page is now a `<Link>` or calls `useNavigate`, and
+ * a router hook outside a router throws rather than degrading — so a render
+ * without one does not fail *an assertion*, it fails to mount. `MemoryRouter`
+ * rather than the real route table for the reason these tests render
+ * `DashboardPage` rather than `App`: the subject is what the page draws from a
+ * payload, and mounting the whole shell would drag a session, a top bar and two
+ * more queries into it.
+ */
 function renderPage(routes: Parameters<typeof stubApi>[0]) {
   stubApi(routes);
   return render(
-    <QueryClientProvider client={createQueryClient()}>
-      <DashboardPage />
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={createQueryClient()}>
+        <DashboardPage />
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
 }
 
@@ -334,4 +350,39 @@ test("a rejected second page keeps the loaded rows and offers a section reload",
   // rejected cursor, which would fail identically for ever.
   expect(screen.getByTestId("priority-claims-reload")).toBeVisible();
   expect(screen.queryByTestId("priority-claims-more")).toBeNull();
+});
+
+// --- Story 5.5: the row affordance 5.4 deliberately withheld ------------
+
+test("each claim id links to that claim's read-only view", async () => {
+  renderPage({ priorityClaims: PRIORITY_CLAIMS });
+
+  await screen.findAllByTestId("priority-row");
+
+  const links = screen.getAllByTestId("priority-claim-link");
+  expect(links).toHaveLength(PRIORITY_CLAIMS.body.items.length);
+
+  // A `<Link>` on the claim-id cell rather than an `onRowClick` on the `<tr>`:
+  // the destination is a URL, so the control is an anchor — keyboard focus,
+  // middle-click and a copyable address follow from the element — and the other
+  // nine cells stay selectable rather than having every click swallowed.
+  for (const [index, row] of PRIORITY_CLAIMS.body.items.entries()) {
+    expect(links[index]).toHaveTextContent(row.claimId);
+    expect(links[index]).toHaveAttribute("href", `/dashboard/claims/${row.claimId}`);
+  }
+});
+
+test("the heading offers the whole population, uncapped", async () => {
+  renderPage({ priorityClaims: PRIORITY_CLAIMS });
+
+  const viewAll = await screen.findByTestId("priority-view-all");
+
+  // `filter[priority]` is the worklist's own population predicate — the server
+  // imports it rather than restating it — so this link opens all 38 of a book
+  // whose table shows the top 30. That is deliberate and is why the caption
+  // beside it quotes both numbers.
+  expect(viewAll).toHaveAttribute(
+    "href",
+    "/dashboard/claims?filter%5Bpriority%5D=true",
+  );
 });

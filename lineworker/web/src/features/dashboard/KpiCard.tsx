@@ -14,12 +14,29 @@
  * no threshold; `noDerivation.test.ts` walks this directory and fails a build
  * over any of it.
  *
- * **Ready for Story 5.5 without a redesign.** Drill-through makes every card a
- * click target, and the shape that survives that is the one here: content in,
- * nothing out. Adding an `onClick` (or wrapping the section in a link) then
- * changes this file's element and none of its callers, because no caller
- * passes behaviour today.
+ * **Story 5.5 made every card a click target, and the shape held.** The
+ * prediction written here one story ago was that drill-through would change
+ * this file's element and none of its callers, because no caller passed
+ * behaviour. That is what happened: the card gained a `drill` prop describing
+ * *where* it goes, wraps its contents in a `<Link>` when it has one, and still
+ * emits nothing and decides nothing.
+ *
+ * **A `<Link>` rather than a `div` with an `onClick`.** It is a navigation to a
+ * URL a supervisor can copy, so it is a link — which gets keyboard access,
+ * middle-click, and an accessible name for free. The focus ring is visible
+ * rather than removed: a dense dashboard of ten cards is exactly the surface
+ * where a keyboard user needs to see where they are.
+ *
+ * **The `<section>` stays outside the link, and the link wraps its contents.**
+ * The section is the card — its border, its background, its `data-testid` — and
+ * a link *around* a landmark would put a region inside an anchor, which is
+ * neither valid nor announceable. Inside, the anchor is the whole clickable
+ * area and the card keeps its identity for the tests that already read it.
  */
+
+import { Link } from "react-router";
+
+import { drillHref, type DrillFilters } from "./drill/filters";
 
 /** The prototype's five `.kpi` modifiers, plus its unmodified default. */
 export type KpiTone = "steel" | "warn" | "ok" | "error" | "brand" | "plain";
@@ -43,6 +60,7 @@ export function KpiCard({
   label,
   caption,
   tone,
+  drill,
 }: {
   /** `data-testid` stem, kebab-case: `kpi-<slug>`. */
   testId: string;
@@ -62,12 +80,26 @@ export function KpiCard({
   label: string;
   caption: React.ReactNode;
   tone: KpiTone;
+  /**
+   * The filter set this card's claims are behind, or `null` for a card that
+   * opens nothing.
+   *
+   * A whole filter **set** rather than a single facet, because three of the ten
+   * cards open the *unfiltered* list: Total Paid and Total Reserve are sums of
+   * cents over the whole scoped book, which is exactly what Total Claims
+   * counts, so `{}` is the honest answer for all three (see `DashboardPage`).
+   * A single-facet type could not say that, and the alternatives — ruling two
+   * of ten cards dead ends, or inventing a "filter" that names a card and
+   * cannot be cleared — are both worse.
+   *
+   * `null` is kept even though every card supplies a set today: a future card
+   * whose figure has no claim list behind it should be able to say so, rather
+   * than link to a list that does not answer it.
+   */
+  drill: DrillFilters | null;
 }) {
-  return (
-    <section
-      data-testid={testId}
-      className="rounded-md border border-border bg-surface px-[14px] py-3"
-    >
+  const body = (
+    <>
       {/* The figure carries its own test id so assertions match it exactly:
           "100" contains "10", and a card-level substring check would pass on
           the wrong number. */}
@@ -81,6 +113,30 @@ export function KpiCard({
         {label}
       </div>
       <div className="mt-1 text-[10px] text-muted-text">{caption}</div>
+    </>
+  );
+
+  return (
+    <section
+      data-testid={testId}
+      className="rounded-md border border-border bg-surface px-[14px] py-3"
+    >
+      {drill === null ? (
+        body
+      ) : (
+        <Link
+          data-testid={`${testId}-link`}
+          to={drillHref(drill)}
+          // The card's own words are the accessible name: "Total Claims, 100".
+          // The `<Link>` would otherwise be announced as the concatenation of
+          // three unlabelled divs, which reads as a number and a caption with
+          // nothing saying what it opens.
+          aria-label={`${label}, ${value}`}
+          className="block rounded focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none"
+        >
+          {body}
+        </Link>
+      )}
     </section>
   );
 }

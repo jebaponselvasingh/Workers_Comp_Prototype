@@ -102,7 +102,12 @@ export function ClaimCard({ card, selected, onSelect }: ClaimCardProps) {
         // these you are looking at", not a toggle that stays down.
         aria-current={selected ? "true" : undefined}
         onClick={() => onSelect(card.claimId)}
-        className={`w-full border-b border-border border-l-[3px] px-[11px] py-[9px] text-left hover:bg-surface-2 ${
+        // The focus ring every other click target on the dashboard carries.
+        // This card is reused as the row of Story 5.5's drill-through list,
+        // where it is the one affordance that navigates to a route of its own —
+        // and it was relying on the UA default outline while the KPI cards,
+        // chart legends and table cells beside it all drew one.
+        className={`w-full border-b border-border border-l-[3px] px-[11px] py-[9px] text-left hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none focus-visible:-outline-offset-2 ${
           selected ? "border-l-brand bg-brand-soft/40" : "border-l-transparent bg-surface"
         }`}
       >

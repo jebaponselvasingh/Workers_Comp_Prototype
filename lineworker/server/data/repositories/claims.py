@@ -325,6 +325,88 @@ async def select_priority_rows(
     return rows.all()
 
 
+async def select_drill_rows(
+    db: AsyncSession,
+    ctx: CallerContext,
+) -> Sequence[sa.Row[Any]]:
+    """`select_queue_rows`, plus the four columns the drill filters read.
+
+    Story 5.5's dashboard drill-through renders the *queue card* — the same
+    thirteen columns, so a card opened from a KPI number looks like the card
+    opened from a handler's queue — and narrows the caller's book by a whitelist
+    of facets, four of which name columns no queue card shows:
+    `Claim.employer_id`, `Claim.handler_id`, `Claim.state` and
+    `Claim.osha_recordable`. Those four and nothing else.
+
+    **The two id columns rather than the two display names.** A drill-through
+    filters on an employer and on a handler, and both arrive from a dashboard
+    surface that already publishes an id (`EmployerPaidResponse.employerId`, and
+    `HandlerBenchmarkResponse.handlerId` from this same story). A name is a
+    label, not an identity — `benchmarks.py` has grouped on `handler_id` since
+    Story 5.2 for exactly that reason — so the filter compares ids and this
+    projection carries them.
+
+    **A sibling of `select_queue_rows`/`select_priority_rows` rather than a
+    parameter on either**, for the reason `select_priority_rows`' docstring
+    argues at length: widening the queue's projection changes the row every
+    queue card in the console is derived from, on the console's most fetched
+    list, for the benefit of one dashboard surface — and a `columns` argument
+    would put back the seam `select_queue_rows` refuses.
+
+    **No `predicate` parameter either, and here the argument is sharper than it
+    is there.** Half of this story's twelve facets read *derived* values —
+    `severityBand` is `derivations.risk`, `fraudFlagged` is the registered fraud
+    rule, `priority` is the worklist's whole population predicate — and the
+    ordering is Python arithmetic over a JDM parameter block. A SQL narrowing
+    would therefore put some of the filter set here and the rest in
+    `services/worklist`, which is the split AD-10 exists to prevent, and which
+    would make "the list reconciles with the number that opened it" a property
+    of two tiers agreeing rather than of one rule being called once. This module
+    decides *which rows* — scope, and nothing else.
+
+    **Three joins, and the handler's name rides along even though no queue card
+    shows one.** A drill-through publishes the filters it applied so the browser
+    can draw a clearable chip for each, and the two id-valued facets — employer
+    and handler — cannot be labelled from an id: "Handler: 4" is not a sentence.
+    The chip's text has to be resolved somewhere, and resolving it from a row
+    this read already returned is what keeps the aggregate at **one** scoped
+    read; a lookup on the way out would be a second query for a caption. So the
+    projection carries `handler_name` beside `handler_id`, exactly as
+    `select_priority_rows` does, and the drill's row payload — which is the
+    queue card's field set, field for field — does not.
+
+    `Employee` and `Employer` are joined un-aliased and `AppUser` aliased, each
+    for the reason its neighbour's docstring already gives: the first two are
+    reachable from `claim` by exactly one foreign key, and the third is reachable
+    by more than one over the life of this schema. All three inner: every one of
+    the three foreign keys is non-nullable, so an outer join would add a `None`
+    branch that cannot happen and every consumer would have to reason about it.
+
+    Ordered by `claim_id` for `select_priority_rows`' reason: the service
+    re-sorts by score, and a total, deterministic order underneath is what makes
+    that sort stable across two requests — which an offset cursor into the
+    ranked list depends on absolutely.
+    """
+    handler = sa.orm.aliased(AppUser)
+    rows = await db.execute(
+        sa.select(
+            *QUEUE_ROW_COLUMNS,
+            handler.name.label("handler_name"),
+            Claim.employer_id,
+            Claim.handler_id,
+            Claim.state,
+            Claim.osha_recordable,
+        )
+        .select_from(Claim)
+        .join(Employee, Claim.employee_id == Employee.id)
+        .join(Employer, Claim.employer_id == Employer.id)
+        .join(handler, Claim.handler_id == handler.id)
+        .where(employer_scope(ctx))
+        .order_by(Claim.claim_id)
+    )
+    return rows.all()
+
+
 async def select_claim_detail(
     db: AsyncSession,
     ctx: CallerContext,

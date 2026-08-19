@@ -24,6 +24,7 @@ import pytest
 from data.models.enums import ActionKey, ActionUrgency, ClaimStatus, DocType
 from rules.engine import LoadedDocument
 from rules.parameters import (
+    CURSOR_PAGE_CEILING,
     BenefitParams,
     DerivationThresholds,
     HandlerPerformance,
@@ -274,6 +275,31 @@ def test_a_page_limit_below_one_is_refused(limit: int) -> None:
     queue renders nothing and never stops asking."""
     with pytest.raises(RuleParameterError, match="pageLimit"):
         weights(pageLimit=limit)
+
+
+@pytest.mark.parametrize("limit", [CURSOR_PAGE_CEILING + 1, 1_000])
+def test_a_page_limit_above_the_cursor_ceiling_is_refused(limit: int) -> None:
+    """The symmetric refusal to `pageLimit: 0`, and the one it does not imply.
+
+    A page size past what `decode_cursor` will accept serves page one and then
+    400s every "Show more" — on *both* surfaces that read this field, the
+    queue since Story 2.1 and the drill-through since 5.5. `WorklistActions`
+    already refuses exactly this for its own page size; this is the same guard
+    on the field with two cursors behind it.
+    """
+    with pytest.raises(RuleParameterError, match="pageLimit"):
+        weights(pageLimit=limit)
+
+
+def test_the_published_page_limit_sits_under_the_ceiling() -> None:
+    """The shipped document, checked against the rule that governs it.
+
+    A refusal nothing exercises is a refusal that can be wrong in the direction
+    that matters. `priority_weights` v1 publishes 50; if a later version raised
+    it past the ceiling, this fails beside the parametrized guard above rather
+    than at a supervisor's second click.
+    """
+    assert weights().page_limit <= CURSOR_PAGE_CEILING
 
 
 # --- the status set (AD-8: the whole rule element in one tier) ----------

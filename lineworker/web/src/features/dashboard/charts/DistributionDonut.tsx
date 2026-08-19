@@ -28,9 +28,19 @@
  * are drawn *inside* the hidden SVG, do carry an `sr-only` list — same
  * vocabulary, applied where the visible text is unreachable.
  *
- * **Inert.** Segment click drill-through is Story 5.5. The component takes a
- * finished series as a prop and emits nothing, so 5.5 attaches a handler here
- * and changes no caller.
+ * **Story 5.5 made the segments click targets, and the prediction held**: the
+ * component took a finished series and emitted nothing, so drill-through
+ * attached one optional handler here and changed no caller that does not want
+ * it.
+ *
+ * **The legend row is the click target, not the arc.** A `<button>` gets
+ * keyboard focus, Enter and Space and a visible ring for free; an SVG `<path>`
+ * gets none of those, and a `<path>` with a `tabIndex` would be a control with
+ * no accessible name inside a figure the whole component deliberately hides
+ * from assistive technology. The arc *also* carries an `onClick` — Recharts'
+ * `<Cell onClick>` — and that is **redundant with the button by design**: a
+ * reader who aims at the slice should not have to discover that the words
+ * beside it are the control.
  */
 import { Cell, Pie, PieChart, ResponsiveContainer } from "recharts";
 
@@ -66,6 +76,7 @@ export function DistributionDonut({
   errorMessage,
   isPending,
   isError,
+  onSelect,
 }: {
   testId: string;
   title: string;
@@ -81,6 +92,15 @@ export function DistributionDonut({
   errorMessage: string;
   isPending: boolean;
   isError: boolean;
+  /**
+   * Open the claims behind one segment, by its wire key.
+   *
+   * Optional, so a series with no drill-through behind it renders exactly what
+   * it rendered before — the legend stays a plain list rather than becoming a
+   * row of buttons that go nowhere. `PortfolioCharts` supplies it for the two
+   * donuts and deliberately supplies nothing to `SlaTiles`.
+   */
+  onSelect?: (key: string) => void;
 }) {
   // One predicate for `aria-busy` and for the skeleton, `HandlerBenchmarkTable`'s
   // ruling: a section that says it is busy while a chart is on screen is
@@ -124,6 +144,12 @@ export function DistributionDonut({
                         key={item.key}
                         fill={fill[item.key] ?? UNKNOWN_KEY_FILL}
                         fillOpacity={ARC_OPACITY}
+                        // Pointer parity with the legend button below, and
+                        // nothing more: the arc is inside an `aria-hidden`
+                        // figure, so this is the mouse's affordance and the
+                        // button is the keyboard's and the screen reader's.
+                        onClick={onSelect === undefined ? undefined : () => onSelect(item.key)}
+                        style={onSelect === undefined ? undefined : { cursor: "pointer" }}
                       />
                     ))}
                   </Pie>
@@ -149,22 +175,46 @@ export function DistributionDonut({
             data-testid={`${testId}-legend`}
             className="flex min-w-0 flex-1 flex-col gap-[6px] text-[11px] text-muted-text"
           >
-            {series.items.map((item) => (
-              <li
-                key={item.key}
-                data-testid={`${testId}-legend-row`}
-                data-key={item.key}
-                className="flex items-center gap-[6px]"
-              >
-                <span
-                  aria-hidden
-                  style={{ background: fill[item.key] ?? UNKNOWN_KEY_FILL }}
-                  className="inline-block h-[9px] w-[9px] shrink-0 rounded-[2px]"
-                />
-                <span className="truncate">{label[item.key] ?? item.key}:</span>
-                <b className="font-mono text-text">{item.count}</b>
-              </li>
-            ))}
+            {series.items.map((item) => {
+              const text = label[item.key] ?? item.key;
+              const row = (
+                <>
+                  <span
+                    aria-hidden
+                    style={{ background: fill[item.key] ?? UNKNOWN_KEY_FILL }}
+                    className="inline-block h-[9px] w-[9px] shrink-0 rounded-[2px]"
+                  />
+                  <span className="truncate">{text}:</span>
+                  <b className="font-mono text-text">{item.count}</b>
+                </>
+              );
+              return (
+                <li
+                  key={item.key}
+                  data-testid={`${testId}-legend-row`}
+                  data-key={item.key}
+                  className="flex items-center gap-[6px]"
+                >
+                  {onSelect === undefined ? (
+                    row
+                  ) : (
+                    <button
+                      type="button"
+                      data-testid={`${testId}-legend-link`}
+                      data-key={item.key}
+                      // The segment *and* its figure, so a chart click target
+                      // has discernible text rather than being announced as
+                      // "button" beside a swatch nobody can see.
+                      aria-label={`${text}: ${item.count}. Show these claims.`}
+                      onClick={() => onSelect(item.key)}
+                      className="flex w-full items-center gap-[6px] rounded text-left hover:underline focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none"
+                    >
+                      {row}
+                    </button>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}

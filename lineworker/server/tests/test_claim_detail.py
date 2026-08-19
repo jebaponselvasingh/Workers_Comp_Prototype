@@ -534,3 +534,125 @@ async def test_the_route_takes_no_scope_shaped_parameter(seeded_db_url: str) -> 
         )
 
     assert plain.json() == smuggled.json()
+
+
+# --- Story 5.5: what the read-only claim view rests on -------------------
+#
+# The dashboard's drill-through opens a **read-only** case file, composed from
+# the presentational half of Epic 2/3's components and fed by this one GET and
+# nothing else. Two properties have to hold for that to be honest, and neither
+# was pinned before this story:
+#
+#   1. A supervisor and an analyst can read this endpoint inside their scope
+#      and get a 404 outside it — so the view rests on a *scoped read*, not on
+#      a role branch.
+#   2. Every claim-mutating command refuses them — so "read-only" is enforced
+#      by the server rather than by which components the SPA happened to render.
+#
+# Scope gates visibility; role gates capability (AD-7). Both halves, asserted.
+
+BLINE = ("David Bline", "supervisor")
+PARK = ("Jennifer Park", "supervisor")
+ANALYST = ("David Bline", "analyst")
+
+
+@pytest.mark.parametrize("persona", [BLINE, PARK, ANALYST])
+async def test_an_oversight_persona_may_read_a_claim_inside_her_scope(
+    seeded_db_url: str, persona: tuple[str, str]
+) -> None:
+    """The read the drill-through's claim view is built on.
+
+    No role gate on this route at all — the only thing separating two callers'
+    answers is the scope predicate, which is what lets the same GET serve a
+    handler's workspace and a supervisor's read-only view.
+    """
+    claim_id = sorted(seed_fixture.expected_claim_ids(*persona))[0]
+
+    payload = await detail_for(seeded_db_url, persona, claim_id)
+
+    assert payload["claimId"] == claim_id
+    assert payload["header"]["claimId"] == claim_id
+
+
+@pytest.mark.parametrize("persona", [PARK, ANALYST])
+async def test_an_oversight_persona_reading_outside_her_scope_gets_a_not_found(
+    seeded_db_url: str, persona: tuple[str, str]
+) -> None:
+    """404, never 403 — no existence leak, whatever the role.
+
+    Jennifer Park's book holds three employers, so a Boeing claim is a claim she
+    must not be able to *learn exists*. The analyst is parametrized beside her
+    because "the analyst reads everything" is exactly the assumption a
+    role-branching implementation would encode.
+    """
+    outside = sorted(
+        seed_fixture.expected_claim_ids(*BLINE) - seed_fixture.expected_claim_ids(*persona)
+    )
+    if not outside:
+        pytest.skip("this persona's scope is the whole portfolio")
+
+    async with make_client(seeded_db_url) as client:
+        await login_as(client, *persona)
+        resp = await client.get(f"/claims/{outside[0]}")
+
+    assert resp.status_code == 404
+    assert resp.headers["content-type"].startswith("application/problem+json")
+    assert resp.json()["type"] == "/problems/claim-not-found"
+
+
+#: Every claim-mutating command, by method and path suffix.
+#:
+#: Named here rather than discovered from the router, because the point is that
+#: a *new* command added without a role gate should fail this test — and a test
+#: that enumerated the routes would silently grow to cover it while asserting
+#: nothing about it.
+MUTATIONS: list[tuple[str, str, dict[str, Any]]] = [
+    ("PATCH", "", {"injuryType": "Laceration", "expectedVersion": 1}),
+    (
+        "POST",
+        "/injuries",
+        {"bodyKey": "torso", "injuryType": "Strain", "severityScore": 20, "expectedVersion": 1},
+    ),
+    ("DELETE", "/injuries/1?expectedVersion=1", {}),
+    ("PATCH", "/severity", {"severityScore": 50, "expectedVersion": 1}),
+    ("PATCH", "/comp-rate", {"compRateBp": 6667, "expectedVersion": 1}),
+    ("POST", "/payments/approvals", {"kind": "week", "targetId": 1, "expectedVersion": 1}),
+    ("POST", "/assessment/approval", {"expectedVersion": 1}),
+    (
+        "POST",
+        "/documents/1/review",
+        {"expectedVersion": 1, "step": "mark_document_reviewed"},
+    ),
+    ("POST", "/osha-log", {"expectedVersion": 1}),
+]
+
+
+@pytest.mark.parametrize(("method", "suffix", "body"), MUTATIONS)
+@pytest.mark.parametrize("persona", [BLINE, PARK, ANALYST])
+async def test_every_claim_mutation_refuses_an_oversight_persona(
+    seeded_db_url: str,
+    persona: tuple[str, str],
+    method: str,
+    suffix: str,
+    body: dict[str, Any],
+) -> None:
+    """Role gates capability — "read-only" is the server's answer, not the SPA's.
+
+    The claim is one the persona **can** read, so a 404 here would mean the test
+    had proved nothing about capability. 403 before any lookup is the contract —
+    and the bodies above are well-formed rather than empty on purpose, because
+    FastAPI validates a request body before the handler runs, so a malformed one
+    would answer 422 and this test would be asserting nothing about the gate.
+    """
+    claim_id = sorted(seed_fixture.expected_claim_ids(*persona))[0]
+
+    async with make_client(seeded_db_url) as client:
+        await login_as(client, *persona)
+        resp = await client.request(
+            method,
+            f"/claims/{claim_id}{suffix}",
+            json=body if method != "DELETE" else None,
+        )
+
+    assert resp.status_code == 403, f"{method} {suffix} answered {resp.status_code}"
+    assert resp.headers["content-type"].startswith("application/problem+json")

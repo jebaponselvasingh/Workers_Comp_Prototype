@@ -18,6 +18,9 @@ import { Navigate, Route, Routes } from "react-router";
 
 import { ToastHost, ToastProvider } from "@/components/ui/toast";
 import { LoginScreen } from "@/features/login/LoginScreen";
+import { DashboardPage } from "@/features/dashboard/DashboardPage";
+import { DrillClaimsPage } from "@/features/dashboard/drill/DrillClaimsPage";
+import { ReadOnlyClaimPage } from "@/features/dashboard/drill/ReadOnlyClaimPage";
 import { DashboardShell } from "@/features/shell/DashboardShell";
 import { RequireSession } from "@/features/shell/RequireSession";
 import { WorkspaceShell } from "@/features/shell/WorkspaceShell";
@@ -29,8 +32,25 @@ export default function App() {
       <Routes>
         <Route path={LOGIN_ROUTE} element={<LoginScreen />} />
 
+        {/* Story 5.5 turns the dashboard into a **layout route**: one shell,
+            three views. `DashboardShell` renders the top bar and an `<Outlet/>`,
+            and the three children below fill it — the portfolio overview at the
+            index, the drill-through list, and one claim read-only.
+
+            All three sit inside the *same* `RequireSession` guard, which is what
+            makes "a handler cannot reach a drill-through" a property of the
+            route table rather than of three separate checks. Scope is a
+            different question and is not answered here at all: it re-resolves
+            server-side on every request (AD-7), so a supervisor who edits the
+            URL gets an empty list or a 404, never a route the client refused. */}
         <Route element={<RequireSession allow={["supervisor", "analyst"]} />}>
-          <Route path={DASHBOARD_ROUTE} element={<DashboardShell />} />
+          <Route path={DASHBOARD_ROUTE} element={<DashboardShell />}>
+            <Route index element={<DashboardPage />} />
+            <Route path="claims" element={<DrillClaimsPage />} />
+            {/* The business id, `WC-nnnn`, as the ID convention requires — the
+                claim's own identifier in the path rather than a surrogate. */}
+            <Route path="claims/:claimId" element={<ReadOnlyClaimPage />} />
+          </Route>
         </Route>
 
         <Route element={<RequireSession allow={["handler"]} />}>

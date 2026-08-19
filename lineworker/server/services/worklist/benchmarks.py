@@ -263,8 +263,16 @@ class HandlerBenchmark:
     row index the browser happened to compute — which matters because the
     ordering is a function of a rule document's thresholds and a scope
     predicate, neither of which the SPA has.
+
+    **`handler_id` rides along beside the name, and only the id is an
+    identity.** The grouping has been on it since this module was written (see
+    `BenchmarkClaim`), and Story 5.5 is the first consumer that needs it on the
+    wire: clicking a row opens `filter[handlerId]=…`, and filtering on a display
+    name would merge two handlers who share one. `EmployerPaid.employer_id` is
+    the same field for the same reason on the same dashboard.
     """
 
+    handler_id: int
     rank: int | None
     handler_name: str
     case_count: int
@@ -462,6 +470,7 @@ def benchmarks_of(
                 group.handler_name,
                 group.handler_id,
                 HandlerBenchmark(
+                    handler_id=group.handler_id,
                     # Replaced once the order is known — `rank` is a property of
                     # the table, not of the handler, so it cannot be decided
                     # while the rows are still being built. `None` rather than a

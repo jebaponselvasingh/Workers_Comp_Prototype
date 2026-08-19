@@ -2532,3 +2532,258 @@ export function expectedPriorityClaimsFor(persona: {
         : `(${String(population.length)} claims)`,
   };
 }
+
+// --- Story 5.5: the dashboard drill-through, restated independently -------
+//
+// Twelve facets, an ordering and a page size — every one of them built on a
+// block already in this file rather than restated a second time, which is
+// `expectedPriorityClaimsFor`'s departure from `HIGH_RISK_MIN`'s discipline and
+// is the *whole story* here rather than an exception to it.
+//
+// What a drill-through promises is that the list a number opens holds the
+// claims that number counted. An oracle with its own twelfth banding rule could
+// not check that: it would agree with a drill-through that had banded
+// differently from the card, so long as this file banded the same way. So the
+// severity facet reuses `riskBand` (the High Risk card's own restatement), the
+// fraud facet reuses `FRAUD_FLAG_SCORE_MIN` (the review rule, deliberately not
+// `SIU_FRAUD_SCORE_MIN`), the priority facet reuses `qualifiesForWorklist`, and
+// the ordering reuses `priorityScore` and its `(-score, claimId)` tie-break.
+
+/**
+ * The drill-through's page size — `priority_weights.pageLimit`, restated.
+ *
+ * Consumed rather than assumed: `expectedDrillClaimsFor` cuts its sequence into
+ * pages with it and publishes the page list, so a spec walks the number of
+ * pages the *rule* implies rather than the one page it hoped for. Story 5.4's
+ * review recorded the opposite mistake — an oracle that assumed a single page
+ * and asserted a caption the server never sends.
+ *
+ * Deliberately a different number from `SUPERVISOR_WORKLIST_CAP` above and from
+ * that document's own page limit: they are three knobs in two documents, and a
+ * shared constant here would hide a wiring mistake between them.
+ */
+const DRILL_PAGE_LIMIT = 50;
+
+/** The facets a spec can ask this oracle for, spelled as the URL spells them. */
+export type DrillFacet =
+  | "stage"
+  | "severityBand"
+  | "fraudFlagged"
+  | "litigation"
+  | "surgery"
+  | "oshaRecordable"
+  | "recoveryStatus"
+  | "injuryType"
+  | "state"
+  | "employerId"
+  | "handlerId"
+  | "priority";
+
+export type DrillFilters = Partial<Record<DrillFacet, string>>;
+
+/** The `filter[handlerId]` value for a seeded handler — the `app_user` id. */
+export function handlerIdOf(handlerName: string): number {
+  const index = seed.app_users.findIndex(
+    (user) => user.name === handlerName && user.role === "handler",
+  );
+  if (index < 0) throw new Error(`no seeded handler ${handlerName}`);
+  // Migration 0004 inserts `app_users` in the seed file's order against an
+  // identity column, so the id is the 1-based index. Restated rather than
+  // queried, because an oracle that read the id back from the API would agree
+  // with an implementation that had published the wrong one.
+  return index + 1;
+}
+
+/** The `filter[employerId]` value for a seeded employer, by its full name. */
+export function employerIdOf(employerName: string): number {
+  const index = seed.employers.findIndex((row) => row.name === employerName);
+  if (index < 0) throw new Error(`no seeded employer ${employerName}`);
+  return index + 1;
+}
+
+/** One facet, restated against the surface it has to reconcile with. */
+function matchesFacet(claim: SeedClaim, facet: DrillFacet, value: string): boolean {
+  switch (facet) {
+    // The stage column, never `status` — 62 seeded claims against 54.
+    case "stage":
+      return claim.stage === value;
+    // `riskBand`, the same restatement the High Risk card's oracle uses.
+    case "severityBand":
+      return riskBand(claim.severity_score) === value;
+    // The *review* threshold, never the SIU referral one — 13 against 9.
+    case "fraudFlagged":
+      return (
+        String(claim.fraud_flag && claim.fraud_score >= FRAUD_FLAG_SCORE_MIN) === value
+      );
+    case "litigation":
+      return String(claim.litigation_flag) === value;
+    case "surgery":
+      return String(claim.surgery_required) === value;
+    case "oshaRecordable":
+      return String(claim.osha_recordable) === value;
+    case "recoveryStatus":
+      return claim.return_status === value;
+    // The exact stored string, with no trim, case-fold or merge.
+    case "injuryType":
+      return claim.injury_type === value;
+    case "state":
+      return claim.state === value;
+    case "employerId":
+      return String(employerIdOf(claim.employer)) === value;
+    case "handlerId":
+      return String(handlerIdOf(claim.handler)) === value;
+    // The worklist's population, before its cap.
+    case "priority":
+      return String(qualifiesForWorklist(claim)) === value;
+  }
+}
+
+export interface ExpectedDrillClaims {
+  /** Every matching claim id, in ranked order — the list is uncapped. */
+  claimIds: string[];
+  /** The population, as the result sentence renders it. */
+  count: string;
+  /** The chips the page must draw, in the server's order, as rendered text. */
+  chips: string[];
+  /** `claimIds` cut into pages at the published page size. */
+  pages: string[][];
+}
+
+/** What a chip says the facet is — the client's `FILTER_LABEL`, restated. */
+// "Stage" and not "Status": `status` is a different column with a different
+// value set, and this oracle exists to disagree with the app when the app is
+// wrong — so it restates the rule rather than copying the string.
+const DRILL_FACET_LABEL: Record<DrillFacet, string> = {
+  stage: "Stage",
+  severityBand: "Severity",
+  fraudFlagged: "Fraud flags",
+  litigation: "Litigation",
+  surgery: "Surgery required",
+  oshaRecordable: "OSHA recordable",
+  recoveryStatus: "Recovery",
+  injuryType: "Injury type",
+  state: "State",
+  employerId: "Employer",
+  handlerId: "Handler",
+  priority: "Priority worklist",
+};
+
+/** What a chip says the *value* is, for the ten facets the UI labels. */
+const DRILL_VALUE_LABEL: Partial<Record<DrillFacet, Record<string, string>>> = {
+  stage: {
+    settled: "Settled & Closed",
+    treatment: "Under Treatment",
+    intake: "Intake",
+    investigation: "Investigation",
+  },
+  severityBand: { high: "High", med: "Medium", low: "Low" },
+  recoveryStatus: {
+    returned_and_fully_recovered: "Fully Recovered",
+    under_treatment: "Under Treatment",
+    returned_and_under_therapy: "Under Therapy",
+  },
+  fraudFlagged: { true: "Yes", false: "No" },
+  litigation: { true: "Yes", false: "No" },
+  surgery: { true: "Yes", false: "No" },
+  oshaRecordable: { true: "Yes", false: "No" },
+  priority: { true: "Yes", false: "No" },
+};
+
+/**
+ * The **order** the chips are drawn in — the server's `FILTER_KEYS`, restated.
+ *
+ * A chip row that rendered the right two chips in the wrong order would satisfy
+ * a set comparison, and the order is what a reader scans; so the oracle carries
+ * it and the spec compares a list.
+ */
+const DRILL_FACET_ORDER: DrillFacet[] = [
+  "stage",
+  "severityBand",
+  "fraudFlagged",
+  "litigation",
+  "surgery",
+  "oshaRecordable",
+  "recoveryStatus",
+  "injuryType",
+  "state",
+  "employerId",
+  "handlerId",
+  "priority",
+];
+
+/**
+ * What a persona's drill-through must render under one filter set.
+ *
+ * Rendered strings rather than numbers, `expectedPortfolioSummaryFor`'s
+ * discipline: a spec comparing numbers would still pass if the page printed an
+ * employer id where a name belongs, which is exactly the failure the two
+ * id-valued chips exist to prevent.
+ *
+ * The two id chips are labelled from the *seed's* display strings — the
+ * employer's `short_name` and the handler's name — because that is what the
+ * server resolves them to, off rows it had already read. The other ten are
+ * labelled from the maps above, which are the client's copy restated.
+ */
+export function expectedDrillClaimsFor(
+  persona: { name: string; role: string },
+  filters: DrillFilters = {},
+): ExpectedDrillClaims {
+  const visible = claimsFor(persona.name, persona.role).filter((claim) =>
+    DRILL_FACET_ORDER.every((facet) => {
+      const value = filters[facet];
+      return value === undefined || matchesFacet(claim, facet, value);
+    }),
+  );
+  const ordered = [...visible].sort(
+    (a, b) =>
+      priorityScore(b) - priorityScore(a) || a.claim_id.localeCompare(b.claim_id),
+  );
+  const claimIds = ordered.map((claim) => claim.claim_id);
+
+  const pages: string[][] = [];
+  for (let start = 0; start < Math.max(claimIds.length, 1); start += DRILL_PAGE_LIMIT) {
+    pages.push(claimIds.slice(start, start + DRILL_PAGE_LIMIT));
+  }
+
+  const chips = DRILL_FACET_ORDER.flatMap((facet) => {
+    const value = filters[facet];
+    if (value === undefined) return [];
+    if (facet === "employerId") {
+      const employer = seed.employers.find(
+        (row) => String(employerIdOf(row.name)) === value,
+      );
+      // `#id` when the id names nothing in this book — the app cannot publish a
+      // name it must not confirm the existence of, and a bare integer names
+      // nothing at all.
+      return [`${DRILL_FACET_LABEL[facet]}: ${employer?.short_name ?? `#${value}`}`];
+    }
+    if (facet === "handlerId") {
+      const handler = seed.app_users.find(
+        (user) =>
+          user.role === "handler" && String(handlerIdOf(user.name)) === value,
+      );
+      return [`${DRILL_FACET_LABEL[facet]}: ${handler?.name ?? `#${value}`}`];
+    }
+    return [
+      `${DRILL_FACET_LABEL[facet]}: ${DRILL_VALUE_LABEL[facet]?.[value] ?? value}`,
+    ];
+  });
+
+  return {
+    claimIds,
+    count: `${String(claimIds.length)} in view`,
+    chips,
+    pages,
+  };
+}
+
+/** The drill-through URL for one filter set, as the page builds it. */
+export function drillUrl(filters: DrillFilters = {}): string {
+  const params = new URLSearchParams();
+  for (const facet of DRILL_FACET_ORDER) {
+    const value = filters[facet];
+    if (value !== undefined) params.set(`filter[${facet}]`, value);
+  }
+  const query = params.toString();
+  return query === "" ? "/dashboard/claims" : `/dashboard/claims?${query}`;
+}

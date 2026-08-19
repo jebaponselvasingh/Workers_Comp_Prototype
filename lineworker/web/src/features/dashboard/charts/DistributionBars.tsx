@@ -21,15 +21,29 @@
  * rendered only when the server says `truncated`, so a scope with fewer
  * categories than the cap carries no apology for a cut that did not happen.
  *
- * **The figure is `aria-hidden` and an `sr-only` list carries the pairs.**
- * `RiskGauge`'s pattern, and here the `sr-only` half is genuinely needed rather
- * than duplicative: unlike the donut's legend, a bar chart's labels and values
- * are drawn *inside* the SVG, so hiding the figure hides them. The list is also
+ * **The figure is `aria-hidden` and a label/value list carries the pairs.**
+ * `RiskGauge`'s pattern, and here it is genuinely needed rather than
+ * duplicative: unlike the donut's legend, a bar chart's labels and values are
+ * drawn *inside* the SVG, so hiding the figure hides them. The list is also
  * what the tests read, which keeps them off Recharts' internal SVG structure
  * and off jsdom measuring anything.
  *
- * **Inert.** Segment click drill-through is Story 5.5; this takes a finished
- * series and emits nothing.
+ * **Story 5.5 makes that list visible when the chart is navigable, and this is
+ * a deliberate visual addition to Story 5.3's charts.** An `sr-only` list
+ * cannot be a sighted user's click target, and a Recharts `<Rectangle>` cannot
+ * carry a focus ring — so a bar chart whose only affordance was the bar would be
+ * reachable by mouse and by nobody else. The list becomes a compact row of chip
+ * buttons under the figure, inside the frame's reserved height, so the four bar
+ * surfaces stay exactly as tall as they were (NFR-3) and the chart area shrinks
+ * by the rows the chips occupy. Each chip carries the **same text the `sr-only`
+ * row carried** — "Fracture: 5" — so the accessible rendering is unchanged and
+ * the tests that read it keep reading it; the `aria-label` adds only what
+ * pressing it does.
+ *
+ * The bar itself carries an `onClick` too, and that is redundant with the chip
+ * by design — the donut records the same pairing for the same reason: a reader
+ * who aims at the bar should not have to discover that the chip beneath it is
+ * the control.
  */
 import { Bar, BarChart, Cell, LabelList, ResponsiveContainer, XAxis, YAxis } from "recharts";
 
@@ -70,6 +84,7 @@ export function DistributionBars<ItemT>({
   errorMessage,
   isPending,
   isError,
+  onSelect,
 }: {
   testId: string;
   title: string;
@@ -149,6 +164,14 @@ export function DistributionBars<ItemT>({
   errorMessage: string;
   isPending: boolean;
   isError: boolean;
+  /**
+   * Open the claims behind one bar, by its `keyOf` value.
+   *
+   * Optional: a series with no drill-through behind it keeps the `sr-only`
+   * list it had, rather than growing a visible row of chips that go nowhere.
+   * All four bar charts on this dashboard supply it.
+   */
+  onSelect?: (key: string) => void;
 }) {
   // `HandlerBenchmarkTable`'s one-predicate ruling — see `DistributionDonut`.
   const isLoading = isPending && series === undefined;
@@ -230,8 +253,13 @@ export function DistributionBars<ItemT>({
       }
     >
       {series !== undefined && (
-        <>
-          <div aria-hidden className="h-full w-full">
+        <div className="flex h-full flex-col">
+          {/* `flex-1 min-h-0` rather than `h-full`, since Story 5.5: the chip
+              row below is a sibling inside the frame's reserved box, so the
+              figure takes what is left instead of the whole of it. Without
+              `min-h-0` a flex child floors at its content height and the chips
+              would push the chart out of the box the frame reserved. */}
+          <div aria-hidden className="min-h-0 w-full flex-1">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart
                 data={data}
@@ -253,7 +281,15 @@ export function DistributionBars<ItemT>({
                 />
                 <Bar dataKey="value" radius={BAR_RADIUS} isAnimationActive={false}>
                   {data.map((datum) => (
-                    <Cell key={datum.label} fill={datum.fill} />
+                    <Cell
+                      key={datum.label}
+                      fill={datum.fill}
+                      // Pointer parity with the chip below — see the module
+                      // docstring. The figure is `aria-hidden`, so this is the
+                      // mouse's affordance and the chip is everyone else's.
+                      onClick={onSelect === undefined ? undefined : () => onSelect(datum.id)}
+                      style={onSelect === undefined ? undefined : { cursor: "pointer" }}
+                    />
                   ))}
                   {/* The server's figure, formatted. `formatter` here does no
                       arithmetic — it is `String` or `formatCents`, and a
@@ -284,18 +320,46 @@ export function DistributionBars<ItemT>({
           </div>
 
           {/* The accessible rendering of the figure above, and what the tests
-              read. `sr-only` rather than visible here — unlike the donut's
-              legend — because the labels and values *are* on screen, drawn
-              inside the SVG that had to be hidden to keep it from being
-              announced as a tree of paths. */}
-          <ul data-testid={`${testId}-values`} className="sr-only">
+              read. `sr-only` while the chart is inert — the labels and values
+              *are* on screen, drawn inside the SVG that had to be hidden to
+              keep it from being announced as a tree of paths — and a visible
+              row of chip buttons once there is somewhere to go. See the module
+              docstring for why the visible half had to exist. */}
+          <ul
+            data-testid={`${testId}-values`}
+            aria-label={onSelect === undefined ? undefined : `${title} — show claims`}
+            className={
+              onSelect === undefined
+                ? "sr-only"
+                : "mt-1 flex max-h-[54px] flex-wrap gap-[4px] overflow-y-auto"
+            }
+          >
             {data.map((datum) => (
               <li key={datum.label} data-label={datum.label}>
-                {datum.label}: {formatValue(datum.value)}
+                {onSelect === undefined ? (
+                  <>
+                    {datum.label}: {formatValue(datum.value)}
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    data-testid={`${testId}-value-link`}
+                    data-key={datum.id}
+                    data-label={datum.label}
+                    // The chip's own words plus what pressing it does, so a
+                    // chart click target has discernible text rather than being
+                    // announced as a label with no purpose.
+                    aria-label={`${datum.label}: ${formatValue(datum.value)}. Show these claims.`}
+                    onClick={() => onSelect(datum.id)}
+                    className="rounded-full border border-border bg-surface-2 px-[6px] py-px text-[9.5px] text-muted-text hover:bg-surface hover:text-text focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none"
+                  >
+                    {datum.label}: {formatValue(datum.value)}
+                  </button>
+                )}
               </li>
             ))}
           </ul>
-        </>
+        </div>
       )}
     </ChartFrame>
   );

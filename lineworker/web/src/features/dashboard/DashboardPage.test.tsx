@@ -1,3 +1,5 @@
+import { MemoryRouter } from "react-router";
+
 import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
@@ -28,12 +30,26 @@ import { DashboardPage } from "./DashboardPage";
  * the wrong figure.
  */
 
+/**
+ * Inside a `MemoryRouter` since Story 5.5.
+ *
+ * Not a formality: every KPI card, every chart legend row, every handler cell
+ * and every claim id on this page is now a `<Link>` or calls `useNavigate`, and
+ * a router hook outside a router throws rather than degrading — so a render
+ * without one does not fail *an assertion*, it fails to mount. `MemoryRouter`
+ * rather than the real route table for the reason these tests render
+ * `DashboardPage` rather than `App`: the subject is what the page draws from a
+ * payload, and mounting the whole shell would drag a session, a top bar and two
+ * more queries into it.
+ */
 function renderPage(routes: Parameters<typeof stubApi>[0]) {
   stubApi(routes);
   return render(
-    <QueryClientProvider client={createQueryClient()}>
-      <DashboardPage />
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={createQueryClient()}>
+        <DashboardPage />
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
 }
 
@@ -71,9 +87,15 @@ test("the ten cards render the server's figures in the prototype's order", async
   // The order is the design contract, so it is asserted as an order rather
   // than as ten independent lookups — a page that rendered every card in the
   // wrong row would satisfy the loop above.
+  // `-value` and `-link` are dropped: each card now renders three test ids —
+  // the card, the figure inside it, and the `<Link>` Story 5.5 wrapped its
+  // contents in — and this assertion is about the ten *cards* and their order.
   const rendered = [...container.querySelectorAll("[data-testid^='kpi-']")]
     .map((node) => node.getAttribute("data-testid"))
-    .filter((testId) => testId !== null && !testId.endsWith("-value"));
+    .filter(
+      (testId) =>
+        testId !== null && !testId.endsWith("-value") && !testId.endsWith("-link"),
+    );
   expect(rendered).toEqual(EXPECTED_CARDS.map(([testId]) => testId));
 });
 
@@ -187,4 +209,56 @@ test("a failed request states it inline and renders no figures at all", async ()
     "aria-busy",
     "false",
   );
+});
+
+// --- Story 5.5: every card opens the claims behind its figure -----------
+
+/**
+ * Each card's link target, against the filter set the server counted with.
+ *
+ * Written out as a table rather than derived from `ROW_ONE`/`ROW_TWO`, for the
+ * reason the card order is written out above: an expectation computed from the
+ * declaration under test agrees with it however wrong both are. The three
+ * empty targets are the argument recorded in `DashboardPage`: Total Claims
+ * counts the whole book and the two money cards *sum* over it, so all three
+ * open the unfiltered list.
+ */
+const EXPECTED_LINKS: readonly [string, string][] = [
+  ["kpi-total-claims", "/dashboard/claims"],
+  ["kpi-under-treatment", "/dashboard/claims?filter%5Bstage%5D=treatment"],
+  ["kpi-settled-closed", "/dashboard/claims?filter%5Bstage%5D=settled"],
+  ["kpi-high-risk", "/dashboard/claims?filter%5BseverityBand%5D=high"],
+  ["kpi-total-paid", "/dashboard/claims"],
+  ["kpi-total-reserve", "/dashboard/claims"],
+  ["kpi-fraud-flags", "/dashboard/claims?filter%5BfraudFlagged%5D=true"],
+  ["kpi-osha-recordable", "/dashboard/claims?filter%5BoshaRecordable%5D=true"],
+  ["kpi-litigation", "/dashboard/claims?filter%5Blitigation%5D=true"],
+  ["kpi-surgery-required", "/dashboard/claims?filter%5Bsurgery%5D=true"],
+];
+
+test("every card is a link to the claims behind its figure", async () => {
+  renderPage({ dashboardSummary: DASHBOARD_SUMMARY });
+
+  await waitFor(() =>
+    expect(screen.getByTestId("kpi-total-claims-value")).toBeVisible(),
+  );
+
+  for (const [testId, href] of EXPECTED_LINKS) {
+    const link = screen.getByTestId(`${testId}-link`);
+    // A real anchor, not a div with a handler: keyboard access, middle-click
+    // and a copyable address all follow from the element.
+    expect(link.tagName).toBe("A");
+    expect(link).toHaveAttribute("href", href);
+  }
+});
+
+test("a card's link is named by its own label and figure", async () => {
+  renderPage({ dashboardSummary: DASHBOARD_SUMMARY });
+
+  // The accessible name has to say *what* it opens: the card's three divs are
+  // an unlabelled number and two captions, and a link announced as "27" tells a
+  // screen-reader user nothing about where it goes.
+  expect(
+    await screen.findByRole("link", { name: "High Risk, 10" }),
+  ).toBeInTheDocument();
 });
