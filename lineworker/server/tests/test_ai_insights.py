@@ -28,6 +28,7 @@ two Protocols are for — a suite that needed a GPU to say whether a re-refresh
 duplicates rows is a suite that gets skipped.
 """
 
+import asyncio
 import io
 import json
 import tokenize
@@ -41,7 +42,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from agents import insights as agent_insights
-from agents.client import ChatSchemaRejected
+from agents.client import ChatSchemaRejected, ChatUnavailable
 from agents.envelope import ToolResult
 from agents.insights import InsightGenerationDeps, refresh_claim_insights, refresh_pending_insights
 from agents.prompts import PROMPTS_DIR, load
@@ -55,9 +56,10 @@ from agents.schemas import (
 )
 from agents.tools import fraud_signals, next_actions, reserve_check, similar_cases
 from data.context import ALL_EMPLOYERS, CallerContext
-from data.models import AiInsight, AppUser, AuditEvent, Claim
+from data.models import AiInsight, AiInsightAttempt, AppUser, AuditEvent, Claim
 from data.models.enums import InsightKind, UserRole
 from services import rag
+from services.claims.detail import ClaimNotVisible
 from services.financials import ReserveVerdict, format_dollars
 from services.rag.client import EmbeddingDimensionMismatch
 from tests.conftest import requires_db
@@ -66,6 +68,7 @@ from tests.insight_fixture import (
     FakeChatClient,
     MalformedChatClient,
     UnavailableChatClient,
+    fill,
 )
 
 SERVER_ROOT = Path(__file__).resolve().parents[1]
@@ -353,6 +356,37 @@ def test_langsmith_tracing_is_forced_off_and_cannot_be_switched_back_on() -> Non
         _clear_env_cache(ls_utils)
 
 
+@pytest.mark.parametrize("profile", ["compose.yaml", "compose.e2e.yaml"])
+def test_every_compose_profile_closes_all_six_tracing_doors(profile: str) -> None:
+    """C5: the container-level half of the egress guard, matched to the code's.
+
+    `config.py` overwrites six variables at import, and the compose files set
+    three — while their own comment claimed the door was "closed even before
+    Python starts". It was not: `langsmith.utils.get_env_var` reads the
+    `LANGSMITH_*` spelling and falls back to `LANGCHAIN_*`, and `*_OTEL_ENABLED`
+    is a second exporter, so half the names an operator could set were never
+    answered at this layer at all (follow-up review of Story 6.2, C5).
+
+    The import-time overwrite covers them regardless, which is why this is a
+    `low` — but two statements of one containment rule that disagree is how the
+    weaker one ends up being the one somebody relies on. Driven off
+    `_TRACING_ENV_OFF` rather than a copied list, so a seventh door added to the
+    code is a failure here rather than a silent gap.
+
+    Matched as text rather than parsed, because the file is YAML with anchors
+    and a parser would be a dependency this suite does not declare.
+    """
+    from config import _TRACING_ENV_OFF
+
+    text = (SERVER_ROOT.parent / "deploy" / profile).read_text()
+
+    for name, value in _TRACING_ENV_OFF.items():
+        assert f'{name}: "{value}"' in text, (
+            f"{profile} does not close {name}, which config.py forces off — the two "
+            "statements of one containment rule disagree"
+        )
+
+
 def test_the_insight_refresh_is_registered_as_a_third_job() -> None:
     """`build_job_runner` holds this refresh, after the two Story 6.1 left.
 
@@ -608,6 +642,72 @@ async def test_a_kind_whose_answer_fails_its_schema_writes_nothing_and_leaves_th
     assert kinds == set(InsightKind) - {InsightKind.fraud_risk_indicators}
 
 
+class _SessionPoisoningChatClient:
+    """A client whose first kind leaves the session in a failed transaction.
+
+    A gather issues four scoped queries per kind, and any of them can raise —
+    a statement timeout, a lost connection, a bug in a future kind's tool. What
+    matters is not the query but the *state it leaves behind*: PostgreSQL
+    refuses every subsequent statement on that connection until the transaction
+    is rolled back, so a session left failed takes down every later kind of this
+    claim and every claim after it in the batch.
+
+    Modelled by executing a statement that cannot succeed. That is a real
+    `SQLAlchemyError` out of a real failed transaction rather than a raised
+    sentinel, which is the difference between asserting the rollback and
+    asserting that a fake was constructed.
+    """
+
+    model = "poisoning-chat"
+
+    def __init__(self, db: AsyncSession) -> None:
+        self._db = db
+        self.calls = 0
+
+    async def structured[T: Any](self, *, system: str, user: str, schema: type[T]) -> T:
+        self.calls += 1
+        if self.calls == 1:
+            await self._db.execute(sa.text("SELECT 1 FROM lineworker_no_such_table"))
+        return fill(schema)
+
+
+@requires_db
+async def test_a_database_error_in_one_gather_does_not_poison_the_rest_of_the_run(
+    db: AsyncSession, system: CallerContext, claim_id: str
+) -> None:
+    """A2: the failure path that had no `await db.rollback()`.
+
+    `_attempt`'s write-stage handler rolled back and its generation-stage
+    handler did not, so a database error during a kind's gather returned "one
+    failed kind" while leaving the session unusable. Every later kind then
+    raised `PendingRollbackError` from a line with nothing to do with the
+    original fault, was caught by the same handler, and was counted as another
+    failed kind — and in a batch run the *next claim* failed the same way, so
+    one transient error took out the whole tick.
+
+    Asserted as the three survivors rather than as the absence of an exception:
+    a version that swallowed the poisoning without rolling back would also not
+    raise, and would report four failures instead of one.
+    """
+    chat = _SessionPoisoningChatClient(db)
+
+    run = await refresh_claim_insights(db, system, claim_business_id=claim_id, deps=deps(chat))
+
+    assert run.failed == 1, "a database error in one gather was allowed to fail the other kinds"
+    assert run.written == len(InsightKind) - 1
+    assert run.model_unavailable is False, "a database error is not a model outage"
+    assert run.failed_kinds == (rag.ALL_KINDS[0],)
+
+    kinds = {
+        insight.kind for insight in await rag.claim_insights(db, system, claim_business_id=claim_id)
+    }
+    assert kinds == set(InsightKind) - {rag.ALL_KINDS[0]}
+
+    # …and the session is still usable afterwards, which is what the next claim
+    # in a batch depends on.
+    assert await db.scalar(sa.select(sa.func.count()).select_from(Claim))
+
+
 @requires_db
 async def test_an_unreachable_model_writes_nothing_and_leaves_the_previous_cards_standing(
     db: AsyncSession, system: CallerContext, claim_id: str
@@ -628,9 +728,13 @@ async def test_an_unreachable_model_writes_nothing_and_leaves_the_previous_cards
     learn what the first one already said. The client's own call counter is what
     makes that assertable: a version that ploughed on would show four.
 
-    The three kinds never attempted are counted as neither written nor failed,
-    which is honest — they are simply still pending, and the next tick and the
-    next Refresh both act on that.
+    The three kinds never attempted are counted as neither written nor failed —
+    `failed` is rows this run tried — but they are **named** in `failed_kinds`,
+    which is the question a caller asks (follow-up review of Story 6.2, B7).
+    Publishing only the one that failed left the other three looking never
+    generated with nothing to say they had not been tried; that matters most on
+    the run that *did* write a card first, because that one answers 200 and the
+    tab renders the list.
     """
     await refresh_claim_insights(
         db, system, claim_business_id=claim_id, deps=deps(FakeChatClient())
@@ -647,7 +751,10 @@ async def test_an_unreachable_model_writes_nothing_and_leaves_the_previous_cards
     assert run.failed == 1
     assert chat.calls == 1, "the run kept asking a model server that had already not answered"
     assert run.model_unavailable is True
-    assert run.failed_kinds == (rag.ALL_KINDS[0],)
+    assert run.failed_kinds == rag.ALL_KINDS, (
+        "the kinds after the outage were left out of the report, so a caller "
+        "could not tell an un-attempted card from a never-generated one"
+    )
 
     after = {
         insight.kind: (insight.generated_at, insight.model)
@@ -820,6 +927,52 @@ async def test_every_written_card_records_one_content_free_audit_event(
 
 
 @requires_db
+async def test_the_attempt_cursor_is_deliberately_unaudited(
+    db: AsyncSession, system: CallerContext, claim_id: str
+) -> None:
+    """The other half of AD-4 on this story: an argued exemption, asserted.
+
+    `store_insights` writes and commits an `ai_insight_attempt` row before it
+    generates anything, and emits no audit event for it. AD-4 has no carve-out,
+    so that is either a decision or a miss — and the difference between the two
+    is whether anything says so. `AiInsightAttempt`'s class docstring and
+    migration 0042's both carry the argument (the row is a scheduler's cursor,
+    not a change to a claim; the audited fact is what the refresh produced, and
+    `ai_insight.generated` carries it), and this asserts the outcome so that a
+    later story adding an event has to come back and delete a test rather than
+    quietly changing the volume Epic 8's review reads (follow-up review of Story
+    6.2, B5).
+
+    Asserted over every event the whole refresh wrote, not merely over a
+    filtered subset: the property is that `ai_insight.generated` is the *only*
+    action this path emits, which a query for that action could not tell from a
+    second action nobody thought to look for.
+    """
+    await refresh_claim_insights(
+        db, system, claim_business_id=claim_id, deps=deps(FakeChatClient())
+    )
+
+    attempted = await db.scalar(
+        sa.select(AiInsightAttempt.attempted_at)
+        .join(Claim, AiInsightAttempt.claim_id == Claim.id)
+        .where(Claim.claim_id == claim_id)
+    )
+    assert attempted is not None, "the attempt cursor was not written — the fixture is inert"
+
+    actions = set(
+        (
+            await db.scalars(
+                sa.select(AuditEvent.action).where(AuditEvent.entity_id.like(f"{claim_id}:%"))
+            )
+        ).all()
+    )
+    assert actions == {rag.INSIGHT_GENERATED_ACTION}
+    assert not (
+        await db.scalars(sa.select(AuditEvent).where(AuditEvent.entity == "ai_insight_attempt"))
+    ).all()
+
+
+@requires_db
 async def test_no_log_line_carries_a_prompt_or_the_model_s_answer(
     db: AsyncSession,
     system: CallerContext,
@@ -855,6 +1008,180 @@ async def test_no_log_line_carries_a_prompt_or_the_model_s_answer(
     assert "Deterministic test narrative" not in emitted
     # …and the events that *are* emitted carry the ids and counts they should.
     assert "rag.insights_stored" in emitted
+
+
+class _DyingChatClient:
+    """Answers `healthy` completions, then the model server goes away.
+
+    The case a client that is always up or always down cannot produce, and the
+    one that matters for B7: a run that wrote a card and *then* lost the model
+    answers 200 with a fresh payload, so its report is the only thing telling a
+    handler that two of the four cards on screen were never attempted.
+    """
+
+    model = "dying-chat"
+
+    def __init__(self, healthy: int) -> None:
+        self._healthy = healthy
+        self.calls = 0
+
+    async def structured[T: Any](self, *, system: str, user: str, schema: type[T]) -> T:
+        self.calls += 1
+        if self.calls > self._healthy:
+            raise ChatUnavailable("no model server")
+        return fill(schema)
+
+
+@requires_db
+async def test_the_kinds_after_an_outage_are_named_rather_than_left_silent(
+    db: AsyncSession, system: CallerContext, claim_id: str
+) -> None:
+    """B7: a partial run's report covers what it never attempted, not only what failed.
+
+    One card is written, the model dies, and the run stops — correctly, because
+    a container that did not answer for the second kind will not answer for the
+    third or the fourth, and pressing on would spend two more chat timeouts on
+    the route a handler is sitting in front of. But `written == 1` means this
+    answers 200 with a fresh payload, and the two kinds nobody ever asked for
+    render as "not generated" — the same state as a claim the scheduler has not
+    reached, with nothing to distinguish them.
+
+    So `failed_kinds` names all three: the one that failed and the two that were
+    skipped. `failed` still counts one, because it counts attempts, and the two
+    numbers disagreeing is the point rather than a defect.
+    """
+    chat = _DyingChatClient(healthy=1)
+
+    run = await refresh_claim_insights(db, system, claim_business_id=claim_id, deps=deps(chat))
+
+    assert run.written == 1
+    assert run.failed == 1, "an un-attempted kind was counted as a failed row"
+    assert chat.calls == 2, "the run kept asking after the model stopped answering"
+    assert run.model_unavailable is True
+    assert run.failed_kinds == rag.ALL_KINDS[1:]
+
+    # …and the cache agrees with the report: one card, three slots empty.
+    cached = await rag.claim_insights(db, system, claim_business_id=claim_id)
+    assert {insight.kind for insight in cached} == {rag.ALL_KINDS[0]}
+
+
+@requires_db
+async def test_a_claim_that_vanishes_mid_batch_is_skipped_rather_than_killing_the_run(
+    db: AsyncSession,
+    system: CallerContext,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B6: the queue is a snapshot, and a stale entry in it is a race.
+
+    `claims_needing_insights` reads the queue, and the claims in it are then
+    generated one at a time over minutes of model time. A claim deleted by
+    Story 8.1's purge, or reassigned out of the actor's partition, raises
+    `ClaimNotVisible` from `store_insights`' own scope resolution when its turn
+    comes — and that used to come out of the loop, ending the batch with every
+    remaining claim unprocessed and turning `POST /admin/insight-refresh` into a
+    500 for a run that was otherwise going perfectly well.
+
+    Driven by making the *command* refuse one claim rather than by deleting a
+    row, because a claim in this seed is referenced by a dozen tables and the
+    property under test is the loop's handling, not the cascade's.
+    """
+    pending = await rag.claims_needing_insights(db, system, limit=3)
+    assert len(pending) == 3, "the seed did not offer three pending claims"
+    vanished = pending[0]
+    real = rag.store_insights
+
+    async def refusing(
+        session: AsyncSession,
+        ctx: CallerContext,
+        *,
+        claim_business_id: str,
+        generator: Any,
+        kinds: Any = rag.ALL_KINDS,
+    ) -> Any:
+        if claim_business_id == vanished:
+            raise ClaimNotVisible(claim_business_id)
+        return await real(
+            session, ctx, claim_business_id=claim_business_id, generator=generator, kinds=kinds
+        )
+
+    monkeypatch.setattr(rag, "store_insights", refusing)
+
+    run = await refresh_pending_insights(db, system, limit=3, deps=deps(FakeChatClient()))
+
+    assert run.claims == 2, "the vanished claim was counted as visited"
+    assert run.written == 2 * len(InsightKind)
+    assert run.model_unavailable is False
+    # The other two really generated, and the skipped one is untouched — still
+    # pending, which is the right state for a claim nobody could resolve.
+    for claim_business_id in pending[1:]:
+        cached = await rag.claim_insights(db, system, claim_business_id=claim_business_id)
+        assert {insight.kind for insight in cached} == set(InsightKind)
+    assert vanished in await rag.claims_needing_insights(db, system, limit=None)
+
+
+@requires_db
+async def test_two_concurrent_refreshes_of_one_claim_do_not_interleave(
+    db: AsyncSession, system: CallerContext, claim_id: str, seeded_db_url: str
+) -> None:
+    """B10: the scheduled job and the Refresh button are two callers of one function.
+
+    With a commit per kind, two runs on one claim leave its four rows carrying
+    two different `generated_at` values — half a card set from each — and the
+    tab renders two timestamps for what a handler saw as one refresh. Nothing is
+    corrupt; the timestamp is simply not the thing it claims to be.
+
+    Driven as a real race: a second session on a second engine, so the two runs
+    are two database connections exactly as the job and the route are, and a
+    gate that holds the first run inside the kind loop until the second has had
+    its chance to start. A build without the lock writes eight rows' worth of
+    two generations here; with it, the second run finds the claim held and
+    yields an empty result.
+
+    The assertion is on the *timestamps* rather than on which run won, because
+    which one wins is a race and the property is not.
+    """
+    released = asyncio.Event()
+    entered = asyncio.Event()
+
+    class _GatedChatClient:
+        model = "gated-chat"
+
+        async def structured[T: Any](self, *, system: str, user: str, schema: type[T]) -> T:
+            entered.set()
+            await released.wait()
+            return fill(schema)
+
+    engine = create_async_engine(seeded_db_url.replace("postgresql://", "postgresql+asyncpg://", 1))
+    try:
+        async with async_sessionmaker(engine, expire_on_commit=False)() as other:
+            first = asyncio.create_task(
+                refresh_claim_insights(
+                    db, system, claim_business_id=claim_id, deps=deps(_GatedChatClient())
+                )
+            )
+            async with asyncio.timeout(10):
+                await entered.wait()
+
+                # The first run is inside its kind loop, holding the claim.
+                second = await refresh_claim_insights(
+                    other, system, claim_business_id=claim_id, deps=deps(FakeChatClient())
+                )
+                assert second.written == 0, "a second run generated the same claim concurrently"
+                assert second.failed == 0, "yielding is not failing"
+
+                released.set()
+                winner = await first
+
+    finally:
+        released.set()
+        await engine.dispose()
+
+    assert winner.written == len(InsightKind)
+    cached = await rag.claim_insights(db, system, claim_business_id=claim_id)
+    assert len({insight.generated_at for insight in cached}) == 1, (
+        "one claim's cards carry two generation timestamps — two runs interleaved"
+    )
+    assert {insight.model for insight in cached} == {_GatedChatClient.model}
 
 
 @requires_db
@@ -1102,8 +1429,13 @@ async def test_a_zero_row_upsert_is_counted_as_a_failure(
 
 
 @requires_db
+@pytest.mark.parametrize(
+    "kind",
+    [InsightKind.similar_case_outcomes, InsightKind.next_best_actions],
+    ids=lambda k: k.value,
+)
 async def test_a_dimension_mismatch_is_a_configuration_error_and_not_an_outage(
-    db: AsyncSession, system: CallerContext, claim_id: str
+    db: AsyncSession, system: CallerContext, claim_id: str, kind: InsightKind
 ) -> None:
     """M2: the one embedding failure that must not wear the 503.
 
@@ -1119,6 +1451,16 @@ async def test_a_dimension_mismatch_is_a_configuration_error_and_not_an_outage(
     Asserted as a propagation rather than as a count, which is the whole
     distinction: a counted failure is a card that will regenerate, and this one
     will fail identically on every future tick until somebody changes a setting.
+
+    **Parametrized by kind, and each is run on its own** (follow-up review of
+    Story 6.2, B4). Two kinds embed: the similar-case gather through
+    `agents/tools/similar.py`, and the next-actions gather through the knowledge
+    retrieval in `agents/insights.py::_knowledge`. Only the first was narrowed,
+    and this test passed anyway because `similar_case_outcomes` happens to be
+    `ALL_KINDS[0]` — so the run raised before the second path was ever reached,
+    and reordering the enum would have hidden the gap without touching a line of
+    this file. Driving each kind alone is what makes the two call sites answer
+    for themselves.
     """
 
     class MismatchedEmbeddingClient:
@@ -1127,14 +1469,17 @@ async def test_a_dimension_mismatch_is_a_configuration_error_and_not_an_outage(
         async def embed(self, texts: Any) -> Any:
             raise EmbeddingDimensionMismatch(model="nomic-embed-text", returned=768, expected=1024)
 
+    generator = agent_insights.ToolBackedGenerator(
+        db,
+        system,
+        deps=InsightGenerationDeps(
+            chat=FakeChatClient(),
+            embed=MismatchedEmbeddingClient(),
+            staleness_days=STALENESS_DAYS,
+        ),
+    )
+
     with pytest.raises(EmbeddingDimensionMismatch):
-        await refresh_claim_insights(
-            db,
-            system,
-            claim_business_id=claim_id,
-            deps=InsightGenerationDeps(
-                chat=FakeChatClient(),
-                embed=MismatchedEmbeddingClient(),
-                staleness_days=STALENESS_DAYS,
-            ),
+        await rag.store_insights(
+            db, system, claim_business_id=claim_id, generator=generator, kinds=(kind,)
         )

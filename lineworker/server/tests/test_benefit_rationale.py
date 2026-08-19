@@ -19,7 +19,7 @@ import pytest
 
 from data.models.enums import Disability, RecoveryWindow, ReturnStatus
 from services.derivations import IndemnityType, RiskBand
-from services.financials import compute_benefit, format_comp_rate
+from services.financials import compute_benefit, format_comp_rate, format_exposure_ratio
 from tests.test_benefit_calculation import (
     DEFAULT_COMP_RATE_BP,
     PARAMS,
@@ -257,3 +257,29 @@ def test_basis_points_format_exactly(basis_points: int, text: str) -> None:
     """The whole reason the rate is an integer: 66.67 does not round-trip
     through a float, and `6670` must read "66.70" rather than "66.7"."""
     assert format_comp_rate(basis_points) == text
+
+
+@pytest.mark.parametrize(
+    ("basis_points", "text"),
+    [
+        (0, "0.00%"),
+        (6_667, "66.67%"),
+        (10_000, "100.00%"),
+        (11_500, "115.00%"),
+        (-2_500, "-25.00%"),
+    ],
+)
+def test_an_exposure_ratio_formats_as_a_percentage_with_its_own_sign(
+    basis_points: int, text: str
+) -> None:
+    """`format_exposure_ratio` is a different figure from a comp rate.
+
+    Identical arithmetic and a different string: an exposure ratio reads as a
+    percentage on its own, can exceed 100, and can be negative, while a comp
+    rate is a bare number the UI puts a `%` beside. `agents/tools/reserve.py`
+    built the insight card's ratio out of `format_comp_rate` plus a literal
+    `"%"` — numerically right, and right by coincidence (follow-up review of
+    Story 6.2, C4). Asserted on the sign and on a value above 100, which are the
+    two places the coincidence would end.
+    """
+    assert format_exposure_ratio(basis_points) == text

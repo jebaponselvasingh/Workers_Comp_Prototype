@@ -318,14 +318,22 @@ function freshClaimFrom(error: unknown): ClaimDetail | undefined {
 /**
  * Mark everything a claim edit changes as stale — and nothing it does not.
  *
- * Three keys, each `exact: true`, each `refetchType: "none"`. That is exactly
- * what one prefix invalidation of `claims.detail` used to do, **minus the
- * insights cache**, and separating them is the whole point (review of Story
+ * Three exact keys and one prefix, each `refetchType: "none"`. Together that is
+ * exactly what one prefix invalidation of `claims.detail` used to do, **minus
+ * the insights cache**, and separating them is the whole point (review of Story
  * 6.2, M5).
  *
- * TanStack matches query keys by prefix, and `actions`, `financials` and
- * `insights` are all nested under the claim's own segment — but for two
- * opposite reasons. `actions` and `financials` are cut from the claim's rows,
+ * **The fourth entry is a prefix and has to be.** `documentSheet` carries a
+ * document id, so there is no exact key to name — and the first version of this
+ * helper listed only the three that could be named, which silently dropped
+ * every open document viewer from the invalidation the nesting exists to
+ * deliver (follow-up review of Story 6.2, B1). "Everything the old prefix
+ * reached except insights" is the contract; it is only true if the sheets are
+ * in the list.
+ *
+ * TanStack matches query keys by prefix, and `actions`, `financials`,
+ * `document` and `insights` are all nested under the claim's own segment — but
+ * for two opposite reasons. The first three are cut from the claim's rows,
  * so an edit that changes the claim really does change them and a prefix
  * invalidation reaching them is correct. `insights` is nested so it can be
  * *addressed* beside the case file without being evicted by it: a narrative is
@@ -360,6 +368,15 @@ function markCaseFileStale(
       refetchType: "none",
     });
   }
+  // …and every open document sheet, which is the one nested key that *cannot*
+  // be named exactly: it carries a document id, and the helper does not know
+  // which documents a reader happens to have open. Invalidated by prefix, which
+  // is safe because nothing else lives under `…/document` — the key insights
+  // deliberately does not share (follow-up review of Story 6.2, B1).
+  void client.invalidateQueries({
+    queryKey: queryKeys.claims.documentSheets(claimId),
+    refetchType: "none",
+  });
 }
 
 export function useEditClaimFields(claimId: string) {
@@ -1263,11 +1280,18 @@ export type ClaimInsights = components["schemas"]["ClaimInsightsResponse"];
 /**
  * What a refresh answers: the four cards, plus the kinds it could not write.
  *
- * A superset of `ClaimInsights` rather than a separate shape, so the response
- * installs straight into the query cache — and `failedKinds` rides along, which
+ * A superset of `ClaimInsights` rather than a separate shape, so the four cards
+ * install straight into the query cache — and `failedKinds` rides along, which
  * is what lets the tab say *which* card the model refused instead of leaving it
  * reading "not generated" beside a button that appeared to do nothing (review
  * of Story 6.2, M7).
+ *
+ * **The extra member does not go into the cache**, and `useRefreshInsights`
+ * strips it: the insights key is typed `ClaimInsights`, and writing this shape
+ * into it left the cache holding a `failedKinds` no reader declares and no
+ * later `GET` would replace — a value that would survive until the entry was
+ * evicted, describing a refresh long since finished (follow-up review of Story
+ * 6.2, C6).
  */
 export type RefreshInsights = components["schemas"]["RefreshInsightsResponse"];
 export type InsightKind = components["schemas"]["InsightKind"];
@@ -1351,8 +1375,23 @@ export function useRefreshInsights(claimId: string) {
       return data!;
     },
     onSuccess: (fresh) => {
+      // The cards only. `failedKinds` is a fact about *this run*, not about the
+      // cache, and the key it would be written under is typed `ClaimInsights`
+      // — so it is dropped here rather than left to sit in the entry describing
+      // a refresh that finished long ago.
+      const {
+        similarCaseOutcomes,
+        reserveAdequacyReview,
+        nextBestActions,
+        fraudRiskIndicators,
+      } = fresh;
       const key = queryKeys.claims.insights(claimId);
-      client.setQueryData(key, fresh);
+      client.setQueryData<ClaimInsights>(key, {
+        similarCaseOutcomes,
+        reserveAdequacyReview,
+        nextBestActions,
+        fraudRiskIndicators,
+      });
       // Marked stale without a re-fetch, `afterChecklistWrite`'s pattern:
       // `exact: true` because the key is nested under the case file's, and a
       // prefix invalidation would also re-fetch the case file — which this

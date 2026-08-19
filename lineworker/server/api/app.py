@@ -241,6 +241,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             with suppress(asyncio.CancelledError):
                 await task
 
+        # …and the same again for the jobs that outlive a tick. `run_forever`
+        # cancels them, but cancelling only schedules the interrupt — without
+        # waiting, a background insight run's session cleanup lands *after* the
+        # dispose below (follow-up review of Story 6.2, B8). Unconditional,
+        # because `tick` can be driven without the loop.
+        await runner.shutdown()
+
         await engine.dispose()
         log.info("app.stop")
 

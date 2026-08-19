@@ -166,10 +166,10 @@ test("the urgency chips carry their labels rather than their tokens", async () =
   await screen.findAllByTestId("action-row");
 
   const chips = screen.getAllByTestId("action-urgency").map((chip) => chip.textContent);
-  // Seven since Story 6.2: the fixture gained an `overdue_rtw:rtw_letter` row
-  // when the fraud row stopped being a seam, so that the file still has a
-  // disabled control to assert the seam behaviour against.
-  expect(chips).toEqual(["High", "High", "High", "High", "Medium", "Medium", "Low"]);
+  // Six, which is the server's cap. Story 6.2 added an `overdue_rtw:rtw_letter`
+  // seam when the fraud row stopped being one, and briefly made the fixture
+  // seven rows — a payload no cap of six can produce (follow-up review, C3).
+  expect(chips).toEqual(["High", "High", "High", "High", "Medium", "Low"]);
 });
 
 // --- AC 3: deep links, and the seam --------------------------------------
@@ -179,10 +179,13 @@ test("an enabled go-to control fires the pane's navigation with its target", asy
   renderCard({}, (target) => navigated.push(target));
   await screen.findAllByTestId("action-row");
 
-  const billsRow = row("bill_review:bills");
-  await userEvent.click(within(billsRow).getByTestId("action-goto"));
+  // `surgical_pre_auth`, whose target is `documents`. It carries a command as
+  // well, which is the point: a row with both controls must still fire the
+  // navigation from the "go to" one.
+  const preAuthRow = row("surgical_pre_auth:documents");
+  await userEvent.click(within(preAuthRow).getByTestId("action-goto"));
 
-  expect(navigated).toEqual(["bills"]);
+  expect(navigated).toEqual(["documents"]);
 });
 
 test("a seam control is disabled and cannot navigate anywhere", async () => {

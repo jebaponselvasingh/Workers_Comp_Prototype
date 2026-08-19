@@ -75,9 +75,19 @@ services:
       # them off at import; they are repeated here so the container is closed
       # even before Python starts, and because `environment:` outranks the
       # `env_file:` above, where an inherited value would otherwise land.
+      # All six names `config.py::_TRACING_ENV_OFF` forces, not a subset:
+      # `langsmith.utils.get_env_var` reads the `LANGSMITH_*` spelling first and
+      # falls back to `LANGCHAIN_*`, and `*_OTEL_ENABLED` is a second exporter —
+      # so three of them left the door the comment above claims is closed only
+      # half shut (follow-up review of Story 6.2, C5). The import-time overwrite
+      # covers them either way; this is the layer that does not depend on any
+      # Python having run.
       LANGSMITH_TRACING: "false"
+      LANGSMITH_TRACING_V2: "false"
+      LANGCHAIN_TRACING: "false"
       LANGCHAIN_TRACING_V2: "false"
       LANGSMITH_OTEL_ENABLED: "false"
+      LANGCHAIN_OTEL_ENABLED: "false"
     depends_on:
       postgres:
         condition: service_healthy

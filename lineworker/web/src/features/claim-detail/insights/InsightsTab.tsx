@@ -35,6 +35,7 @@
  * schema, the API and this tab all say the same thing, and the honest way to
  * change a narrative is to regenerate it.
  */
+import type { ClaimInsights, InsightKind as InsightKindToken } from "@/api/claims";
 import { useClaimInsights, useRefreshInsights } from "@/api/claims";
 
 import { CardGrid } from "../Cards";
@@ -64,6 +65,48 @@ import { SimilarCaseInsightCard } from "./SimilarCaseInsightCard";
  */
 const REFRESH_FAILED =
   "⚠ These insights could not be regenerated. Try again in a moment.";
+
+/**
+ * What a partial refresh reads like, given which cards it left behind.
+ *
+ * Split out of the JSX because the sentence has two axes — one refused card or
+ * several, and whether the refused ones have a previous generation to fall back
+ * on — and four `?:` nested in a template literal is a sentence nobody can
+ * check by reading.
+ *
+ * The status comes from the payload rather than from the mutation: `status` is
+ * `"ready"` exactly when a narrative is stored, which is exactly the state in
+ * which "it still shows its previous generation" is a true thing to say.
+ */
+function partialNotice(
+  failedKinds: readonly InsightKindToken[],
+  cards: ClaimInsights,
+): string {
+  const status: Record<InsightKindToken, "ready" | "not_generated"> = {
+    similar_case_outcomes: cards.similarCaseOutcomes.status,
+    reserve_adequacy_review: cards.reserveAdequacyReview.status,
+    next_best_actions: cards.nextBestActions.status,
+    fraud_risk_indicators: cards.fraudRiskIndicators.status,
+  };
+  const anyPrevious = failedKinds.some((kind) => status[kind] === "ready");
+  const allPrevious = failedKinds.every((kind) => status[kind] === "ready");
+
+  if (failedKinds.length === 1) {
+    const label = INSIGHT_KIND_LABEL[failedKinds[0]];
+    return allPrevious
+      ? `The model could not regenerate ${label}. It still shows its previous generation.`
+      : `The model could not regenerate ${label}. It has not been generated yet.`;
+  }
+
+  const count = `${failedKinds.length} of these cards`;
+  if (allPrevious) {
+    return `The model could not regenerate ${count}. They still show their previous generation.`;
+  }
+  if (anyPrevious) {
+    return `The model could not regenerate ${count}. Any that were generated before still show that generation.`;
+  }
+  return `The model could not regenerate ${count}. They have not been generated yet.`;
+}
 
 function InsightsSkeleton() {
   return (
@@ -162,19 +205,26 @@ export function InsightsTab({ claimId }: { claimId: string }) {
       )}
 
       {refresh.isSuccess && refresh.data.failedKinds.length !== 0 && (
-        // A partial refresh — some cards regenerated, some refused. Not an
-        // error: the cards that were written are new and the ones that were not
-        // are still showing their previous generation. Saying which is the whole
-        // of M7: without it a handler watched one card stay unchanged and had no
-        // way to tell a refused kind from a button that did nothing.
+        // A partial refresh — some cards regenerated, some refused or never
+        // attempted. Not an error: the cards that were written are new. Saying
+        // which of the others were not is the whole of M7 — without it a
+        // handler watched a card stay unchanged and had no way to tell a
+        // refused kind from a button that did nothing.
+        //
+        // **What it says about those cards depends on whether they have one.**
+        // The sentence read "they still show their previous generation" for
+        // every kind, which is false in the common case and most false the
+        // first time anybody presses Refresh: a claim the scheduler has not
+        // reached has no previous generation, so the refused card is showing an
+        // empty state, not an older narrative (follow-up review of Story 6.2,
+        // C6). The status of each named card is on the payload this component
+        // already renders, so the distinction costs a lookup.
         <p
           role="status"
           data-testid="insights-partial"
           className="mb-[10px] text-[11px] text-warn"
         >
-          {refresh.data.failedKinds.length === 1
-            ? `The model could not regenerate ${INSIGHT_KIND_LABEL[refresh.data.failedKinds[0]]}. It still shows its previous generation.`
-            : `The model could not regenerate ${refresh.data.failedKinds.length} of these cards. They still show their previous generation.`}
+          {partialNotice(refresh.data.failedKinds, insights.data)}
         </p>
       )}
 

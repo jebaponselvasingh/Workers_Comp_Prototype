@@ -10,9 +10,17 @@
  *
  * **Two states below "generated", and they are different facts.** A card whose
  * search found nothing says so — `bookIsEmpty` is the server's boolean, not
- * `neighbours.length === 0` worked out here — because "no comparable claims in
- * this caseload" is an answer about the caller's book, and rendering an empty
- * table would read as a load that never finished.
+ * `neighbours.length === 0` worked out here — because "no comparable claims at
+ * this employer" is an answer, and rendering an empty table would read as a
+ * load that never finished.
+ *
+ * **The set is the subject claim's employer, not the reader's caseload.** Story
+ * 6.2's review narrowed the gather to the claim's own employer partition,
+ * because this card is a shared cache row served to everyone who can see the
+ * claim; the empty-state sentence went on saying "this caseload", which for a
+ * handler covering two employers names a larger set than the one that was
+ * searched (follow-up review, B9). The server's prompt says the same thing, so
+ * the two halves of the card agree about what it is a list of.
  *
  * **The staleness disclosure is a row, not a footnote** (AD-12). When any
  * neighbour's vector is flagged stale or older than the deployment's disclosure
@@ -34,7 +42,8 @@ export function SimilarCaseInsightCard({ content }: { content: SimilarCaseConten
 
       {content.bookIsEmpty ? (
         <p data-testid="insight-similar-none" className="mt-[8px] text-[11.5px] text-faint">
-          No comparable claims were found in this caseload to compare against.
+          No comparable claims were found at this claim&apos;s employer to
+          compare against.
         </p>
       ) : (
         <div className="mt-[8px] flex flex-col">

@@ -147,6 +147,33 @@ def format_comp_rate(basis_points: int) -> str:
     return f"{whole}.{hundredths:02d}"
 
 
+def format_exposure_ratio(basis_points: int) -> str:
+    """An exposure ratio in basis points as a percentage — `11500` → `"115.00%"`.
+
+    A separate function from `format_comp_rate` despite doing the same
+    arithmetic, and the separation is the point (follow-up review of Story 6.2,
+    C4). The two are different *figures*: a comp rate is a statutory fraction
+    of a wage and renders as a bare number beside a `%` the UI supplies, while
+    `ReserveCheck.ratio_bp` is remaining exposure against the reserve — a
+    quantity that can exceed 100 and that reads as a percentage on its own.
+    They agree numerically today, which is exactly why one being used for the
+    other went unnoticed: `agents/tools/reserve.py` built `f"{format_comp_rate
+    (ratio_bp)}%"`, which is right by coincidence and would stay right until
+    somebody changed how a comp rate is written.
+
+    The sign is kept and rendered as it comes: a ratio is a comparison, and a
+    negative one would be a fact about the claim rather than something a
+    formatter should tidy away.
+
+    Here rather than in `agents/` because AD-13's rule is that a display string
+    is produced once, by the layer that owns the figure — and the layer that
+    owns `ratio_bp` is this one.
+    """
+    whole, hundredths = divmod(abs(basis_points), BASIS_POINTS_PER_PERCENT)
+    sign = "-" if basis_points < 0 else ""
+    return f"{sign}{whole}.{hundredths:02d}%"
+
+
 def reserve_rationale(
     claim: RationaleClaim,
     *,

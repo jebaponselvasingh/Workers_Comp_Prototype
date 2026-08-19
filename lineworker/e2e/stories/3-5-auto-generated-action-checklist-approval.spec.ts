@@ -89,9 +89,15 @@ function actionRow(page: Page, id: string) {
  *
  * Searched rather than hardcoded for `tests/test_payment_approval.py`'s
  * reason: which seeded claim carries which trigger is a property of the
- * dataset. The scan is bounded because the assertion is about one claim, and
- * an unbounded one would fetch a hundred checklists to prove something about
- * the first.
+ * dataset.
+ *
+ * **Unbounded**, and it was capped at the first 25 until the follow-up review
+ * of Story 6.2 (C2). The book has grown to 45, both callers assert
+ * `expect(found).toBeDefined()`, and the 6-2 spec's own sibling search scans
+ * the whole queue — so the cap was a way for two specs looking for the same
+ * kind of claim to disagree, and for a real "no claim raises this row" to read
+ * as one. The cost of removing it is a handful of extra checklist reads on a
+ * seeded stack.
  */
 /**
  * Every claim id in the caller's book, in id order.
@@ -100,7 +106,7 @@ function actionRow(page: Page, id: string) {
  * because the SIU escalation trigger cuts across status: it fires on a stored
  * fraud score, so the claims that raise it are spread through the book and a
  * list built from one status would be a search that could only find them by
- * luck. Sorted so `claimWithRule`'s bounded scan looks at the same claims on
+ * luck. Sorted so `claimWithRule` visits the same claims in the same order on
  * every run — the reproducibility AD-15 rests on.
  */
 async function bookOf(page: Page): Promise<string[]> {
@@ -119,7 +125,7 @@ async function claimWithRule(
   claimIds: string[],
   key: string,
 ): Promise<{ claimId: string; action: Action } | undefined> {
-  for (const claimId of claimIds.slice(0, 25)) {
+  for (const claimId of claimIds) {
     const found = (await checklistOf(page, claimId)).items.find((item) => item.key === key);
     if (found) return { claimId, action: found };
   }

@@ -573,3 +573,50 @@ async def test_a_background_job_that_raises_is_logged_rather_than_orphaned() -> 
         # re-raised into the event loop.
         assert await runner.in_flight["boom"] is None
         assert runner.in_flight["boom"].exception() is None
+
+
+async def test_shutdown_waits_for_an_in_flight_background_job_to_end() -> None:
+    """B8: cancelling is not waiting, and the lifespan disposes the engine next.
+
+    `run_forever` cancels its background tasks when it is itself cancelled, and
+    that was taken for the whole of the shutdown. It is not: `Task.cancel()`
+    schedules the interrupt, the task does not see it until the loop next runs
+    it, and the lifespan's very next statement is `engine.dispose()` — so a
+    background insight run reached its session's cleanup after the engine
+    underneath it had gone, which appears at shutdown as an asyncpg error with
+    no obvious cause.
+
+    Asserted on what the job itself observes rather than on the task's state: a
+    `shutdown()` that only cancelled would return with `cleaned` still false,
+    because the `finally` had not run yet.
+    """
+    started = asyncio.Event()
+    cleaned = False
+
+    async def slow() -> None:
+        nonlocal cleaned
+        started.set()
+        try:
+            await asyncio.sleep(3600)
+        finally:
+            # One await inside the cleanup, which is what a session's
+            # `__aexit__` is and what makes "the task was cancelled" a weaker
+            # statement than "the task has finished".
+            await asyncio.sleep(0)
+            cleaned = True
+
+    runner = JobRunner(tick_seconds=1)
+    runner.register(ScheduledJob(name="slow", due=lambda *_: True, run=slow, background=True))
+
+    async with asyncio.timeout(5):
+        assert await runner.tick(at("mon")) == ("slow",)
+        await started.wait()
+
+        await runner.shutdown()
+
+        assert cleaned, "shutdown returned before the background job's cleanup had run"
+        assert runner.in_flight["slow"].done()
+
+    # Idempotent: a second call on a finished registry is a no-op, which is what
+    # lets the lifespan call it unconditionally.
+    await runner.shutdown()

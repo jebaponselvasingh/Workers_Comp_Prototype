@@ -87,6 +87,24 @@ selects claims. And no failure counter: the ordering already de-prioritises a
 failing claim, and a counter would be a second piece of state to decide when to
 reset.
 
+**Writes to it emit no `audit_event`, and the exemption is argued rather than
+assumed.** AD-4 is stated without a carve-out, so a table that is written and
+committed on every tick with no event beside it has to say why. An audit trail
+answers "who changed what, and when"; this table records neither a change nor a
+fact about a claim, only that a *scheduler* looked at one — the same class of
+thing as a cursor position or the contents of a work queue, and nothing else in
+this build audits one of those. What a refresh actually produced is audited, as
+`ai_insight.generated`, once per card, with the claim, the kind and the model.
+
+The cost of the alternative is what settles it: one event per claim per tick,
+in the table Epic 8's retention and review pass reads, over the whole book on a
+configured interval — a flood of "a job ran" burying the events that say a
+model wrote something into the case file's neighbourhood. `AiInsightAttempt`'s
+class docstring carries the same paragraph and
+`tests/test_ai_insights.py::test_the_attempt_cursor_is_deliberately_unaudited`
+asserts it, so the decision is falsifiable rather than invisible (follow-up
+review of Story 6.2, B5).
+
 ## The enum is written out literally
 
 `insight_kind`'s four members appear below as strings rather than imported from

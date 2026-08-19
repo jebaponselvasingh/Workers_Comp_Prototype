@@ -360,8 +360,18 @@ test.describe("@story:6-2 @epic:6 AI insight cache and Insights tab", () => {
       // **No claim changed.** The cards are this claim's, and the claim the
       // payload named has none — checked through the API rather than the
       // database, so it is the answer a caller would actually get.
+      // Only the out-of-scope claim id, which is a real check: the similar-case
+      // card persists neighbour claim ids and employer names, so a scope leak
+      // would put one here.
+      //
+      // The sibling `not.toContain("250,000")` is gone. The stub emits `_words()`
+      // filler and has no way to write a dollar amount, so the assertion could
+      // not fail — the same vacuous check the previous pass removed from the
+      // unit suite and left standing one layer up (follow-up review of Story
+      // 6.2, C1). Where the injected figure *can* land is the prompt, and
+      // `tests/test_prompt_injection_fixtures.py` asserts it there against the
+      // persisted figures a live service call produces.
       const stored = JSON.stringify(await insightsOf(page, claimId));
-      expect(stored).not.toContain("250,000");
       expect(stored).not.toContain(outOfScope);
 
       // **No scope changed.** The claim the payload asked to be written about

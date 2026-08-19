@@ -213,22 +213,31 @@ def _words(path: str, prompt: str, length: int) -> str:
 def _resolve(schema: dict[str, Any], root: dict[str, Any]) -> dict[str, Any]:
     """Follow a local `$ref` into `$defs`, through an `allOf` wrapper if there is one.
 
-    Pydantic emits a `$ref` per nested model — and wraps it in a single-element
-    `allOf` whenever the *field* carries anything of its own (a `description`, a
-    `default`, a `title`), because JSON Schema draft 2020-12 forbids siblings
-    beside `$ref` in some dialects and Pydantic plays safe. So the two shapes
+    A nested model is a `$ref`, and a *described* nested model is a `$ref` with
+    something beside it. Which shape that "something beside it" takes is a
+    property of the emitter, and there are two in circulation:
 
-        {"$ref": "#/$defs/MoneyFigure"}
-        {"allOf": [{"$ref": "#/$defs/MoneyFigure"}], "description": "…"}
+        {"$ref": "#/$defs/MoneyFigure", "description": "…"}      ← siblings
+        {"allOf": [{"$ref": "#/$defs/MoneyFigure"}], "…": "…"}   ← wrapper
 
-    are the same field, and only the first was handled. The second fell through
-    to the string branch, so the stub answered a nested model with a sentence,
-    the api's `with_structured_output` refused it, and **every** e2e generation
-    broke — silently, on the first narrative schema whose nested field acquired
-    a description (review of Story 6.2, M11).
+    **This build emits the first.** `uv.lock` pins pydantic 2.13.4, which puts
+    `description` and `title` straight beside the `$ref` under draft 2020-12,
+    where siblings are legal. The sibling form has always worked here — the
+    `$ref` lookup below simply ignores the neighbours — so the failure this
+    branch was added for (review of Story 6.2, M11) is not one the pinned
+    version can produce, and the docstring said otherwise until the follow-up
+    review checked (B3).
 
-    Only the *first* branch is followed. A real `allOf` intersection of two
-    object schemas is not something Pydantic emits for the models in
+    The `allOf` branch stays anyway, and deliberately: older Pydantic, and any
+    other JSON-Schema producer this stub is ever pointed at, wrap rather than
+    nest, and the cost of the branch is four lines against a failure mode that
+    is silent (the stub answers a nested object with a sentence, the api's
+    `with_structured_output` refuses it, and *every* e2e generation breaks with
+    no clue as to why). A dependency bump is exactly the kind of change nobody
+    would think to re-test this against.
+
+    Only the *first* branch of an `allOf` is followed. A real intersection of
+    two object schemas is not something Pydantic emits for the models in
     `server/agents/schemas.py`, and a stub that tried to merge constraints would
     be reimplementing a validator; taking branch one keeps the walk total and
     keeps a wrong answer loud (the api validates what comes back) rather than
@@ -287,7 +296,15 @@ def synthesize(schema: dict[str, Any], root: dict[str, Any], path: str, prompt: 
         return {
             name: synthesize(properties[name], root, f"{path}.{name}", prompt)
             for name in properties
-            if name in required
+            # Required, **or a discriminator.** A tagged union's tag field
+            # carries a default in Pydantic, so it is emitted with a `const` and
+            # left out of `required` — and an instance without it cannot be
+            # narrowed to a branch at all ("Unable to extract tag"). Answering
+            # only the required properties therefore produced an object no
+            # discriminated union could validate, which is a shape this stub is
+            # otherwise perfectly able to fill: the `const` says exactly what the
+            # value has to be.
+            if name in required or "const" in _resolve(properties[name], root)
         }
 
     if kind == "array":

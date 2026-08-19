@@ -72,13 +72,15 @@ discipline in the database: it records *that* a narrative was generated, for
 which claim and which kind, by which model — and not one word of what it said.
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
+import sqlalchemy as sa
 import structlog
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from data.context import CallerContext
 from data.models.enums import InsightKind
@@ -98,6 +100,17 @@ ALL_KINDS: tuple[InsightKind, ...] = tuple(InsightKind)
 #: Epic 8's audit review filters on it and a second spelling somewhere would be
 #: a class of events that review never sees.
 INSIGHT_GENERATED_ACTION = "ai_insight.generated"
+
+#: The first key of the PostgreSQL advisory lock `store_insights` takes per
+#: claim — an arbitrary constant that means "insight generation", so that this
+#: lock cannot collide with any other advisory lock a later story invents. The
+#: second key is the claim's surrogate id.
+#:
+#: An advisory lock rather than a row lock because there is no row to lock: the
+#: thing being serialised is a *run*, most of which is four HTTP requests to a
+#: model server, and holding a row for that long is the arrangement the Story
+#: 6.2 review took apart (H2).
+_INSIGHT_LOCK_NAMESPACE = 60_002
 
 
 class InsightGenerationError(RuntimeError):
@@ -199,14 +212,22 @@ class InsightRun:
     a question the cache itself answers, without putting claim ids in a log line
     (AD-11).
 
-    **`failed_kinds` names which cards were refused**, added by the Story 6.2
-    review (M7). A count alone made a partially successful refresh
+    **`failed_kinds` names which cards this run did not deliver**, added by the
+    Story 6.2 review (M7). A count alone made a partially successful refresh
     indistinguishable from a clean one at the API: three of four written
     answered 200 with a fresh payload, and the fourth card silently kept reading
     `not_generated` with no way for the tab to say why the button the handler
     pressed had not filled it. A kind token is not PHI and is not content — it
     is the same vocabulary the payload is already keyed by — so it can be
     published where the narrative cannot.
+
+    **"Did not deliver" is wider than `failed`, deliberately.** A run stops at
+    the first kind whose failure was the model server, so the kinds after it are
+    never attempted — they are not counted in `failed`, which is rows that were
+    tried, but they *are* named here, because a caller asking "which cards did
+    my Refresh not fill?" wants the same answer for both (follow-up review of
+    Story 6.2, B7). The two numbers beside this tuple are what separate them:
+    `failed` counts attempts, `len(failed_kinds)` counts absences.
 
     Deduplicated and in enum order rather than in failure order, because for a
     batch run the same kind can fail on many claims and a reader wants the set.
@@ -259,6 +280,14 @@ async def store_insights(
     card and its audit event are one transaction, and there was never anything
     spanning two cards that a single commit was protecting.
 
+    **One run per claim at a time, enforced by a PostgreSQL advisory lock.** The
+    scheduled job and this route are two callers of one function, and with a
+    commit per kind two of them on one claim leave its four rows carrying two
+    different `generated_at` values — half a card set from each run (follow-up
+    review of Story 6.2, B10). The second caller **yields**: it returns an empty
+    run rather than waiting, because the cards it wanted are the ones the run in
+    progress is writing. `_claim_generation_lock` argues the mechanism.
+
     **The attempt is recorded first, and committed before any generation.** That
     row is what stops one claim starving the portfolio: `select_claims_needing_
     insights` orders by it, so a claim that has just been tried goes to the back
@@ -279,37 +308,57 @@ async def store_insights(
     if claim_pk is None:
         raise ClaimNotVisible(claim_business_id)
 
-    model = generator.model
-    at = datetime.now(UTC)
-    await insight_repo.record_insight_attempt(db, ctx, claim_pk=claim_pk, attempted_at=at)
-    await db.commit()
+    async with _claim_generation_lock(db, claim_pk=claim_pk) as acquired:
+        if not acquired:
+            # Another run holds this claim. Yielding is the answer rather than
+            # waiting: whatever that run writes is what this caller wanted, and
+            # blocking an interactive request behind four chat timeouts to
+            # duplicate it is the worse trade (B10).
+            log.info("rag.insight_refresh_already_running", claim_id=claim_business_id)
+            return InsightRun(claims=1, written=0, failed=0, model_unavailable=False)
 
-    written = 0
-    failed = 0
-    unavailable = False
-    refused: list[InsightKind] = []
+        model = generator.model
+        at = datetime.now(UTC)
+        await insight_repo.record_insight_attempt(db, ctx, claim_pk=claim_pk, attempted_at=at)
+        await db.commit()
 
-    for kind in kinds:
-        outcome = await _attempt(
-            db,
-            ctx,
-            claim_pk=claim_pk,
-            claim_business_id=claim_business_id,
-            kind=kind,
-            generator=generator,
-            model=model,
-            at=at,
-        )
-        written += outcome.written
-        failed += outcome.failed
-        if outcome.failed:
-            refused.append(kind)
-        if outcome.unavailable:
-            unavailable = True
-            # The kinds after this one were never attempted, so they are not
-            # counted as failures — they are simply still pending, which is what
-            # the next tick and the next Refresh both act on.
-            break
+        written = 0
+        failed = 0
+        unavailable = False
+        refused: list[InsightKind] = []
+
+        for index, kind in enumerate(kinds):
+            outcome = await _attempt(
+                db,
+                ctx,
+                claim_pk=claim_pk,
+                claim_business_id=claim_business_id,
+                kind=kind,
+                generator=generator,
+                model=model,
+                at=at,
+            )
+            written += outcome.written
+            failed += outcome.failed
+            if outcome.failed:
+                refused.append(kind)
+            if outcome.unavailable:
+                unavailable = True
+                # The kinds after this one are never attempted — a container
+                # that did not answer for this one will not answer for them —
+                # but they are *named* all the same (follow-up review of Story
+                # 6.2, B7).
+                #
+                # They are not counted in `failed`, which is rows this run tried
+                # and could not write; they are counted in `failed_kinds`, which
+                # is the question a caller is actually asking: which cards did
+                # this refresh not deliver? Without them a run that wrote one
+                # card and then lost the model answered 200 naming a single
+                # refused kind, while two more cards went on reading "not
+                # generated" with nothing anywhere to say they had never been
+                # tried.
+                refused.extend(kinds[index + 1 :])
+                break
 
     run = InsightRun(
         claims=1,
@@ -389,6 +438,56 @@ async def claims_needing_insights(
     )
 
 
+@asynccontextmanager
+async def _claim_generation_lock(db: AsyncSession, *, claim_pk: int) -> AsyncIterator[bool]:
+    """Hold a per-claim advisory lock for the length of one run. Yields whether it was won.
+
+    **Two refreshes of one claim can otherwise interleave** (follow-up review of
+    Story 6.2, B10). The scheduled job and `POST …/insights/refresh` reach this
+    same function, and each kind now commits on its own, so a claim generated by
+    both at once ends up with four rows carrying two different `generated_at`
+    values — half of a card set from one generation and half from another, with
+    the tab rendering two timestamps for what looks like one refresh. Nothing is
+    corrupt; it is simply not the thing a "generated at" is claiming to be.
+
+    `pg_try_advisory_lock` rather than the blocking form: the loser **yields**.
+    Waiting would put an interactive request behind up to four chat timeouts to
+    do work that is already being done, and the reader gets those cards either
+    way, a moment later, from the run that won.
+
+    **Session-scoped, on a connection of its own, and that combination is
+    forced.** A transaction-scoped `pg_try_advisory_xact_lock` would be released
+    by the first per-kind commit, which is most of what needs protecting; a
+    session-scoped lock taken on `db` would ride a connection SQLAlchemy hands
+    back to the pool at that same commit, leaking the lock onto whatever asks
+    for that connection next. So the lock lives on a connection this function
+    checks out and returns itself, in `AUTOCOMMIT` so it is never the
+    idle-in-transaction hold H2 removed. The cost is one extra pooled connection
+    per claim being generated, and generation is serial within a run.
+
+    A bind that is not an `AsyncEngine` — a session constructed around a single
+    connection, which is a shape this build does not use but the type admits —
+    yields `True` unlocked rather than failing: refusing to generate because a
+    lock could not be *taken* would be worse than the interleaving it prevents.
+    """
+    bind = db.bind
+    if not isinstance(bind, AsyncEngine):  # pragma: no cover - not a shape this build builds
+        yield True
+        return
+
+    lock_key = sa.select(sa.func.pg_try_advisory_lock(_INSIGHT_LOCK_NAMESPACE, claim_pk))
+    async with bind.connect() as conn:
+        await conn.execution_options(isolation_level="AUTOCOMMIT")
+        acquired = bool(await conn.scalar(lock_key))
+        try:
+            yield acquired
+        finally:
+            if acquired:
+                await conn.scalar(
+                    sa.select(sa.func.pg_advisory_unlock(_INSIGHT_LOCK_NAMESPACE, claim_pk))
+                )
+
+
 @dataclass(frozen=True)
 class _Outcome:
     """One kind's result: whether it was written, and why it was not."""
@@ -438,10 +537,18 @@ async def _attempt(
 
     A commit rather than a savepoint, which is a stronger form of the same
     isolation: a later kind that fails cannot unwind this one, because this one
-    is already durable. A failure inside the write rolls back explicitly, so the
-    session is usable for the next kind rather than poisoned into
-    `PendingRollbackError` — the failure the savepoint was originally there to
-    prevent, prevented the same way.
+    is already durable.
+
+    **Every failure path rolls back, including the gather's.** A failure inside
+    the write always did; the gather's did not, and that asymmetry was a defect
+    (follow-up review of Story 6.2, A2). The gather reads the case file, the
+    reserve check, the checklist and the neighbour list — four scoped queries,
+    each of which can raise — and a session left in a failed transaction poisons
+    not just the remaining three kinds of this claim but the next claim in the
+    batch, every one of them raising `PendingRollbackError` from a line that has
+    nothing to do with the original fault. Rolling back before returning is what
+    keeps "one kind failed" a statement about one kind, which is the whole
+    premise of counting them separately.
 
     Nothing is re-raised except a permanent configuration error. A refresh that
     could not reach the model is a *reported* outcome rather than an exception —
@@ -461,6 +568,7 @@ async def _attempt(
         # never the completion, never the exception's own text — for a transport
         # error that text can carry a request body, and a request body here
         # contains claim narrative (AD-11).
+        await db.rollback()
         log.warning(
             "rag.insight_generation_failed",
             claim_id=claim_business_id,
@@ -476,6 +584,7 @@ async def _attempt(
         # rather than allowed to take the run down, and logged by exception
         # *class* for the reason `services/jobs.py` makes the same choice: a
         # message can echo a value.
+        await db.rollback()
         log.error(
             "rag.insight_generation_failed",
             claim_id=claim_business_id,

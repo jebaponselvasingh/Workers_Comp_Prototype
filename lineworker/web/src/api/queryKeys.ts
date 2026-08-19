@@ -252,6 +252,24 @@ export const queryKeys = {
     documentSheet: (claimId: string, documentId: number) =>
       ["claims", "detail", claimId, "document", documentId] as const,
     /**
+     * Every open document sheet of one claim — the prefix, not a query.
+     *
+     * Nothing fetches under this key; it exists so `markCaseFileStale` can
+     * reach the sheets without knowing which documents happen to be cached.
+     * The docstring above says the nesting exists precisely so a case-file
+     * edit can reach them, and once that helper replaced the old prefix
+     * invalidation with three exact ones, it no longer could (follow-up review
+     * of Story 6.2, B1) — a claim edited while a FROI viewer was open left the
+     * viewer showing the pre-edit injury type until it was closed and
+     * reopened.
+     *
+     * A named entry rather than an inline array literal at the call site, for
+     * the reason this module exists at all: a key spelled in two places is a
+     * key that stops matching the day one of them changes.
+     */
+    documentSheets: (claimId: string) =>
+      ["claims", "detail", claimId, "document"] as const,
+    /**
      * One claim's Bills & Payments read model (Story 3.3).
      *
      * Nested under the claim's own segment, `documentSheet`'s arrangement and

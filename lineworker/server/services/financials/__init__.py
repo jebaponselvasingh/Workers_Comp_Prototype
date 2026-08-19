@@ -73,7 +73,12 @@ from services.financials.materialize import (
     materialize_schedule,
     plan_materialization,
 )
-from services.financials.rationale import format_comp_rate, format_dollars, reserve_rationale
+from services.financials.rationale import (
+    format_comp_rate,
+    format_dollars,
+    format_exposure_ratio,
+    reserve_rationale,
+)
 from services.financials.reserve import (
     CLOSED_FINAL_RATIONALE,
     ZERO_RESERVE_CLEAR_RATIO_BP,
@@ -155,6 +160,7 @@ __all__ = [
     "line_item_is_approvable",
     "format_comp_rate",
     "format_dollars",
+    "format_exposure_ratio",
     "materialize_schedule",
     "plan_materialization",
     "project_payments",

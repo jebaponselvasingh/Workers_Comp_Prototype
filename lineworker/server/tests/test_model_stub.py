@@ -3,22 +3,25 @@
 `deploy/model-stub/app.py` is the deterministic Ollama stand-in the e2e profile
 runs against. It lives outside `server/` so application code can never import it
 — but nothing else in the build could tell whether it *works*, and that turned
-out to matter: the Story 6.2 review found that it did not handle the `allOf`
-wrapper Pydantic emits for a nested model with a description, so the first
-narrative schema to grow one would have broken every e2e generation at once,
-silently, with a structured-parse failure and no clue as to why (M11).
+out to matter twice: the Story 6.2 review found it could not follow a `$ref`
+wrapped in `allOf` (M11), and the follow-up review found it answered no
+discriminator for a tagged union, so the fraud card's stored shape could not be
+synthesized at all (B2). Both failures are silent — a structured-parse refusal
+with no clue as to why — and both would appear under e2e as empty cards.
 
-Two halves, and they fail for different reasons:
+Three halves, and they fail for different reasons:
 
-1. **The construct in isolation.** `allOf` around a `$ref`, which is the shape
-   that was unhandled. Written as a literal schema so the assertion says what it
-   is about rather than depending on which of `agents/schemas.py`'s fields
-   happens to carry a description today.
+1. **The constructs in isolation.** The `allOf` wrapper as a literal, because
+   this build's Pydantic does not emit one and the branch is a guard against a
+   future emitter; the sibling `$ref` form taken from the real
+   `model_json_schema()`, because that *is* what this build emits.
 2. **Every schema the stub is actually sent**, round-tripped: synthesize an
    instance from the real `model_json_schema()` and validate it back through the
    real model. That is the property the e2e suite depends on and the one nothing
    asserted — and it keeps working as the schemas change, which a hand-written
    fixture would not.
+3. **The one union**, which is the only `const` in this build's schemas and so
+   the only exercise that branch of the walker gets.
 
 The module is loaded **by path**, `test_ai_insight_migration.py`'s device for
 Alembic's script directory and for the same reason: `deploy/model-stub/` is not
@@ -32,11 +35,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, Field, TypeAdapter
 
 from agents.schemas import (
     NARRATIVE_SCHEMAS,
-    FraudLowRiskNarrative,
+    FraudRiskInsight,
     MoneyFigure,
 )
 
@@ -57,23 +60,35 @@ stub = _load_stub()
 class _Nested(BaseModel):
     """A model with a nested field carrying a description.
 
-    Which is the whole fixture: Pydantic wraps a `$ref` in a single-element
-    `allOf` whenever the field has anything of its own beside it, and that is
-    what a `Field(description=…)` on a nested model produces. Every card model
-    in `agents/schemas.py` documents its fields, so this shape is one field
-    declaration away at all times.
+    Which is the whole fixture: a described nested model is a `$ref` with
+    something beside it, and that is what a `Field(description=…)` produces.
+    Every card model in `agents/schemas.py` documents its fields, so this shape
+    is one field declaration away at all times.
+
+    **What "beside it" looks like depends on the emitter**, and the two tests
+    below take one form each — see `_resolve` in the stub. The pinned pydantic
+    puts the description straight beside the `$ref`; older versions and other
+    producers wrap it in a single-element `allOf`.
     """
 
-    figure: MoneyFigure
+    figure: MoneyFigure = Field(description="the money")
 
 
 def test_the_walker_follows_an_allof_wrapped_ref() -> None:
-    """The construct that was unhandled, asserted as a literal.
+    """The wrapper form, asserted as a literal — and it is a literal on purpose.
 
-    Before the fix `_resolve` looked only for a bare `$ref`, so a wrapped one
-    fell through every branch to the string default — the stub answered a nested
-    *object* with a sentence, `with_structured_output` refused it, and the kind
-    failed to generate. In the e2e profile that is every card of every claim.
+    `_resolve` looked only for a bare `$ref` once, so a wrapped one fell through
+    every branch to the string default: the stub answered a nested *object* with
+    a sentence, `with_structured_output` refused it, and the kind failed to
+    generate. In the e2e profile that is every card of every claim.
+
+    **The literal is the whole fixture, because this build does not emit this
+    shape.** The second half of this test used to claim to assert "the same
+    schema Pydantic actually emits" and contained no `allOf` at all — pydantic
+    2.13.4 emits siblings — so it exercised the plain `$ref` branch while
+    reading as coverage of the wrapper (follow-up review of Story 6.2, B3). The
+    sibling form now has its own test below, and this one is honest about being
+    a guard against a *future* emitter rather than the current one.
 
     Asserted on the synthesized value's shape rather than on its contents: the
     strings are hash-derived filler and no test in this build asserts on those.
@@ -101,9 +116,30 @@ def test_the_walker_follows_an_allof_wrapped_ref() -> None:
         "against a nested narrative schema would fail its structured parse"
     )
     assert set(produced["figure"]) == {"cents", "display"}
-    # And the same schema Pydantic actually emits, so this does not depend on a
-    # hand-written approximation of the wrapper staying accurate.
+
+
+def test_the_walker_follows_the_ref_with_siblings_this_build_actually_emits() -> None:
+    """The shape the pinned Pydantic produces, taken from the pinned Pydantic.
+
+    Not hand-written, which is the point: the emitted form is a property of a
+    dependency, and a literal fixture would go on asserting the 2026 spelling
+    long after a bump changed it. The assertion is that whatever comes out of
+    `model_json_schema()` walks into something the model validates — which is
+    exactly what the api asks of the stub under e2e.
+
+    The `description` beside the `$ref` is asserted first, so that a Pydantic
+    version that started wrapping would fail *here*, with a message naming the
+    change, rather than in the round-trip below.
+    """
     emitted = _Nested.model_json_schema()
+    field = emitted["properties"]["figure"]
+
+    assert "$ref" in field and "allOf" not in field, (
+        "this Pydantic wraps a described $ref in allOf — the sibling form this "
+        "test is about is no longer what the api sends the stub"
+    )
+    assert field["description"] == "the money"
+
     _Nested.model_validate(stub.synthesize(emitted, emitted, "", "prompt"))
 
 
@@ -131,13 +167,38 @@ def test_the_fraud_discriminated_union_round_trips_too() -> None:
     """The one card whose stored shape is a union rather than a class.
 
     `agents/schemas.py` makes the fraud card a discriminated union on `outcome`,
-    which renders as a `const` in each branch's schema — so a stub that ignored
-    `const` would answer a discriminator the union cannot narrow, and the failure
-    would be confined to the one kind AC 3 is about. The union is not in
-    `NARRATIVE_SCHEMAS` (those are the *narrative* halves), so it is asserted on
-    its own.
-    """
-    emitted = FraudLowRiskNarrative.model_json_schema()
-    adapter = TypeAdapter(FraudLowRiskNarrative)
+    which renders as a `oneOf` over two branches plus a `const` per branch — the
+    only `const` anywhere in this build's schemas, and so the only exercise the
+    stub's `const` handling gets.
 
-    adapter.validate_python(stub.synthesize(emitted, emitted, "", "a prompt"))
+    **This test named the union and then tested `FraudLowRiskNarrative`**, which
+    is a plain class with two prose fields, no `const`, no union, and its own
+    entry in the parametrized round-trip above (follow-up review of Story 6.2,
+    B2). It could not fail for the reason it gave, and the branch it claimed to
+    cover had no coverage at all — which is how the actual gap survived: the
+    discriminator carries a default, so Pydantic emits it with a `const` and
+    leaves it out of `required`, and a walker that answered only the required
+    properties produced an object the union refused with "Unable to extract
+    tag". The stub now answers a `const` property whether or not it is required.
+
+    The union is not in `NARRATIVE_SCHEMAS` — those are the *narrative* halves,
+    the part a model is actually asked to write — so it is asserted on its own,
+    and what it guards is the stub's ability to fill the shape rather than a
+    request the e2e profile makes today.
+    """
+    adapter: TypeAdapter[Any] = TypeAdapter(FraudRiskInsight)
+    emitted = adapter.json_schema()
+
+    assert "oneOf" in emitted and "discriminator" in emitted, (
+        "the fraud card stopped being a discriminated union — this test is about "
+        "the construct, not about the card"
+    )
+
+    produced = stub.synthesize(emitted, emitted, "", "a prompt")
+
+    assert isinstance(produced, dict)
+    assert produced["outcome"] in ("red_flags", "low_risk"), (
+        "the stub answered no discriminator — a tagged union cannot be narrowed "
+        "without one, whatever the rest of the object says"
+    )
+    adapter.validate_python(produced)

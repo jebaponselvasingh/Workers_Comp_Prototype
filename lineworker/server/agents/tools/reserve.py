@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agents.envelope import ToolResult
 from data.context import CallerContext
 from services.claims.detail import ClaimNotVisible, claim_detail
-from services.financials import ReserveCheck, format_comp_rate, format_dollars
+from services.financials import ReserveCheck, format_dollars, format_exposure_ratio
 
 
 async def reserve_check(
@@ -71,16 +71,18 @@ async def reserve_check(
     if check.projected_remaining_cents is not None:
         display["projectedRemainingCents"] = format_dollars(check.projected_remaining_cents)
     if check.ratio_bp is not None:
-        # The exposure ratio, formatted by the service that owns basis points
-        # (`services/financials.format_comp_rate` — the same function the
-        # comp-rate row is rendered through). It was an f-string in
-        # `agents/insights.py` until the Story 6.2 review pointed out that the
-        # package forbidden to originate a figure was formatting one, and that
-        # the string was reaching the prompt without passing through `display`
-        # at all (AD-2/AD-13).
+        # The exposure ratio, rendered by the service that owns it. It was an
+        # f-string in `agents/insights.py` until the Story 6.2 review pointed
+        # out that the package forbidden to originate a figure was formatting
+        # one; the follow-up review pointed out that moving it here had only
+        # moved the f-string, and that it was borrowing the *comp-rate*
+        # formatter for a quantity that is not a comp rate — right by
+        # arithmetic coincidence, and wrong the day either figure's rendering
+        # changes (C4). `format_exposure_ratio` is now the ratio's own, and it
+        # supplies the `%` because that is part of how this figure reads.
         #
         # Present exactly when `ratio_bp` is — which is exactly when the bills
         # are on file — so the absence of this key is itself the "there is no
         # ratio to quote" state rather than a second condition to remember.
-        display["ratioBp"] = f"{format_comp_rate(check.ratio_bp)}%"
+        display["ratioBp"] = format_exposure_ratio(check.ratio_bp)
     return ToolResult.succeeded(check, display=display)

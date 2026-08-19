@@ -183,6 +183,39 @@ test("a committed severity score marks the queue and the top-bar tiles stale", a
   expect(client.getQueryState(queryKeys.claims.queue("all"))?.isInvalidated).toBe(true);
 });
 
+test("a committed severity score reaches an open document sheet and spares the insights cache", async () => {
+  // The two halves of `markCaseFileStale`'s contract, which is "everything the
+  // old `claims.detail` prefix invalidation reached, except insights".
+  //
+  // The document sheet is the half that was silently lost when that helper
+  // replaced the prefix with three exact keys (follow-up review of Story 6.2,
+  // B1): a FROI renders the claim's injury type and ICD-10, both of them
+  // Story 2.3 editable fields, so a viewer left open across an edit showed the
+  // pre-edit values with nothing able to reach it. Its key carries a document
+  // id, so it is the one nested entry a helper cannot name exactly.
+  //
+  // Insights is the half that must *not* be reached — a narrative is a cache
+  // with its own timestamp (AD-10) and an edit dates it rather than
+  // invalidating it. Asserting both here is what keeps a future "just use a
+  // prefix again" from passing.
+  const client = await openTab();
+  client.setQueryData(queryKeys.claims.documentSheet("WC-20017", 41), {});
+  client.setQueryData(queryKeys.claims.insights("WC-20017"), {});
+
+  await commitSeverity("31");
+  await waitFor(() => expect(writesTo("/severity")).toHaveLength(1));
+
+  await waitFor(() =>
+    expect(
+      client.getQueryState(queryKeys.claims.documentSheet("WC-20017", 41))
+        ?.isInvalidated,
+    ).toBe(true),
+  );
+  expect(
+    client.getQueryState(queryKeys.claims.insights("WC-20017"))?.isInvalidated,
+  ).toBe(false);
+});
+
 test("one command in flight disables every editable control on the tab", async () => {
   // **The rule `useInlineEdits` documents, across four hooks rather than
   // within one** (code review, 2026-08-12). `expectedVersion` comes from the

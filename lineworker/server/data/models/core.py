@@ -1397,6 +1397,26 @@ class AiInsightAttempt(Base):
     No `version` column, `AiInsight`'s reason and more bluntly: nothing reads
     this but the queue, nothing edits it, and a whole-row replacement by a
     single writer has nothing for a CAS to protect.
+
+    **And no `audit_event` either, which is a decision rather than an
+    omission.** AD-4 is stated without a carve-out and every other write in this
+    build emits one, so the absence needs an argument and this is it: an audit
+    trail answers "who changed what, and when", and this table records neither a
+    change nor a fact about a claim. It records that a *scheduler* looked at a
+    claim — the same class of thing as the position of a cursor or the contents
+    of a work queue, which nothing else in this codebase audits either. The
+    audited fact is what a refresh produced, and `ai_insight.generated` carries
+    it, once per card, with the claim, the kind and the model.
+
+    Auditing the attempt as well would put one event per claim per tick into the
+    table Epic 8's retention and review pass reads, in a build whose scheduler
+    ticks on a configured interval over the whole book — a volume of events that
+    say "a job ran" drowning the events that say "a model wrote something into
+    the case file's neighbourhood", which is the one this design exists to keep
+    visible. `tests/test_ai_insights.py::test_the_attempt_cursor_is_deliberately
+    _unaudited` asserts the outcome so that the decision is falsifiable, and
+    `data/versions/20260820_0042_ai_insight.py` carries the same paragraph
+    (follow-up review of Story 6.2, B5).
     """
 
     __tablename__ = "ai_insight_attempt"

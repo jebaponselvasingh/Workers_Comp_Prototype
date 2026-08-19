@@ -3202,6 +3202,14 @@ export const APPROVAL_CONFLICT_PAID = {
  * state, an OSHA row, two enabled deep links, and a disabled seam row with its
  * sentence.
  *
+ * **Story 6.2 briefly made it seven**, by enabling the `fraud` row and adding an
+ * `overdue_rtw` seam beside it without taking anything out — a payload the
+ * server cannot emit, since `worklist_actions.v2.jdm.json` caps at six and the
+ * 3-5 e2e spec asserts `items.length <= cap` against a real one (follow-up
+ * review, C3). `bill_review` came out: it was the plainest of the three enabled
+ * deep links and the one whose branch `surgical_pre_auth` already covers, so
+ * the row budget pays for the seam the story actually needed.
+ *
  * **In the server's order, high first.** The card renders `items` as it
  * arrives; a fixture in a different order is how a component that re-sorted
  * would go unnoticed.
@@ -3271,18 +3279,6 @@ export const CLAIM_ACTIONS = {
         command: "mark_document_reviewed",
         documentId: 41,
         documentVersion: 2,
-      },
-      {
-        id: "bill_review:bills",
-        key: "bill_review",
-        label: "Review medical bills awaiting approval",
-        urgency: "medium",
-        target: "bills",
-        enabled: true,
-        disabledReason: null,
-        command: null,
-        documentId: null,
-        documentVersion: null,
       },
       {
         id: "osha_log:overview",
@@ -3399,7 +3395,7 @@ export const CLAIM_INSIGHTS = {
         bookIsEmpty: false,
         narrative: {
           summary:
-            "Two comparable claims in this caseload share the injury type and band.",
+            "Two comparable claims at this employer share the injury type and band.",
           takeaways: ["Both comparables returned to modified duty first."],
         },
         promptVersion: 1,

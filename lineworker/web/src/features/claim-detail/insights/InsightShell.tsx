@@ -62,13 +62,25 @@ export function InsightShell({
       </div>
 
       {/* Rendered only on a generated card, because there is nothing to date
-          otherwise — and a "generated —" row would read as a failed load. */}
+          otherwise — and a "generated —" row would read as a failed load.
+
+          `generatedAt` is not defensively re-checked inside this branch, and
+          the removal of that check is the point (follow-up review of Story 6.2,
+          C7): it rendered an em dash for a state the comment two lines up says
+          cannot happen, so the file both claimed the invariant and hedged
+          against it. It holds on the server — `CachedInsight.generated_at` is
+          non-optional by AD-10's rule that a narrative is always shown with its
+          time — and the prop is typed `string | null` only because the
+          not-generated slot shares this component. A `!` rather than a silent
+          fallback, so a build that broke the invariant fails loudly instead of
+          shipping a card dated "—". `model` keeps its check because it is
+          genuinely optional in the payload's other state. */}
       {status === "ready" && (
         <p
           data-testid={`${testId}-generated`}
           className="mt-[10px] border-t border-hairline pt-[6px] text-[10px] text-faint"
         >
-          Generated {generatedAt === null ? "—" : formatNotedAt(generatedAt)}
+          Generated {formatNotedAt(generatedAt!)}
           {model === null ? "" : ` · ${model}`}
         </p>
       )}

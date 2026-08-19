@@ -161,6 +161,37 @@ class JobRunner:
             await self._guarded(job)
         return tuple(ran)
 
+    async def shutdown(self) -> None:
+        """Cancel every in-flight background job and **wait for it to end**.
+
+        The waiting is the whole of it (follow-up review of Story 6.2, B8).
+        `run_forever` already asked its background tasks to stop when it was
+        cancelled, but `Task.cancel()` only *schedules* the cancellation: the
+        task does not see it until the loop next runs it, and the lifespan's
+        very next statement is `engine.dispose()`. So a background insight run
+        — the one job in this build that can be mid-completion for minutes —
+        got as far as its session's `__aexit__` after the engine underneath it
+        had been torn down, which surfaces as an asyncpg error at shutdown with
+        no obvious cause. That is precisely the failure the lifespan's own
+        `task.cancel(); await task` comment records for the scheduler task
+        itself; the background tasks are a second copy of it, and were left out.
+
+        `return_exceptions=True` because a cancelled task raises
+        `CancelledError` and a failing one has already been logged by
+        `_guarded` — neither is something a shutdown path should re-raise, and
+        an exception here would skip the `engine.dispose()` it is protecting.
+
+        Idempotent and safe on an empty registry, so the lifespan calls it
+        unconditionally rather than mirroring the scheduler's own start
+        condition.
+        """
+        pending = [task for task in self.in_flight.values() if not task.done()]
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+            log.info("scheduler.background_jobs_stopped", jobs=len(pending))
+
     async def _guarded(self, job: ScheduledJob) -> object:
         """Run one job, turning any exception into one operational log line.
 
@@ -191,12 +222,17 @@ class JobRunner:
         `task.cancel()` actually ends the task instead of looping through a
         `CancelledError` caught by a bare `except`.
 
-        **Background jobs are cancelled with it.** They are the one thing in
-        this module that outlives a tick, so they are also the one thing that
-        could outlive the engine the lifespan is about to dispose — which
-        surfaces as an asyncpg error at shutdown with no obvious cause. That is
-        precisely the failure the lifespan's own `task.cancel(); await task`
-        comment records, one level down.
+        **Background jobs are cancelled with it** — but cancelled is not
+        finished, and this method cannot wait for them: it is itself being
+        cancelled, so an `await` here has no promise of returning. Asking them
+        to stop is all that belongs on this path; `shutdown()` is the half that
+        waits, and the lifespan calls it after this task has ended (follow-up
+        review of Story 6.2, B8). Background jobs are the one thing in this
+        module that outlives a tick, so they are also the one thing that could
+        outlive the engine the lifespan is about to dispose — which surfaces as
+        an asyncpg error at shutdown with no obvious cause, precisely the
+        failure the lifespan's own `task.cancel(); await task` comment records
+        one level down.
         """
         log.info("scheduler.started", jobs=[job.name for job in self.jobs])
         try:

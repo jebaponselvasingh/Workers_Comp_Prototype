@@ -258,8 +258,14 @@ test("refresh installs the response and leaves the case file alone", async () =>
   await waitFor(() => {
     expect(screen.getByTestId("insight-similar-generated")).toBeInTheDocument();
   });
+  // The four cards, and **not** `failedKinds`: the key is typed `ClaimInsights`
+  // and the extra member is a fact about the run rather than about the cache,
+  // so writing the response whole left an entry describing a refresh that had
+  // long since finished (follow-up review of Story 6.2, C6).
+  const { failedKinds, ...cards } = CLAIM_INSIGHTS_REFRESHED.body;
+  expect(failedKinds).toEqual([]);
   expect(client.getQueryData(queryKeys.claims.insights(CLAIM_ID))).toEqual(
-    CLAIM_INSIGHTS_REFRESHED.body,
+    cards,
   );
   expect(
     client.getQueryData(queryKeys.claims.detail(CLAIM_ID)),
@@ -286,10 +292,40 @@ test("a partial refresh says which card the model refused", async () => {
 
   const notice = await screen.findByTestId("insights-partial");
   expect(notice).toHaveTextContent(INSIGHT_KIND_LABEL.fraud_risk_indicators);
+  // This claim's fraud card *has* a previous generation, so the sentence about
+  // one is true here — and the sibling test below is the case where it is not.
+  expect(notice).toHaveTextContent("still shows its previous generation");
   // Not an alert: nothing failed that the handler must act on, and the cards
   // are all still on screen.
   expect(notice).toHaveAttribute("role", "status");
   expect(screen.getByTestId("insight-fraud-generated")).toBeInTheDocument();
+});
+
+test("a partial refresh on a never-generated claim does not claim a previous generation", async () => {
+  // The common case, and the one the sentence was wrong about (follow-up review
+  // of Story 6.2, C6). Every claim starts with four `not_generated` cards, so
+  // the *first* Refresh anybody presses is exactly the run where "it still
+  // shows its previous generation" is false: there is no previous generation,
+  // and the refused card is showing an empty state.
+  //
+  // Asserted on the words rather than on the notice merely existing, because
+  // the defect was entirely in the words.
+  renderTab(CLAIM_INSIGHTS_NOT_GENERATED, {
+    status: 200,
+    body: {
+      ...CLAIM_INSIGHTS_NOT_GENERATED.body,
+      failedKinds: ["fraud_risk_indicators"],
+    },
+  });
+  await screen.findByTestId("insights-tab");
+
+  await userEvent.click(screen.getByTestId("insights-refresh"));
+
+  const notice = await screen.findByTestId("insights-partial");
+  expect(notice).toHaveTextContent(INSIGHT_KIND_LABEL.fraud_risk_indicators);
+  expect(notice).toHaveTextContent("has not been generated yet");
+  expect(notice).not.toHaveTextContent("previous generation");
+  expect(screen.getByTestId("insight-fraud-empty")).toBeInTheDocument();
 });
 
 test("a refused refresh renders the reason inline and keeps the cards standing", async () => {

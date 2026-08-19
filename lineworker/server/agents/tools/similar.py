@@ -96,7 +96,7 @@ async def similar_cases(
     k: int = NEIGHBOUR_COUNT,
     as_of: datetime | None = None,
 ) -> ToolResult[SimilarCases]:
-    """The nearest claims in the caller's book, with their freshness disclosed.
+    """The nearest claims at the subject claim's employer, with freshness disclosed.
 
     `ok=False` for a claim the caller cannot see, `reserve_check`'s rule and its
     reason. `ok=False` for an unreachable model server too — embedding the query
@@ -105,11 +105,18 @@ async def similar_cases(
     into the same "this kind did not generate" outcome either way.
 
     **An empty neighbour list is a success, not a failure.** A handler between
-    assignments has an empty book, and a scoped persona whose partition holds
-    one claim has no neighbours for it; both are real states and the insight
-    says so explicitly rather than rendering an empty card (the I/O matrix's
-    "empty book" row). `ok=False` there would have made "no similar cases" look
-    like a broken tool.
+    assignments has an empty book, and an employer partition holding one claim
+    has no neighbours for it; both are real states and the insight says so
+    explicitly rather than rendering an empty card (the I/O matrix's "empty
+    book" row). `ok=False` there would have made "no similar cases" look like a
+    broken tool.
+
+    **The set is the subject claim's employer partition, not the caller's book**
+    — see `subject_scoped_context` above and the narrowing argued in the module
+    docstring. Everything that describes this list to a reader or to a model has
+    to say so, and for a while did not (follow-up review of Story 6.2, B9): for
+    a handler covering two employers, "your caseload" names a strictly larger
+    set than the one that was searched.
 
     `as_of` is injectable for the reason every other clock in this codebase is:
     a staleness disclosure computed from `datetime.now()` is a test that has to
