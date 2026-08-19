@@ -3,7 +3,7 @@ title: 'Story 6.2 — AI Insight Cache & Insights Tab'
 type: 'feature'
 created: '2026-08-19'
 baseline_revision: '9fe1bc6a9eb70a356427ebe5384d4b1b2fd32764'
-final_revision: '2bc76803076be4d629b56276a0e5f33811e5cad1'
+final_revision: 'd7ef4e9f539d176741280f467e216f21225312a8'
 status: 'done'
 review_loop_iteration: 0
 followup_review_recommended: true # narrowly scoped: the follow-up pass itself added new concurrency machinery — a per-claim advisory lock on a dedicated pooled connection and a shutdown cancel-and-gather — written under review pressure and carrying two documented residual risks. The AD-16 scrubber, the security-critical part, was re-verified directly against adversarial payloads and needs no further pass; a third review would be worth it only for the locking and shutdown paths
