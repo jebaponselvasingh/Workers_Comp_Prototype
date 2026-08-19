@@ -3,6 +3,7 @@ title: 'Story 6.2 — AI Insight Cache & Insights Tab'
 type: 'feature'
 created: '2026-08-19'
 baseline_revision: '9fe1bc6a9eb70a356427ebe5384d4b1b2fd32764'
+final_revision: '2bc76803076be4d629b56276a0e5f33811e5cad1'
 status: 'done'
 review_loop_iteration: 0
 followup_review_recommended: true # the review pass changed transaction boundaries, added a table to an unreleased migration, narrowed a scope rule, added a dependency-level egress guard and altered a published response shape — 26 patches across data, API, prompt-safety and CI surfaces is more breadth than one pass should be the last word on
