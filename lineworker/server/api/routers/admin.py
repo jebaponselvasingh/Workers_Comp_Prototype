@@ -41,6 +41,15 @@ it is a live assertion: a run under a scoped handler embeds that handler's book
 and nothing else, so the AD-7 predicate on the two *write* paths — the ones
 nobody would think to scope — is exercised by every e2e run rather than only by
 a unit test.
+
+**Story 6.2 adds a third of the same shape**, `POST /admin/insight-refresh`,
+and everything above transfers again: e2e only, the same
+`refresh_pending_insights` the scheduled job calls, the requesting persona's
+context. It exists because generating four narratives per claim across a book
+is far too slow to do inside a Playwright `beforeEach`, and because the
+scheduler is off in this profile — so a spec that wanted a warmed cache would
+otherwise wait an hour for a tick (AD-15's "never wait on wall-clock cadence",
+for a third job).
 """
 
 from typing import Annotated
@@ -48,11 +57,13 @@ from typing import Annotated
 from fastapi import APIRouter, Response
 from pydantic import Field
 
+from agents import InsightGenerationDeps, chat_client, refresh_pending_insights
 from api.deps import CallerContextDep, DbDep, SettingsDep
 from api.routers.auth import UNAUTHENTICATED_RESPONSE
 from api.schemas import ApiModel
+from data.models.enums import InsightKind
 from services.financials.batch import PaymentBatchRun, run_payment_batch
-from services.rag import RefreshRun, embedding_client, refresh_stale_embeddings
+from services.rag import InsightRun, RefreshRun, embedding_client, refresh_stale_embeddings
 
 router = APIRouter(tags=["admin"])
 
@@ -160,4 +171,91 @@ async def trigger_embedding_refresh(
         chunks_embedded=run.chunks_embedded,
         rows_failed=run.rows_failed,
         chunks_failed=run.chunks_failed,
+    )
+
+
+class InsightRefreshResponse(ApiModel):
+    """What one insight-refresh run did — counts and one flag, never content.
+
+    `claims` and `written` answer different questions and both are wanted: a run
+    over five claims that wrote twenty rows finished its batch, and one over
+    five that wrote three did not. `failed` counts *cards* rather than claims,
+    because a kind is the unit of success — three narratives generated and one
+    refused is a claim with three cards, not a failed claim.
+
+    **`modelUnavailable` is what a degradation spec asserts on.** A run in which
+    the stub was unreachable returns 200 with zeroes and this flag set, which is
+    the honest report of "the job ran and could not do the work" — and it is a
+    flag rather than a count because it is a fact about the *server*, not about
+    how many attempts it refused.
+
+    **`failedKinds` names which cards a run could not write**, deduplicated
+    across the batch and in enum order. Published for the interactive route's
+    reason (review of Story 6.2, M7) and useful here for one more: a batch run
+    whose `failed` count is non-zero tells a spec that something went wrong and
+    nothing about what, and a kind token is the smallest thing that answers the
+    second question without putting content or a claim id in a response body
+    (AD-11).
+    """
+
+    claims: int
+    written: int
+    failed: int
+    model_unavailable: bool
+    failed_kinds: list[InsightKind]
+
+
+@router.post(
+    "/admin/insight-refresh",
+    response_model=InsightRefreshResponse,
+    summary="Generate every pending AI insight now (e2e profile only)",
+    responses=UNAUTHENTICATED_RESPONSE,
+)
+async def trigger_insight_refresh(
+    ctx: CallerContextDep,
+    db: DbDep,
+    settings: SettingsDep,
+    response: Response,
+) -> InsightRefreshResponse:
+    """Run the insight refresh over the caller's scope, now (Story 6.2).
+
+    `trigger_embedding_refresh` above, one story later and in every respect the
+    same shape — the module docstring's three paragraphs transfer verbatim. It
+    exists only under `ENV=e2e`, it calls the same `refresh_pending_insights`
+    the scheduled job calls, and it runs under the requesting persona's context.
+
+    `limit=None` — every claim missing a kind — rather than the configured batch
+    size, so a spec does not have to know what `INSIGHT_REFRESH_BATCH_SIZE` is
+    or call this route twenty times to warm one book. The batch bound is a
+    property of the *scheduled* path and is asserted where it lives, in
+    `tests/test_ai_insights.py`.
+
+    Idempotent in the way that matters for a suite: a second call selects only
+    the claims still missing a kind, so a run that completed answers zeroes.
+    (It is not idempotent in the embedding refresh's stronger sense — a claim
+    can be regenerated on demand — but nothing selects an already-complete claim
+    without being asked to.)
+
+    **It answers 200 even when the model server is down**, so a degradation spec
+    can assert on the counts rather than on a status code. The interactive
+    `POST /claims/{id}/insights/refresh` is the route that answers 503, because
+    it is the one a handler is waiting on.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    run: InsightRun = await refresh_pending_insights(
+        db,
+        ctx,
+        limit=None,
+        deps=InsightGenerationDeps(
+            chat=chat_client(settings),
+            embed=embedding_client(settings),
+            staleness_days=settings.insight_staleness_disclosure_days,
+        ),
+    )
+    return InsightRefreshResponse(
+        claims=run.claims,
+        written=run.written,
+        failed=run.failed,
+        model_unavailable=run.model_unavailable,
+        failed_kinds=list(run.failed_kinds),
     )

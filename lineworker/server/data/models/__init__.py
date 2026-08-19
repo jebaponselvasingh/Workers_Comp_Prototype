@@ -1,6 +1,8 @@
 from data.models.base import Base
 from data.models.core import (
     AdditionalInjury,
+    AiInsight,
+    AiInsightAttempt,
     AppUser,
     AuditEvent,
     Bill,
@@ -30,6 +32,8 @@ from data.models.session import Session
 
 __all__ = [
     "AdditionalInjury",
+    "AiInsight",
+    "AiInsightAttempt",
     "AppUser",
     "AuditEvent",
     "Base",

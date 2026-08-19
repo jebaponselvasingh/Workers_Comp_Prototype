@@ -196,7 +196,7 @@ test.describe("@story:2-2 @epic:2 case header and stage-adaptive overview", () =
     }
   });
 
-  test("all six tabs exist and the unbuilt ones say which story fills them (UX-DR5, NFR-3)", async ({
+  test("all six tabs exist and every one of them renders its own panel (UX-DR5)", async ({
     page,
   }) => {
     await loginAs(page, PERSONAS.handler);
@@ -211,33 +211,31 @@ test.describe("@story:2-2 @epic:2 case header and stage-adaptive overview", () =
     await expect(byRole(page, "tablist", "Case file sections").getByRole("tab")).toHaveCount(6);
 
     // **Story 2.4 built the Injury Diagram tab, 2.5 the Documents & ID tab,
-    // 2.6 the Photos tab and 3.3 the Bills & Payments tab, so their rows are
-    // gone from this table and their panels are asserted below instead.**
-    // Re-pointed rather than deleted (1.5, 1.6 and 2.1's precedent): what the
-    // rows were really guaranteeing is that a tab is either built or honest
-    // about not being, and both halves of that are still asserted here.
+    // 2.6 the Photos tab, 3.3 the Bills & Payments tab and 6.2 the AI Insights
+    // tab, so their rows are gone from this table and their panels are asserted
+    // below instead.** Re-pointed rather than deleted (1.5, 1.6 and 2.1's
+    // precedent): what the rows were really guaranteeing is that a tab is
+    // either built or honest about not being.
     //
-    // One row left, and it names an *epic*. That is the state Epic 3's
-    // financial engine closes in — the only seam still standing is the
-    // copilot's.
-    for (const [tab, mentions] of [["insights", "copilot"]] as const) {
-      await byTestId(page, `tab-${tab}`).click();
-      await expect(byTestId(page, `tab-empty-${tab}`)).toContainText(mentions);
-      // The Overview content is gone, so the seam is a real panel switch
-      // rather than a message appended under the case file.
-      await expect(byTestId(page, "stage-stepper")).toHaveCount(0);
-    }
-
-    // The tabs that are built show their content rather than a seam.
+    // With 6.2 there is no second half left to assert. `SEAMS` and `SeamPanel`
+    // were deleted from `DetailTabs` along with the last entry, so
+    // `tab-empty-*` exists nowhere in the app — which is why the loop that used
+    // to check one now checks that none of the six renders one. That is the
+    // stronger statement, and it is the assertion that would fail if the seam
+    // mechanism were quietly reintroduced for a seventh tab.
     for (const [tab, panel] of [
       ["injury", "injury-tab"],
       ["bills", "bills-tab"],
       ["documents", "documents-tab"],
       ["photos", "photos-tab"],
+      ["insights", "insights-tab"],
     ] as const) {
       await byTestId(page, `tab-${tab}`).click();
       await expect(byTestId(page, panel)).toBeVisible();
       await expect(byTestId(page, `tab-empty-${tab}`)).toHaveCount(0);
+      // The Overview content is gone, so each is a real panel switch rather
+      // than a section appended under the case file.
+      await expect(byTestId(page, "stage-stepper")).toHaveCount(0);
     }
 
     // …and Overview comes back.
@@ -265,7 +263,12 @@ test.describe("@story:2-2 @epic:2 case header and stage-adaptive overview", () =
 
     await page.keyboard.press("End");
     await expect(byTestId(page, "tab-insights")).toBeFocused();
-    await expect(byTestId(page, "tab-empty-insights")).toBeVisible();
+    // Re-pointed from the seam panel to the panel that replaced it (Story
+    // 6.2), exactly as the ArrowRight assertion above was re-pointed by Story
+    // 2.4. The assertion is the same one it always was: the *panel* followed
+    // the selection, which is the half of the tabs pattern that would otherwise
+    // pass while Overview's content stayed on screen.
+    await expect(byTestId(page, "insights-tab")).toBeVisible();
 
     await page.keyboard.press("Home");
     await expect(byTestId(page, "tab-overview")).toBeFocused();

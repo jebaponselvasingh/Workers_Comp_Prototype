@@ -83,6 +83,32 @@ async def list_claims(db: AsyncSession, ctx: CallerContext) -> Sequence[Claim]:
     return rows.all()
 
 
+async def select_claim_employer_id(
+    db: AsyncSession,
+    ctx: CallerContext,
+    *,
+    claim_business_id: str,
+) -> int | None:
+    """Which employer partition one claim sits in, or `None` — scoped.
+
+    One column, and it exists for one caller: `services/rag.subject_scoped_
+    context`, which narrows a context down to the *subject claim's* partition
+    before the similar-case gather runs (Story 6.2's review). See that function
+    for why a cached narrative may not be composed under the actor's scope.
+
+    **`None` for absent and `None` for out of scope**, `select_insight_claim_pk`'s
+    single-answer rule: a caller who cannot see the claim learns nothing about
+    whether it exists, and a narrowing built from this cannot be widened by a
+    claim the caller was never entitled to name.
+    """
+    found: int | None = await db.scalar(
+        sa.select(Claim.employer_id)
+        .where(employer_scope(ctx))
+        .where(Claim.claim_id == claim_business_id)
+    )
+    return found
+
+
 async def select_claim_columns(
     db: AsyncSession,
     ctx: CallerContext,

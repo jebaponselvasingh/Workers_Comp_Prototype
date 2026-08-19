@@ -205,29 +205,30 @@ test("the Photos tab's label counts what the payload says it counts", async () =
 });
 
 // Story 2.4 removed the `injury` row, 2.5 the `documents` one, 2.6 the
-// `photos` one and 3.3 the `bills` one: the tabs they named are built, so an
-// assertion that any of them still says "arrives with Story 2.x" would be
-// asserting the seam rather than the shipped surface. What the rows were
-// really guaranteeing — every unbuilt tab is honest about being unbuilt — is
-// asserted by the one that remains, and each built tab's content is asserted
-// in its own suite (`InjuryTab.test.tsx`, `DocumentsTab.test.tsx`,
-// `PhotosTab.test.tsx`, `BillsTab.test.tsx`).
+// `photos` one, 3.3 the `bills` one and **6.2 the last one** — the tabs they
+// named are built, so an assertion that any of them still says "arrives with
+// Story 2.x" would be asserting the seam rather than the shipped surface.
 //
-// One row left, and it names an *epic* rather than a story. That is the state
-// Epic 3's financial engine closes in: the only seam still standing belongs to
-// the copilot.
-test.each([["insights", "copilot"]])(
-  "the %s tab shows an explicit empty state naming its story",
-  async (tab, mentions) => {
-    renderPane(CLAIM_DETAIL_TREATMENT);
-    await screen.findByTestId("case-header");
+// This is the re-pointed version of the row that named the copilot (the
+// 1.5/1.6/2.1/2.3/2.4/2.5 precedent: re-point, never delete). What that row was
+// really guaranteeing is that a tab is either built or honest about not being,
+// and with `SEAMS` gone from `DetailTabs` there is no third state left — so the
+// assertion becomes the stronger half it always stood in for: the sixth tab
+// renders a *panel*. Its four cards are asserted in `InsightsTab.test.tsx`,
+// beside the three states only a component test can reach.
+test("the AI Insights tab is built, and renders its cards rather than a seam", async () => {
+  renderPane(CLAIM_DETAIL_TREATMENT);
+  await screen.findByTestId("case-header");
 
-    await userEvent.click(screen.getByTestId(`tab-${tab}`));
+  await userEvent.click(screen.getByTestId("tab-insights"));
 
-    expect(screen.getByTestId(`tab-empty-${tab}`)).toHaveTextContent(mentions);
-    expect(screen.queryByTestId("stage-stepper")).not.toBeInTheDocument();
-  },
-);
+  expect(await screen.findByTestId("insights-tab")).toBeVisible();
+  // The seam panel is gone from the component, not merely unreachable.
+  expect(screen.queryByTestId("tab-empty-insights")).not.toBeInTheDocument();
+  // The Overview content is gone, so this is a real panel switch rather than a
+  // section appended under the case file.
+  expect(screen.queryByTestId("stage-stepper")).not.toBeInTheDocument();
+});
 
 test("the Photos tab is built, and renders its grid rather than a seam", async () => {
   // The stronger half of the row that was just removed: a seam assertion goes

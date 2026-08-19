@@ -114,6 +114,12 @@ const NAVIGABLE_FROM_OVERVIEW: ReadonlySet<ActionTarget> = new Set<ActionTarget>
   // enabled and was not added here loses its disabled link and gains nothing.
   // Story 4.1 hit exactly this with `meetings`.
   "diary",
+  // Story 6.2, the third target enabled by deleting a `SEAM_REASONS` entry and
+  // the third time this line was the other half of it. "View Fraud Indicators →"
+  // switches the detail pane to AI Insights — see `ClaimDetailPane.navigate`,
+  // where `fraud` needs a branch of its own because it is the first target
+  // whose name is not also a tab key.
+  "fraud",
 ]);
 
 /**

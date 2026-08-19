@@ -37,6 +37,7 @@ import { StageStepper } from "./StageStepper";
 import { BillsTab } from "./bills/BillsTab";
 import { DocumentsTab } from "./documents/DocumentsTab";
 import { InjuryTab } from "./injury/InjuryTab";
+import { InsightsTab } from "./insights/InsightsTab";
 import { PhotosTab } from "./photos/PhotosTab";
 import { IntakeOverview } from "./overview/IntakeOverview";
 import { InvestigationOverview } from "./overview/InvestigationOverview";
@@ -115,6 +116,15 @@ function CaseFile({ claimId }: { claimId: string }) {
    * intent on the context `WorkspaceShell` provides, and the copilot pane's
    * Diary tab picks it up.
    *
+   * **`fraud` is the first target whose name is not a `TabKey`** (Story 6.2),
+   * which is why it needs a branch of its own rather than joining the
+   * string-equality shortcut above. The Epic-3 checklist calls the target
+   * `fraud`; the tab is called `insights`; and the three-way `||` at the top of
+   * this function works precisely because those three targets happen to be
+   * spelled the same as their tabs. Adding `"fraud"` to that list would not
+   * type-check, and widening the list to accept a non-tab string would be the
+   * change that lets a future typo through silently.
+   *
    * **Below the `xl` breakpoint the scheduler still opens**, and that is worth
    * stating because the obvious guess is the opposite. The copilot aside is
    * `hidden … xl:flex` — `display: none`, but still *mounted* — so
@@ -133,6 +143,17 @@ function CaseFile({ claimId }: { claimId: string }) {
     }
     if (target === "meetings") {
       requestMeetings();
+      return;
+    }
+    if (target === "fraud") {
+      // Story 6.2's half of the seam Epic 3 shipped disabled: the SIU
+      // escalation row's "View Fraud Indicators →" opens the AI Insights tab on
+      // this claim, where the fraud risk card is one of four. Enabling it was
+      // one deletion from `SEAM_REASONS` on the server, this branch, and one
+      // entry in `ActionsCard.NAVIGABLE_FROM_OVERVIEW` — without that last one
+      // the row renders no control at all, which is the trap Stories 4.1 and
+      // 4.2 both hit.
+      setActiveTab("insights");
       return;
     }
     if (target === "diary") {
@@ -157,6 +178,10 @@ function CaseFile({ claimId }: { claimId: string }) {
         bills={<BillsTab claimId={claimId} />}
         documents={<DocumentsTab claim={detail.data} />}
         photos={<PhotosTab claim={detail.data} />}
+        // The claim id rather than the case file, `bills`' reason: the tab
+        // fetches its own payload under its own query key, so the only thing it
+        // needs from here is which claim to ask about.
+        insights={<InsightsTab claimId={claimId} />}
         // The server's number, not the grid's length — see `DetailTabs`. It is
         // read here because the label is rendered whether or not the panel is
         // mounted, and the panel is mounted only while its tab is selected.

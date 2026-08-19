@@ -13,15 +13,28 @@ like any other unknown query string (`tests/test_claims_queue.py` proves the
 answer is byte-identical), because a 422 would tell them which names exist.
 """
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import date, datetime
 from typing import Annotated, Any, Literal
 
 import httpx
 import structlog
 from fastapi import APIRouter, Path, Query, Response, status
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, TypeAdapter, ValidationError
 
+# The composition root reaching into `agents/` — the one direction that is
+# allowed to. `api` builds the model clients and hands them down, exactly as it
+# builds the embedding client for `/similar`; nothing in `services/` imports
+# `agents/`, which is the layering rule this arrangement exists to keep (AD-5).
+from agents import InsightGenerationDeps, chat_client, refresh_claim_insights
+from agents.schemas import (
+    FraudLowRiskInsight,
+    FraudRedFlagsInsight,
+    FraudRiskInsight,
+    NextBestActionsInsight,
+    ReserveAdequacyInsight,
+    SimilarCaseInsight,
+)
 from api.deps import CallerContextDep, DbDep, SettingsDep
 from api.errors import PROBLEM_CONTENT_TYPE, ProblemDocument, ProblemException
 from api.routers.auth import UNAUTHENTICATED_RESPONSE
@@ -38,6 +51,7 @@ from data.models.enums import (
     Disability,
     DocType,
     ExpenseCategory,
+    InsightKind,
     LineItemStatus,
     RecoveryWindow,
     ReturnStatus,
@@ -76,7 +90,7 @@ from services.financials import (
     ReserveVerdict,
     StalePaymentRow,
 )
-from services.rag import MAX_K, embedding_client
+from services.rag import MAX_K, CachedInsight, claim_insights, embedding_client
 from services.rag import similar_claims as rag_similar_claims
 from services.rag.client import EmbeddingDimensionMismatch
 from services.worklist.actions import claim_actions
@@ -2783,3 +2797,414 @@ async def mark_osha_logged_route(
         ),
         claim_business_id,
     )
+
+
+# --- Story 6.2: the AI insight cache ------------------------------------
+
+
+class InsightCardBase(ApiModel):
+    """What every card carries whether or not it has ever been generated.
+
+    **`status` is `not_generated` rather than the payload being absent** (NFR-3,
+    AC 2). A claim nobody has generated for is a normal state — it is the state
+    every claim is in until the refresh job reaches it — so the API answers 200
+    with four explicit empty cards, and the tab renders four empty states with a
+    refresh affordance rather than a spinner that never resolves or a 404 that
+    reads as "no such claim".
+
+    `model` and `generatedAt` are `null` exactly when `status` is
+    `not_generated`, and non-null exactly when it is `ready`. Both are on every
+    ready card and neither is optional in the AD-10 sense: an AI narrative is
+    always rendered with the time it was generated and the model that wrote it,
+    because a cached sentence without those two reads as a claim fact.
+
+    There is deliberately no `version`, no `editable` flag and no write route
+    for a card. `ai_insight` has no version column and the reason is the same
+    one (FR-H-9): a version is what an inline edit would send back, so its
+    absence is the contract saying this tab is read-only.
+
+    **Four subclasses rather than one generic**, and the reason is entirely
+    about what the generated TypeScript reads like: a Pydantic generic named
+    `InsightCard[…]` renders into the OpenAPI document as a schema whose name
+    encodes its whole parameter list, so the fraud slot — a discriminated union
+    — would arrive in `schema.d.ts` under an eighty-character identifier. Four
+    named classes cost three repeated field declarations and give four
+    component types a reader can say out loud.
+    """
+
+    kind: InsightKind = Field(
+        description=(
+            "Which narrative this card holds. Redundant with the field it "
+            "occupies on the response and published anyway, for "
+            "`ActionResponse.target`'s reason: the browser stamps it into the "
+            "DOM as the card's identity, so a testid and a selector name the "
+            "server's own token rather than a camelCase key a client invented."
+        ),
+    )
+    status: Literal["ready", "not_generated"]
+    model: str | None = Field(
+        description="The model that wrote this narrative. Null when not generated.",
+    )
+    generated_at: datetime | None = Field(
+        description=(
+            "When this narrative was generated. Null when not generated; never "
+            "null on a ready card — an AI narrative is always shown with its age."
+        ),
+    )
+
+
+class SimilarCaseCard(InsightCardBase):
+    """The similar-case outcomes card. `content` is null when not generated."""
+
+    content: SimilarCaseInsight | None
+
+
+class ReserveAdequacyCard(InsightCardBase):
+    """The reserve adequacy review card. `content` is null when not generated."""
+
+    content: ReserveAdequacyInsight | None
+
+
+class NextBestActionsCard(InsightCardBase):
+    """The next best actions card. `content` is null when not generated."""
+
+    content: NextBestActionsInsight | None
+
+
+class FraudRiskCard(InsightCardBase):
+    """The fraud risk indicators card, in whichever variant the claim earned.
+
+    `content` is the discriminated union: `outcome: "red_flags"` carries a
+    non-empty list of indicators, `outcome: "low_risk"` carries the confirmation
+    and what would change it. **Which one a claim gets was decided by
+    `services/derivations`' two registered rules**, never by the model (AC 3) —
+    so the browser branches on `outcome` and never on a score.
+    """
+
+    content: FraudRedFlagsInsight | FraudLowRiskInsight | None = Field(
+        discriminator="outcome",
+    )
+
+
+class ClaimInsightsResponse(ApiModel):
+    """The four cached narratives for one claim, keyed by kind.
+
+    **A keyed object rather than a list**, which is the one shape decision on
+    this payload worth arguing. The four kinds are a closed set with four
+    different content structures and four different card components; a list of
+    `{kind, content}` would have made `content` a union the browser has to
+    narrow by hand at every use, and the narrowing would be a `switch` in the
+    client over a vocabulary the server owns. Keyed, each slot is typed
+    precisely, and "all four kinds are always present" is a property of the
+    response model rather than of whatever the server happened to find.
+
+    That also settles the empty case without a special branch: a claim with no
+    rows answers four `not_generated` cards, and a claim with three answers
+    three ready ones and one empty.
+    """
+
+    similar_case_outcomes: SimilarCaseCard
+    reserve_adequacy_review: ReserveAdequacyCard
+    next_best_actions: NextBestActionsCard
+    fraud_risk_indicators: FraudRiskCard
+
+
+class RefreshInsightsResponse(ClaimInsightsResponse):
+    """The four cards a refresh produced, plus which kinds it could not produce.
+
+    A subclass rather than a field on the shared payload, because the extra is
+    true of a *run* and not of the cache: a GET has no failures to report, and a
+    nullable `failedKinds` on every read would be a field the browser has to
+    ignore on three quarters of its uses.
+
+    **It exists because a partial refresh looked exactly like a clean one**
+    (review of Story 6.2, M7). Three kinds written and one refused answered 200
+    with a fresh payload, and the refused card went on reading "not generated" —
+    so a handler pressed Refresh, watched one card stay empty, and had nothing
+    on screen to distinguish "the model refused this kind" from "the button did
+    not work". Publishing the kinds lets the tab say which.
+
+    A kind token is not content and is not PHI — it is the same closed
+    vocabulary the payload above is already keyed by — so it is publishable
+    where the narrative and the model's own refusal text are not (AD-11).
+    """
+
+    failed_kinds: list[InsightKind] = Field(
+        description=(
+            "The kinds this refresh could not write, in enum order. Empty when "
+            "every kind was regenerated. A kind listed here keeps whatever "
+            "narrative it had before the refresh, with its previous timestamp."
+        ),
+    )
+
+
+#: One validator per kind, built once at import rather than per request.
+#:
+#: `TypeAdapter` rather than `Model.model_validate` because the fraud slot is a
+#: **discriminated union** and not a class — the discriminator is what makes
+#: `outcome` decide between the red-flag and low-risk shapes on the way back out
+#: of JSONB, exactly as it decides between them on the way in.
+_SIMILAR_CASE = TypeAdapter[SimilarCaseInsight](SimilarCaseInsight)
+_RESERVE_ADEQUACY = TypeAdapter[ReserveAdequacyInsight](ReserveAdequacyInsight)
+_NEXT_BEST_ACTIONS = TypeAdapter[NextBestActionsInsight](NextBestActionsInsight)
+_FRAUD_RISK = TypeAdapter[FraudRedFlagsInsight | FraudLowRiskInsight](FraudRiskInsight)
+
+
+def _slot[T](
+    cached: Mapping[InsightKind, CachedInsight],
+    kind: InsightKind,
+    adapter: TypeAdapter[T],
+    *,
+    claim_business_id: str,
+) -> tuple[Literal["ready", "not_generated"], str | None, datetime | None, T | None]:
+    """One slot's four values: the cached row parsed, or the empty state.
+
+    **The stored `content` is re-validated on the way out**, not passed through
+    as an opaque dictionary, and that is deliberate rather than belt-and-braces.
+    A row written by an older prompt version whose schema has since changed
+    would otherwise reach the browser as a shape the component does not handle,
+    and the failure would be a blank card with a console error.
+
+    **A row that fails re-validation is reported as `not_generated`**, and this
+    is the half the Story 6.2 review corrected (M3). It used to propagate, which
+    was wrong twice over. Pydantic v2 embeds the offending input in a
+    `ValidationError`'s message, so the unhandled 500 that followed was logged
+    with a full traceback containing model prose about a claim — the one place
+    in the build where a narrative reached the operational log, against AD-11.
+    And one bad row took all four cards down with it, when the other three were
+    perfectly readable.
+
+    `not_generated` rather than a fourth status, because it is the state the tab
+    already knows how to render *and* the state the row is really in: the card
+    has no content the browser can show, it has a Refresh button attached, and
+    pressing it overwrites the row — which is the whole repair. The log line
+    carries the claim id and the kind and nothing else, which is enough to find
+    the row and never enough to leak what it said.
+
+    A tuple rather than a card instance because the four card classes are four
+    types: returning the parts lets one function do the parsing for all of them
+    without a generic whose only job is to be constructed four ways.
+    """
+    found = cached.get(kind)
+    if found is None:
+        return "not_generated", None, None, None
+    try:
+        content = adapter.validate_python(found.content)
+    except ValidationError:
+        # Content-free by construction: the exception is neither logged nor
+        # chained onward, because its message quotes the value that failed and
+        # that value is a narrative about a claim (AD-11).
+        log.warning("claims.insight_content_rejected", claim_id=claim_business_id, kind=kind.value)
+        return "not_generated", None, None, None
+    return "ready", found.model, found.generated_at, content
+
+
+def _insights_payload(
+    cached: Sequence[CachedInsight], *, claim_business_id: str
+) -> ClaimInsightsResponse:
+    """Fold what the cache holds into the four-slot payload. Missing kinds empty.
+
+    `claim_business_id` is carried for one purpose: `_slot` logs it when a stored
+    row fails re-validation, and a log line naming a kind but not a claim would
+    be a defect nobody could act on.
+    """
+    by_kind = {insight.kind: insight for insight in cached}
+    similar = _slot(
+        by_kind,
+        InsightKind.similar_case_outcomes,
+        _SIMILAR_CASE,
+        claim_business_id=claim_business_id,
+    )
+    reserve = _slot(
+        by_kind,
+        InsightKind.reserve_adequacy_review,
+        _RESERVE_ADEQUACY,
+        claim_business_id=claim_business_id,
+    )
+    actions = _slot(
+        by_kind,
+        InsightKind.next_best_actions,
+        _NEXT_BEST_ACTIONS,
+        claim_business_id=claim_business_id,
+    )
+    fraud = _slot(
+        by_kind,
+        InsightKind.fraud_risk_indicators,
+        _FRAUD_RISK,
+        claim_business_id=claim_business_id,
+    )
+    return ClaimInsightsResponse(
+        similar_case_outcomes=SimilarCaseCard(
+            kind=InsightKind.similar_case_outcomes,
+            status=similar[0],
+            model=similar[1],
+            generated_at=similar[2],
+            content=similar[3],
+        ),
+        reserve_adequacy_review=ReserveAdequacyCard(
+            kind=InsightKind.reserve_adequacy_review,
+            status=reserve[0],
+            model=reserve[1],
+            generated_at=reserve[2],
+            content=reserve[3],
+        ),
+        next_best_actions=NextBestActionsCard(
+            kind=InsightKind.next_best_actions,
+            status=actions[0],
+            model=actions[1],
+            generated_at=actions[2],
+            content=actions[3],
+        ),
+        fraud_risk_indicators=FraudRiskCard(
+            kind=InsightKind.fraud_risk_indicators,
+            status=fraud[0],
+            model=fraud[1],
+            generated_at=fraud[2],
+            content=fraud[3],
+        ),
+    )
+
+
+@router.get(
+    "/claims/{claim_business_id}/insights",
+    response_model=ClaimInsightsResponse,
+    summary="The claim's four cached AI narratives, with their generation timestamps",
+    responses={
+        **UNAUTHENTICATED_RESPONSE,
+        **NOT_FOUND_RESPONSE,
+    },
+)
+async def insights(
+    ctx: CallerContextDep,
+    db: DbDep,
+    response: Response,
+    claim_business_id: Annotated[
+        str,
+        Path(
+            pattern=CLAIM_ID_PATTERN,
+            description="The claim's business id, `WC-nnnn`.",
+            examples=["WC-20017"],
+        ),
+    ],
+) -> ClaimInsightsResponse:
+    """Read the AI insight cache for one claim (AC 2).
+
+    Thin by AD-1: one service call and a shape. Nothing is generated here — this
+    is a cache read, and a GET that generated would make opening a tab cost four
+    model completions and would give `POST …/refresh` nothing to do.
+
+    **A claim with no insights is 200 with four `not_generated` cards**, never a
+    404. That distinction is the whole of NFR-3 on this surface: "nobody has
+    generated this yet" is a state with an affordance attached, and answering it
+    as a missing resource would send the tab down its error branch for the
+    normal state of a fresh deployment.
+
+    **No `MODEL_UNAVAILABLE_RESPONSE`**, unlike `/similar`: this route touches
+    no model server at all. The cards a handler can see while Ollama is down are
+    exactly the cards they could see before it went down, which is the honest
+    behaviour for a cache and is why the tab keeps working through an outage.
+
+    404 for out of scope, in the case file's exact wording and for its reason
+    (AD-7).
+    """
+    # Specific to one persona's book, so never served to another from a cache
+    # upstream — the same reason every other route on this router says so. It
+    # matters more here than most: the payload is model output about one claim.
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        cached = await claim_insights(db, ctx, claim_business_id=claim_business_id)
+    except ClaimNotVisible as exc:
+        raise _not_found(claim_business_id) from exc
+    return _insights_payload(cached, claim_business_id=claim_business_id)
+
+
+@router.post(
+    "/claims/{claim_business_id}/insights/refresh",
+    response_model=RefreshInsightsResponse,
+    summary="Regenerate this claim's four AI narratives now",
+    responses={
+        **UNAUTHENTICATED_RESPONSE,
+        **NOT_FOUND_RESPONSE,
+        **MODEL_UNAVAILABLE_RESPONSE,
+    },
+)
+async def refresh_insights(
+    ctx: CallerContextDep,
+    db: DbDep,
+    settings: SettingsDep,
+    response: Response,
+    claim_business_id: Annotated[
+        str,
+        Path(
+            pattern=CLAIM_ID_PATTERN,
+            description="The claim's business id, `WC-nnnn`.",
+            examples=["WC-20017"],
+        ),
+    ],
+) -> RefreshInsightsResponse:
+    """Generate this claim's four narratives and return the fresh cards (AC 1).
+
+    **The same command the scheduled job runs** (AD-12). This route builds the
+    two model clients from configuration and calls
+    `agents.refresh_claim_insights`, which calls `services/rag.store_insights` —
+    the single writer. There is no on-demand code path and no fixture path; the
+    e2e trigger in `api/routers/admin.py` enters the same function one level up.
+
+    **It answers with the payload rather than a job id**, and the reason is what
+    the browser does next: the tab invalidates its own query key and re-renders
+    from this body, so a handler who pressed Refresh sees four fresh cards in
+    one round trip instead of a spinner and a poll. Generation is synchronous
+    and can take tens of seconds on a CPU-only dev box, which is a real cost —
+    but a 202 with polling would need a job table, a status route and a
+    client-side loop, all of which are Story 6.6's degradation surface rather
+    than this story's.
+
+    **503 when the model server did not answer, and 200 when it merely answered
+    badly.** The distinction is `InsightRun.model_unavailable`'s whole purpose:
+    an outage is temporary and specific to AI reads, so the client should say so
+    and offer a retry, while a completion that failed its schema left the
+    previous cards standing and is not something a handler can act on. A
+    partially successful run — three cards written, one kind refused — is a 200
+    with the fresh payload, because three new narratives are a better answer
+    than a refusal.
+
+    **…and it says which kind was refused**, in `failedKinds`. Without that the
+    200 above is indistinguishable from a clean run and the refused card just
+    goes on reading "not generated", which looks to a handler like a button that
+    did nothing (review of Story 6.2, M7).
+
+    404 for out of scope, in the case file's exact wording and for its reason.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        run = await refresh_claim_insights(
+            db,
+            ctx,
+            claim_business_id=claim_business_id,
+            deps=InsightGenerationDeps(
+                chat=chat_client(settings),
+                embed=embedding_client(settings),
+                staleness_days=settings.insight_staleness_disclosure_days,
+            ),
+        )
+    except ClaimNotVisible as exc:
+        raise _not_found(claim_business_id) from exc
+
+    if run.written == 0 and run.model_unavailable:
+        raise ProblemException(
+            status_code=503,
+            title="Model server unavailable",
+            detail=(
+                "Generating AI insights needs the local model server, and it did "
+                "not answer. Any previously generated cards are unchanged, and "
+                "claim data is unaffected."
+            ),
+        )
+
+    fresh = _insights_payload(
+        await claim_insights(db, ctx, claim_business_id=claim_business_id),
+        claim_business_id=claim_business_id,
+    )
+    # The four slots, plus what the run refused. `model_dump` rather than four
+    # named arguments so a fifth kind does not have to be spelled out twice.
+    return RefreshInsightsResponse(**fresh.model_dump(), failed_kinds=list(run.failed_kinds))

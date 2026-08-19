@@ -1,6 +1,6 @@
 # Story 6.2: AI Insight Cache & Insights Tab
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 

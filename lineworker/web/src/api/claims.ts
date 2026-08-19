@@ -101,11 +101,14 @@ export type ClaimDetail = components["schemas"]["ClaimDetailResponse"];
 export type CaseHeaderData = components["schemas"]["CaseHeaderResponse"];
 export type StepperStep = components["schemas"]["StepperStepResponse"];
 export type StageOverview = ClaimDetail["overview"];
-export type IntakeOverviewData = components["schemas"]["IntakeOverviewResponse"];
+export type IntakeOverviewData =
+  components["schemas"]["IntakeOverviewResponse"];
 export type InvestigationOverviewData =
   components["schemas"]["InvestigationOverviewResponse"];
-export type TreatmentOverviewData = components["schemas"]["TreatmentOverviewResponse"];
-export type SettledOverviewData = components["schemas"]["SettledOverviewResponse"];
+export type TreatmentOverviewData =
+  components["schemas"]["TreatmentOverviewResponse"];
+export type SettledOverviewData =
+  components["schemas"]["SettledOverviewResponse"];
 export type TimelineEntry = components["schemas"]["TimelineEntryResponse"];
 export type ChecklistRow = components["schemas"]["ChecklistRowResponse"];
 export type CostSplit = components["schemas"]["CostSplitResponse"];
@@ -176,7 +179,12 @@ export type EditableField = Exclude<keyof ClaimFieldPatch, "expectedVersion">;
  * have would invent a property that the next server response then deletes —
  * a cache that briefly holds a shape the API never sends.
  */
-const OPTIMISTIC_HEADER_FIELDS = ["injuryType", "cause", "bodyKey", "icd"] as const;
+const OPTIMISTIC_HEADER_FIELDS = [
+  "injuryType",
+  "cause",
+  "bodyKey",
+  "icd",
+] as const;
 const OPTIMISTIC_INVESTIGATION_FIELDS = [
   "injuryType",
   "cause",
@@ -213,7 +221,10 @@ const OPTIMISTIC_TREATMENT_FIELDS = ["recovery"] as const;
  * on the marker moves: `band` and `severityScore` are the server's answers, and
  * AD-9 is explicit that a derivation must not be guessed in the browser.
  */
-function withPrimaryMarkerBodyKey(injury: ClaimDetail["injury"], value: string) {
+function withPrimaryMarkerBodyKey(
+  injury: ClaimDetail["injury"],
+  value: string,
+) {
   const [primary, ...rest] = injury.markers;
   if (!primary?.primary) return injury;
   return { ...injury, markers: [{ ...primary, bodyKey: value }, ...rest] };
@@ -254,7 +265,9 @@ export function applyOptimisticEdit(
     ? { ...detail.overview, [field]: value }
     : detail.overview;
   const injury =
-    field === "bodyKey" ? withPrimaryMarkerBodyKey(detail.injury, value) : detail.injury;
+    field === "bodyKey"
+      ? withPrimaryMarkerBodyKey(detail.injury, value)
+      : detail.injury;
   return { ...detail, header, overview, injury };
 }
 
@@ -297,7 +310,56 @@ export type FieldEdits = Omit<ClaimFieldPatch, "expectedVersion">;
  */
 function freshClaimFrom(error: unknown): ClaimDetail | undefined {
   const claim = problemExtension<ClaimDetail>(error, "claim");
-  return claim && claim.claimId && claim.header && claim.overview ? claim : undefined;
+  return claim && claim.claimId && claim.header && claim.overview
+    ? claim
+    : undefined;
+}
+
+/**
+ * Mark everything a claim edit changes as stale — and nothing it does not.
+ *
+ * Three keys, each `exact: true`, each `refetchType: "none"`. That is exactly
+ * what one prefix invalidation of `claims.detail` used to do, **minus the
+ * insights cache**, and separating them is the whole point (review of Story
+ * 6.2, M5).
+ *
+ * TanStack matches query keys by prefix, and `actions`, `financials` and
+ * `insights` are all nested under the claim's own segment — but for two
+ * opposite reasons. `actions` and `financials` are cut from the claim's rows,
+ * so an edit that changes the claim really does change them and a prefix
+ * invalidation reaching them is correct. `insights` is nested so it can be
+ * *addressed* beside the case file without being evicted by it: a narrative is
+ * a cache with its own generation timestamp (AD-10), and editing a claim does
+ * not make yesterday's narrative wrong, it makes it dated — which the card says
+ * for itself. `queryKeys.ts` states that "nothing else invalidates it at all",
+ * and until this helper existed every claim edit invalidated it, defeating the
+ * deliberate five-minute `staleTime` and re-fetching four narratives on every
+ * keystroke's commit.
+ *
+ * Written once here rather than expanded at each of the eight call sites,
+ * because eight copies of a three-line invalidation is eight places for the
+ * next nested key to be forgotten.
+ *
+ * `refetchType: "none"` throughout, which is `useEditClaimFields`' rule: the
+ * mutation response *is* the fresh case file and is installed directly, so an
+ * immediate refetch would re-open the read-after-write window that returning it
+ * closes.
+ */
+function markCaseFileStale(
+  client: ReturnType<typeof useQueryClient>,
+  claimId: string,
+): void {
+  for (const key of [
+    queryKeys.claims.detail(claimId),
+    queryKeys.claims.actions(claimId),
+    queryKeys.claims.financials(claimId),
+  ]) {
+    void client.invalidateQueries({
+      queryKey: key,
+      exact: true,
+      refetchType: "none",
+    });
+  }
 }
 
 export function useEditClaimFields(claimId: string) {
@@ -312,7 +374,10 @@ export function useEditClaimFields(claimId: string) {
     }): Promise<ClaimDetail> => {
       const { data } = await api.PATCH("/claims/{claim_business_id}", {
         params: { path: { claim_business_id: claimId } },
-        body: { expectedVersion: variables.expectedVersion, ...variables.edits },
+        body: {
+          expectedVersion: variables.expectedVersion,
+          ...variables.edits,
+        },
       });
       return data!;
     },
@@ -360,7 +425,7 @@ export function useEditClaimFields(claimId: string) {
       // command commits and re-reads in a new transaction, so a follow-up GET
       // resolving against older data would show the saved value reverting.
       client.setQueryData(key, fresh);
-      void client.invalidateQueries({ queryKey: key, refetchType: "none" });
+      markCaseFileStale(client, claimId);
       // The queue is a different resource and genuinely must re-fetch: its
       // cards show this claim's injury type, and it has no fresh copy.
       void client.invalidateQueries({ queryKey: queryKeys.claims.queues });
@@ -370,7 +435,7 @@ export function useEditClaimFields(claimId: string) {
       // The `onError` rollback above is conservative by design, so this is
       // what guarantees a failed edit cannot leave a stale entity behind
       // indefinitely (code review).
-      void client.invalidateQueries({ queryKey: key, refetchType: "none" });
+      markCaseFileStale(client, claimId);
     },
   });
 }
@@ -379,7 +444,8 @@ export function useEditClaimFields(claimId: string) {
 export type InjuryDiagram = components["schemas"]["InjuryDiagramResponse"];
 export type InjuryMarker = components["schemas"]["InjuryMarkerResponse"];
 export type Prognosis = components["schemas"]["PrognosisResponse"];
-export type TreatmentPlanStep = components["schemas"]["TreatmentPlanStepResponse"];
+export type TreatmentPlanStep =
+  components["schemas"]["TreatmentPlanStepResponse"];
 export type NewInjury = components["schemas"]["NewInjury"];
 
 /**
@@ -405,11 +471,11 @@ export type NewInjury = components["schemas"]["NewInjury"];
  */
 function afterInjuryWrite(
   client: ReturnType<typeof useQueryClient>,
-  key: readonly unknown[],
+  claimId: string,
   fresh: ClaimDetail,
 ): void {
-  client.setQueryData(key, fresh);
-  void client.invalidateQueries({ queryKey: key, refetchType: "none" });
+  client.setQueryData(queryKeys.claims.detail(claimId), fresh);
+  markCaseFileStale(client, claimId);
   void client.invalidateQueries({ queryKey: queryKeys.claims.queues });
   void client.invalidateQueries({ queryKey: queryKeys.stats.topbar });
 }
@@ -452,9 +518,9 @@ export function useEditSeverity(claimId: string) {
       const fresh = freshClaimFrom(error);
       if (fresh) client.setQueryData(key, fresh);
     },
-    onSuccess: (fresh) => afterInjuryWrite(client, key, fresh),
+    onSuccess: (fresh) => afterInjuryWrite(client, claimId, fresh),
     onSettled: () => {
-      void client.invalidateQueries({ queryKey: key, refetchType: "none" });
+      markCaseFileStale(client, claimId);
     },
   });
 }
@@ -479,7 +545,10 @@ export function useAddInjury(claimId: string) {
     }): Promise<ClaimDetail> => {
       const { data } = await api.POST("/claims/{claim_business_id}/injuries", {
         params: { path: { claim_business_id: claimId } },
-        body: { expectedVersion: variables.expectedVersion, ...variables.injury },
+        body: {
+          expectedVersion: variables.expectedVersion,
+          ...variables.injury,
+        },
       });
       return data!;
     },
@@ -487,9 +556,9 @@ export function useAddInjury(claimId: string) {
       const fresh = freshClaimFrom(error);
       if (fresh) client.setQueryData(key, fresh);
     },
-    onSuccess: (fresh) => afterInjuryWrite(client, key, fresh),
+    onSuccess: (fresh) => afterInjuryWrite(client, claimId, fresh),
     onSettled: () => {
-      void client.invalidateQueries({ queryKey: key, refetchType: "none" });
+      markCaseFileStale(client, claimId);
     },
   });
 }
@@ -527,9 +596,9 @@ export function useRemoveInjury(claimId: string) {
       const fresh = freshClaimFrom(error);
       if (fresh) client.setQueryData(key, fresh);
     },
-    onSuccess: (fresh) => afterInjuryWrite(client, key, fresh),
+    onSuccess: (fresh) => afterInjuryWrite(client, claimId, fresh),
     onSettled: () => {
-      void client.invalidateQueries({ queryKey: key, refetchType: "none" });
+      markCaseFileStale(client, claimId);
     },
   });
 }
@@ -570,7 +639,8 @@ export type ReserveVerdict = components["schemas"]["ReserveVerdict"];
  * clamps a claim to at most twenty weeks, and the line items are a handful.
  */
 export type ClaimFinancials = components["schemas"]["ClaimFinancialsResponse"];
-export type FinancialSummary = components["schemas"]["FinancialSummaryResponse"];
+export type FinancialSummary =
+  components["schemas"]["FinancialSummaryResponse"];
 export type ScheduleWeek = components["schemas"]["ScheduleWeekResponse"];
 export type ScheduleWeekStatus = components["schemas"]["ScheduleWeekStatus"];
 export type BillLine = components["schemas"]["BillResponse"];
@@ -612,7 +682,9 @@ export type ApprovalKind = PaymentApproval["kind"];
  */
 function freshFinancialsFrom(error: unknown): ClaimFinancials | undefined {
   const fresh = problemExtension<ClaimFinancials>(error, "financials");
-  return fresh && fresh.summary && fresh.schedule && fresh.bills ? fresh : undefined;
+  return fresh && fresh.summary && fresh.schedule && fresh.bills
+    ? fresh
+    : undefined;
 }
 
 /** The row's fresh status on a 409, so the sheet can say *why* it was refused. */
@@ -663,14 +735,17 @@ export function useApprovePayment(claimId: string) {
       targetId: number;
       expectedVersion: number;
     }): Promise<ClaimFinancials> => {
-      const { data } = await api.POST("/claims/{claim_business_id}/payments/approvals", {
-        params: { path: { claim_business_id: claimId } },
-        body: {
-          kind: variables.kind,
-          targetId: variables.targetId,
-          expectedVersion: variables.expectedVersion,
+      const { data } = await api.POST(
+        "/claims/{claim_business_id}/payments/approvals",
+        {
+          params: { path: { claim_business_id: claimId } },
+          body: {
+            kind: variables.kind,
+            targetId: variables.targetId,
+            expectedVersion: variables.expectedVersion,
+          },
         },
-      });
+      );
       return data!;
     },
     onError: (error) => {
@@ -692,8 +767,15 @@ export function useApprovePayment(claimId: string) {
       client.setQueryData(key, fresh);
       // Marked stale without an immediate refetch, `useEditClaimFields`' rule:
       // the body *is* the fresh payload, and a follow-up GET would re-open the
-      // read-after-write window that returning it closes.
-      void client.invalidateQueries({ queryKey: key, refetchType: "none" });
+      // read-after-write window that returning it closes. `exact: true` for the
+      // reason spelled out below — and because `insights` is nested under the
+      // claim too, and a refresh of the narratives is not something approving a
+      // payment asks for (review of Story 6.2, M5).
+      void client.invalidateQueries({
+        queryKey: key,
+        exact: true,
+        refetchType: "none",
+      });
       // The case file genuinely must re-fetch: its treatment Overview card
       // renders `disbursedIndemnityCents` of `scheduledIndemnityCents` from the
       // same rows, and it has no fresh copy of them.
@@ -714,7 +796,11 @@ export function useApprovePayment(claimId: string) {
       });
     },
     onSettled: () => {
-      void client.invalidateQueries({ queryKey: key, refetchType: "none" });
+      void client.invalidateQueries({
+        queryKey: key,
+        exact: true,
+        refetchType: "none",
+      });
     },
   });
 }
@@ -751,20 +837,26 @@ export function useEditCompRate(claimId: string) {
       compRateBp: number | null;
       expectedVersion: number;
     }): Promise<ClaimDetail> => {
-      const { data } = await api.PATCH("/claims/{claim_business_id}/comp-rate", {
-        params: { path: { claim_business_id: claimId } },
-        body: {
-          expectedVersion: variables.expectedVersion,
-          compRateBp: variables.compRateBp,
+      const { data } = await api.PATCH(
+        "/claims/{claim_business_id}/comp-rate",
+        {
+          params: { path: { claim_business_id: claimId } },
+          body: {
+            expectedVersion: variables.expectedVersion,
+            compRateBp: variables.compRateBp,
+          },
         },
-      });
+      );
       return data!;
     },
     onMutate: async (variables) => {
       await client.cancelQueries({ queryKey: key });
       const snapshot = client.getQueryData<ClaimDetail>(key);
       if (snapshot) {
-        client.setQueryData(key, applyOptimisticCompRate(snapshot, variables.compRateBp));
+        client.setQueryData(
+          key,
+          applyOptimisticCompRate(snapshot, variables.compRateBp),
+        );
       }
       return { snapshot };
     },
@@ -785,10 +877,10 @@ export function useEditCompRate(claimId: string) {
       // priority score reads one — unlike the severity score, which moves a
       // card's band and its position.
       client.setQueryData(key, fresh);
-      void client.invalidateQueries({ queryKey: key, refetchType: "none" });
+      markCaseFileStale(client, claimId);
     },
     onSettled: () => {
-      void client.invalidateQueries({ queryKey: key, refetchType: "none" });
+      markCaseFileStale(client, claimId);
     },
   });
 }
@@ -882,8 +974,15 @@ function afterChecklistWrite(
 ): void {
   const key = queryKeys.claims.detail(claimId);
   client.setQueryData(key, fresh);
-  void client.invalidateQueries({ queryKey: key, exact: true, refetchType: "none" });
-  void client.invalidateQueries({ queryKey: queryKeys.claims.actions(claimId), exact: true });
+  void client.invalidateQueries({
+    queryKey: key,
+    exact: true,
+    refetchType: "none",
+  });
+  void client.invalidateQueries({
+    queryKey: queryKeys.claims.actions(claimId),
+    exact: true,
+  });
   void client.invalidateQueries({ queryKey: queryKeys.claims.queues });
   void client.invalidateQueries({ queryKey: queryKeys.stats.topbar });
 }
@@ -910,11 +1009,16 @@ export function useApproveAssessment(claimId: string) {
     // out of a cached payload, and two overlapping writes send a version the
     // first has already consumed.
     mutationKey: queryKeys.claims.writes(claimId),
-    mutationFn: async (variables: { expectedVersion: number }): Promise<ClaimDetail> => {
-      const { data } = await api.POST("/claims/{claim_business_id}/assessment/approval", {
-        params: { path: { claim_business_id: claimId } },
-        body: { expectedVersion: variables.expectedVersion },
-      });
+    mutationFn: async (variables: {
+      expectedVersion: number;
+    }): Promise<ClaimDetail> => {
+      const { data } = await api.POST(
+        "/claims/{claim_business_id}/assessment/approval",
+        {
+          params: { path: { claim_business_id: claimId } },
+          body: { expectedVersion: variables.expectedVersion },
+        },
+      );
       return data!;
     },
     onError: (error) => {
@@ -930,7 +1034,10 @@ export function useApproveAssessment(claimId: string) {
       // for a document row it is worse, because the row keeps a
       // `documentVersion` the server has already superseded and every
       // subsequent click refuses again until `staleTime` happens to lapse.
-      void client.invalidateQueries({ queryKey: queryKeys.claims.actions(claimId), exact: true });
+      void client.invalidateQueries({
+        queryKey: queryKeys.claims.actions(claimId),
+        exact: true,
+      });
     },
     onSuccess: (fresh) => afterChecklistWrite(client, claimId, fresh),
     onSettled: () => {
@@ -970,9 +1077,15 @@ export function useSetDocumentReview(claimId: string) {
         "/claims/{claim_business_id}/documents/{document_id}/review",
         {
           params: {
-            path: { claim_business_id: claimId, document_id: variables.documentId },
+            path: {
+              claim_business_id: claimId,
+              document_id: variables.documentId,
+            },
           },
-          body: { expectedVersion: variables.expectedVersion, step: variables.step },
+          body: {
+            expectedVersion: variables.expectedVersion,
+            step: variables.step,
+          },
         },
       );
       return data!;
@@ -990,7 +1103,10 @@ export function useSetDocumentReview(claimId: string) {
       // for a document row it is worse, because the row keeps a
       // `documentVersion` the server has already superseded and every
       // subsequent click refuses again until `staleTime` happens to lapse.
-      void client.invalidateQueries({ queryKey: queryKeys.claims.actions(claimId), exact: true });
+      void client.invalidateQueries({
+        queryKey: queryKeys.claims.actions(claimId),
+        exact: true,
+      });
     },
     onSuccess: (fresh) => afterChecklistWrite(client, claimId, fresh),
     onSettled: () => {
@@ -1009,7 +1125,9 @@ export function useMarkOshaLogged(claimId: string) {
 
   return useMutation({
     mutationKey: queryKeys.claims.writes(claimId),
-    mutationFn: async (variables: { expectedVersion: number }): Promise<ClaimDetail> => {
+    mutationFn: async (variables: {
+      expectedVersion: number;
+    }): Promise<ClaimDetail> => {
       const { data } = await api.POST("/claims/{claim_business_id}/osha-log", {
         params: { path: { claim_business_id: claimId } },
         body: { expectedVersion: variables.expectedVersion },
@@ -1029,7 +1147,10 @@ export function useMarkOshaLogged(claimId: string) {
       // for a document row it is worse, because the row keeps a
       // `documentVersion` the server has already superseded and every
       // subsequent click refuses again until `staleTime` happens to lapse.
-      void client.invalidateQueries({ queryKey: queryKeys.claims.actions(claimId), exact: true });
+      void client.invalidateQueries({
+        queryKey: queryKeys.claims.actions(claimId),
+        exact: true,
+      });
     },
     onSuccess: (fresh) => afterChecklistWrite(client, claimId, fresh),
     onSettled: () => {
@@ -1045,7 +1166,8 @@ export function useMarkOshaLogged(claimId: string) {
 /** The Documents & ID tab (Story 2.5). */
 export type DocumentsBlock = components["schemas"]["DocumentsBlockResponse"];
 export type RequiredForm = components["schemas"]["RequiredFormResponse"];
-export type EmployeeIdCardData = components["schemas"]["EmployeeIdCardResponse"];
+export type EmployeeIdCardData =
+  components["schemas"]["EmployeeIdCardResponse"];
 export type DocumentRow = components["schemas"]["DocumentRowResponse"];
 export type DocumentSheet = components["schemas"]["DocumentSheetResponse"];
 export type SheetRow = components["schemas"]["SheetRowResponse"];
@@ -1080,10 +1202,7 @@ export type PhotoCardData = components["schemas"]["PhotoResponse"];
  * re-opening the same document instant — and the sheet is derived from stored
  * columns, so a stale one is only stale in the way the case file behind it is.
  */
-export function useDocumentSheet(
-  claimId: string,
-  documentId: number | null,
-) {
+export function useDocumentSheet(claimId: string, documentId: number | null) {
   return useQuery({
     queryKey: queryKeys.claims.documentSheet(claimId, documentId ?? 0),
     queryFn: async (): Promise<DocumentSheet> => {
@@ -1124,4 +1243,125 @@ export function useDocumentSheet(
  */
 export function useClaimWriteInFlight(claimId: string): boolean {
   return useIsMutating({ mutationKey: queryKeys.claims.writes(claimId) }) > 0;
+}
+
+/**
+ * The AI insight cache (Story 6.2).
+ *
+ * Four cached narratives per claim, keyed by kind rather than listed, so each
+ * slot's `content` is the exact structure that kind stores and each card
+ * component is typed all the way from the JSONB column. See
+ * `ClaimInsightsResponse` on why the server sends an object.
+ *
+ * `FraudRiskContent` is a discriminated union on `outcome`, and the browser
+ * narrows on that field and on nothing else. The alternative — comparing
+ * `fraudScore` against `fraudFlagScoreMin`, both of which are on the payload —
+ * would be the client re-deciding a verdict `services/derivations` already
+ * reached, which is the one thing AC 3 is about.
+ */
+export type ClaimInsights = components["schemas"]["ClaimInsightsResponse"];
+/**
+ * What a refresh answers: the four cards, plus the kinds it could not write.
+ *
+ * A superset of `ClaimInsights` rather than a separate shape, so the response
+ * installs straight into the query cache — and `failedKinds` rides along, which
+ * is what lets the tab say *which* card the model refused instead of leaving it
+ * reading "not generated" beside a button that appeared to do nothing (review
+ * of Story 6.2, M7).
+ */
+export type RefreshInsights = components["schemas"]["RefreshInsightsResponse"];
+export type InsightKind = components["schemas"]["InsightKind"];
+export type SimilarCaseCard = components["schemas"]["SimilarCaseCard"];
+export type ReserveAdequacyCard = components["schemas"]["ReserveAdequacyCard"];
+export type NextBestActionsCard = components["schemas"]["NextBestActionsCard"];
+export type FraudRiskCard = components["schemas"]["FraudRiskCard"];
+export type SimilarCaseContent = components["schemas"]["SimilarCaseInsight"];
+export type ReserveAdequacyContent =
+  components["schemas"]["ReserveAdequacyInsight"];
+export type NextBestActionsContent =
+  components["schemas"]["NextBestActionsInsight"];
+export type FraudRedFlagsContent =
+  components["schemas"]["FraudRedFlagsInsight"];
+export type FraudLowRiskContent = components["schemas"]["FraudLowRiskInsight"];
+
+/**
+ * One claim's four cards — a read of the cache, never a generation.
+ *
+ * **A query of its own rather than a block on the case file**, which is
+ * `useClaimActions`' call for a stronger reason: this payload is model output,
+ * it is refreshed on its own schedule by a server-side job, and it is far
+ * larger than anything the Overview needs. Folding it into the console's
+ * most-fetched response would put four narratives on the wire every time a
+ * handler clicked a claim.
+ *
+ * **A long `staleTime`, unlike every other claim query.** Fifteen seconds is
+ * right for a payload cut from rows a handler is editing; an insight is a cache
+ * with a visible generation timestamp (AD-10), so re-fetching it every fifteen
+ * seconds would spend requests to receive the identical rows until somebody
+ * pressed Refresh or a job ran. Five minutes is a compromise between that and
+ * a tab that never notices a scheduled run.
+ */
+export function useClaimInsights(claimId: string | null) {
+  return useQuery({
+    queryKey: queryKeys.claims.insights(claimId ?? ""),
+    queryFn: async (): Promise<ClaimInsights> => {
+      const { data } = await api.GET("/claims/{claim_business_id}/insights", {
+        params: { path: { claim_business_id: claimId! } },
+      });
+      return data!;
+    },
+    enabled: claimId !== null,
+    staleTime: 300_000,
+  });
+}
+
+/**
+ * Regenerate this claim's four narratives (AC 1, AC 2's refresh affordance).
+ *
+ * **The response body *is* the fresh payload**, so it is installed directly
+ * rather than triggering a re-fetch — `afterChecklistWrite`'s move, for its
+ * reason: a follow-up GET would re-open the read-after-write window that
+ * returning the entity closes, and here it would also cost a second request
+ * after a call that already took tens of seconds.
+ *
+ * **It carries no `claims.writes` mutation key**, and that is deliberate rather
+ * than an omission. That key drives `useClaimWriteInFlight`, which disables
+ * every editable control on the case file while a command is in flight, because
+ * those controls all send an `expectedVersion` read from one cached case file.
+ * A refresh writes no column of `claim` and bumps no version — `ai_insight` has
+ * no version at all — so carrying it would grey out the severity score and the
+ * comp-rate input for the length of a model completion, for no reason anybody
+ * could see. `queryKeys.meetings` and `queryKeys.diaryNotes` record the same
+ * decision for the same reason.
+ *
+ * Nothing is invalidated beyond this claim's own insights: a narrative is not a
+ * claim fact, so no queue card, no top-bar tile and no case file changes
+ * because one was regenerated.
+ */
+export function useRefreshInsights(claimId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: async (): Promise<RefreshInsights> => {
+      const { data } = await api.POST(
+        "/claims/{claim_business_id}/insights/refresh",
+        {
+          params: { path: { claim_business_id: claimId } },
+        },
+      );
+      return data!;
+    },
+    onSuccess: (fresh) => {
+      const key = queryKeys.claims.insights(claimId);
+      client.setQueryData(key, fresh);
+      // Marked stale without a re-fetch, `afterChecklistWrite`'s pattern:
+      // `exact: true` because the key is nested under the case file's, and a
+      // prefix invalidation would also re-fetch the case file — which this
+      // mutation did not change.
+      void client.invalidateQueries({
+        queryKey: key,
+        exact: true,
+        refetchType: "none",
+      });
+    },
+  });
 }

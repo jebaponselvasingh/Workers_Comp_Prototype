@@ -1061,20 +1061,31 @@ async def test_write_claim_embedding_clears_stale_in_the_same_statement(
 
 
 def test_the_refresh_is_registered_as_a_second_job() -> None:
-    """`build_job_runner` holds two jobs, and the runner is still generic.
+    """`build_job_runner` holds this refresh, and the runner is still generic.
 
     Story 3.4 wrote the scheduler with no mention of payments precisely so that
     this story could add a job without touching `services/jobs.py` beyond a
     second predicate. Asserted because "the slot was reserved" is only a claim
     about the code until something registers in it — and because the scheduler
     is off under `ENV=e2e` by design, so no e2e spec can see this.
+
+    **Membership and ordering rather than an exact list**, amended by Story
+    6.2 when it registered a third job. An equality against two names was the
+    right assertion while this story was the last one; keeping it would have
+    made every later job a failure here, in a test about *this* job's
+    registration. What still matters is that the embedding refresh is
+    registered, that the payment batch is registered before it (registration
+    order is the tick's evaluation order), and that neither has been renamed.
     """
     from api.app import EMBEDDING_REFRESH_JOB, PAYMENT_BATCH_JOB, build_job_runner
     from config import Settings
 
     runner = build_job_runner(Settings(), sessionmaker=None)  # type: ignore[arg-type]
 
-    assert [job.name for job in runner.jobs] == [PAYMENT_BATCH_JOB, EMBEDDING_REFRESH_JOB]
+    names = [job.name for job in runner.jobs]
+    assert EMBEDDING_REFRESH_JOB in names
+    assert names.index(PAYMENT_BATCH_JOB) < names.index(EMBEDDING_REFRESH_JOB)
+    assert len(names) == len(set(names)), f"a job name is registered twice: {names}"
 
 
 @pytest.mark.parametrize(

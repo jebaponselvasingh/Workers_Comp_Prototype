@@ -142,8 +142,19 @@ PAYMENT_DUE_WEEK_STATUSES: Final[frozenset[ScheduleWeekStatus]] = frozenset(
 #: that card's render gate is `!enabled || NAVIGABLE_FROM_OVERVIEW.has(target)`
 #: and an enabled row outside the set renders no control at all. Story 4.1 hit
 #: the same trap with `meetings`.
+#:
+#: **And `fraud` was here until Story 6.2**, which is the third deletion and the
+#: one this entry was written for: the AI Insights tab is filled, so
+#: "View Fraud Indicators →" is a live deep link onto the fraud risk card. It
+#: cost the same two lines as the last two — this entry, and the target's
+#: membership of `NAVIGABLE_FROM_OVERVIEW` — plus one branch in
+#: `ClaimDetailPane.navigate`, which is new only because `fraud` is the first
+#: target whose name is not also a tab key.
+#:
+#: One entry left, and it names the story that closes it: `rtw_letter` is Story
+#: 6.5's modal (FR-H-11). While it stands, the seam remains a thing a reviewer
+#: can see working rather than a claim about a mechanism nothing exercises.
 SEAM_REASONS: Final[Mapping[ActionTarget, str]] = {
-    ActionTarget.fraud: "Available with AI Insights — Epic 6",
     ActionTarget.rtw_letter: "Available with the RTW letter — Epic 6",
 }
 

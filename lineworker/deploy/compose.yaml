@@ -67,6 +67,17 @@ services:
       OLLAMA_BASE_URL: http://ollama:11434
       CHAT_MODEL: ${CHAT_MODEL:-qwen3:14b}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-bge-m3}
+      # AD-5/AD-16 containment, and it is not a preference. `langchain-core`
+      # hard-depends on `langsmith`, whose tracer activates from these variables
+      # alone and exports the whole prompt body and the whole completion to
+      # `api.smith.langchain.com` — a claim's clinical narrative leaving the
+      # network with no code in this repository to grep for. `config.py` forces
+      # them off at import; they are repeated here so the container is closed
+      # even before Python starts, and because `environment:` outranks the
+      # `env_file:` above, where an inherited value would otherwise land.
+      LANGSMITH_TRACING: "false"
+      LANGCHAIN_TRACING_V2: "false"
+      LANGSMITH_OTEL_ENABLED: "false"
     depends_on:
       postgres:
         condition: service_healthy

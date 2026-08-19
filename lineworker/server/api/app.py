@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+from agents import InsightGenerationDeps, chat_client, refresh_pending_insights
 from api.deps import enforce_authenticated
 from api.errors import register_error_handlers
 from api.routers import (
@@ -42,6 +43,7 @@ log = structlog.get_logger()
 
 PAYMENT_BATCH_JOB = "payment_batch"
 EMBEDDING_REFRESH_JOB = "embedding_refresh"
+INSIGHT_REFRESH_JOB = "insight_refresh"
 
 
 def build_job_runner(
@@ -50,12 +52,14 @@ def build_job_runner(
 ) -> JobRunner:
     """The api process's scheduled jobs (spine: Structural Seed).
 
-    Two jobs: Story 3.4's payment batch and Story 6.1's embedding refresh. The
-    second is why the runner was written generic in the first place — the
-    comment that stood here reserved the slot, and filling it required no
-    change to `services/jobs.py` beyond a second due-predicate beside
-    `weekly_on`, which is the outcome that made "a small generic hook, not a
-    payments-specific one-off" worth insisting on.
+    Three jobs: Story 3.4's payment batch, Story 6.1's embedding refresh and
+    Story 6.2's insight refresh. The second is why the runner was written
+    generic in the first place — the comment that stood here reserved the slot,
+    and filling it required no change to `services/jobs.py` beyond a second
+    due-predicate beside `weekly_on`. The third cost nothing at all: same
+    predicate, same session-per-run shape, same system actor, which is the
+    outcome that made "a small generic hook, not a payments-specific one-off"
+    worth insisting on.
 
     **The two cadences are different kinds of thing**, and the predicates say
     so. `weekly_on` is a claim about the calendar (a bank's cut-off days);
@@ -114,6 +118,58 @@ def build_job_runner(
             name=EMBEDDING_REFRESH_JOB,
             due=every_seconds(settings.embedding_refresh_interval_seconds),
             run=embedding_refresh,
+        )
+    )
+
+    async def insight_refresh() -> None:
+        # The embedding refresh's shape one story later, and deliberately not a
+        # variation on it: its own session, the system actor resolved per run,
+        # the clients built per run so an operator's restart after changing
+        # `CHAT_MODEL` is the whole of the deployment procedure.
+        #
+        # **Two clients, because generation speaks to two endpoints.** The chat
+        # client narrates; the embedding client is what the similar-case gather
+        # needs to turn the query claim into a vector. Both are built here at
+        # the composition root and handed down, which is the arrangement that
+        # keeps `services/rag` free of chat code (AD-5) — see
+        # `services/rag/insights.py` on the injected generator.
+        #
+        # The bound is a bound on *claims*, not rows: each claim costs up to
+        # four completions against a model server that answers one request at a
+        # time, which is why `INSIGHT_REFRESH_BATCH_SIZE` is much smaller than
+        # the embedding batch. Whatever is left is still pending on the next
+        # tick.
+        async with sessionmaker() as session:
+            await refresh_pending_insights(
+                session,
+                await system_context(session),
+                limit=settings.insight_refresh_batch_size,
+                deps=InsightGenerationDeps(
+                    chat=chat_client(settings),
+                    embed=embedding_client(settings),
+                    staleness_days=settings.insight_staleness_disclosure_days,
+                ),
+            )
+
+    runner.register(
+        ScheduledJob(
+            name=INSIGHT_REFRESH_JOB,
+            due=every_seconds(settings.insight_refresh_interval_seconds),
+            run=insight_refresh,
+            # **The one background job**, and the only one that has any business
+            # being one. `tick` awaits its jobs in order, so before this flag a
+            # multi-minute insight run sat in front of the embedding refresh and
+            # the payment batch and delayed both — a job that spends up to
+            # `CHAT_REQUEST_TIMEOUT_SECONDS` per kind, four kinds per claim,
+            # holding a scheduler whose other two jobs are measured in
+            # milliseconds (review of Story 6.2, M9).
+            #
+            # Safe to run alongside them because of what it touches: it writes
+            # `ai_insight` and nothing else, through the one command that owns
+            # that table (AD-12), and the payment batch and embedding refresh
+            # write neither. `JobRunner.tick`'s in-flight guard is what stops a
+            # second copy of *this* job starting on the next tick.
+            background=True,
         )
     )
     return runner

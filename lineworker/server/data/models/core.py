@@ -41,6 +41,7 @@ from data.models.enums import (
     EmailPriority,
     ExpenseCategory,
     Gender,
+    InsightKind,
     LineItemStatus,
     MeetingType,
     RecoveryWindow,
@@ -1285,3 +1286,120 @@ class KnowledgeEmbedding(Base):
             postgresql_ops={"embedding": "vector_cosine_ops"},
         ),
     )
+
+
+class AiInsight(Base):
+    """One cached AI narrative for one claim and one kind (Story 6.2, AD-10/AD-12).
+
+    Derived data in the AD-10 sense, exactly as `ClaimEmbedding` is: one
+    computing path, nothing user-writable, every column a function of the claim
+    rather than a fact anybody typed. `services/rag` is the sole writer (AD-12)
+    — `services/rag/insights.py::store_insights` is the only function in the
+    build that inserts or updates a row here, and `agents/` reaches it by
+    calling that command rather than by holding a session of its own.
+
+    **No `version` column, and this is the AD-4 statement for the table.**
+    Compare-and-swap arbitrates concurrent writers of a mutable row, and this
+    table has neither. It has one writer, whose writes are whole-row
+    replacements of a derived value rather than read-modify-writes of a fact
+    somebody typed: a refresh does not *edit* a narrative, it generates a new
+    one and overwrites, so two runs racing on one claim leave the row holding
+    one of two complete generations and never a blend of both. There is nothing
+    for a CAS to protect. `ClaimEmbedding` reaches the same conclusion from the
+    derived-data direction and `TimelineEvent`/`AuditEvent` from the
+    append-only one.
+
+    The corollary matters more than the rule: **because there is no version,
+    there is no user-editable affordance anywhere**, and there must not be. A
+    version column is what an inline edit sends back as `expectedVersion`, so
+    its absence is the schema saying that FR-H-9's "never user-editable" is
+    structural rather than a habit the UI keeps. A story that wanted a handler
+    to correct a narrative would be proposing that AI output become claim data,
+    which AD-10 rules out — the honest move is to regenerate the cache.
+
+    **And no `stale` flag either**, which is where this table parts company with
+    `ClaimEmbedding`. A stale embedding is a *wrong answer* — a similar-case
+    search ranked against a claim's pre-edit summary returns the wrong
+    neighbours with nothing on screen to say so — so it needs a per-row flag and
+    a mid-flight guard. A stale insight is a *dated* answer, and it is dated
+    beside its own `generated_at` on the card, which is the whole of AD-10's
+    "always rendered with its generation timestamp". The reader can see how old
+    it is; nothing has to decide for them.
+
+    ## The columns
+
+    `content` is JSONB holding a **validated structure**, not prose. Each kind
+    has a Pydantic model (`agents/schemas.py`) that the generated narrative is
+    parsed into before anything reaches this table, so the UI renders typed
+    cards and Story 7.1 can aggregate the fraud kind portfolio-wide. Every
+    money, date, count, score and verdict inside it was copied from
+    deterministic service output (AD-2); the model supplied the prose around
+    them and nothing else.
+
+    `model` records the model that actually answered — read off the chat client
+    rather than out of `Settings` a second time, `ClaimEmbedding.model`'s rule
+    — because the card labels the narrative with it and "which model wrote
+    this?" is the first thing anybody asks of a generated sentence.
+
+    `generated_at` is on the wire for every card, always. A cached narrative
+    without its timestamp is indistinguishable from a claim fact, which is the
+    confusion AD-10 exists to prevent.
+
+    **PHI-class (AD-11).** A narrative about a claim is claim data: it lives on
+    the same encrypted volume, joins Epic 8's purge cascade, and never appears
+    in a log line. `services/rag` logs claim ids, kinds and counts.
+    """
+
+    __tablename__ = "ai_insight"
+
+    id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+    claim_id: Mapped[int] = mapped_column(ForeignKey("claim.id"))
+    kind: Mapped[InsightKind] = mapped_column(_enum(InsightKind, "insight_kind"))
+    content: Mapped[dict] = mapped_column(JSONB)  # type: ignore[type-arg]
+    model: Mapped[str] = mapped_column(Text)
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        # The cache key, and the reason a refresh replaces rather than appends:
+        # this table holds the latest generation per kind, not a history. It is
+        # also the conflict target that makes `upsert_insight` one idempotent
+        # `INSERT … ON CONFLICT DO UPDATE` instead of a select-then-branch with
+        # a race in the gap, and it doubles as the index the `claim_id` foreign
+        # key needs — PostgreSQL does not create one, and without it Story 8.1's
+        # purge would scan this table once per deleted claim.
+        UniqueConstraint("claim_id", "kind"),
+    )
+
+
+class AiInsightAttempt(Base):
+    """When one claim's insights were last generated *for* — outcome or not.
+
+    A cursor for the scheduled refresh's work queue, not a record of anything a
+    reader sees. `select_claims_needing_insights` orders by `attempted_at` with
+    never-attempted claims first, so a claim that has just been tried moves to
+    the back of the queue whatever came of it.
+
+    **That is the whole reason the table exists.** The queue's membership test
+    is "missing at least one kind", and a kind whose generation fails writes no
+    `ai_insight` row at all — so a claim the model reliably refuses stays
+    pending for ever, and under a stable `ORDER BY claim.id` it sat at the head
+    of every batch, re-spending its completions each tick and (because the run
+    stops at the first unavailable model server) potentially stopping every
+    other claim from ever generating. Recording the attempt turns that into a
+    backoff whose interval is "everything else first" (review of Story 6.2, H4).
+
+    **One row per claim, keyed by the claim**, replaced in place. No surrogate
+    id, no history and no failure counter: this is a cursor, the record of what
+    a refresh actually wrote is `audit_event` (AD-4), and a counter would be a
+    second piece of state with a "when does it reset?" question attached that
+    the ordering already answers.
+
+    No `version` column, `AiInsight`'s reason and more bluntly: nothing reads
+    this but the queue, nothing edits it, and a whole-row replacement by a
+    single writer has nothing for a CAS to protect.
+    """
+
+    __tablename__ = "ai_insight_attempt"
+
+    claim_id: Mapped[int] = mapped_column(ForeignKey("claim.id"), primary_key=True)
+    attempted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

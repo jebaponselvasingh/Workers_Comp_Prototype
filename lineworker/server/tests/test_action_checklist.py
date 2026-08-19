@@ -436,33 +436,47 @@ def test_a_note_does_not_summon_the_check_in_on_a_claim_that_is_not_in_treatment
 
 
 def test_every_seam_target_renders_disabled_with_the_epic_that_enables_it() -> None:
-    """AC 3, and the property Stories 4.2 and 6.2 will flip.
+    """AC 3, and the property Stories 4.2 and 6.2 both flipped.
 
     The sentence is asserted to be the *server's* — the same string the
     generator's table holds — because the whole point of publishing it is that
     the browser never decides which epics have shipped.
+
+    **One target left, and the loop is now over `SEAM_REASONS` itself** rather
+    than over a hand-written list beside it. That was the right shape while
+    there were three and it is the necessary one now there is one: a
+    hand-written list that fell out of step with the table would assert the seam
+    behaviour of a target that no longer has any, which is exactly what this
+    story's change to `siu_escalation` would have done silently. Driving off the
+    table means adding or removing an entry needs no edit here at all.
     """
-    loud = FakeClaim(stage=Stage.treatment, return_status=ReturnStatus.returned_and_under_therapy)
+    # `under_treatment` rather than the previous fixture's
+    # `returned_and_under_therapy`, and the change came with this story rather
+    # than being cosmetic: `_overdue_rtw` returns `None` for a worker who has
+    # gone back, so the old claim fired only `siu_escalation` and the loop was
+    # carried entirely by the target Story 6.2 has just made live. A claim that
+    # fires no seam row at all would have left this test green and vacuous,
+    # which is what the `checked` counter below now refuses.
+    loud = FakeClaim(stage=Stage.treatment, return_status=ReturnStatus.under_treatment)
     actions = {
-        action.key: action
+        action.target: action
         for action in run(
             loud, flags=ClaimFlags(siu_review=True, rtw_blocked=True, payment_due=True)
         )
     }
 
-    for key, target in (
-        (ActionKey.siu_escalation, ActionTarget.fraud),
-        (ActionKey.overdue_rtw, ActionTarget.rtw_letter),
-        # `diary` was the third member until Story 4.2 built the Notes sub-tab
-        # — see `test_the_diary_target_is_live_since_story_4_2`.
-    ):
-        action = actions.get(key)
-        # Not every one of the three survives the cap on this claim; the ones
-        # that do must be disabled, and the assertion is about them.
+    assert SEAM_REASONS, "the seam mechanism is untested once every target is built"
+    checked = 0
+    for target, reason in SEAM_REASONS.items():
+        action = actions.get(target)
+        # Not every seam target fires on this claim; the ones that do must be
+        # disabled, and the assertion is about them.
         if action is None:
             continue
         assert action.enabled is False
-        assert action.disabled_reason == SEAM_REASONS[target]
+        assert action.disabled_reason == reason
+        checked += 1
+    assert checked, "no seam row fired on the loud claim — the fixture stopped exercising this"
 
 
 def test_the_meetings_target_is_live_since_story_4_1() -> None:
@@ -524,6 +538,47 @@ def test_the_diary_target_is_live_since_story_4_2() -> None:
     # Still no completion command: the note is the completion, and a fifth
     # `ActionCommand` would be the "completed actions" store this module's
     # docstring refuses.
+    assert action.command is None
+
+
+def test_the_fraud_target_is_live_since_story_6_2() -> None:
+    """The seam this file's previous version asserted disabled (Story 6.2).
+
+    `siu_escalation` points at `fraud`, and until 6.2 there was no AI Insights
+    tab so the row shipped refused with "Available with AI Insights — Epic 6".
+    Enabling it was one deletion from `SEAM_REASONS` — the property
+    `ActionTarget`'s docstring promises, and the reason `enabled` is a server
+    field rather than a client-side membership test.
+
+    Asserted rather than simply dropped from the loop above, so a regression
+    that re-added the entry fails here instead of silently re-disabling a
+    shipped surface. `test_the_meetings_target_is_live_since_story_4_1` and
+    `test_the_diary_target_is_live_since_story_4_2` are the same assertion two
+    and one stories earlier.
+
+    The SPA needed **two** changes that are not the seam and must not be
+    mistaken for it. `ActionsCard.NAVIGABLE_FROM_OVERVIEW` gained `"fraud"`,
+    because that card renders no control at all for an enabled target outside
+    the set — the trap 4.1 and 4.2 both hit. And `ClaimDetailPane.navigate`
+    gained a branch, because `fraud` is the first target whose name is not also
+    a tab key: the tab is called `insights`, so the string-equality shortcut the
+    other three tab targets take does not cover it.
+    """
+    assert ActionTarget.fraud not in SEAM_REASONS
+
+    action = next(
+        candidate
+        for candidate in run(
+            FakeClaim(stage=Stage.treatment),
+            flags=ClaimFlags(siu_review=True, rtw_blocked=False, payment_due=False),
+        )
+        if candidate.key is ActionKey.siu_escalation
+    )
+    assert action.target is ActionTarget.fraud
+    assert action.enabled is True
+    assert action.disabled_reason is None
+    # Still no completion command: referring a claim to SIU is not a write this
+    # console performs, and a button that recorded one would be a false record.
     assert action.command is None
 
 

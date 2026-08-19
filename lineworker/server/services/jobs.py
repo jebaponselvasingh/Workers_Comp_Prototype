@@ -56,18 +56,34 @@ DuePredicate = Callable[[datetime, datetime | None], bool]
 
 @dataclass(frozen=True)
 class ScheduledJob:
-    """One periodic job. Three fields, and none of them is a schedule string.
+    """One periodic job. Four fields, and none of them is a schedule string.
 
     `run` takes no arguments and returns whatever it likes: a job that needs a
     database session opens one itself (the api process's sessionmaker is
     captured in the closure at registration), because a runner that handed out
     sessions would own their lifetime and would be a transaction manager rather
     than a scheduler.
+
+    **`background` says this job may not hold the tick.** The runner awaits its
+    jobs in order, which is right for work measured in milliseconds and wrong
+    for work measured in model completions: Story 6.2's insight refresh can
+    spend `CHAT_REQUEST_TIMEOUT_SECONDS` per kind, four kinds per claim, five
+    claims per run — so a single slow run delayed the embedding refresh and the
+    payment batch behind it, silently, for minutes at a time (review of Story
+    6.2, M9). A background job is started as its own task and the tick moves on.
+
+    The flag is opt-in and stays that way. Serial is the safer default: it means
+    two jobs never write the same rows at once, and it makes the tick's
+    behaviour something a test can assert without a clock. A job that opts out
+    of it is making a claim about itself — that it holds no lock the other jobs
+    want and that a run overlapping the next tick is survivable — and
+    `JobRunner.tick`'s in-flight guard is what makes the second half true.
     """
 
     name: str
     due: DuePredicate
     run: Callable[[], Awaitable[object]]
+    background: bool = False
 
 
 @dataclass
@@ -82,6 +98,10 @@ class JobRunner:
     tick_seconds: float
     jobs: list[ScheduledJob] = field(default_factory=list)
     last_run: dict[str, datetime] = field(default_factory=dict)
+    #: The still-running task of each `background=True` job, so a second tick
+    #: cannot start a second copy of one. Keyed by job name and never removed:
+    #: a finished task is cheap to hold and `done()` is the whole of the check.
+    in_flight: dict[str, asyncio.Task[object]] = field(default_factory=dict)
 
     def register(self, job: ScheduledJob) -> None:
         """Add a job. A duplicate name is an error, not a second entry.
@@ -109,25 +129,60 @@ class JobRunner:
 
         Failures are contained per job, not per tick: the second job still runs
         when the first raises.
+
+        **A `background=True` job is started rather than awaited**, and a due
+        one that is still running from a previous tick is skipped without
+        advancing `last_run` — so it is retried on the next tick rather than
+        having its due window consumed by a run it never got. That distinction
+        is the reason the skip is not simply "report it as run": a job whose
+        interval is shorter than its runtime would otherwise fire once and then
+        look like it had fired every time.
+
+        The returned names are the jobs this tick *started*, which for a serial
+        job is also the jobs it finished and for a background one is not.
         """
         ran: list[str] = []
         for job in self.jobs:
             if not job.due(now, self.last_run.get(job.name)):
                 continue
+            if job.background:
+                running = self.in_flight.get(job.name)
+                if running is not None and not running.done():
+                    log.info("scheduler.job_still_running", job=job.name)
+                    continue
+                self.last_run[job.name] = now
+                ran.append(job.name)
+                self.in_flight[job.name] = asyncio.create_task(self._guarded(job))
+                continue
             # Recorded *before* awaiting, so a job that raises does not retry
             # on the very next tick — see the module docstring.
             self.last_run[job.name] = now
             ran.append(job.name)
-            try:
-                await job.run()
-            except Exception as exc:
-                # The class name and the job name; never the exception's
-                # message, which for a database error can carry column values
-                # (AD-11). The traceback goes nowhere on purpose: this is an
-                # operational log line, and the failure is visible as a job
-                # that stopped having an effect.
-                log.error("scheduler.job_failed", job=job.name, error=type(exc).__name__)
+            await self._guarded(job)
         return tuple(ran)
+
+    async def _guarded(self, job: ScheduledJob) -> object:
+        """Run one job, turning any exception into one operational log line.
+
+        Shared by both paths so a background job's failure is reported exactly
+        as a serial one's is — an unhandled exception inside a bare
+        `create_task` is worse than useless, because asyncio surfaces it as a
+        "Task exception was never retrieved" warning at garbage-collection time,
+        detached from the job that caused it.
+
+        The class name and the job name; never the exception's message, which
+        for a database error can carry column values (AD-11). The traceback goes
+        nowhere on purpose: this is an operational log line, and the failure is
+        visible as a job that stopped having an effect.
+        """
+        try:
+            return await job.run()
+        except asyncio.CancelledError:
+            # Shutdown, not failure. Re-raised so the task actually ends.
+            raise
+        except Exception as exc:
+            log.error("scheduler.job_failed", job=job.name, error=type(exc).__name__)
+            return None
 
     async def run_forever(self, clock: Callable[[], datetime]) -> None:
         """Tick until cancelled. The only part of this module with a `sleep`.
@@ -135,6 +190,13 @@ class JobRunner:
         Cancellation is re-raised rather than swallowed, so the lifespan's
         `task.cancel()` actually ends the task instead of looping through a
         `CancelledError` caught by a bare `except`.
+
+        **Background jobs are cancelled with it.** They are the one thing in
+        this module that outlives a tick, so they are also the one thing that
+        could outlive the engine the lifespan is about to dispose — which
+        surfaces as an asyncpg error at shutdown with no obvious cause. That is
+        precisely the failure the lifespan's own `task.cancel(); await task`
+        comment records, one level down.
         """
         log.info("scheduler.started", jobs=[job.name for job in self.jobs])
         try:
@@ -142,6 +204,8 @@ class JobRunner:
                 await asyncio.sleep(self.tick_seconds)
                 await self.tick(clock())
         except asyncio.CancelledError:
+            for task in self.in_flight.values():
+                task.cancel()
             log.info("scheduler.stopped")
             raise
 

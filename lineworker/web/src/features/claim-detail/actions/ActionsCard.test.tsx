@@ -166,7 +166,10 @@ test("the urgency chips carry their labels rather than their tokens", async () =
   await screen.findAllByTestId("action-row");
 
   const chips = screen.getAllByTestId("action-urgency").map((chip) => chip.textContent);
-  expect(chips).toEqual(["High", "High", "High", "Medium", "Medium", "Low"]);
+  // Seven since Story 6.2: the fixture gained an `overdue_rtw:rtw_letter` row
+  // when the fraud row stopped being a seam, so that the file still has a
+  // disabled control to assert the seam behaviour against.
+  expect(chips).toEqual(["High", "High", "High", "High", "Medium", "Medium", "Low"]);
 });
 
 // --- AC 3: deep links, and the seam --------------------------------------
@@ -187,14 +190,41 @@ test("a seam control is disabled and cannot navigate anywhere", async () => {
   renderCard({}, (target) => navigated.push(target));
   await screen.findAllByTestId("action-row");
 
-  // `fraud`, not `diary`: Story 4.2 made the diary target live, so the row
-  // this test used to point at now navigates. `fraud` waits for Epic 6.
-  const seamRow = row("siu_escalation:fraud");
+  // `rtw_letter`, not `fraud`: Story 6.2 filled the AI Insights tab, so the row
+  // this test pointed at now navigates (asserted directly below). Third
+  // re-pointing of the same assertion — `diary` → `fraud` → `rtw_letter` — and
+  // each one is the same evidence that the seam mechanism works, moved to the
+  // seam that is still open. Story 6.5 builds the RTW letter and will move it
+  // once more; when there is no seam left, this test's subject is gone and the
+  // assertion goes with it rather than being pointed at nothing.
+  const seamRow = row("overdue_rtw:rtw_letter");
   const control = within(seamRow).getByTestId("action-goto");
 
   expect(control).toBeDisabled();
   await userEvent.click(control);
   expect(navigated).toEqual([]);
+});
+
+test("the fraud target is live since Story 6.2 and navigates", async () => {
+  // The seam the previous version of this file asserted disabled. It is
+  // *enabled* on the server now, and the card had to gain `"fraud"` in
+  // `NAVIGABLE_FROM_OVERVIEW` — without that line the row renders no control at
+  // all, which is the trap Stories 4.1 and 4.2 both hit.
+  //
+  // The target is `fraud` and the tab is `insights`; turning one into the other
+  // is `ClaimDetailPane.navigate`'s job, and this card must not know about it.
+  // Asserting the raw target here is what keeps that seam honest: a card that
+  // "helpfully" translated would be a second place the mapping lives.
+  const navigated: string[] = [];
+  renderCard({}, (target) => navigated.push(target));
+  await screen.findAllByTestId("action-row");
+
+  const fraudRow = row("siu_escalation:fraud");
+  const control = within(fraudRow).getByTestId("action-goto");
+
+  expect(control).toBeEnabled();
+  await userEvent.click(control);
+  expect(navigated).toEqual(["fraud"]);
 });
 
 test("the diary target is live since Story 4.2 and navigates", async () => {
@@ -224,24 +254,25 @@ test("a seam control names the epic that will enable it, without a pointer", asy
   renderCard();
   await screen.findAllByTestId("action-row");
 
-  const seamRow = row("siu_escalation:fraud");
+  const seamRow = row("overdue_rtw:rtw_letter");
 
   expect(within(seamRow).getByTestId("action-goto")).toHaveAttribute(
     "title",
-    "Available with AI Insights — Epic 6",
+    "Available with the RTW letter — Epic 6",
   );
-  expect(seamRow).toHaveTextContent("Available with AI Insights — Epic 6");
+  expect(seamRow).toHaveTextContent("Available with the RTW letter — Epic 6");
 });
 
 test("the seam reason shown is the server's, not a map held in the browser", async () => {
-  // The property Story 6.2 will flip, and 4.2 just did: change the sentence on
-  // the server and the card changes. A client-side epic map would fail this.
+  // The property Stories 4.2 and 6.2 both flipped: change the sentence on the
+  // server and the card changes. A client-side epic map would fail this — and
+  // would also have had to be edited twice by now, in a release each time.
   const retuned = {
     status: 200,
     body: {
       ...CLAIM_ACTIONS.body,
       items: CLAIM_ACTIONS.body.items.map((item) =>
-        item.id === "siu_escalation:fraud"
+        item.id === "overdue_rtw:rtw_letter"
           ? { ...item, disabledReason: "Available in the next release" }
           : item,
       ),
@@ -250,16 +281,16 @@ test("the seam reason shown is the server's, not a map held in the browser", asy
   renderCard({ claimActions: retuned });
   await screen.findAllByTestId("action-row");
 
-  expect(row("siu_escalation:fraud")).toHaveTextContent("Available in the next release");
+  expect(row("overdue_rtw:rtw_letter")).toHaveTextContent("Available in the next release");
 });
 
 test("a disabled row offers no completion control", async () => {
   renderCard();
   await screen.findAllByTestId("action-row");
 
-  const siuRow = row("siu_escalation:fraud");
+  const seamRow = row("overdue_rtw:rtw_letter");
 
-  expect(within(siuRow).queryByTestId("action-command")).not.toBeInTheDocument();
+  expect(within(seamRow).queryByTestId("action-command")).not.toBeInTheDocument();
 });
 
 // --- AC 4 and AC 5: the three completions --------------------------------

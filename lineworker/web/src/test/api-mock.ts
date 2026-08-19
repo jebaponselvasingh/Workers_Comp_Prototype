@@ -99,6 +99,20 @@ export interface StubRoutes {
    * with nothing anywhere saying why.
    */
   claimActions?: StubRouteFor;
+  /**
+   * `GET /claims/{id}/insights` (Story 6.2) — the four cached AI narratives.
+   *
+   * A `StubRouteFor` for `claimDetail`'s reason, and matched **before** the
+   * case file in the router below for `claimActions`' reason: every one of
+   * these URLs contains `/api/claims/`, so a stub that matched the case file
+   * first would answer the tab's request with a case file and the tab would
+   * render four empty cards with nothing anywhere saying why.
+   */
+  claimInsights?: StubRouteFor;
+  /** `POST /claims/{id}/insights/refresh` (Story 6.2). Matched with the read
+   * above — the two share a path prefix and differ only by method, so the
+   * router branches on the method rather than on a longer substring. */
+  refreshInsights?: StubRouteFor;
   /** `POST /claims/{id}/assessment/approval` (Story 3.5). */
   approveAssessment?: StubRouteFor;
   /** `POST /claims/{id}/documents/{id}/review` (Story 3.5). */
@@ -180,7 +194,10 @@ const problem = (status: number, detail: string) => ({
   detail,
 });
 
-export const UNAUTHENTICATED = { status: 401, body: problem(401, "Sign in to continue.") };
+export const UNAUTHENTICATED = {
+  status: 401,
+  body: problem(401, "Sign in to continue."),
+};
 
 /** Matches the first supervisor in SEEDED_PERSONAS below. */
 export const DEFAULT_LOGIN = {
@@ -259,7 +276,6 @@ export const DASHBOARD_SUMMARY_RETUNED = {
     rulesVersion: 6,
   },
 };
-
 
 /**
  * The handler performance table over David Bline's real seeded book — six
@@ -704,10 +720,34 @@ export const HANDLER_BENCHMARKS_EMPTY = {
 export const SLA_STRIP = {
   status: 200,
   body: {
-    pick: { value: 2.7, target: 1, direction: "below", decimals: 1, status: "warn" },
-    approve: { value: 8.1, target: 5, direction: "below", decimals: 1, status: "warn" },
-    settle: { value: 62, target: 30, direction: "below", decimals: 0, status: "warn" },
-    rtwRate: { value: 95, target: 80, direction: "above", decimals: 0, status: "pass" },
+    pick: {
+      value: 2.7,
+      target: 1,
+      direction: "below",
+      decimals: 1,
+      status: "warn",
+    },
+    approve: {
+      value: 8.1,
+      target: 5,
+      direction: "below",
+      decimals: 1,
+      status: "warn",
+    },
+    settle: {
+      value: 62,
+      target: 30,
+      direction: "below",
+      decimals: 0,
+      status: "warn",
+    },
+    rtwRate: {
+      value: 95,
+      target: 80,
+      direction: "above",
+      decimals: 0,
+      status: "pass",
+    },
   },
 };
 
@@ -715,10 +755,34 @@ export const SLA_STRIP = {
 export const SLA_NO_DATA = {
   status: 200,
   body: {
-    pick: { value: null, target: 1, direction: "below", decimals: 1, status: "no_data" },
-    approve: { value: null, target: 5, direction: "below", decimals: 1, status: "no_data" },
-    settle: { value: null, target: 30, direction: "below", decimals: 0, status: "no_data" },
-    rtwRate: { value: null, target: 80, direction: "above", decimals: 0, status: "no_data" },
+    pick: {
+      value: null,
+      target: 1,
+      direction: "below",
+      decimals: 1,
+      status: "no_data",
+    },
+    approve: {
+      value: null,
+      target: 5,
+      direction: "below",
+      decimals: 1,
+      status: "no_data",
+    },
+    settle: {
+      value: null,
+      target: 30,
+      direction: "below",
+      decimals: 0,
+      status: "no_data",
+    },
+    rtwRate: {
+      value: null,
+      target: 80,
+      direction: "above",
+      decimals: 0,
+      status: "no_data",
+    },
   },
 };
 
@@ -995,10 +1059,34 @@ export const DASHBOARD_CHARTS_SCOPED = {
       limit: 10,
     },
     sla: {
-      pick: { value: 2.7, target: 1, direction: "below", decimals: 1, status: "warn" },
-      approve: { value: 8.1, target: 5, direction: "below", decimals: 1, status: "warn" },
-      settle: { value: 62, target: 30, direction: "below", decimals: 0, status: "warn" },
-      rtwRate: { value: 75, target: 80, direction: "above", decimals: 0, status: "warn" },
+      pick: {
+        value: 2.7,
+        target: 1,
+        direction: "below",
+        decimals: 1,
+        status: "warn",
+      },
+      approve: {
+        value: 8.1,
+        target: 5,
+        direction: "below",
+        decimals: 1,
+        status: "warn",
+      },
+      settle: {
+        value: 62,
+        target: 30,
+        direction: "below",
+        decimals: 0,
+        status: "warn",
+      },
+      rtwRate: {
+        value: 75,
+        target: 80,
+        direction: "above",
+        decimals: 0,
+        status: "warn",
+      },
     },
     highRiskSeverityMin: 70,
     medRiskSeverityMin: 40,
@@ -1024,8 +1112,20 @@ export const DASHBOARD_CHARTS_EMPTY = {
   status: 200,
   body: {
     ...DASHBOARD_CHARTS.body,
-    byStage: { items: [], total: 0, totalCategories: 0, truncated: false, limit: null },
-    bySeverity: { items: [], total: 0, totalCategories: 0, truncated: false, limit: null },
+    byStage: {
+      items: [],
+      total: 0,
+      totalCategories: 0,
+      truncated: false,
+      limit: null,
+    },
+    bySeverity: {
+      items: [],
+      total: 0,
+      totalCategories: 0,
+      truncated: false,
+      limit: null,
+    },
     byRecoveryStatus: {
       items: [],
       total: 0,
@@ -1033,9 +1133,27 @@ export const DASHBOARD_CHARTS_EMPTY = {
       truncated: false,
       limit: null,
     },
-    byInjuryType: { items: [], total: 0, totalCategories: 0, truncated: false, limit: 8 },
-    byEmployer: { items: [], total: 0, totalCategories: 0, truncated: false, limit: null },
-    byState: { items: [], total: 0, totalCategories: 0, truncated: false, limit: 10 },
+    byInjuryType: {
+      items: [],
+      total: 0,
+      totalCategories: 0,
+      truncated: false,
+      limit: 8,
+    },
+    byEmployer: {
+      items: [],
+      total: 0,
+      totalCategories: 0,
+      truncated: false,
+      limit: null,
+    },
+    byState: {
+      items: [],
+      total: 0,
+      totalCategories: 0,
+      truncated: false,
+      limit: 10,
+    },
     sla: SLA_NO_DATA.body,
   },
 };
@@ -1737,7 +1855,11 @@ export const GLOSSARY_EMPTY = {
  * mistake a stub for a computation — and because a card carrying invented
  * flags would let a test pass against a component that derived them.
  */
-function stageGroup(items: unknown[], total = items.length, nextCursor: string | null = null) {
+function stageGroup(
+  items: unknown[],
+  total = items.length,
+  nextCursor: string | null = null,
+) {
   return { items, nextCursor, total };
 }
 
@@ -1895,9 +2017,21 @@ function stepper(current: string) {
 }
 
 const TIMELINE = [
-  { eventDate: "2026-03-22", description: "FNOL received — Fall from Height", tag: "intake" },
-  { eventDate: "2026-03-24", description: "C-1 First Report of Injury filed", tag: "froi" },
-  { eventDate: "2026-03-25", description: "Handler assigned — Kaya Johnson", tag: "assignment" },
+  {
+    eventDate: "2026-03-22",
+    description: "FNOL received — Fall from Height",
+    tag: "intake",
+  },
+  {
+    eventDate: "2026-03-24",
+    description: "C-1 First Report of Injury filed",
+    tag: "froi",
+  },
+  {
+    eventDate: "2026-03-25",
+    description: "Handler assigned — Kaya Johnson",
+    tag: "assignment",
+  },
 ];
 
 /**
@@ -1925,7 +2059,13 @@ export const EDIT_OPTIONS = {
     { key: "tibia_left", label: "Left Lower Leg" },
     { key: "tibia_right", label: "Right Lower Leg" },
   ],
-  recoveryWindows: ["weeks_0_2", "weeks_2_4", "weeks_4_6", "weeks_6_8", "over_1_year"],
+  recoveryWindows: [
+    "weeks_0_2",
+    "weeks_2_4",
+    "weeks_4_6",
+    "weeks_6_8",
+    "over_1_year",
+  ],
   disabilities: ["temporary", "permanent"],
 };
 
@@ -1999,7 +2139,10 @@ export const INJURY_DIAGRAM = {
  */
 export const INJURY_UNKNOWN_KEY = {
   ...INJURY_DIAGRAM,
-  markers: [{ ...INJURY_DIAGRAM.markers[0], bodyKey: "cervical_spine" }, INJURY_DIAGRAM.markers[1]],
+  markers: [
+    { ...INJURY_DIAGRAM.markers[0], bodyKey: "cervical_spine" },
+    INJURY_DIAGRAM.markers[1],
+  ],
 };
 
 /**
@@ -2040,7 +2183,8 @@ export const DOCUMENTS_BLOCK = {
     {
       formCode: "C-3",
       formName: "FROI — Employee Claim for Compensation (C-3)",
-      description: "Employee's formal WC claim. Filed when disability exceeds waiting period.",
+      description:
+        "Employee's formal WC claim. Filed when disability exceeds waiting period.",
       timing: "As soon as practicable; carrier within 30 days",
       downloadUrl: "https://www.wcb.ny.gov/content/main/forms/c3.pdf",
     },
@@ -2078,14 +2222,24 @@ export const DOCUMENTS_BLOCK = {
     region: "Midwest",
   },
   documents: [
-    { id: 11, name: "C-1 First Report of Injury", docType: "froi", filedDate: "2026-03-24" },
+    {
+      id: 11,
+      name: "C-1 First Report of Injury",
+      docType: "froi",
+      filedDate: "2026-03-24",
+    },
     {
       id: 12,
       name: "Medical Authorization & Release (HIPAA)",
       docType: "medauth",
       filedDate: "2026-03-24",
     },
-    { id: 13, name: "Surgical Consent & Operative Report", docType: "legal", filedDate: null },
+    {
+      id: 13,
+      name: "Surgical Consent & Operative Report",
+      docType: "legal",
+      filedDate: null,
+    },
   ],
 };
 
@@ -2104,7 +2258,8 @@ export const DOCUMENTS_BLOCK_PATH_A = {
     {
       formCode: "FAR-1",
       formName: "Employee First Aid / Injury Report",
-      description: "Employee-completed onsite first aid and injury description.",
+      description:
+        "Employee-completed onsite first aid and injury description.",
       timing: "Same shift or within 24h",
       downloadUrl: "https://www.fnsb.gov/DocumentCenter/View/18587/",
     },
@@ -2305,7 +2460,8 @@ export const RESERVE_CHECK = {
   // open seeded claim (code review, 2026-08-14).
   disbursedMedicalCents: 127_500,
   reserveCents: 4_500_000,
-  rationale: "Reserve ($45,000) is well aligned with projected remaining exposure ($40,500).",
+  rationale:
+    "Reserve ($45,000) is well aligned with projected remaining exposure ($40,500).",
   bandsVersion: 1,
 };
 
@@ -2407,7 +2563,11 @@ export const DOCUMENT_SHEET_FROI = {
       { label: "Claim ID", text: "WC-20017", cents: null },
       { label: "Policy Number", text: "CL-POL-CAT-2024-118", cents: null },
       { label: "Employee", text: "Marcus Delgado (EMP-CAT-2043)", cents: null },
-      { label: "Employer / Plant", text: "Caterpillar – Peoria, IL", cents: null },
+      {
+        label: "Employer / Plant",
+        text: "Caterpillar – Peoria, IL",
+        cents: null,
+      },
       { label: "Date of Injury", text: "2026-03-22", cents: null },
       { label: "Filed", text: "2026-03-24", cents: null },
       { label: "Injury Type", text: "Fall from Height", cents: null },
@@ -2437,7 +2597,11 @@ export const DOCUMENT_SHEET_SUMMARY = {
       { label: "Claim ID", text: "WC-20017", cents: null },
       { label: "Policy Number", text: "CL-POL-CAT-2024-118", cents: null },
       { label: "Employee", text: "Marcus Delgado (EMP-CAT-2043)", cents: null },
-      { label: "Employer / Plant", text: "Caterpillar – Peoria, IL", cents: null },
+      {
+        label: "Employer / Plant",
+        text: "Caterpillar – Peoria, IL",
+        cents: null,
+      },
       // Undated, as 101 seeded documents are — the dialog renders an em dash.
       { label: "Filed", text: null, cents: null },
       { label: "Status", text: "On file", cents: null },
@@ -2498,7 +2662,8 @@ export const CLAIM_DETAIL_TREATMENT = {
     overview: {
       stageVariant: "treatment",
       phase: "approaching_mmi",
-      phaseNote: "Nearing maximum medical improvement — RTW and closure planning underway.",
+      phaseNote:
+        "Nearing maximum medical improvement — RTW and closure planning underway.",
       expectedDays: 42,
       daysOpen: 140,
       recovery: "weeks_4_6",
@@ -2588,7 +2753,12 @@ export const CLAIM_DETAIL_INVESTIGATION = {
     benefit: BENEFIT,
     reserveCheck: RESERVE_CHECK,
     requirementsVersion: null,
-    header: { ...HEADER, claimId: "WC-20051", stage: "investigation", risk: "med" },
+    header: {
+      ...HEADER,
+      claimId: "WC-20051",
+      stage: "investigation",
+      risk: "med",
+    },
     stepper: stepper("investigation"),
     overview: {
       stageVariant: "investigation",
@@ -2676,7 +2846,10 @@ export const CLAIM_DETAIL_SETTLED_DATED = {
   status: 200,
   body: {
     ...CLAIM_DETAIL_SETTLED.body,
-    overview: { ...CLAIM_DETAIL_SETTLED.body.overview, settlementDate: "2026-07-29" },
+    overview: {
+      ...CLAIM_DETAIL_SETTLED.body.overview,
+      settlementDate: "2026-07-29",
+    },
   },
 };
 
@@ -2742,7 +2915,8 @@ function respond(status: number, body: unknown): Response {
   return new Response(status === 204 ? null : JSON.stringify(body), {
     status,
     headers: {
-      "content-type": status >= 400 ? "application/problem+json" : "application/json",
+      "content-type":
+        status >= 400 ? "application/problem+json" : "application/json",
     },
   });
 }
@@ -3006,7 +3180,12 @@ export const APPROVAL_CONFLICT_PAID = {
       ...CLAIM_FINANCIALS.body,
       schedule: CLAIM_FINANCIALS.body.schedule.map((week) =>
         week.weekNo === 3
-          ? { ...week, status: "paid" as const, version: week.version + 1, approvable: false }
+          ? {
+              ...week,
+              status: "paid" as const,
+              version: week.version + 1,
+              approvable: false,
+            }
           : week,
       ),
     },
@@ -3052,8 +3231,31 @@ export const CLAIM_ACTIONS = {
         label: "Escalate to SIU — fraud indicators on file",
         urgency: "high",
         target: "fraud",
+        // **Live since Story 6.2**, which deleted the target from the server's
+        // `SEAM_REASONS` when the AI Insights tab was filled — the whole of
+        // what enabling a seam costs on that side. On this side it needed one
+        // addition to `ActionsCard.NAVIGABLE_FROM_OVERVIEW` and one branch in
+        // `ClaimDetailPane.navigate`, the second of which is new: `fraud` is
+        // the first target whose name is not also a tab key.
+        enabled: true,
+        disabledReason: null,
+        command: null,
+        documentId: null,
+        documentVersion: null,
+      },
+      {
+        // The seam that remains, and the row every "a disabled control says
+        // which epic" assertion now points at. Story 6.5 builds the RTW-letter
+        // modal (FR-H-11) and will delete this entry from `SEAM_REASONS` in
+        // turn; until then the mechanism has something live to demonstrate it
+        // on, which is why the fixture keeps one rather than none.
+        id: "overdue_rtw:rtw_letter",
+        key: "overdue_rtw",
+        label: "Return to work is overdue — send the RTW letter",
+        urgency: "high",
+        target: "rtw_letter",
         enabled: false,
-        disabledReason: "Available with AI Insights — Epic 6",
+        disabledReason: "Available with the RTW letter — Epic 6",
         command: null,
         documentId: null,
         documentVersion: null,
@@ -3148,6 +3350,262 @@ export const CLAIM_ACTIONS_MEETINGS = {
   },
 };
 
+/**
+ * The four cached AI narratives, all generated (Story 6.2).
+ *
+ * Every figure on it is one a deterministic service would have produced — the
+ * reserve figures match `CLAIM_FINANCIALS`' reserve block, the actions match
+ * `CLAIM_ACTIONS`' first two rows, the fraud signals clear the review threshold
+ * — because a fixture whose numbers were invented would let a card that
+ * re-derived one look correct. The *prose* is deliberately obvious filler: no
+ * component test asserts on a sentence, and one that did would be asserting
+ * model output, which AD-15 forbids at every level.
+ *
+ * The fraud slot is the **red-flag** variant here; `CLAIM_INSIGHTS_LOW_RISK`
+ * below is the other half of the union, which is the one AC 3 names.
+ */
+export const CLAIM_INSIGHTS = {
+  status: 200,
+  body: {
+    similarCaseOutcomes: {
+      kind: "similar_case_outcomes",
+      status: "ready",
+      model: "model-stub",
+      generatedAt: "2026-08-19T09:30:00Z",
+      content: {
+        neighbours: [
+          {
+            claimId: "WC-20044",
+            employerShortName: "Caterpillar",
+            injuryType: "Back Strain",
+            severityScore: 6,
+            distance: 0.1421,
+            embeddedAt: "2026-08-19T09:00:00Z",
+            stale: false,
+          },
+          {
+            claimId: "WC-20051",
+            employerShortName: "GE",
+            injuryType: "Shoulder Strain",
+            severityScore: 5,
+            distance: 0.2033,
+            embeddedAt: "2026-08-19T09:00:00Z",
+            stale: false,
+          },
+        ],
+        neighbourCount: 2,
+        staleCount: 0,
+        stalenessDisclosure: null,
+        bookIsEmpty: false,
+        narrative: {
+          summary:
+            "Two comparable claims in this caseload share the injury type and band.",
+          takeaways: ["Both comparables returned to modified duty first."],
+        },
+        promptVersion: 1,
+      },
+    },
+    reserveAdequacyReview: {
+      kind: "reserve_adequacy_review",
+      status: "ready",
+      model: "model-stub",
+      generatedAt: "2026-08-19T09:30:00Z",
+      content: {
+        verdict: "adequate",
+        verdictRationale:
+          "Reserve of $48,000 covers the $31,000 of exposure still projected against it.",
+        ratioBp: 6458,
+        reserve: { cents: 4800000, display: "$48,000" },
+        remainingIndemnity: { cents: 1900000, display: "$19,000" },
+        remainingMedical: { cents: 1200000, display: "$12,000" },
+        projectedRemaining: { cents: 3100000, display: "$31,000" },
+        billsOnFile: true,
+        bandsVersion: 1,
+        narrative: {
+          summary:
+            "The reserve covers the projected exposure with room to spare.",
+          considerations: [
+            "Watch the surgical authorization, which is not yet confirmed.",
+          ],
+        },
+        promptVersion: 1,
+      },
+    },
+    nextBestActions: {
+      kind: "next_best_actions",
+      status: "ready",
+      model: "model-stub",
+      generatedAt: "2026-08-19T09:30:00Z",
+      content: {
+        actions: [
+          {
+            id: "assessment_approval:approve",
+            key: "assessment_approval",
+            label: "Approve the claim assessment",
+            urgency: "high",
+          },
+          {
+            id: "bill_review:bills",
+            key: "bill_review",
+            label: "Review medical bills awaiting approval",
+            urgency: "medium",
+          },
+        ],
+        actionCount: 2,
+        cap: 6,
+        rulesVersion: 1,
+        narrative: {
+          summary:
+            "The assessment approval is blocking everything downstream of it.",
+          considerations: [
+            "Approving the assessment releases the pending bill review.",
+          ],
+        },
+        promptVersion: 1,
+      },
+    },
+    fraudRiskIndicators: {
+      kind: "fraud_risk_indicators",
+      status: "ready",
+      model: "model-stub",
+      generatedAt: "2026-08-19T09:30:00Z",
+      content: {
+        outcome: "red_flags",
+        signals: {
+          fraudScore: 72,
+          fraudFlag: true,
+          siuReview: true,
+          fraudFlagged: true,
+          siuFraudScoreMin: 60,
+          fraudFlagScoreMin: 55,
+          thresholdsVersion: 4,
+        },
+        narrative: {
+          summary:
+            "The score clears both thresholds, so a referral is indicated.",
+          redFlags: [
+            "The reported cause and the treating diagnosis do not line up.",
+          ],
+        },
+        promptVersion: 1,
+      },
+    },
+  },
+};
+
+/**
+ * The same four cards with the **low-risk** fraud variant (AC 3).
+ *
+ * The one fixture that exists to pin a shape rather than a value: a low-risk
+ * claim's card must render a confirmation in ok tokens, never a heading over an
+ * empty red-flag list, and the two variants are a discriminated union so a
+ * component that branched on the score instead of on `outcome` would render the
+ * wrong half of it. The signals here sit below **both** thresholds, which is
+ * what makes `outcome: "low_risk"` the answer a service would have given.
+ */
+export const CLAIM_INSIGHTS_LOW_RISK = {
+  status: 200,
+  body: {
+    ...CLAIM_INSIGHTS.body,
+    fraudRiskIndicators: {
+      kind: "fraud_risk_indicators",
+      status: "ready",
+      model: "model-stub",
+      generatedAt: "2026-08-19T09:30:00Z",
+      content: {
+        outcome: "low_risk",
+        signals: {
+          fraudScore: 12,
+          fraudFlag: false,
+          siuReview: false,
+          fraudFlagged: false,
+          siuFraudScoreMin: 60,
+          fraudFlagScoreMin: 55,
+          thresholdsVersion: 4,
+        },
+        narrative: {
+          confirmation:
+            "The fraud score sits below both thresholds; no referral is indicated.",
+          monitoring: [
+            "A change of treating physician would be worth a second look.",
+          ],
+        },
+        promptVersion: 1,
+      },
+    },
+  },
+};
+
+/**
+ * A claim nobody has generated for — the NFR-3 empty state, four times.
+ *
+ * The state **every** claim is in until a scheduled run reaches it, which is
+ * why the API answers 200 with four explicit cards rather than a 404: the tab
+ * has an affordance to offer, and an error branch has none.
+ */
+export const CLAIM_INSIGHTS_NOT_GENERATED = {
+  status: 200,
+  body: {
+    similarCaseOutcomes: {
+      kind: "similar_case_outcomes",
+      status: "not_generated",
+      model: null,
+      generatedAt: null,
+      content: null,
+    },
+    reserveAdequacyReview: {
+      kind: "reserve_adequacy_review",
+      status: "not_generated",
+      model: null,
+      generatedAt: null,
+      content: null,
+    },
+    nextBestActions: {
+      kind: "next_best_actions",
+      status: "not_generated",
+      model: null,
+      generatedAt: null,
+      content: null,
+    },
+    fraudRiskIndicators: {
+      kind: "fraud_risk_indicators",
+      status: "not_generated",
+      model: null,
+      generatedAt: null,
+      content: null,
+    },
+  },
+};
+
+/**
+ * What `POST …/insights/refresh` answers — the four cards plus `failedKinds`.
+ *
+ * A superset of the read payload, which is what the route's own response model
+ * is (`RefreshInsightsResponse`), and the extra field is the point: a refresh
+ * that wrote three of four cards is a 200, and without the list the tab has no
+ * way to tell the handler which card the model refused (review of Story 6.2,
+ * M7). Empty here because the ordinary case is that every kind was written;
+ * `CLAIM_INSIGHTS_PARTIAL_REFRESH` below is the other one.
+ */
+export const CLAIM_INSIGHTS_REFRESHED = {
+  status: 200,
+  body: { ...CLAIM_INSIGHTS.body, failedKinds: [] },
+};
+
+/**
+ * A refresh the model could not complete for one kind.
+ *
+ * The cards are the *previous* generation for the refused kind and fresh for
+ * the rest — which is exactly what the server does, because a kind that fails
+ * writes nothing at all and its row keeps its own `generatedAt`. The fixture
+ * therefore reuses the ready payload unchanged: the visible difference is the
+ * sentence the tab writes from `failedKinds`, not the cards.
+ */
+export const CLAIM_INSIGHTS_PARTIAL_REFRESH = {
+  status: 200,
+  body: { ...CLAIM_INSIGHTS.body, failedKinds: ["fraud_risk_indicators"] },
+};
+
 /** A claim with nothing outstanding — the card's empty state (NFR-3). */
 export const CLAIM_ACTIONS_EMPTY = {
   status: 200,
@@ -3239,7 +3697,12 @@ export const MEETING_DONE = {
 
 export const MEETINGS = {
   status: 200,
-  body: { items: [MEETING_UPCOMING, MEETING_DONE], nextCursor: null, total: 2, upcomingCount: 1 },
+  body: {
+    items: [MEETING_UPCOMING, MEETING_DONE],
+    nextCursor: null,
+    total: 2,
+    upcomingCount: 1,
+  },
 };
 
 /**
@@ -3334,7 +3797,11 @@ export const DIARY_NOTE_UNTAGGED = {
 
 export const DIARY_NOTES = {
   status: 200,
-  body: { items: [DIARY_NOTE_TAGGED, DIARY_NOTE_UNTAGGED], nextCursor: null, total: 2 },
+  body: {
+    items: [DIARY_NOTE_TAGGED, DIARY_NOTE_UNTAGGED],
+    nextCursor: null,
+    total: 2,
+  },
 };
 
 export const DIARY_NOTES_EMPTY = {
@@ -3544,7 +4011,11 @@ export const EMAIL_LOG_FREE = {
 
 export const EMAIL_LOGS = {
   status: 200,
-  body: { items: [EMAIL_LOG_TAGGED, EMAIL_LOG_FREE], nextCursor: null, total: 2 },
+  body: {
+    items: [EMAIL_LOG_TAGGED, EMAIL_LOG_FREE],
+    nextCursor: null,
+    total: 2,
+  },
 };
 
 export const EMAIL_LOGS_EMPTY = {
@@ -3612,7 +4083,9 @@ export const EMAIL_INVALID = {
 const pending = (): Promise<Response> => new Promise<Response>(() => {});
 
 function answer(route: StubRoute): Promise<Response> {
-  return route === "pending" ? pending() : Promise.resolve(respond(route.status, route.body));
+  return route === "pending"
+    ? pending()
+    : Promise.resolve(respond(route.status, route.body));
 }
 
 function answerFor(route: StubRouteFor, url: string): Promise<Response> {
@@ -3628,176 +4101,213 @@ export function stubApi(routes: StubRoutes): void {
     // `fetch(new Request(...))`, so in practice the method arrives on the
     // request object rather than here; both are read so a caller that passes a
     // string URL with an init is handled too.
-    vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-      const url =
-        typeof input === "string"
-          ? input
-          : input instanceof URL
-            ? input.href
-            : (input as Request).url;
+    vi.fn(
+      async (
+        input: RequestInfo | URL,
+        init?: RequestInit,
+      ): Promise<Response> => {
+        const url =
+          typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.href
+              : (input as Request).url;
 
-      if (url.includes("/api/me")) {
-        return answer(routes.me ?? UNAUTHENTICATED);
-      }
-      if (url.includes("/api/personas")) {
-        return answer(routes.personas ?? SEEDED_PERSONAS);
-      }
-      if (url.includes("/api/stats/topbar")) {
-        return answer(routes.stats ?? TOPBAR_STATS);
-      }
-      if (url.includes("/api/stats/sla")) {
-        return answer(routes.sla ?? SLA_STRIP);
-      }
-      if (url.includes("/api/glossary")) {
-        return answer(routes.glossary ?? GLOSSARY_TERMS);
-      }
-      if (url.includes("/api/dashboard/summary")) {
-        return answer(routes.dashboardSummary ?? DASHBOARD_SUMMARY);
-      }
-      // Story 5.2's. Order against the summary above is not load-bearing — the
-      // two paths are disjoint, unlike the `/api/claims…` block below — but it
-      // keeps the dashboard's two routes readable together.
-      if (url.includes("/api/dashboard/handler-benchmarks")) {
-        return answer(routes.handlerBenchmarks ?? HANDLER_BENCHMARKS);
-      }
-      // Story 5.3's. Disjoint from both dashboard paths above, so the order is
-      // readability rather than routing.
-      if (url.includes("/api/dashboard/charts")) {
-        return answer(routes.dashboardCharts ?? DASHBOARD_CHARTS);
-      }
-      // Story 5.4's. Disjoint from the three dashboard paths above, so the
-      // order is readability rather than routing — but `answerFor` rather than
-      // `answer`, because this route is paged and a stub has to be able to see
-      // the cursor. The default answers page one whatever the URL says, which
-      // is what every test that does not walk the table wants.
-      if (url.includes("/api/dashboard/priority-claims")) {
-        return answerFor(routes.priorityClaims ?? PRIORITY_CLAIMS, url);
-      }
-      // Story 5.5's. **Before the generic `/api/claims` branch far below**,
-      // which is not a coincidence of ordering but the same rule the queue and
-      // the case file already obey: the more specific path is matched first. It
-      // happens that `/api/dashboard/claims` does not contain `/api/claims/`, so
-      // the catch-all would not swallow it today — the placement is here because
-      // that is a fact about two strings and not a property anybody is
-      // maintaining, and because the four dashboard routes read together.
-      // `answerFor`, because this route is both filtered and paged.
-      if (url.includes("/api/dashboard/claims")) {
-        return answerFor(routes.drillClaims ?? DRILL_CLAIMS, url);
-      }
-      // Story 4.1's four, before every `/api/claims` case below. **Not because
-      // the case file would swallow them**: the catch-all tests `/api/claims/`
-      // with a trailing slash and `/api/claims-diary/meetings` does not contain
-      // that — a rationale this file asserted five times and which was never
-      // true. They are first because they are the most specific prefixes and
-      // the block reads in order. Method is read as well as path, because all
-      // four routes share two URLs.
-      // Story 4.3's five, **before the meetings block**. That ordering is
-      // load-bearing for exactly one of them: `/claims-diary/meetings/{id}/
-      // email-draft` contains `/api/claims-diary/meetings`, so the list below
-      // would otherwise answer the composer's request with a page of meetings.
-      // The rest are here to keep the 4.3 routes readable in one place.
-      if (url.includes("/email-draft")) {
-        return answerFor(routes.meetingEmailDraft ?? MEETING_EMAIL_DRAFT, url);
-      }
-      if (url.includes("/api/claims-diary/email-templates")) {
-        // The merge first: its URL *contains* the template list's.
-        if (url.includes("/merged")) {
-          return answerFor(routes.mergedTemplate ?? MERGED_RTW_OFFER, url);
+        if (url.includes("/api/me")) {
+          return answer(routes.me ?? UNAUTHENTICATED);
         }
-        return answerFor(routes.emailTemplates ?? EMAIL_TEMPLATES, url);
-      }
-      if (url.includes("/api/claims-diary/emails")) {
-        const method =
-          typeof input === "string" || input instanceof URL
-            ? (init?.method ?? "GET")
-            : (input as Request).method;
-        // POST before GET, the meetings block's arrangement: both share one URL.
-        if (method === "POST") {
-          return answerFor(routes.sendEmail ?? EMAIL_CREATED, url);
+        if (url.includes("/api/personas")) {
+          return answer(routes.personas ?? SEEDED_PERSONAS);
         }
-        return answerFor(routes.emails ?? EMAIL_LOGS, url);
-      }
-      if (url.includes("/api/claims-diary/meetings")) {
-        const method =
-          typeof input === "string" || input instanceof URL
-            ? (init?.method ?? "GET")
-            : (input as Request).method;
-        if (method === "POST") {
-          return answerFor(routes.scheduleMeeting ?? MEETING_CREATED, url);
+        if (url.includes("/api/stats/topbar")) {
+          return answer(routes.stats ?? TOPBAR_STATS);
         }
-        if (method === "PATCH") {
-          return answerFor(routes.completeMeeting ?? MEETING_COMPLETED, url);
+        if (url.includes("/api/stats/sla")) {
+          return answer(routes.sla ?? SLA_STRIP);
         }
-        if (method === "DELETE") {
-          return answerFor(routes.deleteMeeting ?? { status: 204, body: null }, url);
+        if (url.includes("/api/glossary")) {
+          return answer(routes.glossary ?? GLOSSARY_TERMS);
         }
-        return answerFor(routes.meetings ?? MEETINGS_BY_DAY, url);
-      }
-      // Story 4.2's two, beside the meetings block and for its reason.
-      if (url.includes("/api/claims-diary/notes")) {
-        const method =
-          typeof input === "string" || input instanceof URL
-            ? (init?.method ?? "GET")
-            : (input as Request).method;
-        if (method === "POST") {
-          return answerFor(routes.addDiaryNote ?? DIARY_NOTE_CREATED, url);
+        if (url.includes("/api/dashboard/summary")) {
+          return answer(routes.dashboardSummary ?? DASHBOARD_SUMMARY);
         }
-        return answerFor(routes.diaryNotes ?? DIARY_NOTES, url);
-      }
-      if (url.includes("/api/claims/queue")) {
-        // The whole URL, query string included, so a stub can branch on the
-        // filter or the cursor — see `StubRouteFor`.
-        return answerFor(routes.claimsQueue ?? CLAIM_QUEUE, url);
-      }
-      // Before the case file, for the mirror of the reason the queue is: the
-      // document sheet's URL *contains* a claim path, so a stub matching the
-      // case file first would answer a viewer's request with a case file.
-      if (url.includes("/documents/") && url.includes("/content")) {
-        return answerFor(routes.documentSheet ?? DOCUMENT_SHEET_FROI, url);
-      }
-      // Before the case file too, and for exactly that reason:
-      // `/api/claims/WC-1/financials` contains `/api/claims/`.
-      // Before the financials read, because an approval answers *with* a
-      // financials payload and a stub that matched the read first would make
-      // every approval look like it had succeeded.
-      if (url.includes("/payments/approvals")) {
-        return answerFor(routes.approvePayment ?? CLAIM_FINANCIALS_APPROVED, url);
-      }
-      if (url.includes("/financials")) {
-        return answerFor(routes.claimFinancials ?? CLAIM_FINANCIALS, url);
-      }
-      // Story 3.5's four, all before the case file and all for the same
-      // reason the financials read is: every one of their URLs contains
-      // `/api/claims/`, so the case file would swallow them.
-      if (url.includes("/assessment/approval")) {
-        return answerFor(routes.approveAssessment ?? CLAIM_DETAIL_APPROVED, url);
-      }
-      if (url.includes("/osha-log")) {
-        return answerFor(routes.oshaLog ?? CLAIM_DETAIL_OSHA_LOGGED, url);
-      }
-      if (url.includes("/documents/") && url.includes("/review")) {
-        return answerFor(routes.documentReview ?? CLAIM_DETAIL_TREATMENT, url);
-      }
-      if (url.includes("/actions")) {
-        return answerFor(routes.claimActions ?? CLAIM_ACTIONS, url);
-      }
-      // After the queue, deliberately: the two share a prefix, and the
-      // server resolves the same ambiguity the same way (the queue route is
-      // declared first). A stub that matched detail first would answer the
-      // queue's request with a case file and no test would say why.
-      if (url.includes("/api/claims/")) {
-        return answerFor(routes.claimDetail ?? CLAIM_DETAIL_TREATMENT, url);
-      }
-      if (url.includes("/api/auth/logout")) {
-        return respond(204, null);
-      }
-      if (url.includes("/api/auth/login")) {
-        // The default carries a real role: `homeRouteFor` reads it, so an
-        // empty body would silently route every login to /dashboard and a
-        // future handler-login test would assert against the wrong shell.
-        return answer(routes.login ?? DEFAULT_LOGIN);
-      }
-      return respond(404, problem(404, "Not Found"));
-    }),
+        // Story 5.2's. Order against the summary above is not load-bearing — the
+        // two paths are disjoint, unlike the `/api/claims…` block below — but it
+        // keeps the dashboard's two routes readable together.
+        if (url.includes("/api/dashboard/handler-benchmarks")) {
+          return answer(routes.handlerBenchmarks ?? HANDLER_BENCHMARKS);
+        }
+        // Story 5.3's. Disjoint from both dashboard paths above, so the order is
+        // readability rather than routing.
+        if (url.includes("/api/dashboard/charts")) {
+          return answer(routes.dashboardCharts ?? DASHBOARD_CHARTS);
+        }
+        // Story 5.4's. Disjoint from the three dashboard paths above, so the
+        // order is readability rather than routing — but `answerFor` rather than
+        // `answer`, because this route is paged and a stub has to be able to see
+        // the cursor. The default answers page one whatever the URL says, which
+        // is what every test that does not walk the table wants.
+        if (url.includes("/api/dashboard/priority-claims")) {
+          return answerFor(routes.priorityClaims ?? PRIORITY_CLAIMS, url);
+        }
+        // Story 5.5's. **Before the generic `/api/claims` branch far below**,
+        // which is not a coincidence of ordering but the same rule the queue and
+        // the case file already obey: the more specific path is matched first. It
+        // happens that `/api/dashboard/claims` does not contain `/api/claims/`, so
+        // the catch-all would not swallow it today — the placement is here because
+        // that is a fact about two strings and not a property anybody is
+        // maintaining, and because the four dashboard routes read together.
+        // `answerFor`, because this route is both filtered and paged.
+        if (url.includes("/api/dashboard/claims")) {
+          return answerFor(routes.drillClaims ?? DRILL_CLAIMS, url);
+        }
+        // Story 4.1's four, before every `/api/claims` case below. **Not because
+        // the case file would swallow them**: the catch-all tests `/api/claims/`
+        // with a trailing slash and `/api/claims-diary/meetings` does not contain
+        // that — a rationale this file asserted five times and which was never
+        // true. They are first because they are the most specific prefixes and
+        // the block reads in order. Method is read as well as path, because all
+        // four routes share two URLs.
+        // Story 4.3's five, **before the meetings block**. That ordering is
+        // load-bearing for exactly one of them: `/claims-diary/meetings/{id}/
+        // email-draft` contains `/api/claims-diary/meetings`, so the list below
+        // would otherwise answer the composer's request with a page of meetings.
+        // The rest are here to keep the 4.3 routes readable in one place.
+        if (url.includes("/email-draft")) {
+          return answerFor(
+            routes.meetingEmailDraft ?? MEETING_EMAIL_DRAFT,
+            url,
+          );
+        }
+        if (url.includes("/api/claims-diary/email-templates")) {
+          // The merge first: its URL *contains* the template list's.
+          if (url.includes("/merged")) {
+            return answerFor(routes.mergedTemplate ?? MERGED_RTW_OFFER, url);
+          }
+          return answerFor(routes.emailTemplates ?? EMAIL_TEMPLATES, url);
+        }
+        if (url.includes("/api/claims-diary/emails")) {
+          const method =
+            typeof input === "string" || input instanceof URL
+              ? (init?.method ?? "GET")
+              : (input as Request).method;
+          // POST before GET, the meetings block's arrangement: both share one URL.
+          if (method === "POST") {
+            return answerFor(routes.sendEmail ?? EMAIL_CREATED, url);
+          }
+          return answerFor(routes.emails ?? EMAIL_LOGS, url);
+        }
+        if (url.includes("/api/claims-diary/meetings")) {
+          const method =
+            typeof input === "string" || input instanceof URL
+              ? (init?.method ?? "GET")
+              : (input as Request).method;
+          if (method === "POST") {
+            return answerFor(routes.scheduleMeeting ?? MEETING_CREATED, url);
+          }
+          if (method === "PATCH") {
+            return answerFor(routes.completeMeeting ?? MEETING_COMPLETED, url);
+          }
+          if (method === "DELETE") {
+            return answerFor(
+              routes.deleteMeeting ?? { status: 204, body: null },
+              url,
+            );
+          }
+          return answerFor(routes.meetings ?? MEETINGS_BY_DAY, url);
+        }
+        // Story 4.2's two, beside the meetings block and for its reason.
+        if (url.includes("/api/claims-diary/notes")) {
+          const method =
+            typeof input === "string" || input instanceof URL
+              ? (init?.method ?? "GET")
+              : (input as Request).method;
+          if (method === "POST") {
+            return answerFor(routes.addDiaryNote ?? DIARY_NOTE_CREATED, url);
+          }
+          return answerFor(routes.diaryNotes ?? DIARY_NOTES, url);
+        }
+        if (url.includes("/api/claims/queue")) {
+          // The whole URL, query string included, so a stub can branch on the
+          // filter or the cursor — see `StubRouteFor`.
+          return answerFor(routes.claimsQueue ?? CLAIM_QUEUE, url);
+        }
+        // Before the case file, for the mirror of the reason the queue is: the
+        // document sheet's URL *contains* a claim path, so a stub matching the
+        // case file first would answer a viewer's request with a case file.
+        if (url.includes("/documents/") && url.includes("/content")) {
+          return answerFor(routes.documentSheet ?? DOCUMENT_SHEET_FROI, url);
+        }
+        // Before the case file too, and for exactly that reason:
+        // `/api/claims/WC-1/financials` contains `/api/claims/`.
+        // Before the financials read, because an approval answers *with* a
+        // financials payload and a stub that matched the read first would make
+        // every approval look like it had succeeded.
+        if (url.includes("/payments/approvals")) {
+          return answerFor(
+            routes.approvePayment ?? CLAIM_FINANCIALS_APPROVED,
+            url,
+          );
+        }
+        if (url.includes("/financials")) {
+          return answerFor(routes.claimFinancials ?? CLAIM_FINANCIALS, url);
+        }
+        // Story 3.5's four, all before the case file and all for the same
+        // reason the financials read is: every one of their URLs contains
+        // `/api/claims/`, so the case file would swallow them.
+        if (url.includes("/assessment/approval")) {
+          return answerFor(
+            routes.approveAssessment ?? CLAIM_DETAIL_APPROVED,
+            url,
+          );
+        }
+        if (url.includes("/osha-log")) {
+          return answerFor(routes.oshaLog ?? CLAIM_DETAIL_OSHA_LOGGED, url);
+        }
+        if (url.includes("/documents/") && url.includes("/review")) {
+          return answerFor(
+            routes.documentReview ?? CLAIM_DETAIL_TREATMENT,
+            url,
+          );
+        }
+        if (url.includes("/actions")) {
+          return answerFor(routes.claimActions ?? CLAIM_ACTIONS, url);
+        }
+        // Story 6.2's two, before the case file and for the same reason the four
+        // above are: `/api/claims/WC-1/insights` contains `/api/claims/`. The
+        // read and the refresh share a prefix and differ only by method, so the
+        // method is what picks between them — the meetings block's arrangement.
+        if (url.includes("/insights")) {
+          const method =
+            typeof input === "string" || input instanceof URL
+              ? (init?.method ?? "GET")
+              : (input as Request).method;
+          if (method === "POST") {
+            return answerFor(
+              routes.refreshInsights ?? CLAIM_INSIGHTS_REFRESHED,
+              url,
+            );
+          }
+          return answerFor(routes.claimInsights ?? CLAIM_INSIGHTS, url);
+        }
+        // After the queue, deliberately: the two share a prefix, and the
+        // server resolves the same ambiguity the same way (the queue route is
+        // declared first). A stub that matched detail first would answer the
+        // queue's request with a case file and no test would say why.
+        if (url.includes("/api/claims/")) {
+          return answerFor(routes.claimDetail ?? CLAIM_DETAIL_TREATMENT, url);
+        }
+        if (url.includes("/api/auth/logout")) {
+          return respond(204, null);
+        }
+        if (url.includes("/api/auth/login")) {
+          // The default carries a real role: `homeRouteFor` reads it, so an
+          // empty body would silently route every login to /dashboard and a
+          // future handler-login test would assert against the wrong shell.
+          return answer(routes.login ?? DEFAULT_LOGIN);
+        }
+        return respond(404, problem(404, "Not Found"));
+      },
+    ),
   );
 }

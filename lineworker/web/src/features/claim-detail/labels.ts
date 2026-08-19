@@ -23,6 +23,7 @@ import type {
   DocType,
   ExpenseCategory,
   IndemnityType,
+  InsightKind,
   LineItemStatus,
   RecoveryWindow,
   ReserveVerdict,
@@ -307,4 +308,25 @@ export const ACTION_TARGET_LABEL: Record<ActionTarget, string> = {
   fraud: "View Fraud Indicators",
   rtw_letter: "Open RTW Letter",
   approve: "Approve Assessment",
+};
+
+/**
+ * The four AI Insights cards' headings (Story 6.2).
+ *
+ * Keyed by the server's `InsightKind` tokens although the payload is a keyed
+ * object rather than a list — the tab renders four fixed cards, so nothing
+ * looks a label up dynamically today. It is a `Record` over the enum anyway,
+ * for this module's opening rule: a fifth kind then fails the build here,
+ * beside the other labels, instead of shipping a card with no heading.
+ *
+ * The emoji are the prototype's own copilot vocabulary (`QAS`, line 1571) and
+ * they are part of the heading rather than decoration: `CaseCard` renders one
+ * uppercase line, and the console's other cards ("⏰ Upcoming actions
+ * required", "🧾 Medical bills") lead with a glyph for the same reason.
+ */
+export const INSIGHT_KIND_LABEL: Record<InsightKind, string> = {
+  similar_case_outcomes: "🧭 Similar case outcomes",
+  reserve_adequacy_review: "💰 Reserve adequacy review",
+  next_best_actions: "✅ Next best actions",
+  fraud_risk_indicators: "🔍 Fraud risk indicators",
 };

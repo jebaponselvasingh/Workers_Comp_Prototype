@@ -21,11 +21,14 @@ import { expect, test } from "../fixtures/test";
  *    routed around (AC 3) — and lands on a surface Story 3.3 filled in and 3.4
  *    put an approve button on.
  *
- * 3. **The seam is visible and inert.** The Diary and Fraud rows render with a
- *    disabled control and a sentence naming the epic that will enable them. A
- *    disabled control is not a missing feature here: it is the cross-epic seam
- *    the readiness review verified, and the *point* is that a handler can see
- *    the work exists (NFR-3 — no dead clicks).
+ * 3. **The seam is visible and inert — and the ones that have shipped are not.**
+ *    Story 4.2 enabled the Diary row and Story 6.2 the Fraud one, so what
+ *    remains disabled is the RTW letter (Story 6.5), rendering with a sentence
+ *    naming the epic that will enable it. A disabled control is not a missing
+ *    feature here: it is the cross-epic seam the readiness review verified, and
+ *    the *point* is that a handler can see the work exists (NFR-3 — no dead
+ *    clicks). Both halves are asserted, because the seam mechanism is only
+ *    demonstrated by a seam that is still closed *and* one that opened.
  *
  * 4. **One approval moves three surfaces.** The header's status chip, the
  *    checklist row and the queue card all change from one command, because all
@@ -90,6 +93,27 @@ function actionRow(page: Page, id: string) {
  * an unbounded one would fetch a hundred checklists to prove something about
  * the first.
  */
+/**
+ * Every claim id in the caller's book, in id order.
+ *
+ * Asked of the server rather than assembled from `claimIdsWithStatus` calls,
+ * because the SIU escalation trigger cuts across status: it fires on a stored
+ * fraud score, so the claims that raise it are spread through the book and a
+ * list built from one status would be a search that could only find them by
+ * luck. Sorted so `claimWithRule`'s bounded scan looks at the same claims on
+ * every run — the reproducibility AD-15 rests on.
+ */
+async function bookOf(page: Page): Promise<string[]> {
+  const response = await page.request.get("/api/claims/queue?filter=all");
+  expect(response.status(), await response.text()).toBe(200);
+  const queue = (await response.json()) as {
+    groups: Record<string, { items: { claimId: string }[] }>;
+  };
+  return Object.values(queue.groups)
+    .flatMap((group) => group.items.map((card) => card.claimId))
+    .sort();
+}
+
 async function claimWithRule(
   page: Page,
   claimIds: string[],
@@ -148,6 +172,12 @@ test.describe("@story:3-5 @epic:3 auto-generated action checklist and approval",
     }
 
     // --- AC 3: a seam control is disabled and says which epic ------------
+    //
+    // Whichever target is still a seam, found from the payload rather than
+    // named: Story 4.2 opened `diary`, Story 6.2 opened `fraud`, and pinning a
+    // target here would have made each of those a failure in a spec about the
+    // checklist. What the assertion is about is the *contract* — a disabled
+    // control carries the server's sentence, in the tooltip and in the DOM.
     const seam = before.items.find((item) => !item.enabled);
     if (seam) {
       const control = actionRow(page, seam.id).getByTestId("action-goto");
@@ -155,6 +185,12 @@ test.describe("@story:3-5 @epic:3 auto-generated action checklist and approval",
       await expect(control).toHaveAttribute("title", seam.disabledReason!);
       await expect(actionRow(page, seam.id)).toContainText(seam.disabledReason!);
     }
+
+    // The fraud deep link Story 6.2 enabled is asserted in its own test below
+    // — `the SIU escalation row's deep link is live and lands on AI Insights`.
+    // It lived here as an `if (fraud) {…}` over this claim, which raises the SIU
+    // row only by coincidence (the trigger reads a fraud score, not a status),
+    // so the block passed by never running (review of Story 6.2, M12).
 
     // --- AC 4: approve, and watch three surfaces move --------------------
     await expect(byTestId(page, "badge-status")).toHaveText("CH Assessment Process");
@@ -199,6 +235,50 @@ test.describe("@story:3-5 @epic:3 auto-generated action checklist and approval",
       const ranks = payload.items.map((item) => order.indexOf(item.urgency));
       expect(ranks, `${claimId} came back unranked`).toEqual([...ranks].sort((a, b) => a - b));
     }
+  });
+
+  test("the SIU escalation row's deep link is live and lands on AI Insights", async ({ page }) => {
+    // AC 3's seam half, from the other side. "View Fraud Indicators →" shipped
+    // disabled with "Available with AI Insights — Epic 6"; Story 6.2 enabled it,
+    // and this is the assertion this spec owes for that under AD-15 — amended,
+    // never deleted.
+    //
+    // **A test of its own, and unconditional** (review of Story 6.2, M12). It
+    // arrived inside the smoke test as `if (fraud) {…}` over the first claim
+    // awaiting assessment — but the SIU trigger fires on a *fraud score*, not on
+    // a status, so that claim raises the row only by coincidence and the block
+    // was a guard that passed by never running. Searched here instead, and the
+    // search's result is asserted: the seed is deterministic and the threshold
+    // is a rule document, so "Kaya's book contains a claim over the SIU
+    // threshold" has one answer per commit, and a build where it became `no`
+    // should fail rather than quietly stop testing the link.
+    await loginAs(page, PERSONAS.handler);
+
+    const found = await claimWithRule(page, await bookOf(page), "siu_escalation");
+    expect(found, "no claim in Kaya's book raises the SIU escalation row").toBeDefined();
+    const { claimId, action } = found!;
+
+    // The server owns `enabled` and the sentence, so the absence of a seam
+    // reason is asserted on the payload rather than inferred from the DOM.
+    expect(action.enabled).toBe(true);
+    expect(action.disabledReason).toBeNull();
+
+    await openClaim(page, claimId);
+    const control = actionRow(page, action.id).getByTestId("action-goto");
+    await expect(control).toBeEnabled();
+    await control.click();
+
+    // The tab state Epic 2 built, reused rather than routed around (AC 3's "no
+    // bespoke routing") — `fraud` is the first target whose name is not also a
+    // tab key, which is why `ClaimDetailPane` needed a branch of its own.
+    await expect(byTestId(page, "insights-tab")).toBeVisible();
+    await expect(byTestId(page, "tab-insights")).toHaveAttribute("aria-selected", "true");
+    expect(new URL(page.url()).searchParams.get("claim")).toBe(claimId);
+
+    // …and back, because a deep link that stranded the handler on the tab it
+    // opened would be a worse affordance than the disabled row it replaced.
+    await byTestId(page, "tab-overview").click();
+    await expect(byTestId(page, "actions-card")).toBeVisible();
   });
 
   test("the same claim produces the same list twice (AD-2)", async ({ page }) => {

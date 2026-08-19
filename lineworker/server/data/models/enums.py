@@ -267,18 +267,20 @@ class ActionTarget(StrEnum):
       control switches tabs within the detail pane; there is no bespoke routing
       and no second notion of "where am I" (Story 2.2's tab state is local UI
       state, and this reuses it).
-    - `diary`, `meetings` — Epic 4. `fraud` — Epic 6's AI Insights.
-      `rtw_letter` — Epic 6's RTW-letter modal (FR-H-11).
+    - `diary`, `meetings` — Epic 4. `fraud` — Epic 6's AI Insights tab, filled
+      by Story 6.2. `rtw_letter` — Epic 6's RTW-letter modal (FR-H-11), the one
+      target still unbuilt.
     - `approve` — the assessment approval, which is a *command* rather than a
       destination. The prototype models it the same way, and keeping it in this
       enum is what lets the card render one control per row.
 
     **This enum is the cross-epic seam, and it is why `enabled` is a server
-    field rather than a client-side membership test.** Story 4.2 enables the
-    diary link and Story 6.2 the fraud one; both are a change to
-    `services/worklist/actions.py`'s target table and to nothing in the SPA. A
-    browser that decided which targets exist would be a second copy of that
-    table, and it would go stale in the release where one of them shipped.
+    field rather than a client-side membership test.** Story 4.2 enabled the
+    diary link and Story 6.2 the fraud one; both were a change to
+    `services/worklist/actions.py`'s target table and to nothing in the SPA
+    except the card's own list of targets it can navigate from. A browser that
+    decided which targets *exist* would be a second copy of that table, and it
+    would go stale in the release where one of them shipped.
     """
 
     overview = "overview"
@@ -580,6 +582,38 @@ class DocType(StrEnum):
     wage = "wage"
     rtw = "rtw"
     legal = "legal"
+
+
+class InsightKind(StrEnum):
+    """The four cached AI narratives a claim carries (Story 6.2, AC 1).
+
+    A native database enum on `ai_insight.kind`, which is why the vocabulary
+    lives here for `BodyRegion`'s reason — `data/` must not import from
+    `services/`, and both the ORM class and migration 0042 need these members.
+
+    **Four, and the set is closed on purpose.** Each kind is a narration of one
+    deterministic service's output and nothing else (AD-2): similar-case
+    outcomes narrate `services/rag.similar_claims`, the reserve review narrates
+    `services/financials`' single reserve check, next best actions narrate
+    `services/worklist`'s action checklist, and the fraud indicators narrate the
+    two registered fraud derivations. A fifth member would be a fifth claim
+    about what the model is allowed to talk about, so adding one is a migration
+    and a prompt file rather than a line here.
+
+    **`kind` is half of the cache key.** `ai_insight` is unique on
+    `(claim_id, kind)`: the table holds the latest generation per kind, not a
+    history, so a refresh replaces rather than appends. The set therefore also
+    fixes how many rows a fully generated claim has, which is what makes "four
+    cards, one per kind" a property a test can assert rather than a convention.
+
+    Snake_case values per the convention; the browser owns the display labels
+    (`web/src/features/claim-detail/labels.ts::INSIGHT_KIND_LABEL`).
+    """
+
+    similar_case_outcomes = "similar_case_outcomes"
+    reserve_adequacy_review = "reserve_adequacy_review"
+    next_best_actions = "next_best_actions"
+    fraud_risk_indicators = "fraud_risk_indicators"
 
 
 class TimelineTag(StrEnum):

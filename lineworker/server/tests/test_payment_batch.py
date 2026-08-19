@@ -18,6 +18,7 @@ so mutations persist between tests in this file — every test below sets up the
 state it needs by SQL rather than assuming what the last one left.
 """
 
+import asyncio
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -468,3 +469,107 @@ async def _raise() -> None:
 
 async def _record(sink: list[str], name: str) -> None:
     sink.append(name)
+
+
+async def test_a_background_job_does_not_hold_the_tick(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`background=True` — the M9 fix, asserted on what the *other* jobs see.
+
+    The runner awaits its jobs in order, which is right for work measured in
+    milliseconds and wrong for Story 6.2's insight refresh: that job can spend
+    `CHAT_REQUEST_TIMEOUT_SECONDS` per kind, four kinds per claim, five claims
+    per run — and everything registered after it waited. The payment batch is
+    registered *first* today, so the symptom was the embedding refresh going
+    minutes late; a reordering would have made it money.
+
+    Asserted by making the slow job block on an event nothing sets until after
+    the tick returns. A tick that awaited it would deadlock the test rather than
+    fail it, which is why there is a timeout around the whole thing.
+    """
+    released = asyncio.Event()
+    finished: list[str] = []
+
+    async def slow() -> None:
+        await released.wait()
+        finished.append("slow")
+
+    async def quick() -> None:
+        finished.append("quick")
+
+    runner = JobRunner(tick_seconds=1)
+    runner.register(ScheduledJob(name="slow", due=lambda *_: True, run=slow, background=True))
+    runner.register(ScheduledJob(name="quick", due=lambda *_: True, run=quick))
+
+    async with asyncio.timeout(5):
+        ran = await runner.tick(at("mon"))
+
+        # Both were started, and the *serial* one finished inside the tick while
+        # the background one is still waiting.
+        assert ran == ("slow", "quick")
+        assert finished == ["quick"]
+        assert not runner.in_flight["slow"].done()
+
+        released.set()
+        await runner.in_flight["slow"]
+
+    assert finished == ["quick", "slow"]
+
+
+async def test_a_background_job_still_running_is_not_started_twice() -> None:
+    """The in-flight guard, which is what makes non-blocking safe.
+
+    A job whose runtime exceeds its interval would otherwise accumulate one
+    concurrent copy per tick, all of them hitting the same model server and the
+    same table. It is skipped rather than reported as run, and `last_run` is not
+    advanced — so the tick after it finishes picks it up rather than having had
+    its due window consumed by a run it never got.
+    """
+    released = asyncio.Event()
+    starts = 0
+
+    async def slow() -> None:
+        nonlocal starts
+        starts += 1
+        await released.wait()
+
+    runner = JobRunner(tick_seconds=1)
+    runner.register(ScheduledJob(name="slow", due=lambda *_: True, run=slow, background=True))
+
+    async with asyncio.timeout(5):
+        assert await runner.tick(at("mon")) == ("slow",)
+        # One turn of the loop, so the task the tick created actually starts.
+        # `create_task` schedules rather than runs, and a test that skipped this
+        # would assert the guard against a job that had not begun — true for the
+        # wrong reason.
+        await asyncio.sleep(0)
+        assert starts == 1
+
+        assert await runner.tick(at("tue")) == ()
+        await asyncio.sleep(0)
+        assert starts == 1
+
+        released.set()
+        await runner.in_flight["slow"]
+        # Free again, so the next tick starts it.
+        assert await runner.tick(at("wed")) == ("slow",)
+        await asyncio.sleep(0)
+        assert starts == 2
+
+
+async def test_a_background_job_that_raises_is_logged_rather_than_orphaned() -> None:
+    """A failure inside a task is contained exactly as a serial job's is.
+
+    `asyncio.create_task` with no error handling is worse than useless: the
+    exception surfaces as a "Task exception was never retrieved" warning at
+    garbage-collection time, detached from the job that caused it. `_guarded`
+    is shared by both paths so the failure reads the same either way, and the
+    tick after it starts the job again.
+    """
+    runner = JobRunner(tick_seconds=1)
+    runner.register(ScheduledJob(name="boom", due=lambda *_: True, run=_raise, background=True))
+
+    async with asyncio.timeout(5):
+        assert await runner.tick(at("mon")) == ("boom",)
+        # It completed — with the exception swallowed into a log line, not
+        # re-raised into the event loop.
+        assert await runner.in_flight["boom"] is None
+        assert runner.in_flight["boom"].exception() is None

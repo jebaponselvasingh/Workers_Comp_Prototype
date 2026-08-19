@@ -298,6 +298,36 @@ export const queryKeys = {
      */
     actions: (claimId: string) => ["claims", "detail", claimId, "actions"] as const,
     /**
+     * One claim's four cached AI narratives (Story 6.2).
+     *
+     * Nested under the claim's own segment, `actions`' and `financials`'
+     * arrangement — but for a reason that runs the *other* way, and the
+     * difference is worth stating because the nesting looks identical.
+     *
+     * Those two are nested so a case-file invalidation can reach them: they are
+     * cut from the claim's rows, so an edit that changes the claim changes them.
+     * This one is nested so it can be *addressed* alongside the case file
+     * without being evicted by it. An insight is a cache with its own
+     * generation timestamp (AD-10), not a projection of the claim's current
+     * state: editing a claim does not make yesterday's narrative wrong, it makes
+     * it dated, and the card says so by showing when it was written. So a
+     * refresh is what replaces a narrative, and a refresh is a thing a handler
+     * asks for.
+     *
+     * `useRefreshInsights` invalidates this key exactly, and **nothing else
+     * invalidates it at all** — which is a claim about `src/api/claims.ts`
+     * rather than about this file, and one that was false when it was written.
+     * Ten mutations invalidated `claims.detail` by *prefix*, which reaches every
+     * key nested under it including this one, so every field edit, severity
+     * change, injury add/remove and comp-rate write evicted four narratives and
+     * defeated the deliberate five-minute `staleTime` below (review of Story
+     * 6.2, M5). `markCaseFileStale` is what makes the sentence true now: it
+     * invalidates `detail`, `actions` and `financials` each `exact: true`, so
+     * the two keys an edit really does change are still reached and this one is
+     * not.
+     */
+    insights: (claimId: string) => ["claims", "detail", claimId, "insights"] as const,
+    /**
      * The **mutation** key every write against one claim carries (Story 2.4).
      *
      * Not a query key: nothing is cached under it. It exists so that

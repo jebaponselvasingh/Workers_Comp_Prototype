@@ -2,8 +2,13 @@
 
 Every runtime knob — now and in every later story — is a field on
 ``Settings``. Nothing else in the server may read ``os.environ``.
+
+That last sentence is also why the LangSmith tripwire below lives here and
+nowhere else: it is a write to the process environment, and this module is the
+only one allowed to touch it.
 """
 
+import os
 from enum import StrEnum
 from functools import lru_cache
 from typing import Any
@@ -11,6 +16,66 @@ from typing import Any
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
+
+#: Every environment variable that can turn LangChain's LangSmith tracer on,
+#: forced to `"false"` at import. **This is an AD-5/AD-16 containment control,
+#: not a preference.**
+#:
+#: `langchain-ollama` depends on `langchain-core`, which hard-depends on
+#: `langsmith` — not as an optional extra, as a required distribution in
+#: `uv.lock`. That tracer needs no code to activate: it reads these names off
+#: the environment at the first completion and, when any of them says `true`,
+#: POSTs the **whole prompt body and the whole completion** to
+#: `api.smith.langchain.com`. For this build that is a claim's clinical
+#: narrative and a model's answer about it leaving the network (AD-11), through
+#: a code path nobody wrote and no grep for `ollama_base_url` can see —
+#: `tests/test_ai_insights.py::test_exactly_two_modules_read_the_ollama_base_url`
+#: greps a string and is blind to it by construction.
+#:
+#: AD-5 says there is no cloud code path and AD-16's containment floor rests on
+#: "no egress". A dependency that can open one from an env file is exactly the
+#: kind of thing those two rules exist to refuse, so it is refused here rather
+#: than documented as a deployment caveat.
+#:
+#: Both vendor namespaces are named because `langsmith.utils.get_env_var` reads
+#: `LANGSMITH_*` first and falls back to `LANGCHAIN_*`, and both spellings of
+#: the switch are honoured. `*_OTEL_ENABLED` is the second exporter the same
+#: package grew and would otherwise be a second door.
+_TRACING_ENV_OFF: dict[str, str] = {
+    "LANGSMITH_TRACING": "false",
+    "LANGSMITH_TRACING_V2": "false",
+    "LANGCHAIN_TRACING": "false",
+    "LANGCHAIN_TRACING_V2": "false",
+    "LANGSMITH_OTEL_ENABLED": "false",
+    "LANGCHAIN_OTEL_ENABLED": "false",
+}
+
+
+def force_local_only_tracing() -> None:
+    """Turn the LangSmith exporter off, overriding whatever the operator set.
+
+    **Overwrite rather than `setdefault`**, which is the whole point: a
+    deployment that inherited `LANGCHAIN_TRACING_V2=true` from a shared env file
+    or a base image would otherwise start exporting prompts, and the failure
+    would be silent, remote and retroactive. There is no supported way to enable
+    it — a story that wanted tracing would be proposing a cloud code path, which
+    AD-5 refuses outright.
+
+    Called at import so it runs before any LangChain object is constructed:
+    `langsmith` caches its environment lookups (`functools.lru_cache` on
+    `get_env_var`), so the first read wins for the life of the process, and
+    every module that touches a model imports `config` on the way to
+    `Settings`. `tests/test_ai_insights.py` asserts the outcome rather than the
+    ordering — it calls the vendor's own `tracing_is_enabled()`.
+
+    Exported rather than private so that test can re-run it after poisoning the
+    environment, which is the only way to assert "an operator cannot switch this
+    back on" rather than "nobody has switched it on".
+    """
+    os.environ.update(_TRACING_ENV_OFF)
+
+
+force_local_only_tracing()
 
 # Knobs that were real fields once and are not any more. `extra="ignore"` is
 # right for a stray variable nobody meant — and exactly wrong for one an
@@ -187,13 +252,15 @@ class Settings(BaseSettings):
     # 127.0.0.1 would work on a developer's laptop and fail in the only
     # topology this project ships.
     ollama_base_url: str = "http://ollama:11434"
-    # Pulled and served from this story on; its first *application* caller
-    # arrives with 6.2/6.3. Nothing in this build issues a chat request —
-    # `services/rag` speaks to the embeddings endpoint and nothing else — so
-    # this knob exists here rather than in 6.3 for one reason: the compose
-    # entrypoint pulls both models before the container reports healthy, and
-    # the name it pulls has to come from the same place the eventual client
-    # will read it from.
+    # Pulled and served since Story 6.1; **read by application code since
+    # Story 6.2**, which is the first thing in the build to issue a chat
+    # request. `agents/client.py` is the reader — the second and last module in
+    # the tree that names `ollama_base_url` — and it records the value it was
+    # given on every `ai_insight` row it writes, so a card can say which model
+    # produced its narrative. Until 6.2 this knob existed only so the compose
+    # entrypoint pulled the right thing before reporting healthy; that
+    # arrangement is why the name the puller reads and the name the client
+    # reads have always been one field.
     chat_model: str = "qwen3:14b"
     # bge-m3 emits 1024 floats, which is what `vector(1024)` and
     # `services/rag/client.EMBEDDING_DIMENSIONS` both say. **Changing this to
@@ -229,6 +296,41 @@ class Settings(BaseSettings):
     # httpx reads 0 as "no timeout" on some transports and as "fail
     # immediately" on others, and neither is a value to reach by accident.
     embedding_request_timeout_seconds: float = Field(default=60.0, gt=0)
+
+    # --- The AI insight cache (Story 6.2) -----------------------------
+    # How often the insight refresh job *checks*. An hour rather than the
+    # embedding refresh's fifteen minutes, and the difference is the cost of
+    # the work rather than a preference: an embedding tick is one batched
+    # request over short summaries, an insight tick is four chat completions
+    # per claim on a server that answers one at a time. An insight is also a
+    # cache with its generation timestamp on screen (AD-10), so a claim whose
+    # narrative is an hour behind is a card that says so rather than a wrong
+    # answer. `gt=0` for `embedding_refresh_interval_seconds`' reason.
+    insight_refresh_interval_seconds: float = Field(default=3600.0, gt=0)
+    # How many *claims* one scheduled run generates for — not how many rows,
+    # which is four times this. Much smaller than the embedding batch for the
+    # same reason the interval is longer: each claim costs four completions,
+    # so a tick of twenty-five would hold the model for minutes and (once 6.3
+    # lands) queue behind a handler's chat. Pending work is not lost — the
+    # next tick picks it up — which is what makes a bound safe here.
+    insight_refresh_batch_size: int = Field(default=5, gt=0)
+    # The per-request timeout on a chat completion. Twice the embeddings
+    # timeout because generation is a different order of work: an embedding is
+    # one forward pass over a short summary, a structured narrative is tens of
+    # tokens decoded one at a time, and the architecture explicitly permits a
+    # CPU-only dev box. `gt=0` for `embedding_request_timeout_seconds`' reason
+    # — 0 reads as "no timeout" on some transports and "fail immediately" on
+    # others.
+    chat_request_timeout_seconds: float = Field(default=120.0, gt=0)
+    # How old a neighbour's vector may be before the similar-case insight says
+    # so. AD-12 requires retrieval to carry `embedded_at` and answers to
+    # disclose staleness past a configured threshold; this is that threshold,
+    # and it is deployment config rather than a rules-tier parameter because
+    # it is a statement about how often *this* deployment's refresh job runs,
+    # not about claims. Seven days: long enough that an ordinary fifteen-minute
+    # refresh cadence never trips it, short enough that a job that has been
+    # failing for a week is visible on the card rather than only in a log.
+    insight_staleness_disclosure_days: int = Field(default=7, gt=0)
 
     @property
     def payment_batch_weekday_numbers(self) -> frozenset[int]:

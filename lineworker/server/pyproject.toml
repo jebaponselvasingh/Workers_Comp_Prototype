@@ -33,6 +33,16 @@ dependencies = [
     # release away from a queue that ranks differently with no diff to
     # explain it. Moving it is a deliberate edit here plus a `uv lock`.
     "zen-engine==0.53.0",
+    # The chat client's vendor stack (Story 6.2). A *range*, like every other
+    # dependency here, and both ends are load-bearing. The floor is 1.1 rather
+    # than the 0.2 this shipped with: `with_structured_output(method=
+    # "json_schema")` — §5.3's prescription and the only reason this package is
+    # in the build — does not exist before 0.3, so `>=0.2` resolved a version
+    # that cannot run `agents/client.py` at all, and the ratified stack is 1.x.
+    # The ceiling is the rule the rest of this list keeps: a major bump of a
+    # LangChain package is a rewrite of the structured-output surface, not a
+    # patch to pick up in a `uv lock` nobody read.
+    "langchain-ollama>=1.1,<2",
 ]
 
 [dependency-groups]

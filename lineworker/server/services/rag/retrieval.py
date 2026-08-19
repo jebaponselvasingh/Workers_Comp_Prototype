@@ -36,12 +36,13 @@ guarantee demonstrable rather than to be built on.
 """
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from data.context import CallerContext
+from data.repositories import claims as claim_repo
 from data.repositories import embeddings as embedding_repo
 from services.claims.detail import ClaimNotVisible
 from services.rag.claim_text import compose_claim_text
@@ -100,6 +101,29 @@ class KnowledgeHit:
     title: str
     chunk_text: str
     distance: float
+
+
+#: Decimal places a cosine distance is shown to. Four, which is where the
+#: seeded corpus's neighbours actually separate — three collapses distinct
+#: claims onto one string.
+DISTANCE_PLACES = 4
+
+
+def format_distance(distance: float) -> str:
+    """A cosine distance as the string a reader sees — `format_dollars`' rule.
+
+    The service that owns the figure owns its display form, so nothing
+    downstream re-formats it (`agents/envelope.py` states the rule; this is the
+    `services/rag` half of keeping it). It lived as an f-string inside
+    `agents/insights.py` until the Story 6.2 review pointed out that a module
+    forbidden to originate figures was formatting one (AD-2/AD-13).
+
+    Still a raw distance and deliberately not a similarity percentage:
+    `SimilarClaim.distance` is published unconverted because a percentage is a
+    presentation decision, and "92% similar" would be a figure no service
+    computed with a model about to write a sentence around it.
+    """
+    return f"{distance:.{DISTANCE_PLACES}f}"
 
 
 async def similar_claims(
@@ -177,6 +201,52 @@ async def similar_claims(
     ]
 
 
+async def subject_scoped_context(
+    db: AsyncSession,
+    ctx: CallerContext,
+    *,
+    claim_business_id: str,
+) -> CallerContext | None:
+    """`ctx`, narrowed to the subject claim's own employer partition.
+
+    `None` when the caller cannot see the claim, or it does not exist — the
+    single-answer rule, inherited from the scoped read this is built on.
+
+    ## Why a *cached* neighbour list may not be gathered under the actor's scope
+
+    A `/claims/{id}/similar` response is composed for one caller and thrown
+    away. A `similar_case_outcomes` insight is composed once, written to
+    `ai_insight`, and then served to **every** caller who can see the claim —
+    so the widest scope that ever composed it becomes the scope of everyone who
+    reads it. The scheduled refresh runs under the system actor, whose
+    `scope_all` makes `employer_scope` the AD-7 tautology, so without this the
+    persisted card names neighbouring claim ids and employer short names drawn
+    from the whole portfolio and hands them to a handler scoped to one plant.
+    That is a cross-employer leak with an audit event attached and a timestamp
+    on it (review of Story 6.2, H1).
+
+    Narrowing to the *subject's* partition rather than to the *reader's* is the
+    only choice that is stable under both refresh paths: it does not depend on
+    who asked, so the scheduled run and the handler's Refresh button compose the
+    same card, and every reader entitled to the claim is by construction
+    entitled to the claim's own employer.
+
+    It is deliberately **not** applied inside `similar_claims`. That function
+    serves the interactive route too, where "nearest claims in my book" across a
+    multi-employer handler's whole book is the answer the reader asked for and
+    Story 6.1 shipped.
+    """
+    employer_id = await claim_repo.select_claim_employer_id(
+        db, ctx, claim_business_id=claim_business_id
+    )
+    if employer_id is None:
+        return None
+    # `replace()` rather than a fresh construction, so a field added to
+    # `CallerContext` later travels with the narrowing instead of being reset to
+    # a default nobody chose.
+    return replace(ctx, employer_ids=frozenset({employer_id}))
+
+
 async def search_knowledge(
     db: AsyncSession,
     ctx: CallerContext,
@@ -208,4 +278,13 @@ async def search_knowledge(
     ]
 
 
-__all__ = ["MAX_K", "KnowledgeHit", "SimilarClaim", "search_knowledge", "similar_claims"]
+__all__ = [
+    "DISTANCE_PLACES",
+    "MAX_K",
+    "KnowledgeHit",
+    "SimilarClaim",
+    "format_distance",
+    "search_knowledge",
+    "similar_claims",
+    "subject_scoped_context",
+]

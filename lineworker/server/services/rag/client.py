@@ -4,17 +4,26 @@
 One module issues one kind of HTTP request to one host, and that is the whole
 of this file's job. The property is worth stating as a property because it is
 what makes AD-5 checkable rather than aspirational: "no PHI leaves the network"
-is a claim about every outbound call in the process, and it is verifiable in
-about ten seconds — grep the tree for `ollama_base_url` and for `/api/embed`
-and confirm that exactly one file matches. A second client, however small,
-however well-behaved, turns that into an audit.
+is a claim about every outbound call in the process, and it stays verifiable in
+about ten seconds — grep the tree for `ollama_base_url` and confirm that the
+files which match are the ones this paragraph names.
 
-**Nothing here calls the chat endpoint.** The chat model is pulled and served
-from Story 6.1 (the compose entrypoint pulls both before reporting healthy) and
-has no application caller until 6.2/6.3. A convenience `chat()` added here
-"while we are in the file" would be an untested code path with a model name and
-a URL in it, sitting in the module whose singular purpose is the reason anyone
-trusts the deployment.
+**The grep answers *two* files since Story 6.2, and the second one is the
+point rather than an exception.** `agents/client.py` is the build's chat
+client: it exists because AD-5 and the dependency diagram allow inference to
+originate only from `agents/`, so the alternative to a second file was a chat
+call in *this* one — which would put the embeddings client and the chat client
+in one module and make "what does `services/rag` send, and where?" a question
+about a branch rather than about a file. Two named modules, one endpoint each,
+both reading the base URL from `config.py` through a factory, is a property a
+reviewer can still hold in their head; three would not be, and there must not
+be a third.
+
+**Nothing here calls the chat endpoint**, and that half is unchanged. This
+module speaks to `/api/embed` and nothing else. A convenience `chat()` added
+here "while we are in the file" would be a second code path with a model name
+and a URL in it, sitting in the module whose singular purpose is the reason
+anyone trusts the deployment.
 
 **And there is no cloud fallback.** The prototype's copilot was a
 credential-less browser `fetch` to `api.anthropic.com` that always failed into
@@ -137,8 +146,10 @@ class OllamaEmbeddingClient:
     """`EmbeddingClient` over Ollama's HTTP API. The only implementation shipped.
 
     Built through `embedding_client(settings)` at the bottom of this file rather
-    than by its callers, so `OLLAMA_BASE_URL` has exactly two readers in the
-    tree: `config.py`, where it is declared, and this module.
+    than by its callers, so this module is the only place in `services/` that
+    names `OLLAMA_BASE_URL` — the other two readers being `config.py`, where it
+    is declared, and `agents/client.py`, which the module docstring accounts
+    for.
 
     **A client per call rather than a pooled one.** `httpx.AsyncClient` is
     created inside `embed` and closed when it returns. That is the wrong default
@@ -216,14 +227,16 @@ class OllamaEmbeddingClient:
 def embedding_client(settings: Settings) -> OllamaEmbeddingClient:
     """Build the shipped client from configuration. The one construction site.
 
-    Three callers want one — the scheduled refresh job, the `/similar` route
-    and the e2e admin trigger — and each needs the same three fields wired the
-    same way. A factory rather than three copies of the constructor call, for a
-    reason beyond tidiness: it keeps `OLLAMA_BASE_URL` named in exactly two
-    places in the whole tree, `config.py` (where it is declared) and here
-    (where it is used). AD-5's "no PHI leaves the network" is a claim about
-    every outbound call in the process, and it stays a ten-second grep rather
-    than an audit only while the base URL has one reader.
+    Four callers want one — the scheduled refresh job, the `/similar` route,
+    the e2e admin trigger and (since Story 6.2) the similar-case insight's tool
+    wrapper — and each needs the same three fields wired the same way. A
+    factory rather than four copies of the constructor call, for a reason
+    beyond tidiness: it keeps `OLLAMA_BASE_URL` named in one place per client
+    rather than one place per call site. AD-5's "no PHI leaves the network" is a
+    claim about every outbound call in the process, and it stays a ten-second
+    grep rather than an audit only while each client has exactly one
+    construction site — see the module docstring on why there are two clients
+    and must not be a third.
 
     Takes `Settings` rather than reading `get_settings()`, because `config.py`
     is the only module in the server allowed to touch the environment and a

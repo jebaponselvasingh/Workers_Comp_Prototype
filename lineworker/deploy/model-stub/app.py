@@ -42,22 +42,45 @@ scope, freshness, exclusion of the target, counts.
 suite. Two implementations of one idea, on purpose: the unit suite needs no
 HTTP, and the e2e suite needs the real client.
 
-## The chat endpoint
+## The chat endpoint, and why it honours `format`
 
-`POST /api/chat` returns one fixed assistant message, and nothing in the build
-calls it yet — `services/rag/client.py` speaks only to the embeddings endpoint
-and Story 6.1 ships no chat client at all. It is here because the compose
-service is this story's deliverable and 6.3 should extend a stub that already
-answers the right shape rather than add the service and the route together in a
-diff about a graph.
+`POST /api/chat` gained its first caller in Story 6.2: insight generation asks
+for structured output, which `ChatOllama.with_structured_output(method=
+"json_schema")` implements by sending the Pydantic model's **JSON Schema** as
+the request's `format` field. Real Ollama constrains decoding to that grammar.
+
+A stub that ignored `format` and answered a prose sentence would fail every
+structured parse in the e2e profile, so no insight could ever be generated
+there and the whole of Story 6.2's done-gate would be unreachable. So this
+container synthesizes a **deterministic instance of the supplied schema** —
+walking `properties`, `required`, `type`, `enum`, `const`, `anyOf`, `allOf`,
+`items`, `$ref`/`$defs` and the length bounds — and returns it JSON-serialised in
+`message.content`, exactly where a real model would put it.
+
+Deterministic in the same sense the vectors are: every scalar is derived from
+the hash of its own path through the schema plus the prompt, so two runs of one
+commit produce byte-identical cards and a spec can assert that a card rendered
+without asserting on prose. It is not *plausible* text and is not meant to be —
+the assertions in `e2e/stories/6-2-…spec.ts` are structural (four cards, four
+timestamps, a model label), which is the only kind of assertion AD-15 allows
+about a model's output anyway.
+
+**Streaming is supported because the real client streams.** `ChatOllama` sends
+`stream: true` by default and the `ollama` package reads an NDJSON body, so the
+stub answers NDJSON when asked and a single JSON object otherwise. Handling
+both is what keeps "nothing is swapped in Python" true of the chat path as well
+as the embeddings one.
 """
 
 import hashlib
+import json
 import math
 import os
+from collections.abc import Iterator
 from typing import Any
 
 from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 #: bge-m3's width, which is what `vector(1024)` and the client's validation both
@@ -139,21 +162,212 @@ def embed(request: EmbedRequest) -> dict[str, Any]:
     }
 
 
-@app.post("/api/chat")
-def chat(body: dict[str, Any]) -> dict[str, Any]:
-    """A fixed, non-streaming assistant turn. No caller in this story.
+#: What an unconstrained chat request answers. Deliberately bland and
+#: deliberately constant: Story 6.3's specs assert *event structure* — that a
+#: run terminates with exactly one terminal event, that an interrupt carries
+#: the pending tool call — and never model prose. A stub that produced varied
+#: text would invite a spec to assert on it.
+PLAIN_REPLY = "model-stub response: deterministic text for the e2e profile."
 
-    Deliberately bland and deliberately constant: Story 6.3's specs assert
-    *event structure* — that a run terminates with exactly one terminal event,
-    that an interrupt carries the pending tool call — and never model prose. A
-    stub that produced varied text would invite a spec to assert on it.
+#: How long a synthesized string is when the schema does not say. Long enough
+#: to clear the prose minimums Story 6.2's narrative schemas declare (20
+#: characters for a summary, 8 for a bullet) without any knowledge of them —
+#: the stub must not import the server's constants, so it satisfies them by
+#: being comfortably above the largest.
+DEFAULT_STRING_LENGTH = 48
+
+#: Bounds on synthesized numbers. Small positive integers: every numeric field
+#: in a schema this stub is asked to fill is a count or a score, and a negative
+#: or enormous value would fail a plausibility check somebody adds later for
+#: reasons unrelated to the stub.
+MIN_NUMBER = 1
+MAX_NUMBER = 9
+
+
+def _digest(path: str, prompt: str) -> int:
+    """A stable integer for one position in one request.
+
+    The schema path *and* the prompt, so two different claims produce two
+    different narratives (a spec asserting that four cards rendered would
+    otherwise pass against four identical ones) while one claim produces the
+    same narrative on every run of one commit — the reproducibility property
+    AD-15 rests on.
     """
+    return int.from_bytes(hashlib.sha256(f"{path}|{prompt}".encode()).digest()[:8], "big")
+
+
+def _words(path: str, prompt: str, length: int) -> str:
+    """Deterministic filler of at least `length` characters.
+
+    Readable rather than random hex, because these strings land in an e2e
+    browser and somebody will screenshot one. It says what it is: nobody should
+    ever mistake stub output for a model's.
+    """
+    tail = hashlib.sha256(f"{path}|{prompt}".encode()).hexdigest()
+    text = f"model-stub narrative for {path.strip('.') or 'root'} {tail}"
+    while len(text) < length:
+        text = f"{text} {tail}"
+    return text[:length] if len(text) > length else text
+
+
+def _resolve(schema: dict[str, Any], root: dict[str, Any]) -> dict[str, Any]:
+    """Follow a local `$ref` into `$defs`, through an `allOf` wrapper if there is one.
+
+    Pydantic emits a `$ref` per nested model — and wraps it in a single-element
+    `allOf` whenever the *field* carries anything of its own (a `description`, a
+    `default`, a `title`), because JSON Schema draft 2020-12 forbids siblings
+    beside `$ref` in some dialects and Pydantic plays safe. So the two shapes
+
+        {"$ref": "#/$defs/MoneyFigure"}
+        {"allOf": [{"$ref": "#/$defs/MoneyFigure"}], "description": "…"}
+
+    are the same field, and only the first was handled. The second fell through
+    to the string branch, so the stub answered a nested model with a sentence,
+    the api's `with_structured_output` refused it, and **every** e2e generation
+    broke — silently, on the first narrative schema whose nested field acquired
+    a description (review of Story 6.2, M11).
+
+    Only the *first* branch is followed. A real `allOf` intersection of two
+    object schemas is not something Pydantic emits for the models in
+    `server/agents/schemas.py`, and a stub that tried to merge constraints would
+    be reimplementing a validator; taking branch one keeps the walk total and
+    keeps a wrong answer loud (the api validates what comes back) rather than
+    subtly plausible.
+    """
+    branches = schema.get("allOf")
+    if isinstance(branches, list) and branches and isinstance(branches[0], dict):
+        merged = {key: value for key, value in schema.items() if key != "allOf"}
+        return _resolve({**merged, **branches[0]}, root)
+    ref = schema.get("$ref")
+    if not isinstance(ref, str) or not ref.startswith("#/$defs/"):
+        return schema
+    resolved = root.get("$defs", {}).get(ref.removeprefix("#/$defs/"))
+    return resolved if isinstance(resolved, dict) else {}
+
+
+def synthesize(schema: dict[str, Any], root: dict[str, Any], path: str, prompt: str) -> Any:
+    """One deterministic instance of `schema`.
+
+    Handles the constructs Pydantic's `model_json_schema()` actually emits for
+    the models in `server/agents/schemas.py`: objects with `properties` and
+    `required`, arrays with `items` and `minItems`/`maxItems`, strings with
+    `minLength`/`maxLength`, integers, numbers, booleans, `enum`, `const`,
+    `anyOf` (which is how `X | None` renders), `allOf` (which is how a `$ref`
+    with a description renders) and `$ref` into `$defs`.
+
+    Unknown or empty schemas answer a string, which is the least surprising
+    thing a JSON value can be and keeps the walk total: a stub that raised on a
+    construct it had not seen would turn a schema change into an e2e failure
+    with no useful message.
+    """
+    schema = _resolve(schema, root)
+
+    if "const" in schema:
+        return schema["const"]
+
+    choices = schema.get("enum")
+    if isinstance(choices, list) and choices:
+        return choices[_digest(path, prompt) % len(choices)]
+
+    variants = schema.get("anyOf") or schema.get("oneOf")
+    if isinstance(variants, list) and variants:
+        # The first non-null branch, deterministically: `X | None` renders as
+        # `[{...}, {"type": "null"}]`, and an optional field answered with null
+        # every time would leave half of Story 6.2's content untested in e2e.
+        for variant in variants:
+            if _resolve(variant, root).get("type") != "null":
+                return synthesize(variant, root, path, prompt)
+        return None
+
+    kind = schema.get("type")
+
+    if kind == "object" or "properties" in schema:
+        properties = schema.get("properties", {})
+        required = schema.get("required", list(properties))
+        return {
+            name: synthesize(properties[name], root, f"{path}.{name}", prompt)
+            for name in properties
+            if name in required
+        }
+
+    if kind == "array":
+        low = int(schema.get("minItems", 1)) or 1
+        high = int(schema.get("maxItems", low)) or low
+        count = max(1, min(low, high))
+        items = schema.get("items", {})
+        return [
+            synthesize(items, root, f"{path}[{index}]", prompt) for index in range(count)
+        ]
+
+    if kind == "integer":
+        low = int(schema.get("minimum", MIN_NUMBER))
+        high = int(schema.get("maximum", MAX_NUMBER))
+        span = max(1, high - low + 1)
+        return low + _digest(path, prompt) % span
+
+    if kind == "number":
+        return float(MIN_NUMBER + _digest(path, prompt) % MAX_NUMBER)
+
+    if kind == "boolean":
+        return bool(_digest(path, prompt) % 2)
+
+    if kind == "null":
+        return None
+
+    minimum = int(schema.get("minLength", 0))
+    maximum = int(schema.get("maxLength", max(minimum, DEFAULT_STRING_LENGTH)))
+    length = max(minimum, min(DEFAULT_STRING_LENGTH, maximum))
+    return _words(path, prompt, length)
+
+
+def _content(body: dict[str, Any]) -> str:
+    """What the assistant "said": a schema instance, or the fixed sentence.
+
+    `format` is Ollama's structured-output field. A dict is a JSON Schema and
+    is honoured; the string `"json"` (Ollama's older JSON mode) has no schema to
+    walk, so it answers a JSON object rather than prose; anything else is an
+    unconstrained request.
+    """
+    prompt = json.dumps(body.get("messages", []), sort_keys=True)
+    fmt = body.get("format")
+    if isinstance(fmt, dict) and fmt:
+        return json.dumps(synthesize(fmt, fmt, "", prompt))
+    if fmt == "json":
+        return json.dumps({"reply": PLAIN_REPLY})
+    return PLAIN_REPLY
+
+
+def _envelope(body: dict[str, Any], content: str) -> dict[str, Any]:
+    """One Ollama chat response object, done in a single turn."""
     return {
         "model": body.get("model", "model-stub"),
-        "message": {
-            "role": "assistant",
-            "content": "model-stub response: deterministic text for the e2e profile.",
-        },
+        "created_at": "2026-01-01T00:00:00Z",
+        "message": {"role": "assistant", "content": content},
         "done": True,
         "done_reason": "stop",
     }
+
+
+@app.post("/api/chat")
+def chat(body: dict[str, Any]) -> Any:
+    """A deterministic assistant turn, honouring `format` and `stream`.
+
+    **Streaming is answered when it is asked for**, because the shipped client
+    asks for it: `ChatOllama` sends `stream: true` unless told otherwise, and
+    the `ollama` package then reads an NDJSON body line by line. One line
+    carrying both the content and `done: true` is a legal stream and is what a
+    single-turn stub has to say; `done_reason` is `stop` rather than `load`,
+    which the client skips.
+
+    Non-streaming requests get the same object as a plain JSON body, so both
+    call shapes exercise the real client against the real wire format.
+    """
+    content = _content(body)
+    envelope = _envelope(body, content)
+    if not body.get("stream", False):
+        return envelope
+
+    def lines() -> Iterator[bytes]:
+        yield (json.dumps(envelope) + "\n").encode()
+
+    return StreamingResponse(lines(), media_type="application/x-ndjson")

@@ -18,8 +18,30 @@ functions take a context they do not filter on. That is a deliberate
 divergence from the three modules above, argued in its own docstring — the
 short version is that a module doing both should not change signature shape
 halfway down.
+
+`insights` (Story 6.2) is the third scoped one, and it is a whole one: every
+function reaches `claim` through `employer_scope(ctx)`, the write included. A
+cached AI narrative is derived from a claim's clinical text, its reserve and
+its fraud score, so serving one across an employer partition is the same leak
+as serving the case file it was cut from — there is no carve-out to argue for.
 """
 
-from data.repositories import claims, embeddings, glossary, identity, state_rates, statutory_forms
+from data.repositories import (
+    claims,
+    embeddings,
+    glossary,
+    identity,
+    insights,
+    state_rates,
+    statutory_forms,
+)
 
-__all__ = ["claims", "embeddings", "glossary", "identity", "state_rates", "statutory_forms"]
+__all__ = [
+    "claims",
+    "embeddings",
+    "glossary",
+    "identity",
+    "insights",
+    "state_rates",
+    "statutory_forms",
+]

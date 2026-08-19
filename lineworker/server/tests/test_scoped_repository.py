@@ -25,6 +25,7 @@ from data.models import AppUser, Claim
 from data.models.enums import Stage, UserRole
 from data.repositories import claims as claim_repo
 from data.repositories import embeddings as embedding_repo
+from data.repositories import insights as insight_repo
 from data.repositories.identity import employer_ids_for
 from tests import seed_fixture
 from tests.conftest import requires_db
@@ -73,9 +74,16 @@ async def context_for(db: AsyncSession, name: str, role: str) -> CallerContext:
 #: `statutory_forms`) are deliberately absent: they take no caller context at
 #: all, and each argues in its own docstring why. `identity` is absent because
 #: it is what *builds* a context and necessarily runs before one exists.
-SCOPED_REPOSITORY_MODULES = [claim_repo, embedding_repo]
+#:
+#: **`insights` joined in Story 6.2**, which is the same move for the same
+#: reason one story later: a cached AI narrative is generated from a claim's
+#: clinical text, its reserve and its fraud score, so an unscoped read of
+#: `ai_insight` leaks exactly what an unscoped read of `claim` would. Adding
+#: the module to this list is the whole cost of covering it, which is what the
+#: parameterization above was for.
+SCOPED_REPOSITORY_MODULES = [claim_repo, embedding_repo, insight_repo]
 
-SCOPED_REPOSITORY_IDS = ["claims", "embeddings"]
+SCOPED_REPOSITORY_IDS = ["claims", "embeddings", "insights"]
 
 
 @pytest.mark.parametrize("module", SCOPED_REPOSITORY_MODULES, ids=SCOPED_REPOSITORY_IDS)
@@ -411,13 +419,21 @@ async def test_the_photo_read_applies_the_filter_itself(db: AsyncSession) -> Non
 
 
 def test_repositories_package_exports_the_scoped_repositories() -> None:
-    """Both, and by identity rather than by name.
+    """All three, and by identity rather than by name.
 
-    `repositories.claims` has been asserted since Story 1.4; `embeddings` joins
-    it because the package docstring now describes it as the second scoped
-    module, and a docstring that named a module the package did not export
-    would be the kind of wrong that nothing else notices.
+    `repositories.claims` has been asserted since Story 1.4; `embeddings`
+    joined it in 6.1 and `insights` in 6.2, because the package docstring now
+    describes each of them as a scoped module, and a docstring that named a
+    module the package did not export would be the kind of wrong that nothing
+    else notices.
+
+    Driven off `SCOPED_REPOSITORY_IDS` rather than a second hand-written list,
+    so a module added to the guards above cannot be left out of the export
+    assertion — which is the failure mode a duplicated list has.
     """
     assert repositories.claims is claim_repo
     assert repositories.embeddings is embedding_repo
-    assert set(repositories.__all__) >= {"claims", "embeddings"}
+    assert repositories.insights is insight_repo
+    assert set(repositories.__all__) >= set(SCOPED_REPOSITORY_IDS)
+    for name, module in zip(SCOPED_REPOSITORY_IDS, SCOPED_REPOSITORY_MODULES, strict=True):
+        assert getattr(repositories, name) is module

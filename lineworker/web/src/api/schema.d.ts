@@ -612,6 +612,95 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/claims/{claim_business_id}/insights": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The claim's four cached AI narratives, with their generation timestamps
+         * @description Read the AI insight cache for one claim (AC 2).
+         *
+         *     Thin by AD-1: one service call and a shape. Nothing is generated here — this
+         *     is a cache read, and a GET that generated would make opening a tab cost four
+         *     model completions and would give `POST …/refresh` nothing to do.
+         *
+         *     **A claim with no insights is 200 with four `not_generated` cards**, never a
+         *     404. That distinction is the whole of NFR-3 on this surface: "nobody has
+         *     generated this yet" is a state with an affordance attached, and answering it
+         *     as a missing resource would send the tab down its error branch for the
+         *     normal state of a fresh deployment.
+         *
+         *     **No `MODEL_UNAVAILABLE_RESPONSE`**, unlike `/similar`: this route touches
+         *     no model server at all. The cards a handler can see while Ollama is down are
+         *     exactly the cards they could see before it went down, which is the honest
+         *     behaviour for a cache and is why the tab keeps working through an outage.
+         *
+         *     404 for out of scope, in the case file's exact wording and for its reason
+         *     (AD-7).
+         */
+        get: operations["insights_claims__claim_business_id__insights_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/claims/{claim_business_id}/insights/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Regenerate this claim's four AI narratives now
+         * @description Generate this claim's four narratives and return the fresh cards (AC 1).
+         *
+         *     **The same command the scheduled job runs** (AD-12). This route builds the
+         *     two model clients from configuration and calls
+         *     `agents.refresh_claim_insights`, which calls `services/rag.store_insights` —
+         *     the single writer. There is no on-demand code path and no fixture path; the
+         *     e2e trigger in `api/routers/admin.py` enters the same function one level up.
+         *
+         *     **It answers with the payload rather than a job id**, and the reason is what
+         *     the browser does next: the tab invalidates its own query key and re-renders
+         *     from this body, so a handler who pressed Refresh sees four fresh cards in
+         *     one round trip instead of a spinner and a poll. Generation is synchronous
+         *     and can take tens of seconds on a CPU-only dev box, which is a real cost —
+         *     but a 202 with polling would need a job table, a status route and a
+         *     client-side loop, all of which are Story 6.6's degradation surface rather
+         *     than this story's.
+         *
+         *     **503 when the model server did not answer, and 200 when it merely answered
+         *     badly.** The distinction is `InsightRun.model_unavailable`'s whole purpose:
+         *     an outage is temporary and specific to AI reads, so the client should say so
+         *     and offer a retry, while a completion that failed its schema left the
+         *     previous cards standing and is not something a handler can act on. A
+         *     partially successful run — three cards written, one kind refused — is a 200
+         *     with the fresh payload, because three new narratives are a better answer
+         *     than a refusal.
+         *
+         *     **…and it says which kind was refused**, in `failedKinds`. Without that the
+         *     200 above is indistinguishable from a clean run and the refused card just
+         *     goes on reading "not generated", which looks to a handler like a button that
+         *     did nothing (review of Story 6.2, M7).
+         *
+         *     404 for out of scope, in the case file's exact wording and for its reason.
+         */
+        post: operations["refresh_insights_claims__claim_business_id__insights_refresh_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/claims/{claim_business_id}/osha-log": {
         parameters: {
             query?: never;
@@ -1280,18 +1369,20 @@ export interface components {
          *       control switches tabs within the detail pane; there is no bespoke routing
          *       and no second notion of "where am I" (Story 2.2's tab state is local UI
          *       state, and this reuses it).
-         *     - `diary`, `meetings` — Epic 4. `fraud` — Epic 6's AI Insights.
-         *       `rtw_letter` — Epic 6's RTW-letter modal (FR-H-11).
+         *     - `diary`, `meetings` — Epic 4. `fraud` — Epic 6's AI Insights tab, filled
+         *       by Story 6.2. `rtw_letter` — Epic 6's RTW-letter modal (FR-H-11), the one
+         *       target still unbuilt.
          *     - `approve` — the assessment approval, which is a *command* rather than a
          *       destination. The prototype models it the same way, and keeping it in this
          *       enum is what lets the card render one control per row.
          *
          *     **This enum is the cross-epic seam, and it is why `enabled` is a server
-         *     field rather than a client-side membership test.** Story 4.2 enables the
-         *     diary link and Story 6.2 the fraud one; both are a change to
-         *     `services/worklist/actions.py`'s target table and to nothing in the SPA. A
-         *     browser that decided which targets exist would be a second copy of that
-         *     table, and it would go stale in the release where one of them shipped.
+         *     field rather than a client-side membership test.** Story 4.2 enabled the
+         *     diary link and Story 6.2 the fraud one; both were a change to
+         *     `services/worklist/actions.py`'s target table and to nothing in the SPA
+         *     except the card's own list of targets it can navigate from. A browser that
+         *     decided which targets *exist* would be a second copy of that table, and it
+         *     would go stale in the release where one of them shipped.
          * @enum {string}
          */
         ActionTarget: "overview" | "bills" | "documents" | "diary" | "meetings" | "fraud" | "rtw_letter" | "approve";
@@ -1770,6 +1861,29 @@ export interface components {
             /** Schedule */
             schedule: components["schemas"]["ScheduleWeekResponse"][];
             summary: components["schemas"]["FinancialSummaryResponse"];
+        };
+        /**
+         * ClaimInsightsResponse
+         * @description The four cached narratives for one claim, keyed by kind.
+         *
+         *     **A keyed object rather than a list**, which is the one shape decision on
+         *     this payload worth arguing. The four kinds are a closed set with four
+         *     different content structures and four different card components; a list of
+         *     `{kind, content}` would have made `content` a union the browser has to
+         *     narrow by hand at every use, and the narrowing would be a `switch` in the
+         *     client over a vocabulary the server owns. Keyed, each slot is typed
+         *     precisely, and "all four kinds are always present" is a property of the
+         *     response model rather than of whatever the server happened to find.
+         *
+         *     That also settles the empty case without a special branch: a claim with no
+         *     rows answers four `not_generated` cards, and a claim with three answers
+         *     three ready ones and one empty.
+         */
+        ClaimInsightsResponse: {
+            fraudRiskIndicators: components["schemas"]["FraudRiskCard"];
+            nextBestActions: components["schemas"]["NextBestActionsCard"];
+            reserveAdequacyReview: components["schemas"]["ReserveAdequacyCard"];
+            similarCaseOutcomes: components["schemas"]["SimilarCaseCard"];
         };
         /**
          * ClaimPath
@@ -2590,6 +2704,130 @@ export interface components {
             weeklyIndemnityCents: number;
         };
         /**
+         * FraudLowRiskInsight
+         * @description The stored fraud card, low-risk-confirmation variant.
+         */
+        FraudLowRiskInsight: {
+            narrative: components["schemas"]["FraudLowRiskNarrative"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            outcome: "low_risk";
+            /** Promptversion */
+            promptVersion: number;
+            signals: components["schemas"]["FraudSignalFigures"];
+        };
+        /**
+         * FraudLowRiskNarrative
+         * @description What the model writes when neither derivation fires.
+         *
+         *     A *confirmation*, which is the whole of AC 3: a low-risk claim's card says
+         *     that the score sits below both thresholds and that nothing needs referring,
+         *     rather than rendering a heading over an empty list. `monitoring` is what to
+         *     keep an eye on anyway — a short list, because "nothing is wrong" with five
+         *     caveats is not a confirmation.
+         */
+        FraudLowRiskNarrative: {
+            /** Confirmation */
+            confirmation: string;
+            /**
+             * Monitoring
+             * @description What would change this assessment, one clause each.
+             */
+            monitoring: string[];
+        };
+        /**
+         * FraudRedFlagsInsight
+         * @description The stored fraud card, red-flag variant.
+         */
+        FraudRedFlagsInsight: {
+            narrative: components["schemas"]["FraudRedFlagsNarrative"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            outcome: "red_flags";
+            /** Promptversion */
+            promptVersion: number;
+            signals: components["schemas"]["FraudSignalFigures"];
+        };
+        /**
+         * FraudRedFlagsNarrative
+         * @description What the model writes when the derivations say there is something to look at.
+         *
+         *     `red_flags` is `min_length=1`: this narrative is *only* requested when a
+         *     registered derivation has already said the claim clears a threshold, so an
+         *     empty list would be the model contradicting a service. The low-risk case is
+         *     a different schema and a different prompt, not this one with nothing in it
+         *     (AC 3).
+         */
+        FraudRedFlagsNarrative: {
+            /**
+             * Redflags
+             * @description Each indicator worth reviewing, one clause each.
+             */
+            redFlags: string[];
+            /** Summary */
+            summary: string;
+        };
+        /**
+         * FraudRiskCard
+         * @description The fraud risk indicators card, in whichever variant the claim earned.
+         *
+         *     `content` is the discriminated union: `outcome: "red_flags"` carries a
+         *     non-empty list of indicators, `outcome: "low_risk"` carries the confirmation
+         *     and what would change it. **Which one a claim gets was decided by
+         *     `services/derivations`' two registered rules**, never by the model (AC 3) —
+         *     so the browser branches on `outcome` and never on a score.
+         */
+        FraudRiskCard: {
+            /** Content */
+            content: (components["schemas"]["FraudRedFlagsInsight"] | components["schemas"]["FraudLowRiskInsight"]) | null;
+            /**
+             * Generatedat
+             * @description When this narrative was generated. Null when not generated; never null on a ready card — an AI narrative is always shown with its age.
+             */
+            generatedAt: string | null;
+            /** @description Which narrative this card holds. Redundant with the field it occupies on the response and published anyway, for `ActionResponse.target`'s reason: the browser stamps it into the DOM as the card's identity, so a testid and a selector name the server's own token rather than a camelCase key a client invented. */
+            kind: components["schemas"]["InsightKind"];
+            /**
+             * Model
+             * @description The model that wrote this narrative. Null when not generated.
+             */
+            model: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ready" | "not_generated";
+        };
+        /**
+         * FraudSignalFigures
+         * @description The claim's two fraud columns, both derived verdicts, and both thresholds.
+         *
+         *     `agents/tools/fraud.py::FraudSignals` field for field. Both thresholds are
+         *     published because they are two different rules — referral and review — and
+         *     a card that quoted one score against the other's cut-off would be
+         *     defensible at every step and wrong on the screen.
+         */
+        FraudSignalFigures: {
+            /** Fraudflag */
+            fraudFlag: boolean;
+            /** Fraudflagscoremin */
+            fraudFlagScoreMin: number;
+            /** Fraudflagged */
+            fraudFlagged: boolean;
+            /** Fraudscore */
+            fraudScore: number;
+            /** Siufraudscoremin */
+            siuFraudScoreMin: number;
+            /** Siureview */
+            siuReview: boolean;
+            /** Thresholdsversion */
+            thresholdsVersion: number;
+        };
+        /**
          * GlossaryList
          * @description The `{items, nextCursor, total}` envelope (Lists convention).
          *
@@ -2824,6 +3062,34 @@ export interface components {
             /** Version */
             version: number | null;
         };
+        /**
+         * InsightKind
+         * @description The four cached AI narratives a claim carries (Story 6.2, AC 1).
+         *
+         *     A native database enum on `ai_insight.kind`, which is why the vocabulary
+         *     lives here for `BodyRegion`'s reason — `data/` must not import from
+         *     `services/`, and both the ORM class and migration 0042 need these members.
+         *
+         *     **Four, and the set is closed on purpose.** Each kind is a narration of one
+         *     deterministic service's output and nothing else (AD-2): similar-case
+         *     outcomes narrate `services/rag.similar_claims`, the reserve review narrates
+         *     `services/financials`' single reserve check, next best actions narrate
+         *     `services/worklist`'s action checklist, and the fraud indicators narrate the
+         *     two registered fraud derivations. A fifth member would be a fifth claim
+         *     about what the model is allowed to talk about, so adding one is a migration
+         *     and a prompt file rather than a line here.
+         *
+         *     **`kind` is half of the cache key.** `ai_insight` is unique on
+         *     `(claim_id, kind)`: the table holds the latest generation per kind, not a
+         *     history, so a refresh replaces rather than appends. The set therefore also
+         *     fixes how many rows a fully generated claim has, which is what makes "four
+         *     cards, one per kind" a property a test can assert rather than a convention.
+         *
+         *     Snake_case values per the convention; the browser owns the display labels
+         *     (`web/src/features/claim-detail/labels.ts::INSIGHT_KIND_LABEL`).
+         * @enum {string}
+         */
+        InsightKind: "similar_case_outcomes" | "reserve_adequacy_review" | "next_best_actions" | "fraud_risk_indicators";
         /**
          * IntakeOverviewResponse
          * @description The intake variant: summary, reported injury, checklist, full timeline.
@@ -3221,6 +3487,22 @@ export interface components {
             subject: string;
         };
         /**
+         * MoneyFigure
+         * @description One money amount: the integer cents, and the string a reader sees.
+         *
+         *     Never one without the other. The cents are what Story 7.1 will aggregate
+         *     and what the AD-2 test compares against the service's own field; the
+         *     display string is what the narrative quotes and the card renders, so that
+         *     neither the model nor the browser is ever the thing that decides how a
+         *     figure looks.
+         */
+        MoneyFigure: {
+            /** Cents */
+            cents: number;
+            /** Display */
+            display: string;
+        };
+        /**
          * NewDiaryNoteRequest
          * @description The add-note input's body — a paragraph, and optionally a claim.
          *
@@ -3415,6 +3697,87 @@ export interface components {
              * @description The stakeholder roles attending. Stored in the vocabulary's own order, de-duplicated — the request's order is not preserved.
              */
             participants?: components["schemas"]["MeetingParticipant"][];
+        };
+        /**
+         * NextActionFigure
+         * @description One checklist row, exactly as `services/worklist.claim_actions` ranked it.
+         *
+         *     The row's identity, rule key, sentence and urgency — no `target`, no
+         *     `enabled`, no `command`. Those three are about a *control* the checklist
+         *     card renders, and an insight is not a place to press a button from; leaving
+         *     them out is what stops the AI card growing a second, unaudited path into the
+         *     three completion commands.
+         */
+        NextActionFigure: {
+            /** Id */
+            id: string;
+            key: components["schemas"]["ActionKey"];
+            /** Label */
+            label: string;
+            urgency: components["schemas"]["ActionUrgency"];
+        };
+        /**
+         * NextBestActionsCard
+         * @description The next best actions card. `content` is null when not generated.
+         */
+        NextBestActionsCard: {
+            content: components["schemas"]["NextBestActionsInsight"] | null;
+            /**
+             * Generatedat
+             * @description When this narrative was generated. Null when not generated; never null on a ready card — an AI narrative is always shown with its age.
+             */
+            generatedAt: string | null;
+            /** @description Which narrative this card holds. Redundant with the field it occupies on the response and published anyway, for `ActionResponse.target`'s reason: the browser stamps it into the DOM as the card's identity, so a testid and a selector name the server's own token rather than a camelCase key a client invented. */
+            kind: components["schemas"]["InsightKind"];
+            /**
+             * Model
+             * @description The model that wrote this narrative. Null when not generated.
+             */
+            model: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ready" | "not_generated";
+        };
+        /**
+         * NextBestActionsInsight
+         * @description The stored next-actions card: the server's list, in the server's order.
+         *
+         *     `actions` is the checklist as generated — same rows, same order, same
+         *     urgencies. The narrative explains it; it never re-ranks it, and there is
+         *     nowhere in `NextBestActionsNarrative` to put a reordering even if a model
+         *     wanted one.
+         *
+         *     `cap` and `rules_version` ride along for `ClaimActionsResponse`'s reason:
+         *     the length of the list is a rule document's answer, and "why are there six
+         *     of these?" should be answerable from the card rather than reconstructed.
+         */
+        NextBestActionsInsight: {
+            /** Actioncount */
+            actionCount: number;
+            /** Actions */
+            actions: components["schemas"]["NextActionFigure"][];
+            /** Cap */
+            cap: number;
+            narrative: components["schemas"]["NextBestActionsNarrative"];
+            /** Promptversion */
+            promptVersion: number;
+            /** Rulesversion */
+            rulesVersion: number;
+        };
+        /**
+         * NextBestActionsNarrative
+         * @description What the model writes about a ranked checklist. Prose only.
+         */
+        NextBestActionsNarrative: {
+            /**
+             * Considerations
+             * @description Why these rows are the ones to work, one clause each.
+             */
+            considerations: string[];
+            /** Summary */
+            summary: string;
         };
         /**
          * PaymentApproval
@@ -3834,6 +4197,37 @@ export interface components {
          */
         RecoveryWindow: "weeks_0_2" | "weeks_2_4" | "weeks_4_6" | "weeks_6_8" | "over_1_year";
         /**
+         * RefreshInsightsResponse
+         * @description The four cards a refresh produced, plus which kinds it could not produce.
+         *
+         *     A subclass rather than a field on the shared payload, because the extra is
+         *     true of a *run* and not of the cache: a GET has no failures to report, and a
+         *     nullable `failedKinds` on every read would be a field the browser has to
+         *     ignore on three quarters of its uses.
+         *
+         *     **It exists because a partial refresh looked exactly like a clean one**
+         *     (review of Story 6.2, M7). Three kinds written and one refused answered 200
+         *     with a fresh payload, and the refused card went on reading "not generated" —
+         *     so a handler pressed Refresh, watched one card stay empty, and had nothing
+         *     on screen to distinguish "the model refused this kind" from "the button did
+         *     not work". Publishing the kinds lets the tab say which.
+         *
+         *     A kind token is not content and is not PHI — it is the same closed
+         *     vocabulary the payload above is already keyed by — so it is publishable
+         *     where the narrative and the model's own refusal text are not (AD-11).
+         */
+        RefreshInsightsResponse: {
+            /**
+             * Failedkinds
+             * @description The kinds this refresh could not write, in enum order. Empty when every kind was regenerated. A kind listed here keeps whatever narrative it had before the refresh, with its previous timestamp.
+             */
+            failedKinds: components["schemas"]["InsightKind"][];
+            fraudRiskIndicators: components["schemas"]["FraudRiskCard"];
+            nextBestActions: components["schemas"]["NextBestActionsCard"];
+            reserveAdequacyReview: components["schemas"]["ReserveAdequacyCard"];
+            similarCaseOutcomes: components["schemas"]["SimilarCaseCard"];
+        };
+        /**
          * RequiredFormResponse
          * @description One statutory form the claim's classified path requires (Story 2.5).
          *
@@ -3855,6 +4249,86 @@ export interface components {
             formName: string;
             /** Timing */
             timing: string;
+        };
+        /**
+         * ReserveAdequacyCard
+         * @description The reserve adequacy review card. `content` is null when not generated.
+         */
+        ReserveAdequacyCard: {
+            content: components["schemas"]["ReserveAdequacyInsight"] | null;
+            /**
+             * Generatedat
+             * @description When this narrative was generated. Null when not generated; never null on a ready card — an AI narrative is always shown with its age.
+             */
+            generatedAt: string | null;
+            /** @description Which narrative this card holds. Redundant with the field it occupies on the response and published anyway, for `ActionResponse.target`'s reason: the browser stamps it into the DOM as the card's identity, so a testid and a selector name the server's own token rather than a camelCase key a client invented. */
+            kind: components["schemas"]["InsightKind"];
+            /**
+             * Model
+             * @description The model that wrote this narrative. Null when not generated.
+             */
+            model: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ready" | "not_generated";
+        };
+        /**
+         * ReserveAdequacyInsight
+         * @description The stored reserve card: the verdict, its exposure terms, the prose.
+         *
+         *     `verdict` and `verdict_rationale` are both `services/financials`': the
+         *     rationale is the deterministic sentence `_rationale` already writes for the
+         *     card, carried here so the narrative has the service's own words to agree
+         *     with rather than to paraphrase.
+         *
+         *     ## `bills_on_file` false forbids a ratio, and the schema is where that is
+         *     enforced
+         *
+         *     `remaining_medical_cents is None` does not mean zero — it means the bills
+         *     are not on file, which forces `ReserveVerdict.indeterminate` and leaves
+         *     `ratio_bp` as `None`. A card that showed "115%" in that state would be
+         *     quoting a comparison nobody made, from half the inputs, which is the exact
+         *     failure `ReserveCheck`'s docstring records this console having shipped once.
+         *
+         *     So the validator below refuses the combination outright: no bills on file,
+         *     no ratio, no medical exposure figure, no projected total. It is a guard on a
+         *     structure whose figures are copied from a service that already keeps the
+         *     rule — which is the point. The service is the reason it holds today; the
+         *     validator is what stops a later story "filling in" a `None` from a second
+         *     source and discovering the problem on a handler's screen.
+         */
+        ReserveAdequacyInsight: {
+            /** Bandsversion */
+            bandsVersion: number;
+            /** Billsonfile */
+            billsOnFile: boolean;
+            narrative: components["schemas"]["ReserveAdequacyNarrative"];
+            projectedRemaining: components["schemas"]["MoneyFigure"] | null;
+            /** Promptversion */
+            promptVersion: number;
+            /** Ratiobp */
+            ratioBp: number | null;
+            remainingIndemnity: components["schemas"]["MoneyFigure"];
+            remainingMedical: components["schemas"]["MoneyFigure"] | null;
+            reserve: components["schemas"]["MoneyFigure"];
+            verdict: components["schemas"]["ReserveVerdict"];
+            /** Verdictrationale */
+            verdictRationale: string;
+        };
+        /**
+         * ReserveAdequacyNarrative
+         * @description What the model writes about a reserve verdict. Prose only.
+         */
+        ReserveAdequacyNarrative: {
+            /**
+             * Considerations
+             * @description What a handler should weigh next, one clause each.
+             */
+            considerations: string[];
+            /** Summary */
+            summary: string;
         };
         /**
          * ReserveCheckResponse
@@ -4135,6 +4609,74 @@ export interface components {
             text?: string | null;
         };
         /**
+         * SimilarCaseCard
+         * @description The similar-case outcomes card. `content` is null when not generated.
+         */
+        SimilarCaseCard: {
+            content: components["schemas"]["SimilarCaseInsight"] | null;
+            /**
+             * Generatedat
+             * @description When this narrative was generated. Null when not generated; never null on a ready card — an AI narrative is always shown with its age.
+             */
+            generatedAt: string | null;
+            /** @description Which narrative this card holds. Redundant with the field it occupies on the response and published anyway, for `ActionResponse.target`'s reason: the browser stamps it into the DOM as the card's identity, so a testid and a selector name the server's own token rather than a camelCase key a client invented. */
+            kind: components["schemas"]["InsightKind"];
+            /**
+             * Model
+             * @description The model that wrote this narrative. Null when not generated.
+             */
+            model: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ready" | "not_generated";
+        };
+        /**
+         * SimilarCaseInsight
+         * @description The stored similar-case card: the neighbours, their freshness, the prose.
+         *
+         *     `book_is_empty` is a server-side boolean rather than something the card
+         *     works out from the list's length, for AD-1's standing reason — and here it
+         *     also carries a meaning the length does not: a scoped handler with one claim
+         *     in their partition and a handler between assignments both see zero
+         *     neighbours, and the sentence the card shows is about the *search* having
+         *     found none in this caller's book rather than about the list being short.
+         *
+         *     `staleness_disclosure` is the sentence `agents/tools/similar.py` composed
+         *     from `embedded_at`, the `stale` flags and the configured window (AD-12). It
+         *     is `None` exactly when nothing is stale, so the card's disclosure row
+         *     renders on a fact rather than on a threshold the browser applied.
+         */
+        SimilarCaseInsight: {
+            /** Bookisempty */
+            bookIsEmpty: boolean;
+            narrative: components["schemas"]["SimilarCaseNarrative"];
+            /** Neighbourcount */
+            neighbourCount: number;
+            /** Neighbours */
+            neighbours: components["schemas"]["SimilarNeighbour"][];
+            /** Promptversion */
+            promptVersion: number;
+            /** Stalecount */
+            staleCount: number;
+            /** Stalenessdisclosure */
+            stalenessDisclosure: string | null;
+        };
+        /**
+         * SimilarCaseNarrative
+         * @description What the model writes about a neighbour list. Prose only.
+         */
+        SimilarCaseNarrative: {
+            /** Summary */
+            summary: string;
+            /**
+             * Takeaways
+             * @description What the comparable claims suggest, one clause each.
+             */
+            takeaways: string[];
+        };
+        /**
          * SimilarClaimResponse
          * @description One neighbouring claim, with the freshness of the vector that matched.
          *
@@ -4189,6 +4731,31 @@ export interface components {
             items: components["schemas"]["SimilarClaimResponse"][];
             /** K */
             k: number;
+        };
+        /**
+         * SimilarNeighbour
+         * @description One neighbouring claim, exactly as `services/rag.similar_claims` returned it.
+         *
+         *     Field-for-field the service's `SimilarClaim`, including `distance` as raw
+         *     cosine distance and the `embedded_at`/`stale` pair AD-12 requires retrieval
+         *     to carry. Nothing is converted: a "92% similar" invented here would be a
+         *     figure no service computed, sitting inside a narrative that quotes it.
+         */
+        SimilarNeighbour: {
+            /** Claimid */
+            claimId: string;
+            /** Distance */
+            distance: number;
+            /** Embeddedat */
+            embeddedAt: string | null;
+            /** Employershortname */
+            employerShortName: string;
+            /** Injurytype */
+            injuryType: string;
+            /** Severityscore */
+            severityScore: number;
+            /** Stale */
+            stale: boolean;
         };
         /**
          * SlaDirection
@@ -6602,6 +7169,160 @@ export interface operations {
             };
             /** @description The claim's jurisdiction has no `state_rate_schedule` row, so its weekly benefit cannot be calculated and no default is substituted (RFC 9457 problem document). Unreachable against a correctly migrated database — 0023 refuses to complete otherwise. */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+        };
+    };
+    insights_claims__claim_business_id__insights_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The claim's business id, `WC-nnnn`. */
+                claim_business_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaimInsightsResponse"];
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description No such claim in the caller's scope. Deliberately the same answer for a claim that does not exist and one that belongs to another employer — see the route docstring (RFC 9457 problem document). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    refresh_insights_claims__claim_business_id__insights_refresh_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The claim's business id, `WC-nnnn`. */
+                claim_business_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RefreshInsightsResponse"];
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description No such claim in the caller's scope. Deliberately the same answer for a claim that does not exist and one that belongs to another employer — see the route docstring (RFC 9457 problem document). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description The local model server did not answer, so the query claim could not be embedded. Temporary and specific to AI-backed reads — claim data is unaffected (RFC 9457 problem document). */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
