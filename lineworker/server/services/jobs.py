@@ -165,4 +165,49 @@ def weekly_on(weekdays: frozenset[int]) -> DuePredicate:
     return due
 
 
-__all__ = ["DuePredicate", "JobRunner", "ScheduledJob", "weekly_on"]
+def every_seconds(interval: float) -> DuePredicate:
+    """Due once per `interval` seconds of elapsed wall clock (Story 6.1).
+
+    The second predicate this module holds, and it answers a different kind of
+    question from `weekly_on`. That one is a statement about the *calendar* —
+    "money goes out on Tuesdays and Fridays" — and compares `.date()` precisely
+    so a daylight-saving shift cannot make a batch run twice or not at all.
+    This one is a statement about *elapsed time*: the embedding refresh has no
+    opinion about which day it is, only about how long a stale row should be
+    allowed to stay stale. Interval arithmetic is the right shape for that, and
+    the daylight-saving hazard does not apply because nothing here reads a
+    local date.
+
+    Written here rather than as a lambda in `api/app.py` for `weekly_on`'s
+    reason: the runner's cadences live in predicates, so that the tick stays a
+    polling rate and a job's schedule stays one testable function.
+
+    **Due immediately on the first tick after a restart** (`last_run is None`),
+    which is the module docstring's stated default and is correct for this job
+    for the same reason it is for the batch: `refresh_stale_embeddings` is
+    idempotent by construction — its query is "what is pending", so a run with
+    nothing pending embeds nothing and commits an empty transaction. A restart
+    loop would cost one query per boot, not one duplicated write.
+
+    The comparison is `>=` rather than `>`: the runner's own tick interval is
+    the granularity, and with `interval` set to an exact multiple of it, a
+    strict comparison would defer every run by one whole tick for ever.
+    """
+
+    def due(now: datetime, last_run: datetime | None) -> bool:
+        if last_run is None:
+            return True
+        elapsed = (now - last_run).total_seconds()
+        # A *negative* elapsed time means the wall clock stepped backwards
+        # between two ticks — an NTP correction, most plainly — leaving
+        # `last_run` in the future. Treated as due rather than waited out: the
+        # alternative is a refresh that stops running until the clock catches
+        # up, which for an hour's correction is an hour of edits that stay
+        # stale for no reason anybody could find in a log. Re-running early
+        # costs one query, because the job is idempotent by construction.
+        return elapsed >= interval or elapsed < 0
+
+    return due
+
+
+__all__ = ["DuePredicate", "JobRunner", "ScheduledJob", "every_seconds", "weekly_on"]

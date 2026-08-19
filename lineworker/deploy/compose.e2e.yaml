@@ -5,9 +5,12 @@
 #   * web publishes 8081 so an e2e stack can run beside a dev stack.
 #
 #   docker compose -f deploy/compose.e2e.yaml up -d --build --wait
-#
-# model-stub: added by Story 6.1 — a deterministic Ollama-API-compatible
-# container serving scripted chat/embedding responses. Placeholder only.
+#   * the model server is `model-stub` (below): a deterministic,
+#     Ollama-API-compatible container, so no model is ever downloaded and no
+#     spec waits on inference. There is deliberately **no `ollama` service in
+#     this file** — AD-5 and AD-14 govern dev and prod, and the stub exists
+#     only here (`deploy/model-stub/`, outside `server/`, so it can never
+#     ship).
 
 name: lineworker-e2e
 
@@ -37,8 +40,21 @@ services:
       APP_DB_PASSWORD: lineworker_app_e2e
       ENV: e2e
       LOG_LEVEL: INFO
+      # The stub, not Ollama. The api runs the *real* `OllamaEmbeddingClient`
+      # against it — nothing is swapped in Python — so an e2e run exercises the
+      # shipped client, the shipped dimension check and the shipped refresh
+      # command against fixed bytes.
+      OLLAMA_BASE_URL: http://model-stub:11434
+      # Named so the request body and `claim_embedding.model` carry a value that
+      # says where the vectors came from. The stub answers whatever it is asked
+      # for; the point is that a row embedded in the e2e profile is
+      # distinguishable from one embedded by a real model.
+      CHAT_MODEL: model-stub
+      EMBEDDING_MODEL: model-stub
     depends_on:
       postgres:
+        condition: service_healthy
+      model-stub:
         condition: service_healthy
     healthcheck:
       test:
@@ -67,4 +83,25 @@ services:
       retries: 10
       start_period: 10s
 
-  # model-stub:   (Story 6.1 — do not add before then)
+  model-stub:
+    build:
+      context: ./model-stub
+    # No ports: — the same rule the real `ollama` service keeps in
+    # `compose.yaml`, kept here too so the two profiles cannot teach different
+    # habits. Reachable from `api` on the compose network and nowhere else.
+    #
+    # No volume and no GPU: the stub holds no models and computes its vectors
+    # from a hash, so it starts in under a second and a `down -v` costs nothing.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:11434/api/version', timeout=3)"
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      # Seconds rather than the dev profile's thirty minutes: there is nothing
+      # to download, so a stub that is not up in half a minute is broken rather
+      # than busy.
+      start_period: 10s

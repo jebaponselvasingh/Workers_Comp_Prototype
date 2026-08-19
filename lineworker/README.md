@@ -10,10 +10,48 @@ docker compose -f deploy/compose.yaml up
 ```
 
 That's it. From a clean checkout this builds the SPA, starts PostgreSQL 18
-(+pgvector) on the internal network, runs Alembic migrations, and serves
-everything through nginx at <http://localhost:8080>. nginx is the **only**
-published port — the API is reached via the `/api` proxy and the database is
-never exposed to the host.
+(+pgvector) and Ollama on the internal network, runs Alembic migrations, and
+serves everything through nginx at <http://localhost:8080>. nginx is the
+**only** published port — the API is reached via the `/api` proxy, and neither
+the database nor the model server is ever exposed to the host.
+
+**The first boot downloads models, and it is slow.** Since Story 6.1 the
+`ollama` service pulls the chat and embedding models (`qwen3:14b` and `bge-m3`
+by default — several gigabytes) *before* it reports healthy, and `api` waits
+for that. So a first `up` on a clean machine takes as long as your connection
+does, with nothing to see until it finishes. Every boot after that is instant:
+the models live in the `ollama-models` volume, and only `docker compose down
+-v` re-downloads them. Set `CHAT_MODEL`/`EMBEDDING_MODEL` in `deploy/.env` to
+pull something smaller — but read the note in `deploy/.env.example` first,
+because changing the *embedding* model's dimensionality is a migration rather
+than a config flip.
+
+**The chat model is the expensive half, and nothing in this build calls it
+yet.** Story 6.1 serves chat and embeddings because the compose stack is
+specified to (AD-5), but the only model traffic the application makes today is
+embeddings — the chat client arrives with Stories 6.2/6.3. The default
+`qwen3:14b` is sized for a GPU host (~9 GB on disk, and the architecture's
+table wants ~24 GB of VRAM to run it well), so on a laptop set both knobs down
+in `deploy/.env` before the first `up`:
+
+```sh
+CHAT_MODEL=qwen3:8b        # the documented CPU fallback
+```
+
+`EMBEDDING_MODEL` is the one knob that is *not* free to change: the columns are
+`vector(1024)` and a model of another width is a migration rather than a
+setting. `deploy/.env.example` says so at the knob.
+
+A machine with an NVIDIA GPU can add the overlay that reserves it:
+
+```sh
+docker compose -f deploy/compose.yaml -f deploy/compose.gpu.yaml up
+```
+
+The base stack is CPU-capable on purpose — no GPU is required to run it, and
+the overlay above is the only thing that asks for one. "CPU-capable" is about
+what the stack *needs*, not about what the defaults cost: a CPU host should
+still set `CHAT_MODEL` down, per the note above.
 
 Copy `deploy/.env.example` to `deploy/.env` first if you want to override
 defaults (the compose file ships working dev values; compose auto-loads
@@ -30,14 +68,19 @@ lineworker/
     src/api/               #   generated OpenAPI client + queryKeys
   server/
     api/                   # FastAPI app factory, auth deps, routers
-    services/              #   claims/ financials/ worklist/ derivations/ rag/ audit/ blobstore
+    services/              #   claims/ financials/ worklist/ derivations/ audit/ blobstore
+                           #   rag/ — sole embeddings client + owner of the
+                           #   three embedding tables (Story 6.1)
     rules/                 #   ZEN engine + JDM documents (Story 2.1+)
     agents/                #   LangGraph copilot (arrives Epic 6)
     data/                  #   SQLAlchemy models, repositories, Alembic
   e2e/                     # Playwright story-gate suite (AD-15)
     fixtures/              #   DB reset, persona login, selector policy
     stories/               #   one spec per story, named by sprint story key
-  deploy/                  # compose.yaml, compose.e2e.yaml, nginx/, *.env.example
+  deploy/                  # compose.yaml, compose.gpu.yaml (prod GPU overlay),
+                           # compose.e2e.yaml, nginx/, *.env.example
+    model-stub/            #   deterministic Ollama-API stand-in, e2e profile
+                           #   only — outside server/ so it can never ship
 ```
 
 ## Working on the server

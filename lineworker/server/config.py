@@ -172,6 +172,64 @@ class Settings(BaseSettings):
     # in `api/routers/admin.py`). `cookie_secure` derives the same way.
     scheduler_enabled: bool | None = None
 
+    # --- Local model serving and embeddings (Story 6.1) ---------------
+    # AD-5: all inference is local, the Ollama port is never published, and
+    # **model names are deployment configuration rather than literals in
+    # code**. That last clause is the whole reason these are fields: the
+    # architecture's Deferred list keeps the exact `qwen3` tag open pending a
+    # re-benchmark, and the CPU-dev pairing it names is a different pair of
+    # models entirely. A tag pinned in a Python constant would make "which
+    # model does this deployment run?" a code change with a review and a
+    # rebuild behind it, on a decision whose whole point is that it moves.
+    #
+    # The default is the internal compose service name, not a localhost URL:
+    # `api` reaches `ollama` over the compose network, and a default of
+    # 127.0.0.1 would work on a developer's laptop and fail in the only
+    # topology this project ships.
+    ollama_base_url: str = "http://ollama:11434"
+    # Pulled and served from this story on; its first *application* caller
+    # arrives with 6.2/6.3. Nothing in this build issues a chat request —
+    # `services/rag` speaks to the embeddings endpoint and nothing else — so
+    # this knob exists here rather than in 6.3 for one reason: the compose
+    # entrypoint pulls both models before the container reports healthy, and
+    # the name it pulls has to come from the same place the eventual client
+    # will read it from.
+    chat_model: str = "qwen3:14b"
+    # bge-m3 emits 1024 floats, which is what `vector(1024)` and
+    # `services/rag/client.EMBEDDING_DIMENSIONS` both say. **Changing this to
+    # a model of a different dimensionality is a migration, not a config
+    # flip** — the architecture's CPU-dev pairing names `nomic-embed-text`,
+    # which emits 768, and pointing this at it against the current column
+    # raises `EmbeddingDimensionMismatch` on the first refresh rather than
+    # writing vectors that retrieve nonsense.
+    embedding_model: str = "bge-m3"
+    # How often the refresh job *checks* — the scheduler's tick is the poll
+    # rate for every job, and this is this job's cadence, the same two-knob
+    # split `payment_batch_weekdays` and `scheduler_tick_seconds` keep. Fifteen
+    # minutes because staleness is a retrieval-quality property rather than a
+    # correctness one: a similar-case search that ranks against a claim's
+    # pre-edit clinical summary for a few minutes is a slightly worse answer,
+    # not a wrong one, and Story 6.4 discloses `embeddedAt` so the reader can
+    # see it. `gt=0` for `scheduler_tick_seconds`' reason — a zero interval is
+    # a job that either never fires or fires on every tick, and neither is
+    # what anybody typed it to mean.
+    embedding_refresh_interval_seconds: float = Field(default=900.0, gt=0)
+    # How many rows one run embeds. A bound rather than "everything pending",
+    # because the first run against a fresh database has 100 claims plus the
+    # knowledge corpus waiting and a single model server serving one request
+    # at a time: an unbounded first tick would hold the job for minutes and
+    # (once 6.3 lands) queue behind a handler's chat. Pending work is not lost
+    # — it is still pending on the next tick, which is what makes a batch bound
+    # safe here and would not make it safe for a payment run.
+    embedding_refresh_batch_size: int = Field(default=25, gt=0)
+    # The per-request HTTP timeout on the embeddings call. Generous because a
+    # cold model on a CPU-only dev box takes tens of seconds to answer its
+    # first request and the alternative is a refresh that can never succeed on
+    # the hardware the architecture explicitly permits for dev. `gt=0` because
+    # httpx reads 0 as "no timeout" on some transports and as "fail
+    # immediately" on others, and neither is a value to reach by accident.
+    embedding_request_timeout_seconds: float = Field(default=60.0, gt=0)
+
     @property
     def payment_batch_weekday_numbers(self) -> frozenset[int]:
         """The configured cadence as `date.weekday()` values (Mon=0 … Sun=6).

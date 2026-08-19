@@ -117,6 +117,34 @@ jobs:
         env:
           MIGRATION_TEST_DATABASE_URL: postgresql://lineworker:ci@localhost:5432/lineworker
 
+  compose:
+    name: compose config (AD-5 port posture)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # AD-5's hardest rule is a negative: the model server's port is never
+      # published, in any profile. A negative is exactly what nobody notices
+      # going missing — a `ports:` line added "just for debugging" reviews as a
+      # one-line diff and turns an internal, unauthenticated inference endpoint
+      # into a host-reachable one that will happily accept a prompt containing
+      # PHI.
+      #
+      # Rendered with `docker compose config` rather than grepped out of the
+      # YAML, because the overlay is the case that matters: a port added in
+      # compose.gpu.yaml would not appear in compose.yaml's text at all, and the
+      # merged document is the thing that actually runs.
+      - name: render the three profiles
+        run: |
+          docker compose -f deploy/compose.yaml config --format json > /tmp/dev.json
+          docker compose -f deploy/compose.yaml -f deploy/compose.gpu.yaml config \
+            --format json > /tmp/gpu.json
+          docker compose -f deploy/compose.e2e.yaml config --format json > /tmp/e2e.json
+      # The e2e profile is asserted from the other direction: it must run the
+      # deterministic stub and must NOT declare a real model server, or specs
+      # would wait on inference and a CI runner would download gigabytes.
+      - name: no published port on the model server
+        run: python3 ../.github/scripts/check_model_ports.py /tmp/dev.json /tmp/gpu.json /tmp/e2e.json
+
   e2e:
     name: playwright story specs + smoke
     runs-on: ubuntu-latest

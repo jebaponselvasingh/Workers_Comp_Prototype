@@ -71,7 +71,7 @@ from data.context import CallerContext
 from data.models.core import Claim
 from data.models.enums import Disability, RecoveryWindow, TimelineTag, UserRole
 from data.repositories import claims as claim_repo
-from services import audit
+from services import audit, rag
 from services.claims import timeline
 from services.claims.detail import ClaimDetail, ClaimNotVisible, claim_detail
 from services.claims.reference import (
@@ -424,6 +424,21 @@ async def update_claim_fields(
         # while its audit row was stamped today. One event, one clock.
         event_date=at.date(),
     )
+    # AD-12, retro-wired by Story 6.1. Three of the seven whitelisted fields —
+    # `injury_type`, `cause` and the `body_part` derived from `body_key` — are
+    # inputs to the claim-text composer, so an edit that landed here changed
+    # what a similar-case search should be matching on. The call is inside this
+    # transaction, beside the audit and timeline emits and before the commit,
+    # which is the whole of the contract: the flag lands with the edit or rolls
+    # back with it. `services/rag` owns the write; this command only asks.
+    #
+    # Unconditional rather than "only when a composer input changed". The
+    # cheaper version would need this module to hold a second copy of the
+    # composer's field list, and the two would drift on the first story that
+    # widened either. Re-embedding a claim whose ICD description was corrected
+    # costs one vector; a stale flag that was not set costs a wrong answer with
+    # a fresh timestamp beside it.
+    await rag.mark_claim_stale(db, ctx, claim_pk=claim.id)
     await db.commit()
 
     # `expire_on_commit=False` (see `api/app.py`) keeps committed objects
@@ -557,6 +572,12 @@ async def update_claim_severity(
         tag=TimelineTag.edit,
         event_date=at.date(),
     )
+    # AD-12, retro-wired by Story 6.1 — `update_claim_fields`' note applies
+    # unchanged. `severity_score` is a composer input in its own right: it is
+    # the raw score rather than the risk band that goes into the embedded text
+    # (`services/rag/claim_text.py` argues why the band was rejected), so a
+    # score moved from 4 to 7 is a genuinely different claim summary.
+    await rag.mark_claim_stale(db, ctx, claim_pk=claim.id)
     await db.commit()
 
     db.expire_all()

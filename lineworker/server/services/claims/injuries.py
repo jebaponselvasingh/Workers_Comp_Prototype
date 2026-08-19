@@ -58,7 +58,7 @@ from data.context import CallerContext
 from data.models.core import Claim
 from data.models.enums import TimelineTag, UserRole
 from data.repositories import claims as claim_repo
-from services import audit
+from services import audit, rag
 from services.claims import timeline
 from services.claims.detail import ClaimDetail, ClaimNotVisible, claim_detail
 from services.claims.edit import (
@@ -192,6 +192,19 @@ async def add_additional_injury(
         tag=TimelineTag.edit,
         event_date=at.date(),
     )
+    # AD-12, retro-wired by Story 6.1 — and this command is the reason
+    # `mark_claim_stale` takes a `claim_pk` rather than a claim's business id
+    # or a `Claim`. Adding a secondary injury writes no column of `claim` and
+    # deliberately does not bump `claim.version` (see the module docstring), so
+    # by every measure this table's own conventions use, the claim did not
+    # change. It changed for the composer: a claim with a primary shoulder
+    # strain and a secondary lumbar strain is not similar to one with the
+    # shoulder strain alone. A command that mutates a *child* row still has to
+    # be able to mark the parent's embedding stale.
+    #
+    # Placed here, after the CAS-loss early return above, with the other two
+    # emits: a lost race wrote nothing, so there is nothing to mark stale.
+    await rag.mark_claim_stale(db, ctx, claim_pk=claim.id)
     await db.commit()
 
     db.expire_all()
@@ -272,6 +285,12 @@ async def remove_additional_injury(
         tag=TimelineTag.edit,
         event_date=at.date(),
     )
+    # AD-12, retro-wired by Story 6.1 — `add_additional_injury`'s note applies
+    # in mirror image. Removing an injury changes the composed summary exactly
+    # as much as adding one did, and a claim whose secondary injury was
+    # recorded in error would otherwise keep retrieving as though it still had
+    # one until some unrelated edit happened to mark it stale.
+    await rag.mark_claim_stale(db, ctx, claim_pk=claim.id)
     await db.commit()
 
     db.expire_all()

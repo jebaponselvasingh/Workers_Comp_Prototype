@@ -35,11 +35,13 @@ from api.routers import (
 from config import Env, Settings, get_settings
 from logging_config import configure_logging
 from services.financials.batch import run_payment_batch, system_context
-from services.jobs import JobRunner, ScheduledJob, weekly_on
+from services.jobs import JobRunner, ScheduledJob, every_seconds, weekly_on
+from services.rag import embedding_client, refresh_stale_embeddings
 
 log = structlog.get_logger()
 
 PAYMENT_BATCH_JOB = "payment_batch"
+EMBEDDING_REFRESH_JOB = "embedding_refresh"
 
 
 def build_job_runner(
@@ -48,9 +50,18 @@ def build_job_runner(
 ) -> JobRunner:
     """The api process's scheduled jobs (spine: Structural Seed).
 
-    One job today. Epic 6's embedding refresh registers a second here, which is
-    why the runner is generic and why this function exists at all rather than
-    an `asyncio.create_task` inline in the lifespan.
+    Two jobs: Story 3.4's payment batch and Story 6.1's embedding refresh. The
+    second is why the runner was written generic in the first place — the
+    comment that stood here reserved the slot, and filling it required no
+    change to `services/jobs.py` beyond a second due-predicate beside
+    `weekly_on`, which is the outcome that made "a small generic hook, not a
+    payments-specific one-off" worth insisting on.
+
+    **The two cadences are different kinds of thing**, and the predicates say
+    so. `weekly_on` is a claim about the calendar (a bank's cut-off days);
+    `every_seconds` is a claim about elapsed time (how long a stale embedding
+    may stay stale). Neither is expressed as a cron string, so neither can be
+    misread as the other.
 
     **The job opens and closes its own session.** A long-lived session held
     across ticks would hold a pooled connection for the process's lifetime and
@@ -74,6 +85,35 @@ def build_job_runner(
             name=PAYMENT_BATCH_JOB,
             due=weekly_on(settings.payment_batch_weekday_numbers),
             run=payment_batch,
+        )
+    )
+
+    async def embedding_refresh() -> None:
+        # Same shape as the batch above, deliberately: its own session, the
+        # system actor resolved per run. The actor is the one migration 0029
+        # seeded for the payment batch rather than a second machine identity —
+        # `data/models/enums.py::UserRole` says in as many words that Epic 6's
+        # refresh "inherits this one rather than minting a second convention",
+        # and its `scope_all` makes the AD-7 predicate a tautology because the
+        # refresh's scope genuinely is the whole portfolio.
+        #
+        # The client is built per run for the same reason the session is: it
+        # holds a URL and a model name read off `Settings`, and constructing it
+        # here rather than in the closure means an operator's restart after
+        # changing `EMBEDDING_MODEL` is the whole of the deployment procedure.
+        async with sessionmaker() as session:
+            await refresh_stale_embeddings(
+                session,
+                await system_context(session),
+                client=embedding_client(settings),
+                limit=settings.embedding_refresh_batch_size,
+            )
+
+    runner.register(
+        ScheduledJob(
+            name=EMBEDDING_REFRESH_JOB,
+            due=every_seconds(settings.embedding_refresh_interval_seconds),
+            run=embedding_refresh,
         )
     )
     return runner

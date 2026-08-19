@@ -1,0 +1,107 @@
+[
+  {
+    "source": "synthetic-demo:oh-workers-compensation-primer",
+    "state_code": "OH",
+    "title": "Ohio — waiting period before indemnity begins",
+    "chunk_index": 0,
+    "chunk_text": "SYNTHETIC DEMONSTRATION TEXT — not statutory law, not legal advice, and not sourced from any jurisdiction's code. Written for the LINEWORKER demo corpus so the retrieval path has real rows to return. Ohio: an injured worker who is unable to work serves a short waiting period before temporary total disability benefits begin to accrue. If the disability continues past a longer qualifying period, the waiting days are paid retroactively. Handlers should confirm the current waiting and retroactive thresholds against the state board's published schedule before quoting a first-payment date to a claimant."
+  },
+  {
+    "source": "synthetic-demo:oh-workers-compensation-primer",
+    "state_code": "OH",
+    "title": "Ohio — temporary total disability rate and weekly maximum",
+    "chunk_index": 1,
+    "chunk_text": "SYNTHETIC DEMONSTRATION TEXT — not statutory law, not legal advice, and not sourced from any jurisdiction's code. Written for the LINEWORKER demo corpus so the retrieval path has real rows to return. Ohio: temporary total disability is generally paid as a percentage of the worker's average weekly wage, subject to a statewide weekly maximum and minimum that are re-set each benefit year. The console's benefit calculation reads the stored rate schedule for the claim's jurisdiction rather than any figure in this paragraph; where the two disagree, the rate schedule is the record."
+  },
+  {
+    "source": "synthetic-demo:oh-workers-compensation-primer",
+    "state_code": "OH",
+    "title": "Ohio — reporting an injury and the claim filing window",
+    "chunk_index": 2,
+    "chunk_text": "SYNTHETIC DEMONSTRATION TEXT — not statutory law, not legal advice, and not sourced from any jurisdiction's code. Written for the LINEWORKER demo corpus so the retrieval path has real rows to return. Ohio: an employee is expected to notify the employer of a work injury promptly, and a formal claim must be filed within a statutory window measured from the date of injury. Occupational disease claims run from a different trigger — usually diagnosis or last exposure — so a claim that looks time-barred on its date of injury may not be."
+  },
+  {
+    "source": "synthetic-demo:mn-workers-compensation-primer",
+    "state_code": "MN",
+    "title": "Minnesota — waiting period before indemnity begins",
+    "chunk_index": 0,
+    "chunk_text": "SYNTHETIC DEMONSTRATION TEXT — not statutory law, not legal advice, and not sourced from any jurisdiction's code. Written for the LINEWORKER demo corpus so the retrieval path has real rows to return. Minnesota: wage-loss benefits begin after a short waiting period, and that period is itself paid once the disability has lasted beyond a longer qualifying threshold. Because the waiting days are measured in calendar rather than scheduled work days, a claim whose worker is on a compressed shift pattern can qualify sooner than the shift calendar suggests."
+  },
+  {
+    "source": "synthetic-demo:mn-workers-compensation-primer",
+    "state_code": "MN",
+    "title": "Minnesota — temporary total disability and maximum duration",
+    "chunk_index": 1,
+    "chunk_text": "SYNTHETIC DEMONSTRATION TEXT — not statutory law, not legal advice, and not sourced from any jurisdiction's code. Written for the LINEWORKER demo corpus so the retrieval path has real rows to return. Minnesota: temporary total disability is paid at a percentage of the average weekly wage subject to a statewide cap, and entitlement is limited both by a maximum number of weeks and by the point at which the worker reaches maximum medical improvement. A handler reviewing reserve adequacy on a long-duration claim should check which of the two limits binds first."
+  },
+  {
+    "source": "synthetic-demo:mn-workers-compensation-primer",
+    "state_code": "MN",
+    "title": "Minnesota — return to work and light duty",
+    "chunk_index": 2,
+    "chunk_text": "SYNTHETIC DEMONSTRATION TEXT — not statutory law, not legal advice, and not sourced from any jurisdiction's code. Written for the LINEWORKER demo corpus so the retrieval path has real rows to return. Minnesota: where an employer offers suitable work within the treating physician's restrictions and the worker declines it without good cause, wage-loss benefits may be suspended. The offer is expected to be in writing and to describe the physical demands of the job, so a modified-duty placement recorded only as a phone call is weak evidence if the refusal is later disputed."
+  },
+  {
+    "source": "synthetic-demo:il-workers-compensation-primer",
+    "state_code": "IL",
+    "title": "Illinois — waiting period and retroactive payment",
+    "chunk_index": 0,
+    "chunk_text": "SYNTHETIC DEMONSTRATION TEXT — not statutory law, not legal advice, and not sourced from any jurisdiction's code. Written for the LINEWORKER demo corpus so the retrieval path has real rows to return. Illinois: temporary total disability is not payable for a short initial waiting period, which becomes payable retroactively once the period of incapacity extends past a longer threshold. The waiting days need not be consecutive, so an intermittent absence pattern can accumulate to the threshold across several weeks."
+  },
+  {
+    "source": "synthetic-demo:il-workers-compensation-primer",
+    "state_code": "IL",
+    "title": "Illinois — medical treatment and provider choice",
+    "chunk_index": 1,
+    "chunk_text": "SYNTHETIC DEMONSTRATION TEXT — not statutory law, not legal advice, and not sourced from any jurisdiction's code. Written for the LINEWORKER demo corpus so the retrieval path has real rows to return. Illinois: an injured worker generally has a limited number of choices of treating provider, with referrals within a chosen provider's chain counting as part of that choice. Where the employer has an approved preferred provider programme, the worker's election to opt out of it can itself consume one of those choices. Surgical pre-authorisation disputes are resolved through the state's utilisation review process."
+  },
+  {
+    "source": "synthetic-demo:il-workers-compensation-primer",
+    "state_code": "IL",
+    "title": "Illinois — permanent partial disability and the wage differential",
+    "chunk_index": 2,
+    "chunk_text": "SYNTHETIC DEMONSTRATION TEXT — not statutory law, not legal advice, and not sourced from any jurisdiction's code. Written for the LINEWORKER demo corpus so the retrieval path has real rows to return. Illinois: permanent partial disability may be paid either as a scheduled or percentage-of-person-as-a-whole award or, where the injury forces the worker into lower-paid work, as a wage differential based on the gap between pre-injury and post-injury earning capacity. The two are alternatives, and which one produces the larger exposure drives the reserve on a claim with a permanent restriction."
+  },
+  {
+    "source": "synthetic-demo:wa-workers-compensation-primer",
+    "state_code": "WA",
+    "title": "Washington — state fund coverage and self-insurance",
+    "chunk_index": 0,
+    "chunk_text": "SYNTHETIC DEMONSTRATION TEXT — not statutory law, not legal advice, and not sourced from any jurisdiction's code. Written for the LINEWORKER demo corpus so the retrieval path has real rows to return. Washington: workers' compensation is administered through a state fund, with larger employers able to self-insure under certification. Which of the two applies changes who adjudicates the claim, where an appeal is filed and what the reporting deadlines are, so it is the first thing to confirm on a Washington file rather than an administrative detail to settle later."
+  },
+  {
+    "source": "synthetic-demo:wa-workers-compensation-primer",
+    "state_code": "WA",
+    "title": "Washington — time-loss compensation and the waiting period",
+    "chunk_index": 1,
+    "chunk_text": "SYNTHETIC DEMONSTRATION TEXT — not statutory law, not legal advice, and not sourced from any jurisdiction's code. Written for the LINEWORKER demo corpus so the retrieval path has real rows to return. Washington: wage replacement is called time-loss compensation and is calculated from the worker's wages at the time of injury together with marital status and the number of dependants — a household-sensitive formula rather than a flat percentage. A short waiting period applies and becomes payable if the disability continues past a longer threshold."
+  },
+  {
+    "source": "synthetic-demo:wa-workers-compensation-primer",
+    "state_code": "WA",
+    "title": "Washington — claim filing deadlines",
+    "chunk_index": 2,
+    "chunk_text": "SYNTHETIC DEMONSTRATION TEXT — not statutory law, not legal advice, and not sourced from any jurisdiction's code. Written for the LINEWORKER demo corpus so the retrieval path has real rows to return. Washington: an industrial injury claim must be filed within a statutory period running from the date of injury, while an occupational disease claim runs instead from the date the worker was told by a physician that the condition is work-related. A file whose date of injury is old is therefore not automatically time-barred, and the distinction is worth recording on the claim rather than re-derived each time it is questioned."
+  },
+  {
+    "source": "synthetic-demo:tx-workers-compensation-primer",
+    "state_code": "TX",
+    "title": "Texas — non-subscription and its consequences",
+    "chunk_index": 0,
+    "chunk_text": "SYNTHETIC DEMONSTRATION TEXT — not statutory law, not legal advice, and not sourced from any jurisdiction's code. Written for the LINEWORKER demo corpus so the retrieval path has real rows to return. Texas: carrying workers' compensation coverage is optional for most private employers. An employer that does not subscribe loses the exclusive-remedy protection and can be sued directly for a work injury, with several common-law defences unavailable to it. Whether the employer on a Texas claim is a subscriber therefore changes what the file is about, not merely how it is paid."
+  },
+  {
+    "source": "synthetic-demo:tx-workers-compensation-primer",
+    "state_code": "TX",
+    "title": "Texas — income benefit types",
+    "chunk_index": 1,
+    "chunk_text": "SYNTHETIC DEMONSTRATION TEXT — not statutory law, not legal advice, and not sourced from any jurisdiction's code. Written for the LINEWORKER demo corpus so the retrieval path has real rows to return. Texas: income benefits are divided into temporary, impairment, supplemental and lifetime categories, and a claim moves between them as the worker's condition resolves. Impairment income benefits follow the assignment of an impairment rating at maximum medical improvement, so the MMI date is the hinge the whole indemnity projection turns on rather than a clinical footnote."
+  },
+  {
+    "source": "synthetic-demo:tx-workers-compensation-primer",
+    "state_code": "TX",
+    "title": "Texas — reporting an injury and the dispute process",
+    "chunk_index": 2,
+    "chunk_text": "SYNTHETIC DEMONSTRATION TEXT — not statutory law, not legal advice, and not sourced from any jurisdiction's code. Written for the LINEWORKER demo corpus so the retrieval path has real rows to return. Texas: an injured worker is expected to report the injury to the employer promptly and to file a claim with the state division within a statutory window. Disputes proceed through a benefit review conference before a contested case hearing, so a disagreement about compensability has an administrative step ahead of it that is worth diarising when the dispute is first recorded."
+  }
+]

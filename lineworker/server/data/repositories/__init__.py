@@ -10,8 +10,16 @@ no claim and no PHI, so there is nothing for a filter to narrow.
 
 `claims` (Story 1.4) is the first scoped repository and the template for
 the rest: read its module docstring before writing another one.
+
+`embeddings` (Story 6.1) is the second scoped one, and it is a **partial**
+carve-out rather than a whole one: its claim-touching functions apply
+`employer_scope(ctx)` like any other, while its three knowledge-corpus
+functions take a context they do not filter on. That is a deliberate
+divergence from the three modules above, argued in its own docstring — the
+short version is that a module doing both should not change signature shape
+halfway down.
 """
 
-from data.repositories import claims, glossary, identity, state_rates, statutory_forms
+from data.repositories import claims, embeddings, glossary, identity, state_rates, statutory_forms
 
-__all__ = ["claims", "glossary", "identity", "state_rates", "statutory_forms"]
+__all__ = ["claims", "embeddings", "glossary", "identity", "state_rates", "statutory_forms"]

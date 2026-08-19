@@ -5,7 +5,14 @@
 # internal network. Interpolation defaults below are synthetic dev-only
 # values; override via deploy/.env (git-ignored, see .env.example) —
 # compose auto-loads .env from the project directory for ${…} interpolation.
-# Ollama arrives with Story 6.1; the backup job with Epic 8.
+# Ollama arrived with Story 6.1 (below, no ports: — AD-5); the backup job
+# with Epic 8.
+#
+# **First boot downloads models.** The `ollama` service pulls CHAT_MODEL and
+# EMBEDDING_MODEL before it reports healthy, and `api` waits for that — so
+# the first `up` on a clean machine takes as long as several gigabytes over
+# your connection. Subsequent boots are instant: the models live in the
+# `ollama-models` volume. See deploy/.env.example.
 
 name: lineworker
 
@@ -53,8 +60,21 @@ services:
       APP_DB_PASSWORD: ${APP_DB_PASSWORD:-lineworker_app_dev}
       ENV: dev
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # AD-5: local-only inference, and the model names are deployment config
+      # rather than literals in code. The URL is a compose service name — the
+      # api reaches ollama on the internal network, and there is no host port
+      # to reach it by.
+      OLLAMA_BASE_URL: http://ollama:11434
+      CHAT_MODEL: ${CHAT_MODEL:-qwen3:14b}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-bge-m3}
     depends_on:
       postgres:
+        condition: service_healthy
+      # `service_healthy`, and ollama's healthcheck is "the models are pulled"
+      # rather than "the server answered" — so the api never starts against a
+      # model server that is up but has nothing loaded. That distinction is the
+      # whole reason the entrypoint below writes a readiness file.
+      ollama:
         condition: service_healthy
     healthcheck:
       test:
@@ -66,6 +86,82 @@ services:
       timeout: 5s
       retries: 5
       start_period: 15s
+
+  ollama:
+    image: ollama/ollama:latest
+    # **No ports: mapping, in this profile or any other (AD-5).** The model
+    # server is reachable from `api` on the internal network and from nowhere
+    # else — the same posture postgres has held since Story 1.1, and for a
+    # stronger reason: an exposed Ollama is an unauthenticated inference
+    # endpoint that will happily accept a prompt containing PHI. CI renders this
+    # file and fails if a `ports:` key appears under this service.
+    #
+    # `:latest` here and a digest at deploy: the architecture pins "current
+    # stable server, image digest pinned at deploy", and a digest committed to a
+    # dev compose file goes stale in a way nobody notices until a pull fails.
+    environment:
+      # Read by the entrypoint below, not by the server. Interpolated from the
+      # same .env keys the api container gets, so "which models does this
+      # deployment run?" has one answer in one file.
+      CHAT_MODEL: ${CHAT_MODEL:-qwen3:14b}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-bge-m3}
+    volumes:
+      - ollama-models:/root/.ollama
+    # Serve first, then pull, then mark ready. The order matters: `ollama pull`
+    # talks to the local server over HTTP, so it cannot run before `serve` is
+    # listening — and `serve` must stay in the foreground as PID 1's child or
+    # the container exits the moment the pull finishes.
+    #
+    # The readiness file is written only after **both** pulls succeed, which is
+    # what makes the healthcheck below mean "ready to embed" rather than "a
+    # process is listening". Without it, `api` starts, the first refresh tick
+    # asks for an embedding, and Ollama answers 404 for a model it has not
+    # finished downloading — a failure that looks like a bug in services/rag.
+    # `set -e` is load-bearing, not hygiene. Without it the pulls below are
+    # three independent statements: a pull that fails — a typo'd tag, a full
+    # disk, no route to the registry — leaves the shell running, `touch`
+    # writes the readiness file anyway, the healthcheck passes, and `api`
+    # starts against a server holding no models. That is precisely the failure
+    # the comment above says this file exists to prevent, arriving as a 404
+    # from a model name nobody typed wrong.
+    #
+    # The wait for `serve` is bounded for the same class of reason. An
+    # unbounded `until` loop against a server that died before it listened
+    # spins for ever: the container neither exits nor reports unhealthy, and
+    # with a 30-minute `start_period` `docker compose up` blocks for half an
+    # hour before anything says why. Sixty tries at one second is far longer
+    # than a local server needs to bind a port and far shorter than a pull.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        rm -f /tmp/ollama-ready
+        ollama serve &
+        server=$$!
+        waited=0
+        until ollama list >/dev/null 2>&1; do
+          waited=$$((waited + 1))
+          if [ $$waited -gt 60 ]; then
+            echo "ollama serve did not accept connections within 60s" >&2
+            exit 1
+          fi
+          sleep 1
+        done
+        ollama pull "$$CHAT_MODEL"
+        ollama pull "$$EMBEDDING_MODEL"
+        touch /tmp/ollama-ready
+        wait $$server
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/ollama-ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      # Long, and it is the pull that needs it: several gigabytes on a first
+      # boot. `start_period` failures do not count against `retries`, so a slow
+      # connection delays the stack rather than failing it — and once the volume
+      # is populated, the check passes on the first interval.
+      start_period: 30m
 
   postgres:
     image: pgvector/pgvector:pg18
@@ -85,3 +181,6 @@ services:
 
 volumes:
   pgdata:
+  # Pulled models. Named rather than anonymous so `docker compose down` keeps
+  # them and only `down -v` re-downloads.
+  ollama-models:

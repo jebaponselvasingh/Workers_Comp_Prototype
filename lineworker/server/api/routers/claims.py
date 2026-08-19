@@ -14,9 +14,10 @@ answer is byte-identical), because a 422 would tell them which names exist.
 """
 
 from collections.abc import Awaitable, Callable
-from datetime import date
+from datetime import date, datetime
 from typing import Annotated, Any, Literal
 
+import httpx
 import structlog
 from fastapi import APIRouter, Path, Query, Response, status
 from pydantic import ConfigDict, Field
@@ -75,6 +76,9 @@ from services.financials import (
     ReserveVerdict,
     StalePaymentRow,
 )
+from services.rag import MAX_K, embedding_client
+from services.rag import similar_claims as rag_similar_claims
+from services.rag.client import EmbeddingDimensionMismatch
 from services.worklist.actions import claim_actions
 from services.worklist.approvals import (
     ApprovalKind,
@@ -321,6 +325,20 @@ async def queue(
 
 
 CLAIM_ID_PATTERN = r"^WC-\d{4,6}$"
+
+#: The one route that needs a model server to answer a read declares this
+#: (`GET /claims/{id}/similar`). Kept beside the 404 rather than in that route's
+#: decorator so the two documented failure modes of this router read together.
+MODEL_UNAVAILABLE_RESPONSE: dict[int | str, dict[str, object]] = {
+    503: {
+        "description": (
+            "The local model server did not answer, so the query claim could "
+            "not be embedded. Temporary and specific to AI-backed reads — "
+            "claim data is unaffected (RFC 9457 problem document)."
+        ),
+        "content": {PROBLEM_CONTENT_TYPE: {"schema": ProblemDocument.model_json_schema()}},
+    }
+}
 
 NOT_FOUND_RESPONSE: dict[int | str, dict[str, object]] = {
     404: {
@@ -2404,6 +2422,151 @@ async def actions(
     except ClaimNotVisible as exc:
         raise _not_found(claim_business_id) from exc
     return ClaimActionsResponse.model_validate(result)
+
+
+class SimilarClaimResponse(ApiModel):
+    """One neighbouring claim, with the freshness of the vector that matched.
+
+    `embeddedAt` and `stale` are on every item rather than on the envelope
+    because they are per-row facts: one neighbour may have been embedded an
+    hour ago and another marked stale by an edit thirty seconds ago, and a
+    single envelope-level timestamp would have to choose which lie to tell.
+    AD-12 requires retrieval to carry freshness, and Story 6.4's similar-case
+    action discloses staleness past a configured threshold — from this field.
+
+    `distance` is cosine distance: smaller is nearer, 0 is identical. Published
+    raw rather than converted to a "92% similar" score, because that conversion
+    is a presentation decision and a percentage invented in a router is a
+    figure no service computed (NFR-3).
+    """
+
+    claim_id: str
+    employer_short_name: str
+    injury_type: str
+    severity_score: int
+    distance: float
+    embedded_at: datetime | None
+    stale: bool
+
+
+class SimilarClaimsResponse(ApiModel):
+    """The neighbour list, and the bound that produced it.
+
+    `k` is echoed for `ClaimActionsResponse`'s reason — "why are there five of
+    these?" should be answerable from the response rather than reconstructed
+    from a request nobody kept.
+
+    **It is the requested bound, not the item count**, and the two differ
+    whenever the caller's book is smaller than `k`: a handler scoped to one
+    employer who asks for 25 gets `k: 25` beside seven items, and that pair is
+    the whole point — it says "you asked for 25 and the partition held seven"
+    rather than leaving the caller to wonder whether the search stopped early.
+    `MAX_K` is enforced by the route as a 422 rather than silently clamped, so
+    no value can arrive here that the caller did not choose.
+
+    No `count`: `items` is the list and its length is already the answer.
+    """
+
+    items: list[SimilarClaimResponse]
+    k: int
+
+
+@router.get(
+    "/claims/{claim_business_id}/similar",
+    response_model=SimilarClaimsResponse,
+    summary="Claims in the caller's book most similar to this one",
+    responses={
+        **UNAUTHENTICATED_RESPONSE,
+        **NOT_FOUND_RESPONSE,
+        **MODEL_UNAVAILABLE_RESPONSE,
+    },
+)
+async def similar(
+    ctx: CallerContextDep,
+    db: DbDep,
+    settings: SettingsDep,
+    response: Response,
+    claim_business_id: Annotated[
+        str,
+        Path(
+            pattern=CLAIM_ID_PATTERN,
+            description="The claim's business id, `WC-nnnn`.",
+            examples=["WC-20017"],
+        ),
+    ],
+    k: Annotated[
+        int,
+        Query(
+            ge=1,
+            le=MAX_K,
+            description=(
+                "How many neighbours to return. Bounded rather than paged: the "
+                "hundredth-nearest claim is not the next page of similar cases, "
+                "it is a claim that is not similar."
+            ),
+        ),
+    ] = 5,
+) -> SimilarClaimsResponse:
+    """Vector similarity over the caller's employer partition (AC 3).
+
+    Thin by AD-1: the route validates one path parameter and one bound, calls
+    one service, and maps its result onto the wire. The query text is composed
+    and embedded in `services/rag`; the repository is invoked with a vector and
+    applies `employer_scope(ctx)` exactly as `GET /claims/queue` does. There is
+    no scope-shaped parameter here for `queue`'s reason — "whose claims?" is
+    answered by the session cookie and by nothing a caller can send.
+
+    **404 for out of scope and 404 for unknown**, the case file's exact
+    wording and its reason: two different answers would make this route an
+    oracle for enumerating a portfolio the caller cannot read (AD-7).
+
+    **No `web/` component calls this yet.** AD-15 gates the story on a spec the
+    browser can reach and AC 3 asks for the scope guarantee to be proven
+    through the service rather than only at the repository, so this is the
+    smallest honest surface that satisfies both. Story 6.4's similar-case quick
+    action calls the same service function through a registered tool.
+    """
+    # Specific to one persona's book, so never served to another from a cache
+    # upstream — the same reason every other route on this router says so.
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        items = await rag_similar_claims(
+            db,
+            ctx,
+            claim_business_id=claim_business_id,
+            k=k,
+            client=embedding_client(settings),
+        )
+    except ClaimNotVisible as exc:
+        raise _not_found(claim_business_id) from exc
+    except (EmbeddingDimensionMismatch, httpx.HTTPError) as exc:
+        # This route is the one place in the build where an interactive read
+        # depends on the model server: the query claim is composed and embedded
+        # per request (AC 2 puts the embedding in `services/rag`, before the
+        # repository). So the outage has to have an answer here, and an
+        # unlabelled 500 after a 60-second timeout is not one — it tells the
+        # caller nothing and reads as a defect in the claim service rather than
+        # as a model server that is down.
+        #
+        # 503 and not 502: the dependency is internal and the condition is
+        # temporary, which is what a client needs to know to decide whether
+        # retrying is sensible. Story 6.6 owns *honest degradation* — the
+        # disabled inputs, the `ai_unavailable` stream code, the bounded
+        # retry — and none of that is built here; this is the status line it
+        # will be built on top of. The exception's own text is never echoed:
+        # for a transport error it can carry a request body (AD-11).
+        raise ProblemException(
+            status_code=503,
+            title="Model server unavailable",
+            detail=(
+                "Similar-case search needs the local model server to embed the "
+                "query claim, and it did not answer. Claim data is unaffected."
+            ),
+        ) from exc
+    return SimilarClaimsResponse(
+        items=[SimilarClaimResponse.model_validate(item) for item in items],
+        k=k,
+    )
 
 
 UNPROCESSABLE_RESPONSE: dict[int | str, dict[str, object]] = {

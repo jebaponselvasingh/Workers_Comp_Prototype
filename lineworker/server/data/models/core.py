@@ -8,6 +8,7 @@ are integer cents (Excel names kept, values in cents). No derived value
 
 from datetime import date, datetime, time
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -1067,3 +1068,220 @@ class AuditEvent(Base):
     entity_id: Mapped[str] = mapped_column(Text)
     before: Mapped[dict | None] = mapped_column(JSONB)  # type: ignore[type-arg]
     after: Mapped[dict | None] = mapped_column(JSONB)  # type: ignore[type-arg]
+
+
+#: The width of a `bge-m3` vector, and the width both embedding columns
+#: declare. Restated as a module constant rather than written twice inline so
+#: the two tables cannot disagree, and asserted against
+#: `services/rag/client.EMBEDDING_DIMENSIONS` and migration 0040's literal in
+#: `tests/test_embedding_tables_migration.py`. The three copies exist for three
+#: different reasons — a column type, a runtime validation bound and a frozen
+#: migration — and the test is what keeps them one number.
+EMBEDDING_DIMENSIONS = 1024
+
+#: The HNSW indexes, named here so the model, migration 0040 and its
+#: `downgrade()` spell them identically. Declared on the models at all — rather
+#: than left as objects only the migration knows about — because
+#: `Base.metadata` is Alembic's `target_metadata`, so an index present in the
+#: database and absent from the metadata is a drop that a later autogenerate
+#: would propose in good faith.
+CLAIM_EMBEDDING_HNSW_INDEX = "ix_claim_embedding_embedding_hnsw"
+KNOWLEDGE_EMBEDDING_HNSW_INDEX = "ix_knowledge_embedding_embedding_hnsw"
+
+
+class ClaimEmbedding(Base):
+    """One claim's vector representation, and its freshness (Story 6.1, AD-12).
+
+    Derived data in the AD-10 sense: there is exactly one computing path
+    (`services/rag`), nothing user-writable, and every column here is a
+    function of the claim rather than a fact anybody typed. Nothing else in the
+    codebase inserts, updates or deletes a row — mutating commands ask for
+    staleness through `services/rag.mark_claim_stale`, the same
+    request-through-the-owner shape `audit.record` and `timeline.append`
+    already use.
+
+    **No `version` column, and this is the AD-4 statement for the table.**
+    Compare-and-swap arbitrates concurrent writers of a mutable row. This table
+    has one writer whose writes are idempotent recomputations: two refresh runs
+    racing on one claim compute the same vector from the same source text and
+    write the same `source_text_hash`, so there is nothing for a CAS to
+    protect. `TimelineEvent` and `AuditEvent` reach the same conclusion from
+    the append-only direction.
+
+    **`stale_at` is not a version, and it guards a race a version would miss.**
+    Refresh-versus-refresh is harmless, as above. Refresh-versus-*edit* is not:
+    the refresh selects a pending row, composes it, and then waits on one HTTP
+    call for up to `EMBEDDING_REQUEST_TIMEOUT_SECONDS`, and a handler's edit
+    committing inside that window sets `stale = true` for a change the in-flight
+    vector does not contain. A write that cleared the flag unconditionally would
+    store the pre-edit vector with a fresh `embedded_at` beside it, and the row
+    would stay wrong until some unrelated edit happened to touch it — a wrong
+    answer with a fresh timestamp, which is precisely what AC 4 exists to
+    prevent.
+
+    So `mark_claim_stale` stamps `stale_at`, the pending read returns it, and
+    `write_claim_embedding` clears `stale` **only if `stale_at` still holds the
+    value that was read before embedding**. The vector is written either way —
+    it is newer than the nothing it replaces — but a mark that landed mid-flight
+    survives and the next tick re-embeds. A timestamp rather than a counter
+    because it is also readable: "when did this row last go out of date" is a
+    question an operator asks and a bare sequence number cannot answer.
+
+    ## Four nullable columns, and a NULL that means something
+
+    `embedding IS NULL` is not a missing value: it is "this claim has never
+    been embedded", which migration 0041 creates deliberately for all 100
+    seeded claims because a migration cannot reach a model server. It is one of
+    the two pending states the refresh command selects on. The other is
+    `stale`, which means "there *is* a vector and the text it was built from
+    has since changed" — a different fact, which is why it is a different
+    column and why the refresh orders stale rows first: a wrong answer is worse
+    than no answer.
+
+    **`source_text_hash` and no summary column.** The composed claim text is
+    re-derivable from the claim at zero cost, so storing it would put a second
+    copy of PHI in the database for Epic 8's purge cascade to chase in exchange
+    for nothing.
+
+    It is **evidence, not a queue**, and the distinction is worth stating
+    because the column reads like a change detector. Nothing selects on it: the
+    refresh's pending predicate is the three facts above, all of which are known
+    without recomputing anything, whereas a hash comparison would require
+    composing every candidate row before deciding whether to embed it — a
+    second, weaker encoding of what `stale` already records. What the hash is
+    for is proving the summary *really* moved:
+    `tests/test_embedding_staleness.py` asserts it changes across an edit, which
+    is the assertion that would fail against a composer that had quietly dropped
+    the edited field while every flag-and-timestamp assertion stayed green.
+    `services/rag/claim_text.py` is deterministic precisely so that comparison
+    detects real change rather than dict iteration order.
+
+    **`model` is provenance and a pending condition.** The refresh treats a row
+    whose `model` is not the model the current client answers as pending, so
+    re-pointing `EMBEDDING_MODEL` at another 1024-dimension model re-embeds the
+    portfolio rather than leaving vectors from two incomparable model spaces
+    mixed in one index and retrieved together. It is also the first thing
+    anybody debugging a retrieval result asks for.
+
+    **PHI-class (AD-11).** A vector derived from claim text is claim data: it
+    lives on the same encrypted volume, joins Epic 8's purge cascade, and never
+    appears in a log line. `services/rag` logs ids and counts.
+    """
+
+    __tablename__ = "claim_embedding"
+
+    id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+    # Unique, not merely indexed: the 1:1 is what lets `mark_claim_stale` be a
+    # single idempotent `INSERT … ON CONFLICT DO UPDATE` rather than a
+    # select-then-branch with a race in the gap. It also backs the FK, which
+    # PostgreSQL does not index automatically — without it Story 8.1's purge
+    # would scan this table once per deleted claim.
+    claim_id: Mapped[int] = mapped_column(ForeignKey("claim.id"), unique=True)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIMENSIONS))
+    source_text_hash: Mapped[str | None] = mapped_column(Text)
+    model: Mapped[str | None] = mapped_column(Text)
+    stale: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # The monotonic mark-stale marker the conditional clear compares against.
+    # NULL is "never marked", which is what migration 0041's pre-created rows
+    # carry — and `IS NOT DISTINCT FROM` is what makes that state compare
+    # correctly rather than silently never matching.
+    stale_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    embedded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        # Cosine, because `<=>` is what the repository orders by and bge-m3's
+        # output is not unit-normalised by the server. An L2 operator class
+        # here would leave a valid index that the planner never chooses, with
+        # nothing on screen to say why retrieval got slow.
+        Index(
+            CLAIM_EMBEDDING_HNSW_INDEX,
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+    )
+
+
+class KnowledgeChunk(Base):
+    """One passage of the seeded labour-law corpus (Story 6.1, AC 2).
+
+    Reference content rather than a live entity, so no `version` column, for
+    `GlossaryTerm`'s and `TreatmentPlanStep`'s reason: rows arrive in a
+    migration and nothing writes one at runtime, which means there is no
+    concurrent writer for a compare-and-swap to arbitrate.
+
+    **Every row is synthetic and says so.** `source` begins `synthetic-demo:`
+    and `chunk_text` opens with a sentence stating that it is demonstration
+    text, not statutory law. Knowledge-corpus sourcing is a Deferred
+    architecture decision and this story is explicitly forbidden from building
+    an ingestion pipeline; what it needs is enough real rows that the RAG path
+    retrieves something. Presenting paraphrase as authoritative law would
+    repeat the failure `deferred-work.md` already records against the statutory
+    forms — a surface that behaves exactly like the real thing while being
+    sourced from nobody. The label travels inside the retrieved text so a model
+    quoting a chunk quotes the disclaimer with it.
+
+    **`state_code` is nullable** because a chunk about a jurisdiction carries
+    its two-letter code and a chunk about something general belongs to no state
+    and must not be filed under one. Every seeded row happens to have one; the
+    column is shaped for the corpus this becomes, not the fifteen rows it is.
+
+    **`(source, chunk_index)` is the identity.** A source is a document and its
+    chunks are ordered within it, so neither column alone identifies a row.
+    Without the constraint a re-seed run twice would return the same paragraph
+    twice under one heading.
+
+    Not PHI: this is the one table of the three that holds no claim-derived
+    data. It still lives with them under one purge story, because separating
+    "which of these three tables may Epic 8 delete from" into a per-table
+    decision is how a cascade acquires an exception nobody re-checks.
+    """
+
+    __tablename__ = "knowledge_chunk"
+
+    id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+    source: Mapped[str] = mapped_column(Text)
+    state_code: Mapped[str | None] = mapped_column(Text)
+    title: Mapped[str] = mapped_column(Text)
+    chunk_text: Mapped[str] = mapped_column(Text)
+    chunk_index: Mapped[int] = mapped_column(Integer)
+
+    # Unnamed, so `NAMING_CONVENTION` decides — `TreatmentPlanStep`'s note on
+    # why an explicit name here would disagree with what the convention renders
+    # in the migration.
+    __table_args__ = (UniqueConstraint("source", "chunk_index"),)
+
+
+class KnowledgeEmbedding(Base):
+    """One knowledge chunk's vector (Story 6.1, AC 2).
+
+    `ClaimEmbedding` without the staleness half, and the asymmetry is the
+    point: a chunk is immutable text written by a migration, so the only way
+    its embedding stops being right is a model change — which `model` records
+    and which the refresh's pending predicate acts on
+    (`model IS DISTINCT FROM <the model answering now>`), invalidating every row
+    at once rather than one row at a time. A claim's summary changes when a
+    handler edits the claim, which is a per-row event, needs a per-row flag, and
+    needs that flag to survive an edit landing mid-embed — hence `stale_at`
+    there and nothing like it here.
+
+    Pending work is represented the same way: migration 0041 inserts one row
+    per chunk with a NULL vector, and `seed_knowledge_corpus` fills them.
+    """
+
+    __tablename__ = "knowledge_embedding"
+
+    id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+    chunk_id: Mapped[int] = mapped_column(ForeignKey("knowledge_chunk.id"), unique=True)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIMENSIONS))
+    model: Mapped[str | None] = mapped_column(Text)
+    embedded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        Index(
+            KNOWLEDGE_EMBEDDING_HNSW_INDEX,
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+    )

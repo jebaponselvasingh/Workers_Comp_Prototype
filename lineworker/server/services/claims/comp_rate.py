@@ -37,6 +37,33 @@ silently discards an out-of-range entry by re-rendering, so a handler who typed
 refusal the handler can read is the honest answer (NFR-3, and
 `normalise_severity` makes the same argument about `Math.max(0, Math.min(100,
 n))`).
+
+## This command is deliberately **not** wired to `mark_claim_stale`
+
+`deferred-work.md` recorded the AD-12 mark-stale obligation against five
+commands and handed the decision to Story 6.1. Four of them — the two in
+`services/claims/edit.py` and the two in `services/claims/injuries.py` — now
+call `services/rag.mark_claim_stale` inside their own transaction. This one
+does not, and the omission is a decision rather than a miss.
+
+The other four write *clinical* fields: injury type, cause, body part, ICD-10,
+severity, secondary injuries. Those are what make two claims similar, and
+`services/rag/claim_text.py` composes its summary from exactly them.
+`comp_rate_override_bp` is a financial decision **about one claim** — a
+handler's judgement that this worker's benefit should be computed at a rate
+other than the statutory default. It says nothing about the injury, and two
+claims are not alike because they were paid at the same percentage of wage. The
+composer deliberately embeds no money at all (no reserve, no paid figures, no
+comp rate), so wiring this command would mark a claim stale, cost a model round
+trip on the next refresh tick, and produce a byte-identical summary and an
+identical `source_text_hash`.
+
+Recorded here rather than left as an absence because an undocumented omission
+is indistinguishable from a command somebody forgot — which is exactly how the
+other four came to be outstanding for four stories.
+`tests/test_embedding_staleness.py` asserts *both* halves structurally: that
+the four call it and that this module does not, so a later story that adds a
+composer input to the money block has to change a test to change the answer.
 """
 
 from datetime import UTC, date, datetime

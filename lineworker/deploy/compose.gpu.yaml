@@ -1,0 +1,61 @@
+# GPU overlay for the model server — production only (Story 6.1, AC 1).
+#
+#   docker compose -f deploy/compose.yaml -f deploy/compose.gpu.yaml up -d
+#
+# Story 1.1's source-tree comment announced this file as arriving with Story
+# 6.1; this is it. It exists as an **overlay** rather than as a flag in
+# `compose.yaml` for one reason, and it is the reason the architecture gives:
+# the base stack stays CPU-capable so that dev needs no GPU. A device
+# reservation in the base file would make `docker compose up` fail on every
+# laptop in the project with an error about the NVIDIA runtime — turning the
+# README's "That's it" into a hardware requirement.
+#
+# ## What is here, and what deliberately is not
+#
+# One service, one key: `ollama` reserves every NVIDIA device the host exposes.
+# Nothing else is overridden. `api`, `web` and `postgres` do not appear at all,
+# because none of them is any different in a GPU deployment and a service listed
+# here would be a second place to keep their configuration correct.
+#
+# **No `ports:` — not here, not anywhere (AD-5).** An overlay is exactly where
+# somebody would eventually add "just for debugging"; the CI job renders this
+# file merged with the base and fails if a published port appears under
+# `ollama`, so the rule survives an edit nobody reviews closely.
+#
+# **No model names, no volume, no healthcheck.** All three are in the base file
+# and are identical under GPU. Repeating them here is how an overlay starts
+# drifting: two `CHAT_MODEL` defaults, one of which is wrong, and no error to
+# say which deployment read which.
+#
+# ## Requirements on the host
+#
+# The NVIDIA Container Toolkit must be installed and the daemon configured for
+# it; `count: all` claims every visible GPU, which is right for a dedicated
+# inference host and wrong for a shared one — set `count: 1` or use
+# `device_ids` there. The architecture's model table sizes chat at `qwen3:14b`
+# for 24 GB and `qwen3:32b` for 48 GB, and both of those are `CHAT_MODEL`
+# settings rather than anything in this file.
+#
+# **A host without the toolkit does not fall back — it refuses to start.** The
+# reservation below is a Docker-level device request, resolved when the
+# container is *created*, so a daemon with no `nvidia` driver registered fails
+# the create with a device-driver error and Ollama never runs at all. (Ollama's
+# own CPU fallback is real, but it applies to a server that started and found no
+# usable GPU, which is a different situation and not this one.) So the overlay
+# is safe in the direction that matters — it cannot silently give you a slow
+# CPU stack while you believe you are on a GPU — and unsafe in the other: apply
+# it only where the toolkit is installed. The positive check is
+# `docker compose exec ollama nvidia-smi`; "the stack came up healthy" only
+# tells you the overlay was not applied at all.
+
+name: lineworker
+
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

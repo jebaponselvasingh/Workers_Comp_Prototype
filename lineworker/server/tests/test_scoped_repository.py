@@ -24,6 +24,7 @@ from data.context import ALL_EMPLOYERS, CallerContext
 from data.models import AppUser, Claim
 from data.models.enums import Stage, UserRole
 from data.repositories import claims as claim_repo
+from data.repositories import embeddings as embedding_repo
 from data.repositories.identity import employer_ids_for
 from tests import seed_fixture
 from tests.conftest import requires_db
@@ -56,7 +57,29 @@ async def context_for(db: AsyncSession, name: str, role: str) -> CallerContext:
 # --- the contract itself ------------------------------------------------
 
 
-def test_every_repository_read_requires_a_caller_context() -> None:
+#: Every repository module bound by AD-7, and therefore by the two structural
+#: guards below.
+#:
+#: **A list rather than one module, since Story 6.1.** Both guards were written
+#: against `claims` alone and this module's own docstring says they exist to
+#: stop "Story 6.x quietly adding an unscoped query" — so a guard still bound to
+#: one module when Story 6.x actually arrived would have let 6.1 do exactly
+#: that, in a file whose queries are the hardest in the codebase to eyeball. The
+#: guards are parameterized rather than duplicated so that the *assertions* stay
+#: written once: two copies of a structural check are two things to update, and
+#: the one nobody updates is the one that stops failing.
+#:
+#: The three carve-out repositories (`glossary`, `state_rates`,
+#: `statutory_forms`) are deliberately absent: they take no caller context at
+#: all, and each argues in its own docstring why. `identity` is absent because
+#: it is what *builds* a context and necessarily runs before one exists.
+SCOPED_REPOSITORY_MODULES = [claim_repo, embedding_repo]
+
+SCOPED_REPOSITORY_IDS = ["claims", "embeddings"]
+
+
+@pytest.mark.parametrize("module", SCOPED_REPOSITORY_MODULES, ids=SCOPED_REPOSITORY_IDS)
+def test_every_repository_read_requires_a_caller_context(module: object) -> None:
     """ "Impossible by signature" — no default, no optional, no keyword escape.
 
     Reflective rather than a list of hand-written assertions per function:
@@ -65,10 +88,10 @@ def test_every_repository_read_requires_a_caller_context() -> None:
     """
     public = [
         (name, obj)
-        for name, obj in vars(claim_repo).items()
+        for name, obj in vars(module).items()
         if inspect.isfunction(obj)
         and not name.startswith("_")
-        and obj.__module__ == claim_repo.__name__
+        and obj.__module__ == module.__name__  # type: ignore[attr-defined]
     ]
     assert public, "no public repository functions found — did the module move?"
 
@@ -169,13 +192,14 @@ def test_the_scope_predicate_is_a_tautology_for_all_never_a_skipped_filter() -> 
 CALLER_ROLE_READ = re.compile(r"(?<!Employee)(?<!employee)\.\s*role\b|\bUserRole\b")
 
 
-def test_no_repository_branches_on_role() -> None:
+@pytest.mark.parametrize("module", SCOPED_REPOSITORY_MODULES, ids=SCOPED_REPOSITORY_IDS)
+def test_no_repository_branches_on_role(module: object) -> None:
     """Scope gates visibility; role gates capability — never the reverse (AD-7).
 
     A role check inside a repository is how "supervisors see everything"
     gets re-implemented next to the scope filter and then diverges from it.
     """
-    source = inspect.getsource(claim_repo)
+    source = inspect.getsource(module)  # type: ignore[arg-type]
     body = "\n".join(line for line in source.splitlines() if not line.lstrip().startswith("#"))
 
     assert not CALLER_ROLE_READ.search(body), (
@@ -386,5 +410,14 @@ async def test_the_photo_read_applies_the_filter_itself(db: AsyncSession) -> Non
     assert await claim_repo.select_photos(db, stranger, claim_id) == []
 
 
-def test_repositories_package_exports_the_claim_repository() -> None:
+def test_repositories_package_exports_the_scoped_repositories() -> None:
+    """Both, and by identity rather than by name.
+
+    `repositories.claims` has been asserted since Story 1.4; `embeddings` joins
+    it because the package docstring now describes it as the second scoped
+    module, and a docstring that named a module the package did not export
+    would be the kind of wrong that nothing else notices.
+    """
     assert repositories.claims is claim_repo
+    assert repositories.embeddings is embedding_repo
+    assert set(repositories.__all__) >= {"claims", "embeddings"}

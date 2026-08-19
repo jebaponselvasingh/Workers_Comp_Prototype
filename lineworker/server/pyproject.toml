@@ -12,6 +12,21 @@ dependencies = [
     "structlog>=24.4",
     "asyncpg>=0.30",
     "psycopg[binary]>=3.2",
+    # Story 6.1. `pgvector.sqlalchemy.Vector` is the column type the three
+    # embedding tables declare and the `<=>` operator the similarity search
+    # orders by, so it is runtime code in `data/models/core.py` and
+    # `data/repositories/embeddings.py` — not a test dependency, and not
+    # optional: the models import it at module scope, so the api would not
+    # start without it. The extension itself has been installed since
+    # migration 0002; this is the Python side finally using it.
+    "pgvector>=0.3",
+    # Promoted from the dev group by Story 6.1. It was a test-only dependency
+    # for as long as the only HTTP client in the tree was Starlette's test
+    # client; `services/rag/client.py` is the first *runtime* caller — the one
+    # module in the build that talks to Ollama's embeddings API (AD-5) — and a
+    # runtime import resolved from a dev-only dependency is an ImportError in
+    # the shipped image and nowhere else.
+    "httpx>=0.27",
     # AD-8's rules engine, pinned exactly. A JDM document is data we commit,
     # seed and assert against: the engine that evaluates it is part of the
     # contract, not an interchangeable detail, so "any 0.53.x" is one patch
@@ -24,7 +39,6 @@ dependencies = [
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
-    "httpx>=0.27",
     "ruff>=0.8",
     "mypy>=1.13",
     "hypothesis>=6.112",
