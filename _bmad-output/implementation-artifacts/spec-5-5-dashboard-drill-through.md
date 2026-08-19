@@ -3,6 +3,7 @@ title: 'Story 5.5 — Dashboard Drill-Through'
 type: 'feature'
 created: '2026-08-19'
 baseline_revision: 'dfd369e133c3c827b241c51a2942490b4c9a7f25'
+final_revision: '519a4642788d902480eca3db3905309d88b82e4b'
 status: 'done'
 review_loop_iteration: 0
 followup_review_recommended: true # one high-severity access-control fix that added a 403 to a published contract, plus a type-level change to the client's query builder, a user-visible relabel and navigation state threaded across three files — breadth and contract impact worth an independent look
