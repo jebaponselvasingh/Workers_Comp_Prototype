@@ -52,7 +52,7 @@ from agents.insights import (
 )
 from agents.tools import fraud_signals, reserve_check
 from data.context import ALL_EMPLOYERS, CallerContext
-from data.models import AiInsight, AppUser, Claim, KnowledgeChunk
+from data.models import AiInsight, AppUser, Claim, Employee, Employer, KnowledgeChunk
 from data.models.enums import InsightKind, UserRole
 from services import rag
 from tests.conftest import requires_db
@@ -109,7 +109,7 @@ MARKER = "ZZQX-INJECTION-MARKER"
 #: first of them. So an item that could write `DETERMINISTIC FIGURES …` into its
 #: own text could introduce a figure under the one heading the model is
 #: instructed to trust — with no delimiter involved at all (review of Story 6.2,
-#: M1). `_scrub` strips both headings for exactly this reason.
+#: M1). `scrub` strips both headings for exactly this reason.
 #:
 #: Written with a zero-width space inside `DETERMINISTIC` for `ZERO_WIDTH_
 #: CLOSE`'s reason: the heading the shipped scrubber caught was the literal one,
@@ -171,6 +171,16 @@ async def poisoned_claim(db: AsyncSession) -> str:
     never reaches a prompt, and poisoning it would make this fixture look
     thorough while testing nothing.
 
+    **The worker's name and role and the employer's name are poisoned too**, and
+    that was the review of Story 6.3's correction to this fixture. Story 6.3's
+    `claim_reader` sends all three to a chat model, and it sent them *outside*
+    the fence on a length argument — so the assertion below, which searched the
+    tool's payload for the marker, was asserting where this fixture had put its
+    payload rather than that the payload was contained. Every field on the
+    header that a person typed now carries the injection, so "the marker appears
+    only inside `narrative`" is a statement about containment and not about the
+    fixture's own aim.
+
     **The corpus is embedded here**, because retrieval only returns chunks that
     have a vector and nothing in this module's database has run a refresh. Until
     that was added the knowledge half of this fixture was inert and the test
@@ -179,6 +189,16 @@ async def poisoned_claim(db: AsyncSession) -> str:
     """
     claim = (await db.scalars(sa.select(Claim).order_by(Claim.id).limit(1))).one()
     claim.cause = f"{MARKER} {INJECTION}{FORGED_HEADING}"
+
+    # The three header fields `claim_reader` publishes that somebody typed. They
+    # are short columns, which is exactly why they were left outside the fence
+    # and exactly why they are poisoned here: length is not what makes a string
+    # safe, provenance is.
+    worker = (await db.scalars(sa.select(Employee).where(Employee.id == claim.employee_id))).one()
+    worker.name = f"{MARKER} {INJECTION}"
+    worker.role = f"{MARKER} welder. {INJECTION}"
+    employer = (await db.scalars(sa.select(Employer).where(Employer.id == claim.employer_id))).one()
+    employer.name = f"{MARKER} {INJECTION}"
 
     chunk = (await db.scalars(sa.select(KnowledgeChunk).order_by(KnowledgeChunk.id).limit(1))).one()
     chunk.chunk_text = f"{MARKER} {chunk.chunk_text} {INJECTION}"
@@ -341,9 +361,9 @@ def test_no_payload_survives_the_scrubber_as_a_marker(name: str, payload: str) -
     carries no `<` at all (`_TEXT_FORBIDDEN`), which is the property that makes
     the first two unforgeable rather than merely unmatched.
     """
-    from agents.insights import _scrub
+    from agents.fencing import scrub
 
-    cleaned = _scrub(payload)
+    cleaned = scrub(payload)
 
     assert ITEM_OPEN not in cleaned, name
     assert ITEM_CLOSE not in cleaned, name
@@ -535,3 +555,127 @@ async def test_nothing_from_the_poisoned_claim_reaches_a_log_line(
     assert MARKER not in emitted
     assert "IGNORE ALL PREVIOUS INSTRUCTIONS" not in emitted
     assert "rag.insights_stored" in emitted
+
+
+# --- Story 6.3: the same fixture, through a graph run --------------------
+
+
+async def test_the_injection_reaches_a_chat_turn_only_inside_a_fence(
+    db: AsyncSession, system: CallerContext, poisoned_claim: str
+) -> None:
+    """AD-16 on the copilot's path — the fixture extended to the agent loop.
+
+    `test_the_injection_triggers_no_second_refresh`'s docstring predicted this:
+    "that is the shape Story 6.3's agent loop will have to keep bounded when it
+    arrives." It has arrived, and the containment it inherits is the same
+    machinery — `agents/fencing.scrub`/`fence`, made public in 6.3 precisely so
+    the copilot's `claim_reader` uses the *same* implementation rather than a
+    second one.
+
+    Asserted at the tool boundary rather than at the model, because that is
+    where the guarantee is made: whatever a graph does afterwards, the claim's
+    `cause` enters a tool result already scrubbed and already inside a
+    source-tagged fence. The marker must be present (or the fixture is inert)
+    and every occurrence of it must be inside `narrative`.
+    """
+    from agents.tools import claim_reader
+
+    result = await claim_reader(db, system, claim_business_id=poisoned_claim)
+    context = result.require()
+
+    fenced = "\n".join(context.narrative)
+    assert MARKER in fenced, "the poisoned claim's text never reached the tool result"
+    for item in context.narrative:
+        assert item.startswith(ITEM_OPEN)
+        assert item.endswith(ITEM_CLOSE)
+    # …and nowhere else on the payload. A structured field carrying the injected
+    # text would be text outside a fence, which is the one thing AD-16's
+    # structural half forbids — and three of them did until the review of Story
+    # 6.3 moved the worker's name, the worker's role and the employer's name
+    # inside. The fixture poisons all three, so this is a containment assertion
+    # rather than a restatement of where the payload was put.
+    outside = (
+        context.claim_id,
+        context.state,
+        context.risk,
+        context.stage,
+        context.status,
+    )
+    assert not any(MARKER in field for field in outside)
+    # Named per source tag rather than counted, so a field that stopped being
+    # fenced fails with the field's own name in the message. `worker` carries
+    # the name and the role in one item (they are one person's identification);
+    # `employer` and `cause` are one each.
+    tagged = {item.split('source="', 1)[1].split('"', 1)[0]: item for item in context.narrative}
+    for source in (
+        f"claim:{poisoned_claim}:worker",
+        f"claim:{poisoned_claim}:employer",
+        f"claim:{poisoned_claim}:cause",
+    ):
+        assert MARKER in tagged[source], (
+            f"{source} reached the model without its poisoned text inside a fence"
+        )
+
+
+async def test_the_fenced_claim_text_cannot_forge_a_boundary(
+    db: AsyncSession, system: CallerContext, poisoned_claim: str
+) -> None:
+    """The forged fence and the forged heading, both defeated on this path too.
+
+    The fixture's injection carries a zero-width-spaced `ITEM_CLOSE`, a spliced
+    one, and a reconstituted `DETERMINISTIC FIGURES …` heading — three payloads
+    the follow-up review of Story 6.2 reproduced against the real scrubber. They
+    have to fail here for the same reason and by the same mechanism, and this is
+    what proves the copilot did not acquire a weaker second implementation.
+
+    Counted rather than merely searched: the delimiter appears exactly twice per
+    item — once opening, once closing — and a forgery that survived would make
+    it three.
+    """
+    from agents.tools import claim_reader
+
+    context = (await claim_reader(db, system, claim_business_id=poisoned_claim)).require()
+
+    for item in context.narrative:
+        assert item.count(ITEM_OPEN) == 1
+        assert item.count(ITEM_CLOSE) == 1
+        body = item.split(">>>\n", 1)[1].rsplit("\n", 1)[0]
+        assert "<" not in body, "item text can still spell a marker"
+        assert FIGURES_HEADING not in body
+        assert MATERIAL_HEADING not in body
+
+
+async def test_the_injection_changes_no_route_and_reaches_no_write_tool(
+    db: AsyncSession, system: CallerContext, poisoned_claim: str
+) -> None:
+    """AC 7's other two clauses: routing and tool selection are unaffected.
+
+    Both are **structural**, which is why they can be asserted without a model
+    at all — and why the safety case does not rest on the model behaving:
+
+    - The route comes from `route_entry`, which reads one channel and never a
+      message. A poisoned `cause` sitting in the conversation cannot move it,
+      because it is not an input.
+    - No `kind: write` tool is registered at all in this story, so "no write
+      tool is reachable" is a property of the registry rather than of the
+      prompt. A fully hijacked model has nothing to select.
+    """
+    from agents.graph import CHAT_NODE, caller_ref, route_entry
+    from agents.registry import REGISTRY, ToolKind
+    from agents.tools import claim_reader
+    from data.models.enums import UserRole as _UserRole
+
+    context = (await claim_reader(db, system, claim_business_id=poisoned_claim)).require()
+    poisoned_turn = {
+        "messages": [],
+        "caller": caller_ref(
+            CallerContext(user_id=1, role=_UserRole.handler, employer_ids=frozenset({1}))
+        ),
+        "claim_business_id": poisoned_claim,
+    }
+    # The injected text, verbatim, as a message — the strongest form of the
+    # attack this router could face.
+    poisoned_turn["messages"] = [*context.narrative]
+
+    assert route_entry(poisoned_turn) == CHAT_NODE  # type: ignore[arg-type]
+    assert all(entry.kind is ToolKind.read for entry in REGISTRY.values())

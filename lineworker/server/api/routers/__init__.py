@@ -1,6 +1,7 @@
 from api.routers.admin import router as admin_router
 from api.routers.auth import router as auth_router
 from api.routers.claims import router as claims_router
+from api.routers.copilot import router as copilot_router
 from api.routers.dashboard import router as dashboard_router
 from api.routers.diary import router as diary_router
 from api.routers.glossary import router as glossary_router
@@ -10,6 +11,7 @@ __all__ = [
     "admin_router",
     "auth_router",
     "claims_router",
+    "copilot_router",
     "dashboard_router",
     "diary_router",
     "glossary_router",

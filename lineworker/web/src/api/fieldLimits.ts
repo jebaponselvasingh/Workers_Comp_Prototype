@@ -61,3 +61,16 @@ export const EMAIL_SUBJECT_MAX = 200;
  * server, which is why the composer trims before it sends.
  */
 export const EMAIL_BODY_MAX = 10_000;
+
+/**
+ * `api/routers/copilot.py::RunRequest.message` — one copilot question.
+ *
+ * Four thousand: a question about a claim, not a document. The route declares
+ * the same number as `max_length`, so a longer value is refused by the schema
+ * with `/problems/validation-error` before any run starts — which names no field
+ * and shows no limit, which is this module's whole argument.
+ *
+ * It is **not** a bound on the *answer*: that is `copilot_max_output_tokens`, a
+ * deployment knob the browser never sees and must not try to reproduce.
+ */
+export const COPILOT_MESSAGE_MAX = 4000;

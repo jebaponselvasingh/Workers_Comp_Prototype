@@ -24,6 +24,7 @@ from data.context import ALL_EMPLOYERS, CallerContext
 from data.models import AppUser, Claim
 from data.models.enums import Stage, UserRole
 from data.repositories import claims as claim_repo
+from data.repositories import copilot as copilot_repo
 from data.repositories import embeddings as embedding_repo
 from data.repositories import insights as insight_repo
 from data.repositories.identity import employer_ids_for
@@ -81,9 +82,16 @@ async def context_for(db: AsyncSession, name: str, role: str) -> CallerContext:
 #: `ai_insight` leaks exactly what an unscoped read of `claim` would. Adding
 #: the module to this list is the whole cost of covering it, which is what the
 #: parameterization above was for.
-SCOPED_REPOSITORY_MODULES = [claim_repo, embedding_repo, insight_repo]
+#:
+#: **`copilot` joined in Story 6.3**, and it is the case the guards were most
+#: obviously written for: a `copilot_thread` row carries no claim data at all —
+#: an id, a sequence, a timestamp — so nothing in it *looks* like it belongs to
+#: anybody, and it is nevertheless the key to a checkpointed transcript quoting
+#: a claim's diagnosis and wage. Its rows are exactly what "hardest in the
+#: codebase to eyeball for scope" means.
+SCOPED_REPOSITORY_MODULES = [claim_repo, embedding_repo, insight_repo, copilot_repo]
 
-SCOPED_REPOSITORY_IDS = ["claims", "embeddings", "insights"]
+SCOPED_REPOSITORY_IDS = ["claims", "embeddings", "insights", "copilot"]
 
 
 @pytest.mark.parametrize("module", SCOPED_REPOSITORY_MODULES, ids=SCOPED_REPOSITORY_IDS)
@@ -419,13 +427,13 @@ async def test_the_photo_read_applies_the_filter_itself(db: AsyncSession) -> Non
 
 
 def test_repositories_package_exports_the_scoped_repositories() -> None:
-    """All three, and by identity rather than by name.
+    """All four, and by identity rather than by name.
 
     `repositories.claims` has been asserted since Story 1.4; `embeddings`
-    joined it in 6.1 and `insights` in 6.2, because the package docstring now
-    describes each of them as a scoped module, and a docstring that named a
-    module the package did not export would be the kind of wrong that nothing
-    else notices.
+    joined it in 6.1, `insights` in 6.2 and `copilot` in 6.3, because the
+    package docstring now describes each of them as a scoped module, and a
+    docstring that named a module the package did not export would be the kind
+    of wrong that nothing else notices.
 
     Driven off `SCOPED_REPOSITORY_IDS` rather than a second hand-written list,
     so a module added to the guards above cannot be left out of the export
@@ -434,6 +442,7 @@ def test_repositories_package_exports_the_scoped_repositories() -> None:
     assert repositories.claims is claim_repo
     assert repositories.embeddings is embedding_repo
     assert repositories.insights is insight_repo
+    assert repositories.copilot is copilot_repo
     assert set(repositories.__all__) >= set(SCOPED_REPOSITORY_IDS)
     for name, module in zip(SCOPED_REPOSITORY_IDS, SCOPED_REPOSITORY_MODULES, strict=True):
         assert getattr(repositories, name) is module

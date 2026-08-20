@@ -14,14 +14,19 @@ import { expect, test } from "../fixtures/test";
  * anything. Four things are only true in a browser and are what this spec is
  * organised around.
  *
- * 1. **The pane exists, and every tab in it goes somewhere.** The copilot shell
- *    ships with ⚡ Actions disabled until Epic 6 and 📓 Diary live. When this
- *    spec was written the Notes and Emails sub-tabs were placeholders naming
- *    Stories 4.2 and 4.3 — the cross-story seam, whose point was that a handler
- *    could see the work existed (NFR-3, no dead clicks). Both have since been
- *    built, so the seam assertions here were **amended into their opposites**
- *    rather than deleted (AD-15): the strip still has three tabs, each one now
- *    mounts a real surface, and the only disabled control left is ⚡ Actions.
+ * 1. **The pane exists, and every tab in it goes somewhere.** When this spec was
+ *    written the copilot shell shipped ⚡ Actions *disabled* until Epic 6, and
+ *    the Notes and Emails sub-tabs were placeholders naming Stories 4.2 and 4.3
+ *    — three cross-story seams, whose point was that a handler could see the
+ *    work existed (NFR-3, no dead clicks). All three stories have since been
+ *    built, so all three seam assertions were **amended into their opposites**
+ *    rather than deleted (AD-15). Story 6.3 amended the last of them: ⚡ Actions
+ *    is enabled, it mounts the copilot's chat surface, and the sentence naming
+ *    Epic 6 is gone from the panel entirely. **There is no disabled affordance
+ *    left anywhere in this pane**, which is a stronger statement than the one
+ *    this test used to make and is asserted as such. 📓 Diary is still the tab
+ *    the panel opens on; that was Story 4.1's decision and 6.3 did not disturb
+ *    it, which is why the assertion below is unchanged.
  *
  * 2. **A meeting survives a reload.** The prototype's `meetingsStore` is a
  *    browser-lifetime object re-seeded at every login; the whole of this story
@@ -229,10 +234,23 @@ test.describe("@story:4-1 @epic:4 meeting scheduling and management", () => {
 
     await openWorkspace(page, claimId);
 
-    // --- AC 1: the shell, its disabled tab and its sub-tab seams ---------
+    // --- AC 1: the shell and its two live tabs ---------------------------
+    //
+    // **Amended by Story 6.3 into the opposite of what it asserted** (AD-15).
+    // This block read `toBeDisabled()` and `toHaveAttribute("title", /Epic 6/)`
+    // for as long as ⚡ Actions was Epic 6's seam. Epic 6 has arrived: the tab
+    // is enabled, it is the one the panel opens on, and the sentence is gone
+    // from the pane — including from the `title` and the `aria-describedby`
+    // target that carried it without a pointer, which is why the absence is
+    // asserted over the whole panel rather than on one attribute.
     const actionsTab = byTestId(page, "copilot-tab-actions");
-    await expect(actionsTab).toBeDisabled();
-    await expect(actionsTab).toHaveAttribute("title", /Epic 6/);
+    await expect(actionsTab).toBeEnabled();
+    await expect(byTestId(page, "copilot")).not.toContainText("Epic 6");
+    await expect(byTestId(page, "copilot-actions-seam")).toHaveCount(0);
+
+    // 📓 Diary is still the tab the panel opens on — **unchanged**, because
+    // Story 6.3 did not falsify it. It enabled the other tab; which one opens
+    // was Story 4.1's decision and stands (`CopilotPane` argues why).
     await expect(byTestId(page, "copilot-tab-diary")).toHaveAttribute("aria-selected", "true");
     // Notes is the sub-tab the pane opens on since Story 4.2 built it — it is
     // first in the strip and carries the greeting.
@@ -241,13 +259,13 @@ test.describe("@story:4-1 @epic:4 meeting scheduling and management", () => {
     // Both of the other two were placeholders naming their story when this
     // spec was written — Notes said "Story 4.2", Emails said "Story 4.3" — and
     // both stories have now built theirs, so `diary-empty-notes` and
-    // `diary-empty-emails` are gone and there is no seam left in this pane at
-    // all. What is left to assert here is the thing this test has always been
-    // about: the strip still has three tabs, each one selects, and each one
-    // mounts a real surface. Their behaviour belongs to
+    // `diary-empty-emails` are gone. Story 6.3 removed the last one above, so
+    // **there is no seam left in this pane at all** and no disabled affordance
+    // in it either. What is left to assert here is the thing this test has
+    // always been about: the strip still has three sub-tabs, each one selects,
+    // and each one mounts a real surface. Their behaviour belongs to
     // `4-2-claim-linked-diary-notes.spec.ts` and
-    // `4-3-templated-stakeholder-emails.spec.ts`; the only disabled affordance
-    // in the panel is the ⚡ Actions tab asserted above (Epic 6).
+    // `4-3-templated-stakeholder-emails.spec.ts`.
     await byTestId(page, "diary-subtab-notes").click();
     await expect(byTestId(page, "notes-subtab")).toBeVisible();
     await byTestId(page, "diary-subtab-emails").click();

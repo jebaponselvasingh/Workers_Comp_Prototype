@@ -24,10 +24,25 @@ function reaches `claim` through `employer_scope(ctx)`, the write included. A
 cached AI narrative is derived from a claim's clinical text, its reserve and
 its fraud score, so serving one across an employer partition is the same leak
 as serving the case file it was cut from — there is no carve-out to argue for.
+
+`copilot` (Story 6.3) is the fourth scoped one, and it is a whole one for a
+reason one indirection removed from `insights`': its rows carry no claim data
+at all, but each is the *key* to a checkpointed transcript that quotes one. It
+also carries a second predicate the other three do not — `user_id == ctx.user_id`
+— because scope answers "may this caller see this claim?" and not "is this
+conversation theirs?", and two handlers can share an employer. That is
+ownership, not a widening, and its own docstring argues it.
+
+**The LangGraph checkpoint tables have no repository here and must not get
+one.** They are AD-3's registered exception: the saver owns them, migration 0043
+vendors their DDL, and the only reader in the process is the saver itself. A
+module in this package selecting from `checkpoints` would be the thing that
+exception exists to forbid.
 """
 
 from data.repositories import (
     claims,
+    copilot,
     embeddings,
     glossary,
     identity,
@@ -38,6 +53,7 @@ from data.repositories import (
 
 __all__ = [
     "claims",
+    "copilot",
     "embeddings",
     "glossary",
     "identity",

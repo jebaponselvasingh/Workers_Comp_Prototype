@@ -1423,3 +1423,99 @@ class AiInsightAttempt(Base):
 
     claim_id: Mapped[int] = mapped_column(ForeignKey("claim.id"), primary_key=True)
     attempted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class CopilotThread(Base):
+    """One copilot conversation's identity — the row `(claim, user, seq)` keys.
+
+    **The checkpoint tables are not here, and their absence is the design.**
+    LangGraph's `AsyncPostgresSaver` owns `checkpoints`, `checkpoint_blobs`,
+    `checkpoint_writes` and `checkpoint_migrations`; migration 0043 vendors
+    their DDL under AD-3's registered exception and nothing in `server/`
+    declares a model over them, reads them, or writes them. This table is the
+    small, ordinary thing beside them: a thread's *identity*, so that minting a
+    sequence and listing a claim's conversations are scoped SQL against a table
+    this project owns rather than queries against a schema it has just declared
+    it does not.
+
+    The story permits it "if it proves necessary", and it is, twice.
+    `conversation_seq` needs a uniqueness arbiter — two "new conversation"
+    clicks racing must not both mint `seq 3` — and the thread switcher needs
+    enumeration. Both are one statement here and neither is expressible against
+    the saver's tables without breaking AD-3.
+
+    ## No `version` column, and this is the AD-4 statement for the table
+
+    Compare-and-swap arbitrates concurrent writers of a **mutable** row, and
+    this table has no mutation at all: a row is inserted when a conversation
+    starts and is never updated. `thread_id` is derived from the three columns
+    beside it, so no field could change without the row becoming a different
+    thread; and "this thread is read-only history" is not a column either, it is
+    `conversation_seq < max(conversation_seq)` computed from the rows. There is
+    nothing for a CAS to protect. That makes this the **append-only** case —
+    `AuditEvent` and `TimelineEvent` reach the same conclusion from the same
+    direction, while `ClaimEmbedding` and `AiInsight` reach it from the
+    derived-data one.
+
+    The corollary is the part worth stating, because an unexplained missing
+    `version` is indistinguishable from an oversight: a version column is what
+    an inline edit sends back as `expectedVersion`, so its absence is the schema
+    saying there is no edit affordance to send one from. A story that wanted a
+    handler to rename a thread or re-point it at another claim would be
+    proposing that a conversation's identity become editable, which would
+    silently re-key every checkpoint hanging off it.
+
+    ## The columns
+
+    `thread_id` is the string the saver files checkpoints under, minted by
+    `agents/threads.mint_thread_id` in the shape
+    `claim.<claim business id>.u<user id>.s<seq>`. **No client ever supplies
+    one** (AD-6); the API has no parameter for it, and a caller who guessed
+    another user's is answered by the ownership check with the same 404 an
+    unknown thread produces.
+
+    `user_id` is what makes a thread the handler's rather than the claim's. It
+    is checked against the caller freshly resolved by `api.deps.
+    get_caller_context` on every run — never against a value read out of graph
+    state, which is AD-7's whole point.
+
+    `conversation_seq` starts at 1 and increments per `(claim, user)`.
+    `dashboard`-scope threads are a reserved key shape and are never minted
+    (Epic 7 reopens them); `claim_id` is therefore NOT NULL here rather than
+    nullable-with-a-comment, because a column admitting a state nothing can
+    produce is a column somebody eventually produces it in.
+
+    `created_at` is supplied by the command rather than defaulted by the
+    database, `ai_insight.generated_at`'s rule: the instant belongs to the
+    minting run.
+
+    **PHI-class by association (AD-11).** The row itself holds no claim data —
+    an id, a sequence, a timestamp — but it is the key to a transcript that
+    quotes diagnoses and wages, so it lives on the same encrypted volume, joins
+    Epic 8's purge cascade beside the checkpoints it addresses, and appears in
+    logs only as `thread_id`.
+    """
+
+    __tablename__ = "copilot_thread"
+
+    id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+    thread_id: Mapped[str] = mapped_column(Text)
+    claim_id: Mapped[int] = mapped_column(ForeignKey("claim.id"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), index=True)
+    conversation_seq: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        # The saver's key. Unique because two rows sharing one would be two
+        # conversations sharing one transcript.
+        UniqueConstraint("thread_id"),
+        # The thread key, and the arbiter minting relies on: `INSERT … SELECT
+        # max(seq) + 1` races are resolved by this constraint rather than by a
+        # lock, so two simultaneous "new conversation" clicks produce one new
+        # thread and one refused insert instead of two threads at one sequence.
+        # Its backing index leads with `claim_id`, which is exactly the list
+        # read, and gives the `claim_id` foreign key the index PostgreSQL does
+        # not create for it — without which Story 8.1's purge would scan this
+        # table once per deleted claim.
+        UniqueConstraint("claim_id", "user_id", "conversation_seq"),
+    )

@@ -466,6 +466,67 @@ export const queryKeys = {
     writes: ["diaryNotes", "write"] as const,
   },
   /**
+   * The copilot's threads and transcripts (Story 6.3) — **a top-level group,
+   * never under `claims`**, for the reason `meetings` records at length.
+   *
+   * `GET /copilot/claims/{id}/threads` is scoped to the *caller*: a conversation
+   * belongs to the handler who started it and merely references a claim, and two
+   * handlers covering the same employer do not share one. So the list is not a
+   * child read-model of `claims.detail` the way `financials` and `actions` are,
+   * and nesting it under a claim's segment would make an unrelated case-file
+   * edit invalidate every conversation.
+   *
+   * **`writes` is this group's own, and reusing `claims.writes` here would be a
+   * bug with a visible symptom.** That key drives `useClaimWriteInFlight`, which
+   * greys out every editable control on the case file while a command is in
+   * flight — because those controls all send an `expectedVersion` read from one
+   * cached case file. Sending a copilot message touches no column of `claim` and
+   * bumps no version, so carrying that key would disable the severity score and
+   * the comp-rate input for the length of a model completion, for no reason a
+   * handler could see. It is not `meetings.writes` either: asking the copilot a
+   * question is not a reason somebody cannot tick a meeting done.
+   */
+  copilot: {
+    /**
+     * One claim's conversations for this caller, plus the seeded greeting.
+     *
+     * Keyed by claim because the *list* is per claim even though the threads are
+     * the caller's: selecting a different claim (FR-Q-3) is a different server
+     * answer, and the panel swaps to it. No persona segment, for the reason the
+     * stats keys record — the server answers for whoever holds the cookie
+     * (AD-7), and putting an identity here would imply the client picks whose
+     * conversations it sees.
+     *
+     * No cursor either, and there is nothing to page: a handler has a handful of
+     * conversations per claim and the switcher renders all of them.
+     */
+    threads: (claimId: string) => ["copilot", "threads", claimId] as const,
+    /**
+     * One conversation's transcript, keyed by its **server-minted** thread id.
+     *
+     * Flat under `copilot` rather than nested beneath `threads(claimId)`, which
+     * is the opposite of `claims.documentSheet`'s arrangement and deliberately
+     * so. A document sheet is cut from claim columns, so a case-file edit
+     * changes it and it has to be reachable from the claim; a transcript is an
+     * immutable record of what was said, and nothing that happens to the claim
+     * afterwards makes it wrong. The thread id already contains the claim, so
+     * nothing is lost.
+     *
+     * Invalidated by exactly one thing — a run finishing on that thread — which
+     * is what makes the read-only history of a superseded thread free: nothing
+     * ever invalidates it again.
+     */
+    thread: (threadId: string) => ["copilot", "thread", threadId] as const,
+    /**
+     * The **mutation** key every copilot command carries — minting a thread and
+     * running a turn. Nothing is cached under it; `useIsMutating` counts it so
+     * the composer and the "new conversation" control disable themselves while a
+     * write is in flight, which is also the client half of the server's
+     * single-flight 409.
+     */
+    writes: ["copilot", "write"] as const,
+  },
+  /**
    * The handler's stakeholder emails (Story 4.3) — **a top-level group beside
    * `meetings` and `diaryNotes`, never under `claims`**, for the reason those
    * two record.

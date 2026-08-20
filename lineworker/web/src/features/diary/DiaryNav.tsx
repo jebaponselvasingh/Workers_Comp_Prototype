@@ -163,6 +163,28 @@ export interface DiaryNav {
   /** The centre pane's deep link: Diary → Meetings → scheduler, in one call. */
   requestMeetings: () => void;
   /**
+   * Increments every time something asks for the **diary pane itself**.
+   *
+   * **The half of a deep link that only became necessary in Story 6.3.** While
+   * ⚡ Actions was disabled, 📓 Diary was the only tab there was, so
+   * `requestMeetings()` selecting a sub-tab was the whole of "show me the
+   * scheduler". Epic 6 made the copilot strip a real two-way switch and made
+   * ⚡ Actions the tab the panel opens on — so the centre pane's deep link now
+   * has to move two levels, and the outer one is not this provider's to own:
+   * `CopilotPane` owns which tab is showing.
+   *
+   * A counter rather than a boolean or an intent flag, `schedulerSession`'s
+   * shape and for its reason: "show the diary" is an *event*, and a boolean
+   * would be a piece of state with a "when does it clear?" question attached
+   * that nothing has a good answer to. `CopilotPane` compares it against the
+   * last value it acted on, which is React's own documented way to adjust state
+   * when a prop changes and needs no effect.
+   *
+   * All three deep links bump it. `selectSubTab` does not: the handler clicking
+   * a sub-tab is already looking at the diary.
+   */
+  diaryRequestSession: number;
+  /**
    * Increments every time the add-note input is asked for; `NotesSubTab` keys
    * the input on it (see below).
    */
@@ -260,6 +282,7 @@ const NO_DIARY_PANE: DiaryNav = {
   openScheduler: () => {},
   closeScheduler: () => {},
   requestMeetings: () => {},
+  diaryRequestSession: 0,
   noteFocusSession: 0,
   noteFocusPending: false,
   lowerNoteFocus: () => {},
@@ -278,6 +301,11 @@ const DiaryNavContext = createContext<DiaryNav>(NO_DIARY_PANE);
 export function DiaryNavProvider({ children }: { children: React.ReactNode }) {
   const [subTab, setSubTab] = useState<DiarySubTab>(INITIAL_SUB_TAB);
   const [schedulerOpen, setSchedulerOpen] = useState(false);
+  // See `diaryRequestSession` on the interface: the outer half of every deep
+  // link, which Story 6.3 made necessary by giving the copilot strip a second
+  // live tab.
+  const [diaryRequestSession, setDiaryRequestSession] = useState(0);
+  const requestDiary = useCallback(() => setDiaryRequestSession((n) => n + 1), []);
   const [schedulerSession, setSchedulerSession] = useState(0);
   const [noteFocusSession, setNoteFocusSession] = useState(0);
   const [noteFocusPending, setNoteFocusPending] = useState(false);
@@ -322,9 +350,10 @@ export function DiaryNavProvider({ children }: { children: React.ReactNode }) {
     // an intent nobody had expressed. One of the two sub-tab movers clearing the
     // flag and the other not is exactly the asymmetry that makes a state
     // machine wrong in one place only.
+    requestDiary();
     selectSubTab("meetings");
     openScheduler();
-  }, [openScheduler, selectSubTab]);
+  }, [openScheduler, requestDiary, selectSubTab]);
   const requestNotes = useCallback(() => {
     // The sub-tab first, for `requestMeetings`' reason exactly: the add-note
     // input is rendered by `NotesSubTab`, so bumping the session while
@@ -333,18 +362,20 @@ export function DiaryNavProvider({ children }: { children: React.ReactNode }) {
     // later clicked the tab themselves. Both calls are in one event handler,
     // so React batches them into a single render and the input mounts once,
     // already focused.
+    requestDiary();
     setSubTab("notes");
     setNoteFocusSession((session) => session + 1);
     // The intent, which is what `autoFocus` actually reads. The counter forces
     // the remount; this says the mount may take the caret. See
     // `noteFocusPending` on the bug that separating them fixes.
     setNoteFocusPending(true);
-  }, []);
+  }, [requestDiary]);
 
   const requestEmails = useCallback(() => {
+    requestDiary();
     // Through `selectSubTab`, never `setSubTab` — see the field's docstring.
     selectSubTab("emails");
-  }, [selectSubTab]);
+  }, [requestDiary, selectSubTab]);
 
   const openComposer = useCallback((prefill: ComposerPrefill = { kind: "blank" }) => {
     // No sub-tab move — see the field's docstring. `DiaryTab` mounts the dialog
@@ -371,6 +402,7 @@ export function DiaryNavProvider({ children }: { children: React.ReactNode }) {
       openScheduler,
       closeScheduler,
       requestMeetings,
+      diaryRequestSession,
       noteFocusSession,
       noteFocusPending,
       lowerNoteFocus,
@@ -391,6 +423,7 @@ export function DiaryNavProvider({ children }: { children: React.ReactNode }) {
       openScheduler,
       closeScheduler,
       requestMeetings,
+      diaryRequestSession,
       noteFocusSession,
       noteFocusPending,
       lowerNoteFocus,

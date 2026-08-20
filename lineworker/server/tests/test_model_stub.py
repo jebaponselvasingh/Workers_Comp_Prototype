@@ -31,6 +31,7 @@ placement rule is about the shipped image.
 """
 
 import importlib.util
+import json
 from pathlib import Path
 from typing import Any
 
@@ -202,3 +203,115 @@ def test_the_fraud_discriminated_union_round_trips_too() -> None:
         "without one, whatever the rest of the object says"
     )
     adapter.validate_python(produced)
+
+
+# --- Story 6.3: multi-chunk streaming -----------------------------------
+
+
+def test_the_content_chunker_loses_nothing_and_makes_no_empty_piece() -> None:
+    """The property the whole stream rests on: the pieces reassemble exactly.
+
+    A client concatenates the content of every `done: false` line to rebuild the
+    answer, so a split that dropped or duplicated a character would corrupt every
+    structured generation in the e2e profile — as an unexplainable parse
+    failure, three layers from the cause.
+
+    A text shorter than the chunk count yields fewer pieces than asked for, which
+    is honest: there is nothing to put in the extra lines. What must never happen
+    is an empty piece, because a frame carrying no content is a frame a client
+    cannot tell from a keepalive.
+    """
+    for text in ("abcdefghij", "short", "a", "x" * 101, PLAIN_REPLY := stub.PLAIN_REPLY):
+        for count in (1, 2, 3, 7):
+            pieces = stub._chunks(text, count)
+            assert "".join(pieces) == text
+            assert all(pieces), f"an empty chunk for {text!r} at {count}"
+            assert len(pieces) <= max(1, count)
+    assert PLAIN_REPLY
+
+
+def test_an_empty_answer_is_one_empty_piece_rather_than_none() -> None:
+    """The degenerate case, pinned rather than left to `range()`.
+
+    `_chunks("")` returning `[]` would emit a stream with no content line at all
+    — legal, and indistinguishable from a model that said nothing, which is not
+    a state this stub should be able to produce by accident.
+    """
+    assert stub._chunks("", 3) == [""]
+
+
+def test_a_streamed_chat_is_n_partials_then_one_empty_terminal() -> None:
+    """Ollama's real shape, which is the whole reason this was changed (6.3).
+
+    Before this, `stream: true` emitted exactly one line carrying both the
+    content and `done: true`. Legal — but it made "the stream renders" a
+    one-frame assertion and left the one-terminal-event property asserted
+    vacuously, because there was no run in which a second terminal *could* have
+    appeared.
+
+    Three things are asserted and each is a different failure: the count (the
+    stub really does chunk), the terminal line's emptiness (a client
+    concatenating content must not double the last piece), and that exactly one
+    line says `done: true`.
+    """
+    from fastapi.testclient import TestClient
+
+    with TestClient(stub.app) as client:
+        response = client.post(
+            "/api/chat",
+            json={
+                "model": "model-stub",
+                "stream": True,
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+        )
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("application/x-ndjson")
+        lines = [json.loads(line) for line in response.text.splitlines() if line.strip()]
+
+    assert len(lines) == stub.STUB_CHAT_CHUNKS + 1
+    assert [line["done"] for line in lines] == [False] * stub.STUB_CHAT_CHUNKS + [True]
+    assert lines[-1]["message"]["content"] == ""
+    assert "".join(line["message"]["content"] for line in lines) == stub.PLAIN_REPLY
+
+
+def test_a_non_streamed_chat_is_still_one_object() -> None:
+    """The other call shape, unchanged — both exercise the real client."""
+    from fastapi.testclient import TestClient
+
+    with TestClient(stub.app) as client:
+        body = client.post(
+            "/api/chat",
+            json={"model": "model-stub", "messages": [{"role": "user", "content": "hi"}]},
+        ).json()
+
+    assert body["done"] is True
+    assert body["message"]["content"] == stub.PLAIN_REPLY
+
+
+def test_a_structured_answer_survives_being_chunked() -> None:
+    """A JSON document arriving in three pieces is what a real stream looks like.
+
+    The `ollama` package reassembles the lines before
+    `with_structured_output` ever sees them, so chunking exercises that
+    reassembly rather than stepping around it. If the split were lossy, every
+    insight generation in the e2e profile would break — and this is the assertion
+    that would say so first.
+    """
+    from fastapi.testclient import TestClient
+
+    schema = MoneyFigure.model_json_schema()
+    with TestClient(stub.app) as client:
+        response = client.post(
+            "/api/chat",
+            json={
+                "model": "model-stub",
+                "stream": True,
+                "format": schema,
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+        )
+        lines = [json.loads(line) for line in response.text.splitlines() if line.strip()]
+
+    reassembled = "".join(line["message"]["content"] for line in lines)
+    MoneyFigure.model_validate(json.loads(reassembled))

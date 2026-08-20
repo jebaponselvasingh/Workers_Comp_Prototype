@@ -169,8 +169,25 @@ def test_the_prompt_files_are_versioned_and_declare_their_own_key() -> None:
     # And every `.md` beside the loader is a prompt somebody can reach, so a
     # file added without being wired to a kind fails here rather than sitting
     # unloaded.
-    expected = {kind.value for kind in InsightKind} | {"system"}
+    #
+    # **Two copilot files joined the set in Story 6.3** (AD-15: amended, never
+    # deleted). `copilot_system` is the chat surface's own preamble — a sibling
+    # of `system` rather than a kind composed on top of it, because `system.md`
+    # ends by instructing the model to answer only with JSON, which is right for
+    # four constrained completions and exactly wrong for a streamed
+    # conversation. `copilot_greeting` is not an instruction at all: it is the
+    # deterministic case-summary line (AD-2), filed here because user-visible
+    # text belongs in a versioned file a reviewer reads as prose.
+    #
+    # Both are loaded by key like everything else, so both are covered by the
+    # header validation above rather than exempted from it.
+    copilot = {"copilot_system", "copilot_greeting"}
+    expected = {kind.value for kind in InsightKind} | {"system"} | copilot
     assert {path.stem for path in PROMPTS_DIR.glob("*.md")} == expected
+    for key in sorted(copilot):
+        assert load(key).key == key
+        assert load(key).version >= 1
+        assert load(key).text
 
 
 #: Every module that plausibly *would* write `ai_insight` if AD-12 were not
@@ -256,14 +273,31 @@ def _code_only(source: str) -> str:
     return "\n".join(out)
 
 
-def test_exactly_two_modules_read_the_ollama_base_url() -> None:
+def test_exactly_the_declared_modules_read_the_ollama_base_url() -> None:
     """AD-5 stays a ten-second grep, and this is the ten seconds.
 
     `services/rag/client.py` argues the property at length: "no PHI leaves the
     network" is a claim about every outbound call in the process, and it is
     checkable only while the base URL has a countable set of readers. Story 6.1
-    had one; Story 6.2 adds the chat client and says so in both docstrings.
-    Three would be an audit rather than a grep, so the assertion is an equality.
+    had one; Story 6.2 added the chat client; Story 6.3 adds
+    `agents/chat_model.py`, the streaming model the copilot graph runs on.
+
+    **Amended rather than deleted, and renamed with it** (AD-15). The test was
+    `test_exactly_two_modules_read_the_ollama_base_url` and the number was in
+    its name, so a fourth reader made the name a lie before it made the
+    assertion one. The name no longer counts, because the property was never
+    about the count: it is that the set is *enumerable and declared*, and that
+    every member of it lives in `agents/` or `services/rag/`.
+
+    `agents/chat_model.py` is a correct addition rather than a violation, and
+    `agents/client.py` predicted it in as many words: its `ChatClient` Protocol
+    is structured-only by design and reserves the streaming surface for Story
+    6.3, which "will own its own surface rather than widening this one".
+    Widening the Protocol would have put a streaming path inside the module
+    whose whole claim is that it makes one kind of request.
+
+    The equality stays an equality. A fifth reader should be a diff somebody
+    argues for here, which is the entire mechanism.
     """
     readers = {
         str(path.relative_to(SERVER_ROOT))
@@ -276,7 +310,12 @@ def test_exactly_two_modules_read_the_ollama_base_url() -> None:
         and "tests" not in path.parts
         and "ollama_base_url" in path.read_text(encoding="utf-8")
     }
-    assert readers == {"config.py", "services/rag/client.py", "agents/client.py"}
+    assert readers == {
+        "config.py",
+        "services/rag/client.py",
+        "agents/client.py",
+        "agents/chat_model.py",
+    }
 
 
 def _clear_env_cache(ls_utils: Any) -> None:
@@ -306,8 +345,8 @@ def test_langsmith_tracing_is_forced_off_and_cannot_be_switched_back_on() -> Non
     environment at the first completion and POSTs the whole prompt body and the
     whole completion to `api.smith.langchain.com`. For this build that is a
     claim's clinical narrative leaving the network through a code path nobody
-    wrote — and `test_exactly_two_modules_read_the_ollama_base_url` would still
-    pass, because no file in the tree mentions a URL.
+    wrote — and `test_exactly_the_declared_modules_read_the_ollama_base_url`
+    would still pass, because no file in the tree mentions a URL.
 
     Asserted through the **vendor's own predicate** rather than by reading the
     environment back, so a rename of the variables upstream fails here instead

@@ -70,6 +70,26 @@ about a model's output anyway.
 stub answers NDJSON when asked and a single JSON object otherwise. Handling
 both is what keeps "nothing is swapped in Python" true of the chat path as well
 as the embeddings one.
+
+**And it streams in more than one chunk, since Story 6.3.** This shipped
+emitting exactly one NDJSON line carrying both the whole content and
+`done: true` — legal, and the right shape for a single-turn stub whose only
+caller wanted a structured object. It is the wrong shape for a copilot: with one
+frame, "the stream renders" is an assertion about a single event, "exactly one
+terminal event per run" holds vacuously, and a server that accidentally emitted
+two would go unnoticed by every test in the suite.
+
+So `_chunks(text)` splits the content into `STUB_CHAT_CHUNKS` (default 3)
+`done: false` lines followed by a final `done: true` line with **empty
+content** — which is Ollama's real shape, and the reason the final line is empty
+matters: a client that concatenated content across every line would double the
+last chunk if the terminal line repeated it. Deterministic, like everything else
+here: the same request produces the same split on every run.
+
+Structured (`format`) requests are chunked too. A JSON document arriving in
+three pieces is what a real constrained-decoding stream looks like, and the
+`ollama` package reassembles it before `with_structured_output` ever sees it —
+so chunking exercises that reassembly instead of stepping around it.
 """
 
 import hashlib
@@ -95,6 +115,19 @@ from pydantic import BaseModel
 #: of only in a unit test with a fake client. A constant that could not be
 #: moved made the paragraph above a claim the container could not honour.
 EMBEDDING_DIMENSIONS = int(os.environ.get("STUB_EMBEDDING_DIMENSIONS", "1024"))
+
+#: How many content-bearing lines a streamed chat answer is split into.
+#:
+#: Three by default: enough that "more than one frame arrived" is a real
+#: assertion, few enough that an e2e spec is not waiting on a hundred round
+#: trips. Settable for the same reason `STUB_EMBEDDING_DIMENSIONS` is — a later
+#: story wanting to exercise a long stream, or a one-chunk one, should not have
+#: to edit this container.
+#:
+#: A value below 1 is clamped to 1: zero content lines followed by a terminal
+#: line is a stream that says nothing, which is a state the real server does not
+#: produce and which no caller should have to handle.
+STUB_CHAT_CHUNKS = max(1, int(os.environ.get("STUB_CHAT_CHUNKS", "3")))
 
 app = FastAPI(title="LINEWORKER model-stub", docs_url=None, redoc_url=None)
 
@@ -365,26 +398,65 @@ def _envelope(body: dict[str, Any], content: str) -> dict[str, Any]:
     }
 
 
+def _partial(body: dict[str, Any], content: str) -> dict[str, Any]:
+    """One non-terminal streamed line: content, and `done: false`.
+
+    No `done_reason` — the field is only meaningful once a turn has ended, and a
+    stub that set it on every line would be teaching a client that it means
+    nothing.
+    """
+    return {
+        "model": body.get("model", "model-stub"),
+        "created_at": "2026-01-01T00:00:00Z",
+        "message": {"role": "assistant", "content": content},
+        "done": False,
+    }
+
+
+def _chunks(text: str, count: int) -> list[str]:
+    """Split `text` into `count` pieces, deterministically and without loss.
+
+    Concatenating the result is `text` exactly — which is the property the whole
+    chunking rests on, because a client reassembles a structured answer from
+    these pieces and a split that dropped or duplicated a character would turn
+    every structured e2e generation into an unexplainable parse failure.
+
+    Ceiling division rather than an even split, so the last piece is the short
+    one and no piece is empty for a text longer than `count`. A text *shorter*
+    than `count` yields fewer pieces than asked for, which is honest: there is
+    nothing to put in the extra lines.
+    """
+    if not text:
+        return [""]
+    size = -(-len(text) // count)
+    return [text[index : index + size] for index in range(0, len(text), size)]
+
+
 @app.post("/api/chat")
 def chat(body: dict[str, Any]) -> Any:
     """A deterministic assistant turn, honouring `format` and `stream`.
 
     **Streaming is answered when it is asked for**, because the shipped client
     asks for it: `ChatOllama` sends `stream: true` unless told otherwise, and
-    the `ollama` package then reads an NDJSON body line by line. One line
-    carrying both the content and `done: true` is a legal stream and is what a
-    single-turn stub has to say; `done_reason` is `stop` rather than `load`,
-    which the client skips.
+    the `ollama` package then reads an NDJSON body line by line.
 
-    Non-streaming requests get the same object as a plain JSON body, so both
+    The shape is Ollama's own: `STUB_CHAT_CHUNKS` lines carrying a slice of the
+    content with `done: false`, then one final line with **empty** content and
+    `done: true`. `done_reason` is `stop` rather than `load`, which the client
+    skips. See the module docstring on why one line was not enough.
+
+    Non-streaming requests get the whole thing as a plain JSON body, so both
     call shapes exercise the real client against the real wire format.
     """
     content = _content(body)
-    envelope = _envelope(body, content)
     if not body.get("stream", False):
-        return envelope
+        return _envelope(body, content)
 
     def lines() -> Iterator[bytes]:
-        yield (json.dumps(envelope) + "\n").encode()
+        for piece in _chunks(content, STUB_CHAT_CHUNKS):
+            yield (json.dumps(_partial(body, piece)) + "\n").encode()
+        # The terminal line carries no content, so a client that concatenates
+        # every line's content reassembles exactly what was sent.
+        yield (json.dumps(_envelope(body, "")) + "\n").encode()
 
     return StreamingResponse(lines(), media_type="application/x-ndjson")

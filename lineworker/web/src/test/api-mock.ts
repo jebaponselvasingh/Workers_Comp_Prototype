@@ -109,6 +109,30 @@ export interface StubRoutes {
    * render four empty cards with nothing anywhere saying why.
    */
   claimInsights?: StubRouteFor;
+  /**
+   * `GET /copilot/claims/{id}/threads` (Story 6.3) — the conversation list and
+   * the seeded greeting.
+   */
+  copilotThreads?: StubRouteFor;
+  /** `POST /copilot/claims/{id}/threads` (6.3) — "new conversation". */
+  copilotNewThread?: StubRouteFor;
+  /** `GET /copilot/threads/{id}/messages` (6.3) — one checkpointed transcript. */
+  copilotTranscript?: StubRouteFor;
+  /**
+   * `POST /copilot/threads/{id}/runs` (6.3) — the SSE run.
+   *
+   * **The only route in this file whose success is not JSON**, which is why it
+   * has a type of its own rather than a `StubRoute`. A `text/event-stream`
+   * response has no parsed body: it has a `ReadableStream` that yields frames,
+   * and `src/api/copilot.ts` reads it with a `TextDecoder`. Nothing in this file
+   * could produce one before — `respond()` calls `JSON.stringify`.
+   *
+   * A refusal (the single-flight 409, the read-only 409, a 404) *is* an ordinary
+   * problem+json `StubRoute`, because that is exactly what the server answers:
+   * both are decided before the stream begins, which is the whole reason the
+   * single-flight answer can be a status code at all.
+   */
+  copilotRun?: StubRoute | { sse: readonly string[] };
   /** `POST /claims/{id}/insights/refresh` (Story 6.2). Matched with the read
    * above — the two share a path prefix and differ only by method, so the
    * router branches on the method rather than on a longer substring. */
@@ -4078,6 +4102,133 @@ export const EMAIL_INVALID = {
 /** Never settles — the request stays in flight for the life of the test. */
 const pending = (): Promise<Response> => new Promise<Response>(() => {});
 
+/**
+ * An SSE response: a `ReadableStream` body and the right content type.
+ *
+ * The frames are handed in already framed (`event: …\ndata: …\n\n`), because
+ * what a run test is usually about is the framing — a terminal event that
+ * arrived twice, a `data:` line split across a read boundary, a keepalive comment
+ * between two frames — and a helper that assembled them from a nicer shape would
+ * hide the thing under test.
+ *
+ * Each frame is enqueued as its own chunk, which is also deliberate: it is the
+ * shape the reader actually meets on a network, and it exercises the partial-frame
+ * buffering in `streamRun` rather than handing it one complete document.
+ */
+function sseResponse(frames: readonly string[]): Response {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const frame of frames) controller.enqueue(encoder.encode(frame));
+      controller.close();
+    },
+  });
+  return new Response(stream, {
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+  });
+}
+
+/** One SSE frame, in the server's own copilot stream convention. */
+export function sseFrame(event: string, data: unknown): string {
+  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
+/** The frames a plain successful run emits: two chunks, then one `done`. */
+export const COPILOT_RUN_OK: readonly string[] = [
+  sseFrame("updates", { node: "entry_router" }),
+  sseFrame("messages", { content: "The claim is " }),
+  sseFrame("messages", { content: "in treatment." }),
+  sseFrame("done", { threadId: "claim.WC-20017.u1.s1" }),
+];
+
+/** `GET /copilot/claims/{id}/threads` on a claim with one conversation. */
+export const COPILOT_THREADS = {
+  status: 200,
+  body: {
+    items: [
+      {
+        threadId: "claim.WC-20017.u1.s1",
+        conversationSeq: 1,
+        isCurrent: true,
+        createdAt: "2026-08-20T09:00:00Z",
+      },
+    ],
+    currentThreadId: "claim.WC-20017.u1.s1",
+    greeting:
+      "Case summary for WC-20017 — Marcus Delgado, Line Operator at Boeing (WA).",
+    greetingVersion: 1,
+  },
+};
+
+/** …and on a claim nobody has opened the panel on. The normal first state. */
+export const COPILOT_THREADS_EMPTY = {
+  status: 200,
+  body: {
+    items: [],
+    currentThreadId: null,
+    greeting:
+      "Case summary for WC-20017 — Marcus Delgado, Line Operator at Boeing (WA).",
+    greetingVersion: 1,
+  },
+};
+
+/** Two conversations, the second current — the read-only-history fixture. */
+export const COPILOT_THREADS_TWO = {
+  status: 200,
+  body: {
+    items: [
+      {
+        threadId: "claim.WC-20017.u1.s1",
+        conversationSeq: 1,
+        isCurrent: false,
+        createdAt: "2026-08-20T09:00:00Z",
+      },
+      {
+        threadId: "claim.WC-20017.u1.s2",
+        conversationSeq: 2,
+        isCurrent: true,
+        createdAt: "2026-08-20T10:00:00Z",
+      },
+    ],
+    currentThreadId: "claim.WC-20017.u1.s2",
+    greeting:
+      "Case summary for WC-20017 — Marcus Delgado, Line Operator at Boeing (WA).",
+    greetingVersion: 1,
+  },
+};
+
+/** One checkpointed transcript, read back. */
+export const COPILOT_TRANSCRIPT = {
+  status: 200,
+  body: {
+    threadId: "claim.WC-20017.u1.s1",
+    isCurrent: true,
+    messages: [
+      { role: "user", content: "what is the status of this claim?" },
+      { role: "assistant", content: "The claim is in treatment." },
+    ],
+  },
+};
+
+/** An empty transcript — a thread minted but never messaged. */
+export const COPILOT_TRANSCRIPT_EMPTY = {
+  status: 200,
+  body: { threadId: "claim.WC-20017.u1.s1", isCurrent: true, messages: [] },
+};
+
+/** The single-flight refusal, in the server's own shape. */
+export const COPILOT_THREAD_BUSY = {
+  status: 409,
+  body: {
+    type: "/problems/thread-busy",
+    title: "Conflict",
+    status: 409,
+    detail:
+      "This conversation is busy. A message is being answered, or the copilot is waiting for you to approve something.",
+  },
+};
+
 function answer(route: StubRoute): Promise<Response> {
   return route === "pending"
     ? pending()
@@ -4268,6 +4419,47 @@ export function stubApi(routes: StubRoutes): void {
         }
         if (url.includes("/actions")) {
           return answerFor(routes.claimActions ?? CLAIM_ACTIONS, url);
+        }
+        // Story 6.3's four. **Before every `/api/claims…` branch**, and unlike
+        // the diary's that ordering is genuinely load-bearing:
+        // `/api/copilot/claims/WC-1/threads` contains `/api/claims/`… no, it does
+        // not — it contains `/copilot/claims/`. It is first because it is the
+        // most specific prefix and because the four read together, which is this
+        // file's stated rule everywhere else.
+        //
+        // The two `/copilot/claims/…/threads` routes share one URL and differ
+        // only by method, the meetings block's arrangement.
+        if (url.includes("/api/copilot/threads/") && url.endsWith("/runs")) {
+          const route = routes.copilotRun ?? { sse: COPILOT_RUN_OK };
+          if (typeof route === "object" && "sse" in route) {
+            return sseResponse(route.sse);
+          }
+          return answer(route);
+        }
+        if (url.includes("/api/copilot/threads/")) {
+          return answerFor(routes.copilotTranscript ?? COPILOT_TRANSCRIPT, url);
+        }
+        if (url.includes("/api/copilot/claims/")) {
+          const method =
+            typeof input === "string" || input instanceof URL
+              ? (init?.method ?? "GET")
+              : (input as Request).method;
+          if (method === "POST") {
+            return answerFor(
+              routes.copilotNewThread ??
+                {
+                  status: 201,
+                  body: {
+                    threadId: "claim.WC-20017.u1.s2",
+                    conversationSeq: 2,
+                    isCurrent: true,
+                    createdAt: "2026-08-20T10:00:00Z",
+                  },
+                },
+              url,
+            );
+          }
+          return answerFor(routes.copilotThreads ?? COPILOT_THREADS, url);
         }
         // Story 6.2's two, before the case file and for the same reason the four
         // above are: `/api/claims/WC-1/insights` contains `/api/claims/`. The

@@ -14,8 +14,8 @@ Story 6.1 injected an `EmbeddingClient`.
 
 What Story 6.2 put here:
 
-- `client.py` — the build's only chat client, and the second of the two modules
-  that name `OLLAMA_BASE_URL`.
+- `client.py` — the build's only **structured** chat client, and the second
+  module to name `OLLAMA_BASE_URL`.
 - `prompts/` — versioned instruction files loaded by key, the only instruction
   channel, with the shared AD-16 preamble.
 - `schemas.py` — one Pydantic model per kind for what the model may write, and
@@ -25,10 +25,31 @@ What Story 6.2 put here:
 - `envelope.py` — that envelope.
 - `insights.py` — the orchestration both refresh paths enter.
 
-What is deliberately absent: the StateGraph, the supervisor router, threads,
-checkpoints, SSE, the tool *registry*, the quick-action keys, interrupts and
-the approval middleware. Stories 6.3 through 6.6 own those, and every one of
-them lands in this package.
+What Story 6.3 added, which is the copilot spine itself:
+
+- `state.py` — the one closed state schema every node shares (AD-6). New
+  channels are added there by review, never node-locally.
+- `context.py` — the per-run context carrying `CallerContext` and the session
+  factory. The AD-7 split lives across these two files: a caller *reference* is
+  checkpointed, a caller *scope* never is.
+- `registry.py` — the AD-13 registry the four wrappers above were promoted
+  into, plus the `WriteNotApproved` raise that ships before any write tool does.
+- `chat_model.py` — the streaming model factory, and the build's fourth reader
+  of `OLLAMA_BASE_URL`. `client.py` says why a fourth is correct rather than a
+  violation.
+- `graph.py` — the one compiled `StateGraph`: a deterministic entry router
+  (dispatch map empty until 6.4) around a `create_agent` grounded-chat node.
+- `threads.py` — thread-id minting, the advisory-lock single-flight guard, and
+  the saver-derived interrupt probe. The checkpoint tables are read **through
+  the saver** and never with SQL (AD-3's exception).
+- `greeting.py` — the seeded case-summary line, which is deterministic service
+  output rather than model prose (AD-2).
+
+What is still deliberately absent: the quick-action keys and their node map
+(6.4), the `interrupt()` producers, the approval-marker lifecycle and the RTW
+letter (6.5), and the `ai_unavailable`/`ai_limit` degradation surface (6.6).
+The schema declares `pending_approval`, the stream speaks `interrupt`, the run
+bounds are wired — and nothing raises, fills or surfaces any of them yet.
 
 Re-exported here so a composition root writes `from agents import
 refresh_claim_insights` — the shape `services/rag` and `services/derivations`

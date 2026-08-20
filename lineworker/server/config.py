@@ -29,7 +29,7 @@ from sqlalchemy.engine import make_url
 #: `api.smith.langchain.com`. For this build that is a claim's clinical
 #: narrative and a model's answer about it leaving the network (AD-11), through
 #: a code path nobody wrote and no grep for `ollama_base_url` can see —
-#: `tests/test_ai_insights.py::test_exactly_two_modules_read_the_ollama_base_url`
+#: `tests/test_ai_insights.py::test_exactly_the_declared_modules_read_the_ollama_base_url`
 #: greps a string and is blind to it by construction.
 #:
 #: AD-5 says there is no cloud code path and AD-16's containment floor rests on
@@ -331,6 +331,63 @@ class Settings(BaseSettings):
     # refresh cadence never trips it, short enough that a job that has been
     # failing for a week is visible on the card rather than only in a log.
     insight_staleness_disclosure_days: int = Field(default=7, gt=0)
+
+    # --- The copilot (Story 6.3) --------------------------------------
+    # How long a checkpointed conversation is kept. **This knob is the whole
+    # of Story 6.3's retention obligation and none of its enforcement**: AD-11
+    # makes chat history PHI-class — a checkpoint quotes diagnoses, wages and
+    # fraud indicators back verbatim — and `docs/Architecture-LINEWORKER.md`
+    # §5.4 gives it its own retention figure, distinct from the seven-year
+    # audit floor. The purge job that reads this is **Epic 8's** (Story 8.1's
+    # PHI purge cascade, which covers checkpoints, embeddings and the insight
+    # cache together through one `services/audit` path); nothing in this story
+    # deletes a checkpoint row.
+    #
+    # It ships now rather than with the job because the number is a deployment
+    # decision and the story that creates the data is the story that should
+    # have to state how long it lives. Ninety days: long enough that a handler
+    # returning to a claim after a quarter still has the conversation, short
+    # enough that a thread is not an indefinite second copy of the case file.
+    # `gt=0` because a zero retention is either "delete immediately" or "keep
+    # for ever" depending on how the comparison is written, and neither is a
+    # value to arrive at by accident.
+    copilot_checkpoint_retention_days: int = Field(default=90, gt=0)
+    # The wall-clock bound on one run, from the first token requested to the
+    # terminal event. A *run* bound rather than a per-request one: a
+    # `create_agent` loop may make several model calls, so
+    # `chat_request_timeout_seconds` bounds each hop and this bounds the loop.
+    # Without it a model that answers slowly for ever is a stream that never
+    # terminates, and the one-terminal-event invariant is only meaningful if a
+    # terminal event always arrives.
+    #
+    # Three hundred seconds: five model calls' worth of the 120 s per-request
+    # timeout is the pathological case and this cuts it off well short, while
+    # still clearing a cold CPU-only dev box's first answer. **Surfacing this
+    # to the user as `ai_limit` is Story 6.6**; wiring the bound is this story's,
+    # so no run is ever unbounded in the window between them.
+    copilot_run_timeout_seconds: float = Field(default=300.0, gt=0)
+    # Ollama's `num_predict` — the hard ceiling on tokens one completion may
+    # decode. A bound on cost and on latency rather than on quality: the panel
+    # renders a chat turn, and a model that decided to write four thousand
+    # tokens about a claim has misunderstood the question in a way no prompt
+    # edit reliably prevents. `gt=0` because Ollama reads `-1` as "unlimited"
+    # and `0` as "decode nothing", and the field must admit neither.
+    copilot_max_output_tokens: int = Field(default=1024, gt=0)
+    # How often the SSE transport emits a comment frame while nothing else is
+    # happening. Fifteen seconds, which is comfortably inside every idle
+    # timeout between a browser and this process — nginx's `proxy_read_timeout`
+    # defaults to 60 s, and a first token from a cold model can take longer
+    # than that. A keepalive is a `: ` comment line, so it costs two bytes and
+    # cannot be mistaken for an event by any conforming client.
+    copilot_sse_keepalive_seconds: float = Field(default=15.0, gt=0)
+    # How many tool calls one run may make before the harness stops offering
+    # tools. The other half of the run bound, in the dimension a wall clock
+    # does not cover: a model that loops calling `claim_reader` forever is
+    # cheap per call and unbounded in aggregate. Eight is generous for a
+    # grounded-chat turn over five registered read tools — every question this
+    # story can ask is answerable in one or two — and low enough that a loop is
+    # cut short rather than merely noticed.
+    copilot_max_tool_calls_per_run: int = Field(default=8, gt=0)
 
     @property
     def payment_batch_weekday_numbers(self) -> frozenset[int]:

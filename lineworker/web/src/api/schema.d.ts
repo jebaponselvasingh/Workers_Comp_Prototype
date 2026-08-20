@@ -825,6 +825,156 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/copilot/claims/{claim_business_id}/threads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * This caller's conversations about one claim, plus the seeded greeting
+         * @description List the caller's own threads on a claim. Creates nothing.
+         *
+         *     A GET that minted would make opening the panel write a row — and would mint
+         *     one for every claim a handler merely clicked through in the queue. The SPA
+         *     `POST`s once when the list comes back empty, which is one extra round trip
+         *     on the first conversation and none thereafter.
+         *
+         *     **An empty list is 200, never 404**, for `GET …/insights`' reason: "nobody
+         *     has talked to the copilot about this claim yet" is a state with an
+         *     affordance attached, and answering it as a missing resource would send the
+         *     panel down its error branch for the normal state of a fresh deployment.
+         *
+         *     404 for a claim outside the caller's book, in the case file's exact wording
+         *     — which is also what resolves the claim, since the greeting needs it.
+         */
+        get: operations["threads_copilot_claims__claim_business_id__threads_get"];
+        put?: never;
+        /**
+         * Start a new conversation on this claim (mints the next sequence)
+         * @description Mint the caller's next conversation on this claim.
+         *
+         *     **One operation behind two affordances**, and deliberately not two routes.
+         *     "The panel opened on a claim with no conversation" and "the handler pressed
+         *     New conversation" are the same request: mint `max(seq) + 1`. A separate
+         *     `get-or-create` would need a "did it already exist?" answer that the
+         *     switcher does not use and would make the first-conversation path different
+         *     from every later one.
+         *
+         *     The prior thread becomes read-only by arithmetic rather than by an update —
+         *     `is_current` is `seq == max(seq)`, so nothing is written to the old row (see
+         *     `CopilotThread` on why the table is append-only).
+         *
+         *     **201 with no `Location` header**, `schedule_meeting`'s call: the created
+         *     entity is the body, and the only way to address a thread afterwards is
+         *     through the two routes below, both of which take the id this response
+         *     carries.
+         *
+         *     A race between two clicks is arbitrated by `uq_copilot_thread_claim_id`
+         *     rather than by a lock. The loser sees an `IntegrityError` and is retried a
+         *     **bounded** number of times: each attempt reads a `max(seq)` that includes
+         *     the winner's row, so it mints the next one. Exhausting the bound is a 409
+         *     rather than the 500 it used to be — see `open_thread` on why "retried once"
+         *     was wrong, and `data/repositories/copilot.py` on the read-then-write gap it
+         *     was wrong about.
+         *
+         *     **409 while the current conversation is still answering.** Minting `seq + 1`
+         *     against a running thread freezes a run mid-answer: the assistant turn is
+         *     still checkpointed, into a thread that has become read-only, so the handler
+         *     gets no reply and no way to ask again in the conversation they asked in.
+         */
+        post: operations["new_thread_copilot_claims__claim_business_id__threads_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/copilot/threads/{thread_id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One conversation's transcript, read back from the checkpoints
+         * @description Read a conversation back — **the story's point, on one route**.
+         *
+         *     FR-CP-2: per-claim history survives navigation and re-login. That is this
+         *     endpoint: the messages come out of the checkpoint tables, so they survive a
+         *     reload, a logout, and the api process being replaced under them.
+         *
+         *     **Through the saver, never with SQL.** AD-3's exception vendors the
+         *     checkpoint DDL on the understanding that application code does not read
+         *     those tables, and a history route that ran `SELECT … FROM checkpoints`
+         *     would be the thing that understanding forbids.
+         *     `tests/test_layering.py` greps for one.
+         *
+         *     Read-only for every thread, current or superseded — freezing a prior thread
+         *     freezes *posting*, not reading.
+         *
+         *     404 for a thread that is not the caller's own, in the same document an
+         *     unknown id produces (see `_thread_not_found`).
+         */
+        get: operations["transcript_copilot_threads__thread_id__messages_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/copilot/threads/{thread_id}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send a message and stream the answer (SSE)
+         * @description Run one turn on a thread and stream it. **Holds no session while it does.**
+         *
+         *     The order below is the whole of the endpoint's correctness:
+         *
+         *     0. **Decide which kind of run this is, before anything else.** Exactly one
+         *        of `message` and `command`, and a `command` that actually carries a
+         *        `resume` — see `RunRequest`. This step is numbered zero because it used
+         *        to be split in two and interleaved with step 3, which is how a body
+         *        carrying both fields walked past the interrupt-pending 409 and had its
+         *        message silently dropped.
+         *     1. **Resolve the thread under a freshly built context.** `ctx` came from
+         *        `api.deps.get_caller_context` on *this* request, so the ownership and
+         *        scope checks are against who the caller is now — not against anything a
+         *        checkpoint remembers (AD-7). A thread that is not this caller's, or whose
+         *        claim has left their book, is the `_thread_not_found` 404.
+         *     2. **Refuse a superseded thread**, 409 `/problems/thread-read-only`.
+         *     3. **Refuse a busy thread**, 409 `/problems/thread-busy`, for either of its
+         *        two causes: the advisory lock is held, or the saver reports a pending
+         *        interrupt. The lock is *tried* here and, when it is not won, **never
+         *        taken** — the rejected request holds nothing.
+         *     4. **Release the session**, `await db.rollback()`, before a single token is
+         *        requested. See the module docstring; this is the H2 fix at conversation
+         *        scale.
+         *     5. **Stream**, holding the lock for the length of the run.
+         *
+         *     The wall clock is enforced around the whole stream
+         *     (`copilot_run_timeout_seconds`), not inside the graph, so that the decision
+         *     to terminate lives in exactly one place — the same place that decides which
+         *     terminal frame to send.
+         */
+        post: operations["run_copilot_threads__thread_id__runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/dashboard/charts": {
         parameters: {
             query?: never;
@@ -4447,6 +4597,53 @@ export interface components {
          */
         RiskBand: "high" | "med" | "low";
         /**
+         * RunRequest
+         * @description What starts a run: a message, or a resume decision. Never a thread id.
+         *
+         *     `extra="forbid"` for `ClaimFieldPatch`'s reason: an unknown key is a 422
+         *     from the contract rather than a value silently dropped on the way to a
+         *     graph. It matters more here than anywhere else in the build, because the
+         *     keys that are *not* on this model are the ones that must never be: there is
+         *     no `threadId`, no `userId`, no `employerId`, no `scope`, no `systemPrompt`
+         *     and no `model`.
+         *
+         *     `command` is the resume shape, landing now and unused: Story 6.5 raises the
+         *     first interrupt, and this story's job is that its round trip does not need a
+         *     new endpoint.
+         *
+         *     ## Exactly one of the two, and a `command` that is really one
+         *
+         *     A body carrying **neither** is a 422, and so is a body carrying **both** —
+         *     which was a 200 until the review of Story 6.3, and a bad one. The route
+         *     prefers the `Command` when it is present and skips the interrupt-pending
+         *     check when it is, so `{"message": "…", "command": {}}` walked past the
+         *     spec's "second message while interrupt pending → 409" row *and* discarded
+         *     the question, answering 200 with a stream that resumed nothing. Two fields
+         *     that mean "which kind of run is this?" have to be mutually exclusive, or the
+         *     answer to "which kind?" is decided by the order of two `if`s.
+         *
+         *     A `command` without a `resume` key is a 422 for the same reason rather than
+         *     a resume with `None`: `Command(resume=None)` is a real instruction to
+         *     LangGraph — it resumes an interrupt with the value `None` — so accepting a
+         *     body that never said so would be inventing a decision on the caller's
+         *     behalf, and 6.5's approve/edit/reject round trip is exactly where that would
+         *     become a wrong answer to a question about a claim.
+         */
+        RunRequest: {
+            /**
+             * Command
+             * @description Resume an interrupted run, `{"resume": …}`. The shape ships with Story 6.3; the first interrupt that can produce one is Story 6.5's.
+             */
+            command?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Message
+             * @description The handler's message. Free text, treated as a question about the claim this thread is on — never as an instruction that can change scope, routing or tool selection (AD-16).
+             */
+            message?: string | null;
+        };
+        /**
          * ScheduleWeekResponse
          * @description One week of the indemnity payment schedule (AC 2).
          *
@@ -4864,6 +5061,71 @@ export interface components {
             stage: components["schemas"]["Stage"];
         };
         /**
+         * ThreadListResponse
+         * @description A claim's conversations for this caller, plus the two things the panel opens with.
+         *
+         *     Not the `{items, nextCursor, total}` list envelope, and the difference is
+         *     real rather than an omission: this list is not paged and cannot be. A
+         *     handler has a handful of conversations per claim, all of them are rendered
+         *     in the switcher at once, and a cursor would be a contract promising
+         *     pagination that the switcher has no affordance for.
+         *
+         *     `currentThreadId` is `null` for a claim nobody has opened the panel on. That
+         *     is a first-class state — the SPA `POST`s once to mint `seq 1` — and not an
+         *     error: answering a fresh claim with a 404 would send the panel down its
+         *     error branch for the normal state of every claim on a fresh deployment
+         *     (NFR-3).
+         *
+         *     `greeting` is the seeded case-summary line (UX-DR8), and it is
+         *     **deterministic service output rather than model prose** (AD-2) — see
+         *     `agents/greeting.py`. It rides on this payload rather than on the transcript
+         *     because it is a property of the claim, not of a conversation: every thread
+         *     on one claim opens with the same one, and it renders before the first
+         *     message exists.
+         */
+        ThreadListResponse: {
+            /** Currentthreadid */
+            currentThreadId: string | null;
+            /**
+             * Greeting
+             * @description The seeded case-summary greeting for this claim. Server-composed from deterministic figures — the model does not write it, and it is identical on every read.
+             */
+            greeting: string;
+            /**
+             * Greetingversion
+             * @description Which version of the greeting template produced the line above.
+             */
+            greetingVersion: number;
+            /** Items */
+            items: components["schemas"]["ThreadResponse"][];
+        };
+        /**
+         * ThreadResponse
+         * @description One conversation's identity — never its contents.
+         *
+         *     `threadId` is the server-minted key; a client stores it and sends it back in
+         *     a path, and has no way to construct one (AD-6).
+         *
+         *     `isCurrent` is **server-derived** and is `conversation_seq == max(seq)`. It
+         *     is on the wire rather than left to the browser for AD-10's reason in
+         *     miniature: the SPA would have to sort the list and compare to reproduce it,
+         *     and a client that computed "current" would be a second place the read-only
+         *     rule lives — with the 409 arriving as a surprise when the two disagreed.
+         */
+        ThreadResponse: {
+            /** Conversationseq */
+            conversationSeq: number;
+            /**
+             * Createdat
+             * Format: date-time
+             */
+            createdAt: string;
+            /** Iscurrent */
+            isCurrent: boolean;
+            /** Threadid */
+            threadId: string;
+        };
+        /**
          * TimelineEntryResponse
          * @description One line of the case timeline.
          *
@@ -4891,6 +5153,42 @@ export interface components {
             caseload: number;
             /** Highrisk */
             highRisk: number;
+        };
+        /**
+         * TranscriptMessage
+         * @description One turn of a checkpointed conversation.
+         *
+         *     `role` is `user` or `assistant` and nothing else. Tool calls and tool
+         *     results are part of *how* an answer was produced and are deliberately not
+         *     published: they carry raw service payloads, they are not what the transcript
+         *     renders, and a client that received them would be one component away from
+         *     rendering a claim's reserve twice in two formats.
+         *
+         *     **A message with empty content is omitted entirely**, not sent as a blank
+         *     bubble — an assistant turn that only carried tool calls has nothing to say.
+         */
+        TranscriptMessage: {
+            /** Content */
+            content: string;
+            /** Role */
+            role: string;
+        };
+        /**
+         * TranscriptResponse
+         * @description A thread's messages, oldest first, read back through the saver.
+         *
+         *     Read-only, always, for every thread — current or superseded. That is what
+         *     makes "new conversation freezes the prior thread" a freeze of *posting*
+         *     rather than of reading: the transcript stays available for as long as the
+         *     checkpoints do (`copilot_checkpoint_retention_days`, purged by Epic 8).
+         */
+        TranscriptResponse: {
+            /** Iscurrent */
+            isCurrent: boolean;
+            /** Messages */
+            messages: components["schemas"]["TranscriptMessage"][];
+            /** Threadid */
+            threadId: string;
         };
         /**
          * TreatmentOverviewResponse
@@ -7803,6 +8101,366 @@ export interface operations {
                 };
             };
             /** @description The local model server did not answer, so the query claim could not be embedded. Temporary and specific to AI-backed reads — claim data is unaffected (RFC 9457 problem document). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+        };
+    };
+    threads_copilot_claims__claim_business_id__threads_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The claim's business id, `WC-nnnn`. */
+                claim_business_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ThreadListResponse"];
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description No such claim in the caller's scope. Deliberately the same answer for a claim that does not exist and one that belongs to another employer — see the route docstring (RFC 9457 problem document). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    new_thread_copilot_claims__claim_business_id__threads_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The claim's business id, `WC-nnnn`. */
+                claim_business_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ThreadResponse"];
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description No such claim in the caller's scope. Deliberately the same answer for a claim that does not exist and one that belongs to another employer — see the route docstring (RFC 9457 problem document). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /**
+             * @description `/problems/thread-busy` — a new conversation cannot be started right now. Either a run is still streaming into the current conversation (superseding it would checkpoint that answer into a conversation nobody can continue), or several mints raced and this one lost every attempt. Retry in a moment.
+             *
+             *     **No extension member**, like the other 409s on this router (RFC 9457 problem document).
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    transcript_copilot_threads__thread_id__messages_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A server-minted thread id, `claim.<claimId>.u<userId>.s<seq>`. Clients never construct one — they come from the threads route. */
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TranscriptResponse"];
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description No such thread for this caller. Deliberately the same answer for a thread that does not exist, one that belongs to somebody else, and one whose claim has left the caller's caseload — see the route docstring on why it is never 403 (RFC 9457 problem document). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description The copilot's conversation store could not be reached. Nothing was changed on the claim, and the rest of the console is unaffected — the copilot's database pool is deliberately separate from the application's (RFC 9457 problem document). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+        };
+    };
+    run_copilot_threads__thread_id__runs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A server-minted thread id, `claim.<claimId>.u<userId>.s<seq>`. Clients never construct one — they come from the threads route. */
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunRequest"];
+            };
+        };
+        responses: {
+            /** @description A `text/event-stream` of the run. Frames are `messages` (assistant tokens, as they are decoded) and `updates` (a node finished), followed by **exactly one** terminal frame: `done`, `interrupt`, or `error`. An `error` frame's payload is an RFC 9457 problem document, because by the time a stream has started the status is already 200. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description No such thread for this caller. Deliberately the same answer for a thread that does not exist, one that belongs to somebody else, and one whose claim has left the caller's caseload — see the route docstring on why it is never 403 (RFC 9457 problem document). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /**
+             * @description Two refusals, told apart by `type`.
+             *
+             *     `/problems/thread-busy` — the thread is single-flight and is not free: either a run is streaming on it, or a previous run paused for an approval nobody has answered. One `type` for both causes, because the caller cannot act differently on them and the difference is a fact about a run they cannot see. Retry when the current run finishes.
+             *
+             *     `/problems/thread-read-only` — the thread has been superseded by a newer conversation on the same claim. Its transcript stays readable through the messages route; only posting is refused.
+             *
+             *     **Neither carries an extension member**: unlike a version conflict there is no fresh entity to hand back (RFC 9457 problem document).
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description The copilot's conversation store could not be reached. Nothing was changed on the claim, and the rest of the console is unaffected — the copilot's database pool is deliberately separate from the application's (RFC 9457 problem document). */
             503: {
                 headers: {
                     [name: string]: unknown;

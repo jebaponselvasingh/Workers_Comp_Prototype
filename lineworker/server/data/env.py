@@ -1,9 +1,26 @@
-"""Alembic environment. DATABASE_URL comes from config.py — never os.environ."""
+"""Alembic environment. DATABASE_URL comes from config.py — never os.environ.
+
+## The autogenerate exclusion (Story 6.3, AD-3's exception)
+
+`target_metadata` below is `Base.metadata` with no filter, which is right for
+every table this project owns. Migration 0043 creates four it deliberately does
+not — LangGraph's checkpoint tables, vendored under AD-3's registered exception
+— and without an exclusion `alembic check` would read all four as drift and
+propose dropping them.
+
+`include_name` and `include_object` are installed on both `context.configure`
+calls below and come from `data/checkpoint_tables.py`, which argues the case and
+holds the list. They live in a module of their own rather than here because
+**this file cannot be imported**: it runs migrations as a side effect, so the
+test that keeps the list honest against migration 0043 has to find it somewhere
+importable.
+"""
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from config import get_settings
+from data.checkpoint_tables import include_name, include_object
 from logging_config import configure_logging
 
 # Alembic runs as its own process (entrypoint, CI); route its logs through
@@ -24,6 +41,8 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        include_name=include_name,
+        include_object=include_object,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -36,7 +55,12 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            include_name=include_name,
+            include_object=include_object,
+        )
         with context.begin_transaction():
             context.run_migrations()
 

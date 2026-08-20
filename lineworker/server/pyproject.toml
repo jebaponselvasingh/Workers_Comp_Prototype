@@ -43,6 +43,47 @@ dependencies = [
     # LangChain package is a rewrite of the structured-output surface, not a
     # patch to pick up in a `uv lock` nobody read.
     "langchain-ollama>=1.1,<2",
+    # The copilot spine's vendor stack (Story 6.3). Four packages, one range
+    # each, and each range has a reason at both ends.
+    #
+    # `langgraph` is the runtime the one compiled `StateGraph` is built on
+    # (AD-6). The floor is 1.2 because that is the line the spine ratified and
+    # the line whose `AsyncPostgresSaver` DDL migration 0043 vendors; the
+    # ceiling is 1.3 because **the checkpoint schema is frozen against the
+    # pinned minor**. A 1.3 that adds a column would leave the saver writing
+    # against tables that migration created and this project never updated,
+    # which is a silent data failure rather than an import error — so the
+    # ceiling here is a schema guard, not the usual caution about a rewrite.
+    "langgraph>=1.2,<1.3",
+    # The saver itself, and **the package that actually owns the frozen
+    # schema**. `langgraph` above gets a minor ceiling because the checkpoint
+    # schema is frozen against the pinned minor — but the schema is not
+    # `langgraph`'s, it is this one's: migration 0043 vendors *this* package's
+    # `setup()` output and freezes 3.1.2's exact ten-statement `MIGRATIONS`
+    # list. So the same argument has to be applied here, and harder (review of
+    # Story 6.3: it was written for `langgraph` and left as `<4` here, which
+    # admitted every 3.x minor able to add an `ALTER TABLE` this project would
+    # never run). The floor is 3.1.2 because that is the version the DDL was
+    # generated from; the ceiling is 3.2 because a new minor may extend the
+    # schema, and a saver writing against a column migration 0043 never created
+    # is a silent data failure rather than an import error.
+    #
+    # `tests/test_copilot_migration.py` asserts the installed patch version
+    # equals the one the migration names, so even a patch bump inside this range
+    # fails loudly and in a test that names the file to change.
+    "langgraph-checkpoint-postgres>=3.1.2,<3.2",
+    # `AsyncPostgresSaver` takes an `AsyncConnectionPool`, which lives here
+    # rather than in `psycopg` proper. Named explicitly rather than inherited
+    # transitively because `api/app.py` imports it at the composition root: a
+    # runtime import resolved from somebody else's dependency tree is an
+    # `ImportError` the day that somebody drops it (`httpx`'s promotion in 6.1
+    # is the same lesson).
+    "psycopg-pool>=3.2,<4",
+    # `langchain.agents.create_agent` — §5.2's prescribed tool-calling core and
+    # the successor to the deprecated `langgraph.prebuilt.create_react_agent`.
+    # The floor is v1 because that is where `create_agent` exists at all; the
+    # ceiling is the rule the rest of this list keeps for a LangChain package.
+    "langchain>=1.0,<2",
 ]
 
 [dependency-groups]
