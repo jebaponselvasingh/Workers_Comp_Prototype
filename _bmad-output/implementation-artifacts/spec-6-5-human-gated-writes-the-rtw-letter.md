@@ -3,7 +3,8 @@ title: 'Story 6.5 — Human-Gated Writes & the RTW Letter'
 type: 'feature'
 created: '2026-08-20'
 baseline_revision: 'bea8ab3131397a2e93f55c0f2eaa02895c9f3712'
-status: 'in-review'
+final_revision: '7186af29f1ee52a5ef058079e1473fb22e80cb7e'
+status: 'done'
 review_loop_iteration: 0
 followup_review_recommended: true # nineteen findings were patched into the diff, five of them high and all five on the approval path itself — an edit that could rename the pending tool, an edit that could introduce a version pin the handler never saw, a second save that reported success while discarding the letter, two write calls that wedged the thread, and an approval card that vanished on unmount. Four of those five were found independently by both reviewers, which is the signal that the area is dense rather than that the reviewers were thorough. The gate's core is settled; what a second pass should read is the edit-decision guard, the proposal-id handoff and the frontend's interrupt lifecycle across remount and refusal
 context:
@@ -248,7 +249,7 @@ The amendment is small because the schema was built expecting it. `DocType.rtw` 
 
 ## Auto Run Result
 
-Status: in-progress
+Status: done
 
 The 2026-08-20 `blocked` exit is preserved in the Spec Change Log above, which records the alternatives weighed and the decision taken. Options (b) `BlobStore`, (c) diary note and (d) `email_log` were rejected in favour of (a) extending `document`; option (e), descoping the save to its own story, was not needed once (a) was authorized.
 
