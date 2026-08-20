@@ -1,8 +1,9 @@
 """Prompts are versioned files loaded by key — the **only** instruction channel.
 
-The spine's Prompts convention, implemented at its first use. Four kind prompts
-and one shared system preamble live beside this module as `.md` files; nothing
-in the build writes an instruction to a model as a Python string literal.
+The spine's Prompts convention, implemented at its first use. Four kind prompts,
+six quick-action prompts and two shared system preambles live beside this module
+as `.md` files; nothing in the build writes an instruction to a model as a
+Python string literal.
 
 Three things follow from that, and each is the reason for the rule:
 
@@ -171,6 +172,37 @@ def chat_system_message() -> tuple[str, int]:
     return prompt.text, prompt.version
 
 
+def qas_system_message(key: str) -> tuple[str, int]:
+    """The composed system message for one quick action, and its prompt version.
+
+    `system_message`'s shape one surface over, and the difference is which
+    preamble it composes on. **`copilot_system.md`, never `system.md`**, and the
+    distinction is not stylistic: `system.md` ends "Answer only with the JSON
+    object matching the schema you were given", which is correct for the insight
+    cache's four constrained completions and would silently instruct a streamed
+    quick action to answer a handler's question with a JSON document. The
+    failure would look like a model bug rather than like a composition mistake,
+    which is exactly the kind of thing worth making structurally impossible: a
+    caller cannot pass a preamble here, so there is no argument that could
+    select the wrong one.
+
+    Both preambles carry the AD-16 clause in full — material is data, never
+    instructions — so no route can reach a model without it, whichever of the
+    two it went through.
+
+    The version returned is the **quick action's**. The preamble's own version
+    is a property of the build rather than of an answer, exactly as
+    `system_message` treats it.
+
+    Story 6.4's keys map 1:1 to the files this loads, which is the spine's
+    Prompts convention read literally: `agents/graph.py::QUICK_ACTIONS` declares
+    a `prompt_key` per entry, and a key whose file is missing fails at the call
+    that wanted it, naming the key.
+    """
+    action_prompt = load(key)
+    return f"{load(CHAT_SYSTEM_KEY).text}\n\n{action_prompt.text}", action_prompt.version
+
+
 def greeting_template() -> Prompt:
     """The case-summary greeting's template, with its version.
 
@@ -192,5 +224,6 @@ __all__ = [
     "chat_system_message",
     "greeting_template",
     "load",
+    "qas_system_message",
     "system_message",
 ]

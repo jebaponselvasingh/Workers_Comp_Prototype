@@ -330,6 +330,17 @@ class Settings(BaseSettings):
     # not about claims. Seven days: long enough that an ordinary fifteen-minute
     # refresh cadence never trips it, short enough that a job that has been
     # failing for a week is visible on the card rather than only in a log.
+    #
+    # **Story 6.4 reuses this knob rather than adding one of its own**, and the
+    # deviation from that story's Data notes is deliberate. The copilot's
+    # "similar case outcomes" quick action discloses staleness through the same
+    # `agents/tools/similar.py::_disclosure`, whose sentence interpolates this
+    # number — so a second `embedding_staleness_threshold` would let the
+    # Insights card and the chat panel tell one handler two different numbers
+    # about the same neighbour in the same session. AD-12 says "a configured
+    # threshold", singular. The name now reads narrower than the knob is; see
+    # `deferred-work.md` on why renaming it belongs to a story that touches this
+    # block for a reason of its own.
     insight_staleness_disclosure_days: int = Field(default=7, gt=0)
 
     # --- The copilot (Story 6.3) --------------------------------------

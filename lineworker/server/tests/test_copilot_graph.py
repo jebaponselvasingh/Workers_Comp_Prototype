@@ -41,9 +41,9 @@ behaviour for a different test's benefit.
 """
 
 import asyncio
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Iterator, Sequence
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from langchain_core.language_models import BaseChatModel
@@ -59,6 +59,8 @@ from agents.graph import (
     CHAT_NODE,
     ENTRY_NODE,
     QUICK_ACTIONS,
+    QuickAction,
+    Route,
     build_graph,
     caller_ref,
     declared_channels,
@@ -108,6 +110,18 @@ def _graph(**kwargs: Any) -> Any:
     )
 
 
+class _NoEmbeddings:
+    """An `EmbeddingClient` that refuses. Nothing in this module may embed.
+
+    `_context`'s sessionmaker rule, one dependency over: a stand-in that would
+    fail loudly is what makes "no test here reached the model server" an
+    assertion rather than an assumption.
+    """
+
+    async def embed(self, texts: Sequence[str]) -> list[list[float]]:  # pragma: no cover
+        raise AssertionError("a graph test embedded something")
+
+
 def _context(sessionmaker: Any = None, claim: str | None = "WC-20017") -> CopilotContext:
     """A run context whose sessionmaker **explodes unless a test supplies one**.
 
@@ -125,6 +139,13 @@ def _context(sessionmaker: Any = None, claim: str | None = "WC-20017") -> Copilo
         caller=HANDLER_CTX,
         sessionmaker=sessionmaker or _refuse,  # type: ignore[arg-type]
         claim_business_id=claim,
+        # Story 6.4's two context-injected dependencies. Neither is reachable
+        # from any test in this module — nothing here registers a tool that
+        # declares an injection — so they are placeholders whose only job is to
+        # be present, and a client that would explode if embedded is the right
+        # placeholder for the same reason the sessionmaker above is.
+        embedding_client=_NoEmbeddings(),
+        embedding_staleness_days=7,
     )
 
 
@@ -245,9 +266,32 @@ def test_pending_approval_is_declared_and_never_populated() -> None:
 # --- routing -------------------------------------------------------------
 
 
-def test_the_quick_action_map_is_empty_in_this_story() -> None:
-    """6.4's contents are not built here — asserted so "not yet" stays honest."""
-    assert dict(QUICK_ACTIONS) == {}
+def test_the_quick_action_map_holds_the_seven_keys() -> None:
+    """**Amended into its opposite by Story 6.4** (AD-15), and it had to be.
+
+    This test read `test_the_quick_action_map_is_empty_in_this_story` and
+    asserted `dict(QUICK_ACTIONS) == {}` — the honest statement while the
+    dispatch hook shipped ahead of its contents. 6.4 fills it, so the assertion
+    becomes the same claim from the other side: seven keys, each declaring the
+    node it routes to and whether it needs a model.
+
+    The key-by-key routing table, the per-node behaviour and the `requires_llm`
+    declarations live in `tests/test_copilot_qas.py`; what stays here is the
+    graph-level fact that the map is populated and that its node names are the
+    ones the compiled graph actually has.
+    """
+    assert set(QUICK_ACTIONS) == {
+        "laborlaw",
+        "similar",
+        "rtw",
+        "reserve",
+        "fraud",
+        "nextactions",
+        "data_alignment",
+    }
+    nodes = set(_graph().nodes)
+    for key, action in QUICK_ACTIONS.items():
+        assert action.node in nodes, f"{key} routes to a node the graph does not have"
 
 
 def test_free_text_routes_to_the_grounded_chat_node() -> None:
@@ -256,11 +300,19 @@ def test_free_text_routes_to_the_grounded_chat_node() -> None:
 
 
 def test_an_unknown_quick_action_key_falls_through_to_free_text() -> None:
-    """Which is why the map can be empty without the router being a special case."""
+    """The in-graph net, and it is a net rather than the refusal.
+
+    A router has to answer something, and free text is the safe answer for a key
+    it does not know. The *refusal* is `api/routers/copilot.py::_validate_run_body`,
+    which 422s an unknown key before a thread is touched — see
+    `tests/test_copilot_qas.py`. Both exist because they answer different
+    questions: "what does this graph do with a key it has never seen?" and "what
+    does this API tell a client that sent one?".
+    """
     state: CopilotState = {
         "messages": [],
         "caller": caller_ref(HANDLER_CTX),
-        "quick_action": "laborlaw",
+        "quick_action": "laborlow",
     }
     assert route_entry(state) == CHAT_NODE
 
@@ -272,14 +324,30 @@ def test_the_dispatch_hook_would_route_a_registered_key(monkeypatch: Any) -> Non
     any model call — which is AD-14's determinism: a quick action behaves
     identically every time because its key routed it, never because a router
     model agreed with itself twice.
+
+    **The destination is deliberately not one `Route` lists**, and the `cast` is
+    what says so out loud. Story 6.4's review typed `QuickAction.node` with the
+    literal, which is right for the shipped map; but a test that patched in
+    `qas_reserve` would pass identically against a router with the real
+    destination hardcoded, since that is where the real `reserve` key goes
+    anyway. A name no production entry uses is the only value that proves the
+    router read the map it was given.
     """
-    monkeypatch.setattr(graph_module, "QUICK_ACTIONS", {"reserve": "reserve_review"})
+    monkeypatch.setattr(
+        graph_module,
+        "QUICK_ACTIONS",
+        {
+            "reserve": QuickAction(
+                node=cast("Route", "reserve_review"), requires_llm=True, prompt_key="reserve"
+            )
+        },
+    )
     state: CopilotState = {
         "messages": [],
         "caller": caller_ref(HANDLER_CTX),
         "quick_action": "reserve",
     }
-    assert route_entry(state) == "reserve_review"
+    assert route_entry(state) == cast("Route", "reserve_review")
 
 
 def test_the_router_ignores_the_message_body_entirely() -> None:
@@ -365,15 +433,25 @@ async def test_a_poisoned_caller_channel_is_overwritten_before_any_node_reads_it
     assert final == caller_ref(HANDLER_CTX)
 
 
-def test_resume_inputs_narrows_the_caller_and_writes_nothing_else() -> None:
-    """`resume_inputs` writes `caller` and nothing else — the pure half.
+def test_resume_inputs_narrows_the_caller_and_clears_the_quick_action_key() -> None:
+    """`resume_inputs` writes the caller and the cleared key, and nothing else.
 
     A resume adds no message and changes no claim. This is the *function's*
     contract; whether the run path actually uses what it returns is the test
     below, and separating them is the point: this one passed for as long as the
     router was throwing the value away.
+
+    `quick_action: None` joined it in the review of Story 6.4, for the reason
+    `run_inputs` has always cleared the key: the channel is last-write-wins, so
+    an omitted key leaves the previous turn's value in the checkpoint. Inert
+    while nothing interrupts — a resume re-enters at the interrupted node, not
+    at the router — and asserted here so that Story 6.5, which raises the first
+    interrupt against this path, does not have to discover it.
     """
-    assert resume_inputs(caller=HANDLER_CTX) == {"caller": caller_ref(HANDLER_CTX)}
+    assert resume_inputs(caller=HANDLER_CTX) == {
+        "caller": caller_ref(HANDLER_CTX),
+        "quick_action": None,
+    }
 
 
 async def test_the_run_path_re_resolves_the_caller_on_a_resume_too() -> None:
@@ -406,6 +484,11 @@ async def test_the_run_path_re_resolves_the_caller_on_a_resume_too() -> None:
         graph=_RecordingGraph(),
         sessionmaker=None,
         run_timeout_seconds=5.0,
+        # Story 6.4: `_run_frames` builds the run's `CopilotContext` and the
+        # context now carries the two retrieval dependencies. Present so the
+        # construction succeeds, unusable because this test drives no tool.
+        embedding_client=_NoEmbeddings(),
+        embedding_staleness_days=7,
     )
 
     frames = router_module._run_frames(
@@ -421,10 +504,15 @@ async def test_the_run_path_re_resolves_the_caller_on_a_resume_too() -> None:
     assert len(seen) == 1
     command = seen[0]
     assert command.resume == {"decision": "approve"}
-    assert command.update == {"caller": caller_ref(HANDLER_CTX)}, (
+    assert command.update == resume_inputs(caller=HANDLER_CTX), (
         "a resume handed the graph no fresh caller — the checkpointed one "
         "survives, which is the AD-7 overwrite not happening"
     )
+    # Spelled out as well as compared, because the identity above would hold if
+    # `resume_inputs` started returning nothing at all: what this test is for is
+    # that the router passes the *update* on rather than building a bare
+    # `Command(resume=…)`, which discards state inputs entirely.
+    assert command.update["caller"] == caller_ref(HANDLER_CTX)
 
 
 def test_the_caller_reference_carries_no_scope() -> None:
@@ -496,6 +584,7 @@ async def test_the_registry_injects_the_session_and_the_scope() -> None:
         entry,
         caller=HANDLER_CTX,
         session=session,  # type: ignore[arg-type]
+        context=_context(),
         thread_claim_business_id="WC-20017",
         approved_tool_call_ids=frozenset(),
         tool_call_id=None,
@@ -530,6 +619,7 @@ async def test_a_write_tool_without_an_approval_marker_raises() -> None:
             entry,
             caller=HANDLER_CTX,
             session=object(),  # type: ignore[arg-type]
+            context=_context(),
             thread_claim_business_id="WC-20017",
             approved_tool_call_ids=frozenset(),
             tool_call_id="call-1",
@@ -561,6 +651,7 @@ async def test_a_write_tool_with_a_matching_marker_is_allowed_through() -> None:
         entry,
         caller=HANDLER_CTX,
         session=object(),  # type: ignore[arg-type]
+        context=_context(),
         thread_claim_business_id="WC-20017",
         approved_tool_call_ids=frozenset({"call-1"}),
         tool_call_id="call-1",
@@ -594,6 +685,7 @@ async def test_bad_arguments_become_a_structured_failure_not_an_exception() -> N
         entry,
         caller=HANDLER_CTX,
         session=object(),  # type: ignore[arg-type]
+        context=_context(),
         thread_claim_business_id="WC-20017",
         approved_tool_call_ids=frozenset(),
         tool_call_id=None,
@@ -848,6 +940,7 @@ def test_the_registry_refuses_a_claim_the_thread_is_not_about() -> None:
             entry,
             caller=HANDLER_CTX,
             session=object(),  # type: ignore[arg-type]
+            context=_context(),
             thread_claim_business_id="WC-20017",
             approved_tool_call_ids=frozenset(),
             tool_call_id=None,

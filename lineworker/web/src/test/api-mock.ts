@@ -4217,6 +4217,23 @@ export const COPILOT_TRANSCRIPT_EMPTY = {
   body: { threadId: "claim.WC-20017.u1.s1", isCurrent: true, messages: [] },
 };
 
+/**
+ * Every body posted to a copilot run since the last `stubApi` — Story 6.4.
+ *
+ * A quick action is a `quickAction` key on the run's request body and *nothing
+ * else*: the same route, the same stream, the same message. So the only way a
+ * component test can tell "the ✓ Reserve review button ran a reserve quick
+ * action" from "it sent a chat message that happened to say Reserve review" is
+ * to look at what went on the wire — which nothing in this file recorded,
+ * because until now no route's *request* carried a decision.
+ *
+ * Cleared by `stubApi`, so a test reads only its own runs. Exported as a live
+ * array rather than through a getter for `stubApi`'s own reason: this module is
+ * test plumbing, and a helper that has to be imported and called is a helper a
+ * test can forget.
+ */
+export const copilotRunBodies: Record<string, unknown>[] = [];
+
 /** The single-flight refusal, in the server's own shape. */
 export const COPILOT_THREAD_BUSY = {
   status: 409,
@@ -4241,6 +4258,10 @@ function answerFor(route: StubRouteFor, url: string): Promise<Response> {
 
 /** Install a fetch stub for `/api/*`; unmatched paths answer 404. */
 export function stubApi(routes: StubRoutes): void {
+  // Story 6.4: each install starts a fresh recording, so a test never reads the
+  // previous one's runs. `length = 0` rather than a reassignment, because the
+  // export is the array itself and importers hold that reference.
+  copilotRunBodies.length = 0;
   vi.stubGlobal(
     "fetch",
     // `init` is read for the **method**, which nothing needed until Story 4.1
@@ -4430,6 +4451,27 @@ export function stubApi(routes: StubRoutes): void {
         // The two `/copilot/claims/…/threads` routes share one URL and differ
         // only by method, the meetings block's arrangement.
         if (url.includes("/api/copilot/threads/") && url.endsWith("/runs")) {
+          // **The body is recorded before the route answers** (Story 6.4). A
+          // quick action differs from a chat message only by a key on this
+          // body, so a test that could not see it could not tell them apart.
+          // `streamRun` is the SPA's one hand-rolled fetch and passes a string
+          // URL with an init, so the body is on `init`; the `Request` branch is
+          // written anyway because this file's other routes read both.
+          const raw =
+            typeof init?.body === "string"
+              ? init.body
+              : typeof input === "object" && !(input instanceof URL)
+                ? await (input as Request).clone().text()
+                : "";
+          if (raw) {
+            try {
+              copilotRunBodies.push(JSON.parse(raw) as Record<string, unknown>);
+            } catch {
+              // A body that is not JSON is a test's own mistake, and swallowing
+              // it here keeps the stub from failing a run for a reason that has
+              // nothing to do with the route.
+            }
+          }
           const route = routes.copilotRun ?? { sse: COPILOT_RUN_OK };
           if (typeof route === "object" && "sse" in route) {
             return sseResponse(route.sse);

@@ -647,3 +647,36 @@ Two performance shapes raised by the review that are design tradeoffs rather tha
 - source_spec: `_bmad-output/implementation-artifacts/spec-6-3-copilot-chat-with-persistent-threads.md`
   summary: **Every run and every history fetch issues three separate scoped queries plus a saver read before any work starts**, where one join would answer all three.
   evidence: Real, and invisible at present scale — the thread service resolves the thread row, the claim's visibility and the current sequence independently, each with its own `employer_scope(ctx)` predicate, because each is a separate repository function with its own guard obligations under `test_scoped_repository.py`. Collapsing them means either a composite repository read whose scope predicate is harder to eyeball or pushing the composition into the service, which is where the guards cannot see it. The four-guard suite is deliberately shaped to make the scoped read the easy one to write, and trading that for three saved round trips is not a bargain worth striking before there is a measurement showing it matters.
+
+## Deferred from: 6-4-deterministic-quick-actions-qas (2026-08-20)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-6-4-deterministic-quick-actions-qas.md`
+  summary: **The RTW draft letter names no return date, because no reader the copilot has projects one.**
+  evidence: Real, and the omission is the honest half rather than a gap. `Claim.rtw_rec` and `Claim.actual_rtw` are columns on the ORM model and appear on **no** `ClaimDetail` field, so `agents/tools/rtw.py` can project the contraindications, the return-to-work prognosis and the stage variant's `return_status` and nothing else. The dates are not absent from the *build*, and the distinction matters because both quick actions answer about the same claim: `services/worklist/actions.py::_overdue_rtw` reads `rtw_rec` and `actual_rtw` off the ORM row directly and can put "Review Return-to-Work policy & offer letter" on the `nextactions` checklist as overdue. What is missing is a `ClaimDetail` projection the copilot's tools could read, which is why the gap is a deferred *services-layer* item rather than a missing column. Putting a target date in the letter would mean either a services-layer change this story has no standing to make or a date the model originated, and AD-2 forbids the second in the same sentence it forbids a money amount. The node's prompt therefore instructs "the start date will be confirmed by the handler". Story 6.5 owns the editable RTW modal and the approval gate that saves the letter back to the claim, which is where a handler would type one — so the services-layer projection (a `ClaimDetail.injury.rtw_recommended` / `actual_rtw` pair, or an RTW block of its own) should be designed there, against a surface that has a writer for it.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-6-4-deterministic-quick-actions-qas.md`
+  summary: **The copilot reuses `insight_staleness_disclosure_days` rather than adding the story's `embedding_staleness_threshold`.**
+  evidence: A deliberate deviation from the story's Data notes, recorded rather than done. `config.py:333` already carries AD-12's configured threshold, and the disclosure sentence interpolates the number — "last indexed more than N days ago" — from exactly one place, `agents/tools/similar.py::_disclosure`. Two knobs would let the Insights card and the copilot chat tell the same handler two different numbers about the same neighbour in the same session, and AD-12 says "a configured threshold", singular. What is genuinely imperfect is the *name*: the knob now serves an insight card and a chat answer, and reads as though it served only the first. Renaming it to something kind-neutral touches three call sites, the env example and its tests for no behavioural gain; it belongs to whichever story next changes that block for a reason of its own.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-6-4-deterministic-quick-actions-qas.md`
+  summary: **Every narrating quick action reads the whole `claim_detail` assembly at least once, and the reserve and fraud actions read it twice.**
+  evidence: The same shape Story 6.3's review deferred for the greeting, now with a multiplier. Each node calls `claim_reader` for the fenced claim narrative, and `reserve_check`, `fraud_signals` and `rtw_reader` each reach `claim_detail` independently for their own block — so one button press assembles the stepper, the injury diagram, the documents block, the photos block and the benefit twice, to quote a verdict and an injury description. It is correct by AD-13 (one service call per tool, and a tool that shared a cached detail would be a tool holding state between calls) and it is invisible at seeded scale. The fix is the same narrow `claim_summary` projection 6.3 deferred, and it now has a third consumer, which strengthens the case for designing it once across all of them rather than improvising it inside `agents/`.
+
+## Deferred from: code review of 6-4-deterministic-quick-actions-qas (2026-08-20)
+
+One finding that is real but is a design refinement rather than a defect. Everything else the two
+reviewers raised was patched into the diff and is itemised in the spec's Review Triage Log.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-6-4-deterministic-quick-actions-qas.md`
+  summary: **`_BUILDERS`' `Callable[...]` erases the `prompt_key`/`requires_llm` pairing**, so
+    `build_node("reserve", prompt_key=None, model=...)` type-checks and fails at runtime inside
+    `prompts.load(None)`.
+  evidence: Real, and the erasure is genuine — `Mapping[str, Callable[..., QasNode]]` accepts any
+    argument list, so the one invariant that matters here (a `requires_llm: True` key has a prompt
+    file and a `requires_llm: False` key does not) is enforced only by a test asserting the two maps
+    agree, never by a type. It is unreachable today because `build_graph` is the sole caller and
+    reads both halves off the same `QuickAction`. Left rather than fixed because the honest repair
+    is a typed protocol or an overload pair over a heterogeneous builder table, which is a change to
+    how the map is declared rather than a line — and the story that next adds a key (6.5 reuses
+    `rtw`, 6.6 gates on the flags) is the one that will feel the gap and can design it against two
+    consumers instead of one.

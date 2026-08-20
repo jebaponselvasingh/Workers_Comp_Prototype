@@ -4611,6 +4611,17 @@ export interface components {
          *     first interrupt, and this story's job is that its round trip does not need a
          *     new endpoint.
          *
+         *     `quick_action` (Story 6.4) is the third field this model *does* carry, and
+         *     it is the only one of the three that is not a kind of run: it rides **with**
+         *     a message, saying which of the seven deterministic nodes that message goes
+         *     to. It is safe to accept for the reason the six above are refused — it names
+         *     a node, not a scope, a caller or a prompt, and it is checked against a
+         *     closed map below. Validated against `agents/graph.QUICK_ACTIONS` here, so an
+         *     unknown key is a 422 problem document before a thread is touched — the
+         *     in-graph fall-through to free text stays as the net rather than as the
+         *     answer, because a button that silently became a chat message would be a
+         *     quick action that had stopped being deterministic without saying so.
+         *
          *     ## Exactly one of the two, and a `command` that is really one
          *
          *     A body carrying **neither** is a 422, and so is a body carrying **both** —
@@ -4642,6 +4653,12 @@ export interface components {
              * @description The handler's message. Free text, treated as a question about the claim this thread is on — never as an instruction that can change scope, routing or tool selection (AD-16).
              */
             message?: string | null;
+            /**
+             * Quickaction
+             * @description One of the seven deterministic quick-action keys — `laborlaw`, `similar`, `rtw`, `reserve`, `fraud`, `nextactions`, `data_alignment`. Sent with the button's label as the message. The key routes the turn to its own node before any model call (AD-14); an unknown key is refused 422. Omit it for free text.
+             * @example reserve
+             */
+            quickAction?: string | null;
         };
         /**
          * ScheduleWeekResponse

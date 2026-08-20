@@ -47,7 +47,7 @@ from config import Env, Settings, get_settings
 from logging_config import configure_logging
 from services.financials.batch import run_payment_batch, system_context
 from services.jobs import JobRunner, ScheduledJob, every_seconds, weekly_on
-from services.rag import embedding_client, refresh_stale_embeddings
+from services.rag import EmbeddingClient, embedding_client, refresh_stale_embeddings
 
 log = structlog.get_logger()
 
@@ -246,6 +246,23 @@ class CopilotRuntime:
     max_tool_calls: int
     run_timeout_seconds: float
     sse_keepalive_seconds: float
+    #: The embeddings client the two retrieval tools are handed (Story 6.4).
+    #:
+    #: Built **once**, here, for the reason the chat model is: `services/rag`'s
+    #: own `OllamaEmbeddingClient` creates an `httpx.AsyncClient` per call and
+    #: documents that as the right default for a fifteen-minute job and an
+    #: occasional interactive query. A quick action is neither, but the object
+    #: held here is the *client*, not a connection pool — constructing it is
+    #: free and it opens nothing until `embed` is called — so this is where the
+    #: dependency is resolved rather than where a connection is kept alive. The
+    #: per-call `httpx` construction the 6.1 review deferred stays deferred, and
+    #: `agents/chat_model.py` records which half of that deferral 6.3 discharged.
+    embedding_client: EmbeddingClient
+    #: AD-12's configured staleness window — `insight_staleness_disclosure_days`,
+    #: reused rather than duplicated. See `agents/context.py` on why a second
+    #: knob would let the Insights card and the chat tell one handler two
+    #: different numbers about the same neighbour in the same session.
+    embedding_staleness_days: int
 
 
 async def build_copilot(
@@ -311,6 +328,8 @@ async def build_copilot(
         max_tool_calls=settings.copilot_max_tool_calls_per_run,
         run_timeout_seconds=settings.copilot_run_timeout_seconds,
         sse_keepalive_seconds=settings.copilot_sse_keepalive_seconds,
+        embedding_client=embedding_client(settings),
+        embedding_staleness_days=settings.insight_staleness_disclosure_days,
     )
     return runtime, pool
 

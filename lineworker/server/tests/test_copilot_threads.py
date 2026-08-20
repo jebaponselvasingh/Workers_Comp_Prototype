@@ -1073,6 +1073,11 @@ def _runtime_stub() -> Any:
         max_tool_calls=3,
         run_timeout_seconds=30.0,
         sse_keepalive_seconds=30.0,
+        # Story 6.4's retrieval dependencies. Present because the dataclass
+        # requires them and unusable because nothing on this stream path may
+        # embed anything — the same choice `graph=None` makes one field up.
+        embedding_client=None,  # type: ignore[arg-type]
+        embedding_staleness_days=7,
     )
 
 

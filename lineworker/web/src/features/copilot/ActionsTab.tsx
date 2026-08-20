@@ -58,6 +58,43 @@
  *   screen under the new claim's greeting until the new transcript landed.
  * - **The message being streamed** is the runtime's alone.
  *
+ * ## The quick-action key rides the run body, not the runtime config
+ *
+ * `useLangGraphMessages`' `sendMessage` takes a second argument, and the `stream`
+ * callback receives it as `config` — but that config carries an `abortSignal`
+ * and nothing this component put in it, so a key passed that way would be
+ * discarded on the way to `streamRun`. It travels beside the call instead:
+ * `send` enqueues it immediately before `sendMessage` and `stream` takes it off
+ * the front on the way past. That is a handoff between two functions the runtime
+ * owns the call order of, and it is what makes "the key that reaches the wire is
+ * the key that was clicked" true without the callback having to be rebuilt (a
+ * dependency array that rebuilt `stream` would rebuild the runtime with it, and
+ * with it the transcript).
+ *
+ * **A FIFO queue rather than one slot, and a synchronous guard on `send`.**
+ * Both halves are needed and each fixes a different way the key could be the
+ * wrong one — a determinism break, on the story whose whole subject is
+ * determinism, and one that would surface as "Reserve review" answered by the
+ * fraud node.
+ *
+ * - `stream` is an **async generator function**. Calling it constructs the
+ *   generator and runs none of its body; the body — and therefore the read —
+ *   happens at the first `next()`, an arbitrary time later. So the write in
+ *   `send` and the read in `stream` are not adjacent in time, whatever they
+ *   look like in the source, and a single slot is a slot the *next* run can
+ *   overwrite before the first has read it. A queue makes each run take the key
+ *   it was sent with, whenever it gets round to asking.
+ * - `disabled={busy || running}` cannot prevent the second click on its own:
+ *   `setRunning(true)` schedules a render, and two clicks dispatched in one tick
+ *   both reach `send` before React commits either. `sending` is a ref, so it is
+ *   true on the very next statement.
+ *
+ * The queue is drained as it is read, so a free-text question typed straight
+ * after a quick action cannot inherit the button's key — which would be a chat
+ * message silently answered by a deterministic node. An empty queue means "free
+ * text", which is the honest default: a run that lost its key is a chat message,
+ * never some other button's action.
+ *
  * ## The 409 is an inline notice keyed to its thread
  *
  * `MeetingsSubTab`'s refusal shape (NFR-3, UX-DR11): never `alert()`, never a
@@ -83,6 +120,8 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import { Composer } from "./Composer";
 import { COPILOT_DISCLAIMER } from "./disclaimer";
+import { QuickActions } from "./QuickActions";
+import type { QuickActionKey } from "./quickActionMeta";
 import { ThreadSwitcher } from "./ThreadSwitcher";
 import { Transcript, type TranscriptTurn } from "./Transcript";
 
@@ -216,6 +255,21 @@ export function ActionsTab({ claimId }: { claimId: string | null }) {
     activeThreadRef.current = activeThreadId;
   }, [activeThreadId]);
 
+  // Which quick action each queued run belongs to, oldest first. A ref for
+  // `activeThreadRef`'s reason — it is never a rendering input, and a piece of
+  // state would schedule a render the runtime does not wait for — and a
+  // **queue** rather than a slot because `stream` reads it long after `send`
+  // wrote it. See the module docstring.
+  // Boxed rather than bare, so a run that failed before `stream` ever read it
+  // can take *its own* entry back out by identity. Two runs of the same button
+  // are two different objects; two runs of the same bare key would not be.
+  const pendingQuickActions = useRef<{ key: QuickActionKey | null }[]>([]);
+
+  // Whether `send` has already started a run this tick. Synchronous, because
+  // `setRunning(true)` only takes effect after React commits and two clicks in
+  // one tick would both get past `disabled` and both enqueue.
+  const sending = useRef(false);
+
   const history = useThreadTranscript(activeThreadId);
 
   /**
@@ -233,8 +287,17 @@ export function ActionsTab({ claimId }: { claimId: string | null }) {
         outgoing && typeof outgoing.content === "string" ? outgoing.content : "";
       const threadId = activeThreadId;
       if (!threadId) return;
+      // Taken off the front **and removed**: the key belongs to the one run
+      // `send` enqueued it for, and a key left behind would route the next typed
+      // question down a quick action's node. See the module docstring on why a
+      // queue rather than the runtime config or a single slot.
+      const quickAction = pendingQuickActions.current.shift()?.key ?? null;
       try {
-        for await (const frame of streamRun(threadId, { message: text }, config.abortSignal)) {
+        for await (const frame of streamRun(
+          threadId,
+          quickAction === null ? { message: text } : { message: text, quickAction },
+          config.abortSignal,
+        )) {
           yield frame as never;
         }
       } finally {
@@ -351,13 +414,31 @@ export function ActionsTab({ claimId }: { claimId: string | null }) {
     if (element) element.scrollTop = element.scrollHeight;
   }, [turns.length, lastTurnLength]);
 
-  async function send(text: string): Promise<void> {
+  async function send(text: string, quickAction: QuickActionKey | null = null): Promise<void> {
     if (!activeThreadId) return;
+    // **The synchronous half of single-flight.** `disabled={busy || running}`
+    // only takes effect once React has committed the render `setRunning(true)`
+    // schedules, so two clicks dispatched in the same tick both arrive here
+    // with the strip still enabled — and the server's 409 would refuse the
+    // second run after both keys had already been handed over. A ref is true on
+    // the next statement, which is the only guarantee that holds here.
+    if (sending.current) return;
+    sending.current = true;
     setRefusal(null);
     setRunning(true);
+    // Enqueued immediately before the runtime is asked to run, and taken by
+    // `stream` on the way past — the module docstring argues the handoff and why
+    // it is a queue.
+    const queued = { key: quickAction };
+    pendingQuickActions.current.push(queued);
     try {
       await sendMessage([{ type: "human", content: text }], {});
     } catch (error) {
+      // A run refused before `stream` ran leaves its entry behind. Removed by
+      // identity, or the next run would take a failed run's key.
+      pendingQuickActions.current = pendingQuickActions.current.filter(
+        (entry) => entry !== queued,
+      );
       setRefusal({
         threadId: activeThreadId,
         message: isThreadBusy(error)
@@ -367,6 +448,7 @@ export function ActionsTab({ claimId }: { claimId: string | null }) {
             : FAILED_MESSAGE,
       });
     } finally {
+      sending.current = false;
       setRunning(false);
     }
   }
@@ -429,6 +511,19 @@ export function ActionsTab({ claimId }: { claimId: string | null }) {
         {threads.data.greeting}
       </p>
 
+      {/* UX-DR8's seven buttons, between the greeting and the transcript — the
+          prototype's own placement. Absent on a read-only thread for
+          `Composer`'s reason: a greyed-out control invites a handler to work out
+          why, where an absent one under "this conversation is read-only" says
+          it outright. Disabled while a run is in flight, which is the client's
+          half of the single-flight rule the server answers 409 for. */}
+      {readOnly || items.length === 0 ? null : (
+        <QuickActions
+          busy={busy || running}
+          onPick={(key, label) => void send(label, key)}
+        />
+      )}
+
       <div ref={scroller} data-testid="copilot-scroller" className="min-h-0 flex-1 overflow-y-auto">
         {items.length === 0 ? (
           // The panel mints on its own (AC 1), so this is the moment between
@@ -477,7 +572,14 @@ export function ActionsTab({ claimId }: { claimId: string | null }) {
           This conversation is read-only history. Start a new one to ask something else.
         </p>
       ) : items.length === 0 ? null : (
-        <Composer onSend={(text) => void send(text)} busy={running} />
+        // **`busy || running`, the same expression `QuickActions` gets**, and
+        // the strip's version is the correct one: `busy` is a copilot command
+        // in flight — today, a "new conversation" mint — and a message sent
+        // while the thread it addresses is being replaced is a run the server
+        // refuses. Blocking the buttons and leaving the input live meant a
+        // handler could type past a condition they had just been stopped from
+        // clicking past, and be told the conversation was busy for it.
+        <Composer onSend={(text) => void send(text)} busy={busy || running} />
       )}
 
       {/* UX-DR8's disclaimer, in `InsightsTab`'s type size and tone. */}

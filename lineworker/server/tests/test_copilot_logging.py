@@ -14,7 +14,13 @@ risk, because Story 6.3 adds two surfaces nothing in the build has ever had:
 2. **SSE frames carry tokens.** The transport's whole job is moving model
    output, so the tempting line is at exactly the wrong place: logging a frame
    logs the answer.
-3. **Tool results are the richest PHI on the wire.** `claim_reader`'s envelope
+3. **A quick action composes a whole prompt out of a claim.** Story 6.4's nodes
+   build a two-section user message carrying the reserve verdict, the fraud
+   thresholds, the retrieved labour-law passages and the claim's own fenced
+   narrative, then stream a narration about all of it. That is the largest
+   single block of claim data this build ever assembles, and the tempting log
+   line — "what did we send?" — would put the whole of it in an aggregator.
+4. **Tool results are the richest PHI on the wire.** `claim_reader`'s envelope
    carries the injured worker's name and role, the employer, the ICD text and
    the whole of `cause` — and it is serialised into a checkpoint and read back
    into the model on the next step. This one was added by the review of Story
@@ -22,7 +28,7 @@ risk, because Story 6.3 adds two surfaces nothing in the build has ever had:
    contained no `ToolMessage` and the strongest surface the story creates could
    not be seen from here.
 
-None of the three had a precedent test, and all are the kind of thing a later
+None of the four had a precedent test, and all are the kind of thing a later
 story adds while debugging and forgets to take out.
 
 **Every assertion here has a positive control.** A test that searches stderr for
@@ -47,6 +53,7 @@ from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
+from agents.fencing import FIGURES_HEADING, ITEM_OPEN, MATERIAL_HEADING
 from agents.graph import build_graph
 from agents.registry import build_tools
 from api import create_app
@@ -129,6 +136,39 @@ async def login_as(client: httpx.AsyncClient, name: str, role: str) -> None:
 
 def a_claim_of(persona: tuple[str, str]) -> str:
     return sorted(seed_fixture.expected_claim_ids(*persona))[0]
+
+
+async def _reserve_money(db_url: str, claim_business_id: str) -> list[str]:
+    """Every money string one claim's reserve check produces, from a second call.
+
+    `test_copilot_qas.py`'s provenance technique, used here for the opposite
+    purpose: those are the strings the quick action put in front of the model,
+    so they are exactly the strings that must not be in stderr. Reading them
+    from the service rather than searching for `"$"` is what keeps the assertion
+    about *this run's figures* — a bare `"$" not in emitted` is a claim about
+    the whole of stderr, app construction and pool setup included, and any
+    future log line carrying a dollar sign for an unrelated reason would fail it
+    while reporting "a money figure reached the log".
+    """
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from agents.tools import reserve_check
+    from data.context import ALL_EMPLOYERS, CallerContext
+    from data.models import AppUser
+    from data.models.enums import UserRole
+
+    engine = create_async_engine(db_url.replace("postgresql://", "postgresql+asyncpg://", 1))
+    try:
+        async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+            user = (
+                await session.scalars(sa.select(AppUser).where(AppUser.role == UserRole.system))
+            ).one()
+            ctx = CallerContext(user_id=user.id, role=user.role, employer_ids=ALL_EMPLOYERS)
+            result = await reserve_check(session, ctx, claim_business_id=claim_business_id)
+    finally:
+        await engine.dispose()
+    assert result.ok, "the reserve check declined — the assertion below would be vacuous"
+    return list(result.display.values())
 
 
 async def _one_run(db_url: str) -> tuple[str, list[str]]:
@@ -392,3 +432,91 @@ async def test_no_log_line_carries_a_tool_result(
     assert "ToolMessage" not in emitted
     assert QUESTION not in emitted
     assert ANSWER not in emitted
+
+
+# --- Story 6.4: a quick action's prompt, narration and retrieved text -----
+
+
+#: A claim id that is definitely not the thread's, spelled distinctively.
+#:
+#: The quick-action log lines carry a `prompt_key` and a `prompt_version` and
+#: nothing else, so the positive control below has to be the event name itself
+#: rather than an id — which is the correct shape for AD-11 and the reason this
+#: test asserts what *is* logged as carefully as what is not.
+QAS_EVENT = "copilot.quick_action_narrated"
+
+
+async def test_a_quick_action_logs_its_prompt_key_and_none_of_its_content(
+    seeded_db_url: str,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """AD-11 on Story 6.4's surface: the biggest prompt this build composes.
+
+    The run below is a real `reserve` quick action through the shipped route,
+    against the real registry and the real `services/financials` — so a real
+    reserve verdict, real formatted money strings and the claim's own fenced
+    narrative are assembled into a user message and a narration is streamed
+    back. None of it may reach stderr.
+
+    **Three positive controls**, because "these strings are absent" passes
+    identically against a run that never happened. `copilot.run_started` says a
+    run happened; `copilot.quick_action_narrated` says it went through a
+    quick-action node rather than falling through to free text; and the
+    streamed answer proves the model was actually asked. Without the second,
+    this test would have passed against a build where the key was silently
+    ignored.
+
+    The money assertion is the sharpest one and is worth stating plainly: a
+    reserve figure is a claim's financial exposure, and the figures section
+    carries several of them. If any `display` string appears in stderr,
+    something logged a prompt.
+    """
+    configure_logging("INFO")
+
+    frames: list[str] = []
+    async with make_client(seeded_db_url) as client:
+        # The shipped graph, not the toolless one `make_client` swaps in: the
+        # quick-action nodes reach their tools through `agents/registry.invoke`
+        # rather than through the agent harness, but the *model* has to be the
+        # scripted one or this test would need a model server.
+        await login_as(client, *HANDLER)
+        claim_id = a_claim_of(HANDLER)
+        thread = (await client.post(f"/copilot/claims/{claim_id}/threads")).json()["threadId"]
+        async with client.stream(
+            "POST",
+            f"/copilot/threads/{thread}/runs",
+            json={"message": "Reserve review", "quickAction": "reserve"},
+        ) as response:
+            assert response.status_code == 200, await response.aread()
+            async for line in response.aiter_lines():
+                frames.append(line)
+
+    emitted = capfd.readouterr().err
+
+    assert "copilot.run_started" in emitted, "no copilot log line was emitted at all"
+    assert QAS_EVENT in emitted, (
+        "the run did not go through a quick-action node — the absences below "
+        "would be statements about a free-text turn"
+    )
+    assert '"prompt_key": "reserve"' in emitted, "the event carries no key to investigate a run by"
+    assert ANSWER in "".join(frames), "the run produced no assistant content — the fixture is inert"
+
+    # The narration, the two section headings, the fence and every money string
+    # the claim's own reserve check produced.
+    assert ANSWER not in emitted, "the narration reached the log (AD-11)"
+    assert FIGURES_HEADING not in emitted, "a composed prompt reached the log (AD-11)"
+    assert MATERIAL_HEADING not in emitted
+    assert ITEM_OPEN not in emitted, "a fenced claim item reached the log (AD-11)"
+
+    # **The run's own money, named** — not every `$` in stderr. The figures
+    # section carried these exact strings, formatted by `services/financials`,
+    # so each one appearing in the log is a prompt having been logged. The
+    # previous form asserted `"$" not in emitted`, which is a statement about
+    # the whole of stderr — app construction, lifespan, pool setup and every
+    # structlog line — and would have failed on any unrelated future line
+    # carrying a dollar sign, while reporting that a claim's exposure had
+    # leaked.
+    money = await _reserve_money(seeded_db_url, claim_id)
+    assert money, "this claim has no reserve figures — the assertion below is vacuous"
+    for amount in money:
+        assert amount not in emitted, f"the reserve figure {amount} reached the log (AD-11)"

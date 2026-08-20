@@ -182,9 +182,17 @@ def test_the_prompt_files_are_versioned_and_declare_their_own_key() -> None:
     # Both are loaded by key like everything else, so both are covered by the
     # header validation above rather than exempted from it.
     copilot = {"copilot_system", "copilot_greeting"}
-    expected = {kind.value for kind in InsightKind} | {"system"} | copilot
+    # **Six quick-action files joined the set in Story 6.4** (AD-15 again). The
+    # spine's Prompts convention says QAS keys map 1:1 to prompt files where a
+    # prompt is needed, so the stems here are the keys in
+    # `agents/graph.py::QUICK_ACTIONS` — minus `data_alignment`, which makes no
+    # model call and therefore has no instructions to version. That one absence
+    # is the whole of the `requires_llm: False` path, and it is asserted from
+    # the map's side in `tests/test_copilot_qas.py` rather than restated here.
+    quick_actions = {"laborlaw", "similar", "rtw", "reserve", "fraud", "nextactions"}
+    expected = {kind.value for kind in InsightKind} | {"system"} | copilot | quick_actions
     assert {path.stem for path in PROMPTS_DIR.glob("*.md")} == expected
-    for key in sorted(copilot):
+    for key in sorted(copilot | quick_actions):
         assert load(key).key == key
         assert load(key).version >= 1
         assert load(key).text

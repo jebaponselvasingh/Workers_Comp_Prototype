@@ -87,8 +87,9 @@ from pydantic import ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agents.context import CopilotContext
-from agents.graph import resume_inputs, run_inputs
+from agents.graph import QUICK_ACTIONS, resume_inputs, run_inputs
 from agents.greeting import claim_greeting
+from agents.qas import QAS_NOTE
 from agents.threads import (
     THREAD_ID_PATTERN,
     ClaimNotInBook,
@@ -125,15 +126,28 @@ log = structlog.get_logger()
 
 router = APIRouter(prefix="/copilot", tags=["copilot"])
 
-#: The two stream modes a run subscribes to, typed rather than spelled inline.
+#: The three stream modes a run subscribes to, typed rather than spelled inline.
 #:
 #: `astream` overloads on this argument, so a bare `["messages", "updates"]`
 #: infers as `list[str]` and matches no overload — which is why it type-checked
 #: for as long as the graph it was called on was `Any`. `messages` carries the
-#: model's tokens as they are decoded and `updates` says a node finished; no
-#: other mode is subscribed to, and `values` in particular is not, because it
-#: would put the whole conversation on the wire after every step.
-_STREAM_MODES: list[Literal["messages", "updates"]] = ["messages", "updates"]
+#: model's tokens as they are decoded and `updates` says a node finished;
+#: `values` in particular is **not** subscribed to, because it would put the
+#: whole conversation on the wire after every step.
+#:
+#: **`custom` is Story 6.4's**, and it carries exactly one thing: text a node
+#: produced without a model. LangGraph's `messages` mode streams *model* tokens,
+#: so the `data_alignment` quick action — which by design calls no model — would
+#: otherwise finish having emitted nothing, and `_terminal_for` would correctly
+#: report a run that answered nothing as an `error`. The same channel carries a
+#: node's structured tool-failure sentence. Both become ordinary `messages`
+#: frames below, so the client's vocabulary is unchanged and the terminal
+#: decision still lives in one place.
+_STREAM_MODES: list[Literal["messages", "updates", "custom"]] = [
+    "messages",
+    "updates",
+    "custom",
+]
 
 #: The path parameter every claim-addressed route on this router declares.
 CLAIM_ID_PATH = Annotated[
@@ -497,6 +511,17 @@ class RunRequest(ApiModel):
     first interrupt, and this story's job is that its round trip does not need a
     new endpoint.
 
+    `quick_action` (Story 6.4) is the third field this model *does* carry, and
+    it is the only one of the three that is not a kind of run: it rides **with**
+    a message, saying which of the seven deterministic nodes that message goes
+    to. It is safe to accept for the reason the six above are refused — it names
+    a node, not a scope, a caller or a prompt, and it is checked against a
+    closed map below. Validated against `agents/graph.QUICK_ACTIONS` here, so an
+    unknown key is a 422 problem document before a thread is touched — the
+    in-graph fall-through to free text stays as the net rather than as the
+    answer, because a button that silently became a chat message would be a
+    quick action that had stopped being deterministic without saying so.
+
     ## Exactly one of the two, and a `command` that is really one
 
     A body carrying **neither** is a 422, and so is a body carrying **both** —
@@ -534,6 +559,17 @@ class RunRequest(ApiModel):
             'Resume an interrupted run, `{"resume": …}`. The shape ships with '
             "Story 6.3; the first interrupt that can produce one is Story 6.5's."
         ),
+    )
+    quick_action: str | None = Field(
+        default=None,
+        description=(
+            "One of the seven deterministic quick-action keys — `laborlaw`, "
+            "`similar`, `rtw`, `reserve`, `fraud`, `nextactions`, "
+            "`data_alignment`. Sent with the button's label as the message. The "
+            "key routes the turn to its own node before any model call (AD-14); "
+            "an unknown key is refused 422. Omit it for free text."
+        ),
+        examples=["reserve"],
     )
 
 
@@ -902,7 +938,17 @@ async def run(
         await db.rollback()
 
         inputs = (
-            run_inputs(caller=ctx, claim_business_id=view.claim_business_id, message=body.message)
+            run_inputs(
+                caller=ctx,
+                claim_business_id=view.claim_business_id,
+                message=body.message,
+                # Validated against the map above, so what reaches the entry
+                # router is either a key it knows or `None`. `run_inputs` clears
+                # the channel for `None` rather than omitting it — a stale key
+                # left in a checkpoint would dispatch the *next* free-text
+                # message down a quick action's node.
+                quick_action=body.quick_action,
+            )
             if body.message is not None
             else resume_inputs(caller=ctx)
         )
@@ -937,10 +983,18 @@ async def run(
 def _validate_run_body(body: RunRequest) -> None:
     """Which kind of run this is — decided once, before anything else happens.
 
-    Four refusals and one `type`, all 422, because all four are the same
-    statement: this body does not describe a run. See `RunRequest` on why
-    "both" and "a `command` with no `resume`" are refusals rather than
-    precedences.
+    Six raises and one `type`, all 422, because all six are the same statement:
+    this body does not describe a run. See `RunRequest` on why "both" and "a
+    `command` with no `resume`" are refusals rather than precedences.
+
+    They are **not six independent conditions**, and the difference is worth a
+    line for anyone counting branches against tests. Four are: neither field,
+    both fields, a blank message, a `command` with no `resume`. The fifth — an
+    unknown `quick_action` key — is independent of all of them. The sixth, a
+    `quick_action` beside a `command`, is what is *left* of that pair once the
+    "both fields" raise above has taken every body carrying a message: it is
+    reachable only for a resume that also named a button, which is a real
+    request somebody can send and not a separate kind of malformed body.
 
     The order is the order the questions have to be asked in: **which kind of
     run is this** before **is this kind of run well formed**. A body carrying
@@ -961,6 +1015,26 @@ def _validate_run_body(body: RunRequest) -> None:
         raise _unprocessable("A run's message cannot be blank.")
     if body.command is not None and "resume" not in body.command:
         raise _unprocessable('A resume command must carry a "resume" value.')
+    if body.quick_action is None:
+        return
+    # **The unknown-key refusal, and it happens here rather than in the graph**
+    # (Story 6.4, AC 1). `route_entry` falls through to free text for a key it
+    # does not know, which is the right *in-graph* behaviour — a router must
+    # answer something — but it is the wrong answer to a client: a button that
+    # quietly became a chat message would be a quick action that stopped being
+    # deterministic with nothing anywhere saying so. Refusing before the thread
+    # is touched means nothing is checkpointed, no model is called and no
+    # terminal frame is emitted for a request that never described a run.
+    if body.quick_action not in QUICK_ACTIONS:
+        raise _unprocessable(
+            f"{body.quick_action!r} is not a quick action. Valid keys are: "
+            f"{', '.join(sorted(QUICK_ACTIONS))}."
+        )
+    if body.command is not None:
+        raise _unprocessable(
+            "A quick action is a message, not a resume command. Send the quick "
+            "action on its own, or the command on its own."
+        )
 
 
 def _unprocessable(detail: str) -> ProblemException:
@@ -1256,6 +1330,13 @@ async def _run_frames(
         caller=ctx,
         sessionmaker=copilot.sessionmaker,
         claim_business_id=claim_business_id,
+        # Story 6.4's two context-injected tool dependencies, taken off the
+        # runtime built in `lifespan` rather than from `Settings` read here.
+        # `CopilotRuntime` records why: a run must not be able to widen its own
+        # bounds, and a route reading configuration at stream time would be a
+        # second configuration surface at the one moment nobody is watching.
+        embedding_client=copilot.embedding_client,
+        embedding_staleness_days=copilot.embedding_staleness_days,
     )
     payload: Any = inputs
     if resume is not None:
@@ -1291,6 +1372,19 @@ async def _run_frames(
                 # transcript does not render (see `TranscriptMessage`).
                 if isinstance(text, str) and text and getattr(message, "type", "") != "tool":
                     yield _sse("messages", {"content": text})
+            elif mode == "custom":
+                # A model-free node's own text (`agents/qas.QAS_NOTE`). Emitted
+                # as a `messages` frame rather than as a fourth event name: it
+                # is assistant content, the client renders it identically, and
+                # inventing an event for "assistant content that no model wrote"
+                # would put an implementation detail of the graph on a public
+                # wire. Anything else on this channel is ignored rather than
+                # forwarded — the stream publishes what this build writes, not
+                # whatever a future middleware decides to emit.
+                if isinstance(chunk, Mapping):
+                    note = chunk.get(QAS_NOTE)
+                    if isinstance(note, str) and note:
+                        yield _sse("messages", {"content": note})
             elif mode == "updates":
                 for node in dict(chunk):
                     if node == "__interrupt__":

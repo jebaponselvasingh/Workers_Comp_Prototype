@@ -45,11 +45,33 @@ What Story 6.3 added, which is the copilot spine itself:
 - `greeting.py` — the seeded case-summary line, which is deterministic service
   output rather than model prose (AD-2).
 
-What is still deliberately absent: the quick-action keys and their node map
-(6.4), the `interrupt()` producers, the approval-marker lifecycle and the RTW
-letter (6.5), and the `ai_unavailable`/`ai_limit` degradation surface (6.6).
-The schema declares `pending_approval`, the stream speaks `interrupt`, the run
-bounds are wired — and nothing raises, fills or surfaces any of them yet.
+What Story 6.4 added, which is the deterministic half of the copilot:
+
+- `qas.py` — the seven quick-action nodes and the composition they share. Each
+  calls registered read tools for its facts and uses the model only to narrate
+  them; one of the seven calls no model at all, which is the false path Story
+  6.6 gates its degradation on.
+- `graph.py::QUICK_ACTIONS` — the key→node map, filled. Consulted **before any
+  model call**, so a quick action is answered identically every time because its
+  key routed it (AD-14). Every entry declares `requires_llm` and, where it needs
+  one, a prompt key.
+- `tools/knowledge.py` and `tools/rtw.py` — two more thin wrappers, and
+  `similar_cases` finally registered. Registering it needed the thing 6.3
+  declined to invent: `registry.py::INJECTED`, a declaration of the keyword
+  arguments a tool gets from `CopilotContext` rather than from the model, which
+  is what keeps an embeddings client and a staleness window off every
+  `args_schema`.
+- `prompts/{laborlaw,similar,rtw,reserve,fraud,nextactions}.md` — six versioned
+  files keyed 1:1 to the quick actions that need one, composed on
+  `copilot_system.md` by `prompts.qas_system_message`.
+
+What is still deliberately absent: the `interrupt()` producers, the
+approval-marker lifecycle and the RTW letter's modal and save (6.5 — 6.4's `rtw`
+node drafts into the transcript and proposes nothing), and the
+`ai_unavailable`/`ai_limit` degradation surface (6.6). The schema declares
+`pending_approval`, the stream speaks `interrupt`, the run bounds are wired, the
+`requires_llm` flags are declared — and nothing raises, fills or surfaces any of
+them yet.
 
 Re-exported here so a composition root writes `from agents import
 refresh_claim_insights` — the shape `services/rag` and `services/derivations`

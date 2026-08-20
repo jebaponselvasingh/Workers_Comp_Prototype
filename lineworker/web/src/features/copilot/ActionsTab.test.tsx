@@ -14,7 +14,14 @@
  *    dialog, and never following the handler onto a different conversation.
  * 3. **A superseded thread renders read-only**, with the composer *absent*
  *    rather than disabled.
- * 4. **Raw HTML in a model's answer renders as text and creates no element**
+ * 4. **A quick action puts a key on the run body** (Story 6.4). The strip is
+ *    mounted here, hidden on a read-only thread, disabled while a run is in
+ *    flight, and — the assertion that matters — the `quickAction` key it sends
+ *    is what reaches the wire, rather than only the runtime config the `stream`
+ *    callback discards. `copilotRunBodies` is what makes that visible at all: a
+ *    quick action and a chat message are the same route, the same stream and the
+ *    same message, differing only by one key on the request.
+ * 5. **Raw HTML in a model's answer renders as text and creates no element**
  *    (AC 7). This is the one assertion in the suite that is about a security
  *    property rather than about a behaviour, and it is asserted on the DOM
  *    rather than on the markdown configuration — a test that read the plugin
@@ -26,7 +33,7 @@
  * move in Playwright).
  */
 import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
@@ -39,6 +46,7 @@ import {
   COPILOT_THREADS_TWO,
   COPILOT_TRANSCRIPT,
   COPILOT_TRANSCRIPT_EMPTY,
+  copilotRunBodies,
   sseFrame,
   stubApi,
   type StubRoutes,
@@ -458,4 +466,164 @@ test("the frames of a run that ends in an error surface as a notice", async () =
 
   await waitFor(() => expect(screen.getByTestId("copilot-refusal")).toBeInTheDocument());
   expect(screen.getByTestId("copilot-refusal")).toHaveTextContent(/could not/i);
+});
+
+
+// --- Story 6.4: the quick actions ----------------------------------------
+
+test("the seven quick actions render above the transcript", async () => {
+  // UX-DR8's placement, asserted as *order in the DOM* rather than as CSS: the
+  // greeting says what the claim is, the buttons say what can be asked about it,
+  // and the answers appear underneath. A strip that rendered below the scroller
+  // would satisfy every other assertion in this file.
+  renderTab();
+
+  const strip = await screen.findByTestId("copilot-quick-actions");
+  expect(screen.getAllByTestId("copilot-quick-action")).toHaveLength(7);
+
+  const greeting = screen.getByTestId("copilot-greeting");
+  const scroller = screen.getByTestId("copilot-scroller");
+  expect(greeting.compareDocumentPosition(strip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(strip.compareDocumentPosition(scroller) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+test("clicking a quick action posts its key with the button's label", async () => {
+  // **The assertion this story turns on.** A quick action is a `quickAction`
+  // key on the run body and nothing else — same route, same stream, same
+  // message — so "the button ran a reserve quick action" and "the button sent a
+  // chat message saying Reserve review" are indistinguishable from the DOM. The
+  // recorded body is the only place they differ, and the key had to reach
+  // `streamRun`'s body rather than the runtime config, which the `stream`
+  // callback discards.
+  renderTab({ copilotTranscript: COPILOT_TRANSCRIPT_EMPTY, copilotRun: { sse: COPILOT_RUN_OK } });
+
+  const reserve = (await screen.findAllByTestId("copilot-quick-action")).find(
+    (button) => button.dataset.quickAction === "reserve",
+  )!;
+  await userEvent.click(reserve);
+
+  await waitFor(() => expect(copilotRunBodies).toHaveLength(1));
+  expect(copilotRunBodies[0]).toEqual({
+    message: "Reserve review",
+    quickAction: "reserve",
+  });
+
+  // …and the answer streams into the transcript exactly as a typed one does.
+  await waitFor(() =>
+    expect(screen.getByTestId("copilot-transcript")).toHaveTextContent(
+      "The claim is in treatment.",
+    ),
+  );
+});
+
+test("a typed question after a quick action carries no key", async () => {
+  // The key is a property of one run, and it is cleared as it is read. Without
+  // that, the next thing a handler typed would be silently answered by a
+  // deterministic node — a chat message routed to a quick action, with nothing
+  // on screen to say so.
+  renderTab({ copilotTranscript: COPILOT_TRANSCRIPT_EMPTY, copilotRun: { sse: COPILOT_RUN_OK } });
+
+  const fraud = (await screen.findAllByTestId("copilot-quick-action")).find(
+    (button) => button.dataset.quickAction === "fraud",
+  )!;
+  await userEvent.click(fraud);
+  await waitFor(() => expect(copilotRunBodies).toHaveLength(1));
+
+  await userEvent.type(screen.getByTestId("copilot-input"), "and what next?");
+  await userEvent.click(screen.getByTestId("copilot-send"));
+
+  await waitFor(() => expect(copilotRunBodies).toHaveLength(2));
+  expect(copilotRunBodies[1]).toEqual({ message: "and what next?" });
+});
+
+test("the quick actions are absent on a read-only conversation", async () => {
+  // Absent rather than disabled, the composer's rule and its reason: a
+  // greyed-out control invites a handler to work out why, where an absent one
+  // under "this conversation is read-only" says it outright.
+  renderTab({
+    copilotThreads: COPILOT_THREADS_TWO,
+    copilotTranscript: {
+      status: 200,
+      body: {
+        threadId: "claim.WC-20017.u1.s1",
+        isCurrent: false,
+        messages: [{ role: "user", content: "the first conversation" }],
+      },
+    },
+  });
+
+  await userEvent.selectOptions(
+    await screen.findByTestId("copilot-thread-picker"),
+    "claim.WC-20017.u1.s1",
+  );
+
+  expect(await screen.findByTestId("copilot-read-only")).toBeInTheDocument();
+  expect(screen.queryByTestId("copilot-quick-actions")).not.toBeInTheDocument();
+});
+
+test("a quick action clicked while a run is in flight posts nothing", async () => {
+  // The client half of single-flight. The server would answer 409 and the pane
+  // would render it as a notice — correct, and a refusal the handler could not
+  // have avoided. So the buttons disable, and the assertion is that **no second
+  // body reached the wire**, which is stronger than the disabled attribute: a
+  // handler could not have clicked it, and neither could anything else.
+  renderTab({ copilotTranscript: COPILOT_TRANSCRIPT_EMPTY, copilotRun: "pending" });
+
+  const buttons = await screen.findAllByTestId("copilot-quick-action");
+  await userEvent.click(buttons.find((b) => b.dataset.quickAction === "similar")!);
+
+  await waitFor(() => expect(copilotRunBodies).toHaveLength(1));
+  await waitFor(() =>
+    expect(screen.getAllByTestId("copilot-quick-action")[0]).toBeDisabled(),
+  );
+
+  await userEvent.click(screen.getAllByTestId("copilot-quick-action")[1]!);
+  expect(copilotRunBodies).toHaveLength(1);
+});
+
+test("two quick actions clicked in one tick cannot swap keys", async () => {
+  // **The determinism break this story is most exposed to**, and it would read
+  // as a model bug: "Reserve review" answered by the fraud node.
+  //
+  // Two mechanisms had to be wrong together for the key to travel correctly, and
+  // both were. `stream` is an async generator function — calling it builds the
+  // generator and runs none of its body, so the key was read an arbitrary time
+  // after `send` wrote it, not on the next line. And `disabled={busy || running}`
+  // does not take effect until React commits the render `setRunning(true)`
+  // schedules, so two clicks dispatched inside one tick both reached `send` past
+  // an enabled button. A single slot plus a late read is a run carrying the
+  // *other* run's key.
+  //
+  // Dispatched natively inside one `act` rather than through two `userEvent`
+  // clicks, because `userEvent` awaits between them and React commits in
+  // between — which is the case the existing disabled-strip test covers, and
+  // not this one.
+  renderTab({ copilotTranscript: COPILOT_TRANSCRIPT_EMPTY, copilotRun: { sse: COPILOT_RUN_OK } });
+
+  const buttons = await screen.findAllByTestId("copilot-quick-action");
+  const reserve = buttons.find((button) => button.dataset.quickAction === "reserve")!;
+  const fraud = buttons.find((button) => button.dataset.quickAction === "fraud")!;
+
+  await act(async () => {
+    reserve.click();
+    fraud.click();
+  });
+
+  // One run, and it is the one that was clicked first — never a body carrying
+  // the first run's message under the second run's key.
+  await waitFor(() => expect(copilotRunBodies).toHaveLength(1));
+  expect(copilotRunBodies[0]).toEqual({ message: "Reserve review", quickAction: "reserve" });
+
+  // …and the queue drained with it, so the next action takes its own key rather
+  // than the one the dropped click left behind.
+  await waitFor(() =>
+    expect(screen.getAllByTestId("copilot-quick-action")[0]).toBeEnabled(),
+  );
+  await userEvent.click(
+    screen
+      .getAllByTestId("copilot-quick-action")
+      .find((button) => button.dataset.quickAction === "fraud")!,
+  );
+  await waitFor(() => expect(copilotRunBodies).toHaveLength(2));
+  expect(copilotRunBodies[1]).toEqual({ message: "Fraud risk check", quickAction: "fraud" });
 });

@@ -140,13 +140,20 @@ class CopilotState(MessagesState):
     #: scope without changing this schema.
     claim_business_id: NotRequired[str]
 
-    #: The quick-action key that routed this turn, or absent for free text.
+    #: The quick-action key that routed this turn, or `None` for free text.
     #:
-    #: **The map is empty in this story** (`agents/graph.py::QUICK_ACTIONS`).
-    #: The channel and the pre-LLM dispatch hook that reads it land now so that
-    #: Story 6.4 fills a dict rather than re-architecting the entry node — which
-    #: is what "the dispatch hook ships with an empty map" means concretely.
-    quick_action: NotRequired[str]
+    #: One of the seven keys in `agents/graph.py::QUICK_ACTIONS`, validated
+    #: against that map by the runs endpoint before it ever reaches state.
+    #:
+    #: **`str | None` rather than `str`, and the `None` is load-bearing.**
+    #: `run_inputs` writes `None` for a free-text turn rather than omitting the
+    #: key, because the channel is last-write-wins: an omitted key would leave
+    #: the previous turn's value in the checkpoint and the entry router would
+    #: dispatch a free-text message down a quick action's node. The declaration
+    #: said `str` while the only writer wrote `None`, which type-checked for as
+    #: long as the map was empty and nobody constructed the state literally
+    #: (Story 6.4).
+    quick_action: NotRequired[str | None]
 
     #: Which node the entry router chose, for the graph's own conditional edge.
     #:
@@ -181,7 +188,7 @@ class CopilotAgentState(AgentState[Any]):
 
     caller: CallerRef
     claim_business_id: NotRequired[str]
-    quick_action: NotRequired[str]
+    quick_action: NotRequired[str | None]
     route: NotRequired[str]
     pending_approval: NotRequired[PendingApproval | None]
 

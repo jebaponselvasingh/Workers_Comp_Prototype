@@ -32,6 +32,27 @@ only a factory, and each tool opens and closes its own.
 `app.state.sessionmaker` is what the composition root puts in it, so a tool's
 session has exactly the lifetime of the tool call.
 
+## The embedding client and the staleness window ride here for the same reason
+
+Story 6.4's `similar` and `laborlaw` quick actions retrieve, and retrieval needs
+two things the four Story 6.3 tools did not: a live `EmbeddingClient` to embed
+the query with, and the number of days past which a neighbour's vector must be
+disclosed as stale (AD-12). `agents/registry.py` names both as *context-injected
+arguments* precisely so that neither can become a field on an argument schema —
+a model-suppliable `staleness_days` is a model that can decide it need not
+disclose anything, and a model-suppliable client is not a thing at all.
+
+They are dependencies, not arguments, and they are here rather than on a state
+channel for the reason everything here is: a channel is checkpointed, and a
+checkpointed client is an object the saver would have to serialise while a
+checkpointed threshold is yesterday's configuration replayed by a resume.
+
+`registry.py:174-187` is where the alternative was rejected in Story 6.3 — it
+records that registering `similar_cases` would mean "either a second injection
+channel on `CopilotContext` or an argument schema with a model-suppliable knob
+in it", and this is that second injection channel, chosen deliberately over the
+knob.
+
 ## Nothing here is model-suppliable
 
 The model never sees this object and has no parameter that could name any part
@@ -47,6 +68,7 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from data.context import CallerContext
+from services.rag import EmbeddingClient
 
 
 @dataclass(frozen=True)
@@ -91,6 +113,28 @@ class CopilotContext:
     #: claim of its own, where a tool naming one has nothing to be confined to
     #: and is refused outright. v1 never mints such a thread.
     claim_business_id: str | None
+
+    #: **The embeddings client every retrieval tool is handed** (Story 6.4).
+    #:
+    #: A `Protocol`, so a test supplies a deterministic one and the shipped
+    #: `OllamaEmbeddingClient` is built once in `lifespan` from
+    #: `services/rag.embedding_client`. It is a *dependency* of the two
+    #: retrieving tools rather than an argument of either — see the module
+    #: docstring, and `agents/registry.py::INJECTED` for the declaration that
+    #: keeps it off every `args_schema`.
+    embedding_client: EmbeddingClient
+
+    #: How many days old a neighbour's vector may be before the answer has to
+    #: say so — AD-12's "a configured threshold", singular.
+    #:
+    #: It is `Settings.insight_staleness_disclosure_days`, reused rather than
+    #: duplicated: the disclosure sentence interpolates the number ("last
+    #: indexed more than N days ago") and it is produced in exactly one place,
+    #: `agents/tools/similar.py::_disclosure`, for both the Insights card and
+    #: the copilot. Two knobs would let the card and the chat tell the same
+    #: handler two different numbers about the same neighbour in the same
+    #: session.
+    embedding_staleness_days: int
 
 
 __all__ = ["CopilotContext"]
