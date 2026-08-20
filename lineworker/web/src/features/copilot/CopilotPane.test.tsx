@@ -17,26 +17,32 @@
  * which now has somewhere to move to.
  */
 import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { afterEach, expect, test, vi } from "vitest";
 
 import { createQueryClient } from "@/api/queryClient";
-import { DiaryNavProvider } from "@/features/diary/DiaryNav";
+import { DiaryNavProvider, useDiaryNav } from "@/features/diary/DiaryNav";
 import {
   CLAIM_DETAIL_TREATMENT,
+  COPILOT_RUN_RTW_DRAFT,
   COPILOT_THREADS,
   COPILOT_TRANSCRIPT,
+  copilotRunBodies,
   DIARY_NOTES,
   ME_HANDLER,
   MEETINGS,
   stubApi,
+  type StubRoutes,
 } from "@/test/api-mock";
 
 import { CopilotPane } from "./CopilotPane";
 
-function renderPane(path = "/workspace?claim=WC-20017") {
+function renderPane(
+  path = "/workspace?claim=WC-20017",
+  routes: Partial<StubRoutes> = {},
+) {
   stubApi({
     me: ME_HANDLER,
     claimDetail: CLAIM_DETAIL_TREATMENT,
@@ -47,15 +53,36 @@ function renderPane(path = "/workspace?claim=WC-20017") {
     diaryNotes: DIARY_NOTES,
     copilotThreads: COPILOT_THREADS,
     copilotTranscript: COPILOT_TRANSCRIPT,
+    ...routes,
   });
   return render(
     <QueryClientProvider client={createQueryClient()}>
       <MemoryRouter initialEntries={[path]}>
         <DiaryNavProvider>
+          <RtwDeepLink />
           <CopilotPane />
         </DiaryNavProvider>
       </MemoryRouter>
     </QueryClientProvider>,
+  );
+}
+
+/**
+ * The centre pane's "Draft RTW Letter →" row, reduced to the one call it makes.
+ *
+ * `ActionsCard` lives three components away in the *centre* pane and reaches
+ * this one through `DiaryNav` — so what the deep link actually is, from the
+ * copilot's side, is `requestRtwLetter()` being called from somewhere outside
+ * it. Standing in the real row here would drag a case file, a checklist and a
+ * detail pane into a test about which tab is showing; calling the context
+ * method is the same event with none of that.
+ */
+function RtwDeepLink() {
+  const { requestRtwLetter } = useDiaryNav();
+  return (
+    <button type="button" data-testid="rtw-deep-link" onClick={requestRtwLetter}>
+      Draft RTW Letter
+    </button>
   );
 }
 
@@ -157,4 +184,66 @@ test("the arrows move between the two tabs, and only the selected one is a stop"
 
   await userEvent.keyboard("{ArrowRight}");
   expect(screen.getByTestId("copilot-tab-diary")).toHaveAttribute("aria-selected", "true");
+});
+
+test("the RTW deep link works from the tab the panel opens on", async () => {
+  // **The dead click** (review of Story 6.5). 📓 Diary is the tab the panel
+  // opens on, so the ordinary journey is: the checklist raises the counter,
+  // this shell switches to ⚡ Actions, and `ActionsTab` *mounts* — at which
+  // point a `useRef(rtwRequestSession)` inside it initialises to the value it
+  // was supposed to react to, its effect sees no change, and nothing happens.
+  // The tab was selected and the letter never drafted. From ⚡ Actions, where
+  // the component was already mounted, it worked — which is why it looked fine.
+  //
+  // Asserted on the *run* rather than on the tab, because selecting the tab was
+  // never the broken half.
+  renderPane("/workspace?claim=WC-20017", {
+    copilotRun: { sse: COPILOT_RUN_RTW_DRAFT },
+  });
+
+  expect(await screen.findByTestId("copilot-tab-diary")).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+
+  await userEvent.click(screen.getByTestId("rtw-deep-link"));
+
+  expect(screen.getByTestId("copilot-tab-actions")).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await waitFor(() => expect(copilotRunBodies).toHaveLength(1));
+  expect(copilotRunBodies[0]).toMatchObject({ quickAction: "rtw" });
+  // …and the modal the link is really asking for opens on the draft.
+  expect(await screen.findByTestId("rtw-body")).toHaveTextContent(
+    "Modified duty is available.",
+  );
+});
+
+test("returning to the Actions tab by hand does not replay the deep link", async () => {
+  // The other half, and the reason the marker cannot simply be initialised to
+  // zero: a remount cannot tell "I have not handled this" from "I handled it
+  // before I was unmounted", so a ref inside `ActionsTab` would make every
+  // later visit to ⚡ Actions re-run the draft — a network run, and a modal
+  // opening over whatever the handler had come back to do.
+  renderPane("/workspace?claim=WC-20017", {
+    copilotRun: { sse: COPILOT_RUN_RTW_DRAFT },
+  });
+
+  await screen.findByTestId("copilot-tab-diary");
+  await userEvent.click(screen.getByTestId("rtw-deep-link"));
+  await waitFor(() => expect(copilotRunBodies).toHaveLength(1));
+
+  // The modal the first run opened is a focus-trapped dialog, so the strip
+  // behind it is genuinely unclickable until it is dismissed — which is the
+  // handler's own route back to the case file, and Escape is one of the three
+  // ways out `DocumentViewerDialog` argues for.
+  await userEvent.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByTestId("rtw-body")).toBeNull());
+
+  await userEvent.click(screen.getByTestId("copilot-tab-diary"));
+  await userEvent.click(screen.getByTestId("copilot-tab-actions"));
+  await screen.findByTestId("copilot-actions");
+
+  expect(copilotRunBodies).toHaveLength(1);
 });

@@ -45,7 +45,7 @@ getting it subtly wrong is how a streamed turn ends up duplicated in a
 transcript.
 """
 
-from typing import Any, NotRequired
+from typing import Any, Literal, NotRequired
 
 from langchain.agents import AgentState
 from langgraph.graph import MessagesState
@@ -87,21 +87,43 @@ class CallerRef(TypedDict):
 class PendingApproval(TypedDict):
     """The write a run has paused on, waiting for approve / edit / reject.
 
-    **Declared here and never populated by this story.** Story 6.5 owns the
-    `interrupt()` producer, the approval-marker lifecycle and the RTW letter;
-    what 6.3 owes it is a channel that already exists, a stream that already
-    speaks `interrupt`, and a registry that already refuses an unmarked write.
-    So this type is the shape of that future value, `None` in every checkpoint
-    this story can produce, and `tests/test_copilot_graph.py` asserts nothing
-    raises an interrupt yet.
-
-    Declared rather than deferred because the alternative is 6.5 adding a
-    channel to a schema that is already carrying live conversations — which is
-    a checkpoint-compatibility problem, and the reason AD-6 wants the schema
-    closed in one place in the first place.
+    Declared by Story 6.3 and **populated by Story 6.5**, which is the story
+    that owns the `interrupt()` producer, the approval-marker lifecycle and the
+    RTW letter. What 6.3 owed it was a channel that already existed, a stream
+    that already spoke `interrupt`, and a registry that already refused an
+    unmarked write — declared rather than deferred, because the alternative was
+    6.5 adding a channel to a schema already carrying live conversations, which
+    is a checkpoint-compatibility problem and the reason AD-6 wants the schema
+    closed in one place.
 
     At most one per thread (AD-6: the model is capped at one write per turn), so
-    this is a single optional value and not a list.
+    this is a single optional value and not a list. The cap is enforced in
+    **two** places, because neither covers the other's case: a write-scoped
+    `ToolCallLimitMiddleware` per write tool bounds repeat calls to *one* tool,
+    and `agents/approval.py`'s `WriteProposalMiddleware` drops every write call
+    after the first *across* the two tools — which the vendor's per-tool
+    limiters cannot see, since each counts only its own name. Together they are
+    what make this channel singular by construction rather than by convention;
+    the second was missing until the review of Story 6.5, and a turn calling
+    both write tools produced an interrupt batching two pending writes against a
+    channel that recorded one.
+
+    ## Where the drafted versions are, and why they are not a separate field
+
+    AC 1 asks the proposal to record "the `version` of every entity drafted
+    against". They are in `arguments`, because that is what they *are*:
+    `expected_version` is a field on every write tool's argument schema
+    (`registry.WriteArgs`), the model reads it out of a tool result at draft
+    time, and it is the value the AD-4 command compare-and-swaps on. A second
+    copy beside the arguments would be a second thing to keep true, and the copy
+    that drifts is the one the gate reads.
+
+    What `identity` adds is not a copy but a *projection*: the subset of the
+    arguments an `edit` decision may not touch. AD-6 permits a human to revise
+    only non-identity arguments — never the target entity, never the versions
+    the write was drafted against — and `agents/approval.py` enforces that
+    server-side by comparing the resolved decision's arguments against this,
+    rather than by trusting a client to send back what it was given.
     """
 
     tool_name: str
@@ -111,6 +133,77 @@ class PendingApproval(TypedDict):
     #: (AD-16). `Any` because the shape is the tool's own argument schema and
     #: differs per tool; it is validated by that schema before it is executed.
     arguments: dict[str, Any]
+    #: The arguments an `edit` may not change — the write's identity.
+    #:
+    #: `claim_business_id` and `expected_version`, projected out of `arguments`
+    #: at the moment the proposal is recorded, so the comparison an `edit` is
+    #: checked against is the *drafted* value and not whatever the resume body
+    #: happened to contain. See the class docstring.
+    identity: dict[str, Any]
+
+
+class ProposedWrite(TypedDict):
+    """A write drafted **outside the model**, waiting to be emitted as a tool call.
+
+    The RTW letter's save, and the seam that makes AD-6's "one wire contract,
+    not two" literally true. A quick-action node holds no write tool (AD-6), and
+    the handler's edited letter must not be regenerated — so the save arrives on
+    the run request, is written to this channel by `agents/graph.run_inputs`, and
+    `agents/approval.py`'s middleware short-circuits the model call to emit
+    exactly this tool call. `HumanInTheLoopMiddleware.after_model` then interrupts
+    on it natively, producing the identical `HITLRequest` a model-selected write
+    produces and resuming through the identical decision.
+
+    **No model call happens on this path**, which is the point rather than an
+    optimisation: the payload is the handler's own text, regenerating it would
+    discard their edit, and AD-14 keeps a deterministic action deterministic.
+
+    A channel rather than a parameter because the graph is entered once and the
+    middleware runs several nodes later; and a *distinct* channel from
+    `pending_approval` because the two are different moments — this is "a write
+    has been drafted and no tool call exists yet", `pending_approval` is "a tool
+    call exists and a human has not answered".
+    """
+
+    #: The name of the write tool this proposal will be emitted as.
+    tool_name: str
+    #: The tool call's arguments, verbatim — the handler's own letter.
+    arguments: dict[str, Any]
+    #: **This proposal's identity, minted once when the run is assembled.**
+    #:
+    #: The tool call the middleware synthesises carries it, so "has this
+    #: proposal already been drafted in this run?" is answered by looking up
+    #: *that id* in the message history rather than by scanning it for any call
+    #: to the same tool. The distinction is the whole of a thread's second save
+    #: (review of Story 6.5): a name-keyed scan matched the *first* letter's
+    #: call, which is checkpointed for ever, so every later save on the thread
+    #: resolved instantly as though it had already been filed — reporting
+    #: success, proposing nothing, gating nothing and discarding the handler's
+    #: second letter. It matched on name alone, so even a differently-worded
+    #: letter to a different reader was answered by the first one's history.
+    #:
+    #: Minted by `api/routers/copilot.py::_proposed_write`, which is where a
+    #: proposal is built from a request, and carried through `run_inputs`
+    #: untouched. A UUID rather than something derived from the thread or the
+    #: version: two saves on one thread pinned to one claim version are two
+    #: different proposals, and nothing about either of them differs.
+    proposal_id: str
+
+
+#: How the last gated write resolved. **Four values, and each has a producer.**
+#:
+#: `agents/approval.py` is the only writer and it writes exactly these: the
+#: three decisions it can classify (`approved`, `edited`, `rejected`) plus the
+#: one refusal it raises itself when an `edit` moved the write's identity
+#: (`edit_refused`). The channel shipped documented as seven — `saved`, `stale`
+#: and `failed` were also listed — and no code path ever produced those three
+#: (review of Story 6.5). They were not a reserved vocabulary, they were a
+#: description of a design that changed: an execution outcome is narrated from
+#: the tool's own envelope, which the deterministic path reads out of the
+#: `ToolMessage` rather than out of a channel. A `Literal` is what keeps the
+#: list and the writers in step from here on — a fifth value is now a mypy
+#: error at the assignment rather than a docstring nobody re-read.
+WriteOutcome = Literal["approved", "edited", "rejected", "edit_refused"]
 
 
 class CopilotState(MessagesState):
@@ -163,9 +256,47 @@ class CopilotState(MessagesState):
     #: content may select a route).
     route: NotRequired[str]
 
-    #: The one write awaiting a human, or `None`. Story 6.5 populates it; see
-    #: `PendingApproval`.
+    #: The one write awaiting a human, or `None`. See `PendingApproval`.
     pending_approval: NotRequired[PendingApproval | None]
+
+    #: The tool call a human has approved — the AD-6 **approval marker**.
+    #:
+    #: Set by `agents/approval.py` once `HumanInTheLoopMiddleware` has resolved
+    #: an `approve` or an accepted `edit`, keyed by the pending tool-call id,
+    #: and cleared before the next model step. It is a channel rather than a
+    #: context variable *at this level* because AD-6 says the marker lives in
+    #: graph state: a marker on state is one a resumed run still has after a
+    #: process restart, and one a reviewer can read out of a checkpoint. The
+    #: `ContextVar` in `agents/registry.py` is the last hop from here into a
+    #: `StructuredTool` body, not a second source of truth.
+    approved_tool_call_id: NotRequired[str | None]
+
+    #: A write drafted outside the model, waiting to become a tool call.
+    #:
+    #: Written by `run_inputs` for the RTW letter's save and `None` for every
+    #: other turn — cleared rather than omitted, for `quick_action`'s reason:
+    #: the channel is last-write-wins, and a value left in a checkpoint would
+    #: make the *next* free-text message re-propose yesterday's letter. See
+    #: `ProposedWrite`.
+    proposed_write: NotRequired[ProposedWrite | None]
+
+    #: How the last gated write resolved, for the deterministic path to narrate.
+    #:
+    #: One of the four `WriteOutcome` members — set by `agents/approval.py` as
+    #: the decision resolves. The free-chat path does not read it: there, the
+    #: model narrates the outcome from the `ToolMessage` it can see. The RTW
+    #: save does, because it makes **no model call** and therefore has to
+    #: compose its own confirmation or cancellation sentence from something;
+    #: this channel is that something, and it is a closed vocabulary rather than
+    #: a message so that the sentence stays committed code rather than
+    #: checkpointed prose.
+    #:
+    #: It does **not** carry the write's *execution* outcome — whether the
+    #: command CAS-ed, lost the race or refused. That is in the tool's own
+    #: `{ok, error}` envelope, which the deterministic path reads off the
+    #: `ToolMessage`; see `WriteOutcome` on the three values that were declared
+    #: for it and never written.
+    write_outcome: NotRequired[WriteOutcome | None]
 
 
 class CopilotAgentState(AgentState[Any]):
@@ -191,6 +322,9 @@ class CopilotAgentState(AgentState[Any]):
     quick_action: NotRequired[str | None]
     route: NotRequired[str]
     pending_approval: NotRequired[PendingApproval | None]
+    approved_tool_call_id: NotRequired[str | None]
+    proposed_write: NotRequired[ProposedWrite | None]
+    write_outcome: NotRequired[WriteOutcome | None]
 
 
 #: The channels the `create_agent` harness and its middleware own, declared here
@@ -240,4 +374,6 @@ __all__ = [
     "CopilotAgentState",
     "CopilotState",
     "PendingApproval",
+    "ProposedWrite",
+    "WriteOutcome",
 ]

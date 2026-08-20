@@ -9,12 +9,12 @@ and nothing else in the build constructs a graph or an agent.
 
 ## The entry router is deterministic, and that is AD-14
 
-`route_entry` chooses a node from **two things and nothing else**: the
-`quick_action` channel, and whether there is one at all. It does not ask a
-model, it does not read claim text, and it does not parse anything out of a
-message body — which is AD-16's "nothing derived from injected content may
-select a tool, alter a route or name a scope", made structural rather than
-promised.
+`route_entry` chooses a node from **two channels and nothing else**: whether a
+write was drafted outside the model (`proposed_write`, Story 6.5) and which
+quick-action key, if any, routed the turn. It does not ask a model, it does not
+read claim text, and it does not parse anything out of a message body — which is
+AD-16's "nothing derived from injected content may select a tool, alter a route
+or name a scope", made structural rather than promised.
 
 `QUICK_ACTIONS` is **the seven keys since Story 6.4**, and the hook 6.3 shipped
 took them without a re-architecture — which was the point of shipping it empty.
@@ -38,12 +38,17 @@ in aggregate. The wall clock itself is enforced by the runs endpoint around the
 whole stream, because a timeout that lived here would fire inside the graph and
 leave the terminal-event decision in two places.
 
-`HumanInTheLoopMiddleware` is **not** here, and its absence is Story 6.5's
-seam rather than an oversight: there is no `kind: write` tool registered, so
-there is nothing for it to gate, and a middleware configured to interrupt on an
-empty tool set is a moving part with no behaviour. `agents/registry.py`'s
-`WriteNotApproved` raise is what stands in the gap in the meantime — defence in
-depth that ships before the thing it defends.
+`HumanInTheLoopMiddleware` **is** here since Story 6.5, which registered the
+first two `kind: write` tools and therefore the first thing for it to gate. It
+is the single `interrupt()` producer in this build: both write origins — a
+model-selected write on a free-chat turn, and the RTW letter's deterministic
+save — arrive at it as ordinary entries in `AIMessage.tool_calls`, so both
+produce one payload and resume through one decision shape (AD-6). The two
+middleware either side of it are `agents/approval.py`'s, and **the order of the
+three in the list below is load-bearing**: `create_agent` chains `after_model`
+hooks in reverse list order, so `[Outcome, HumanInTheLoop, Proposal]` runs as
+Proposal → HumanInTheLoop → Outcome. `agents/registry.py`'s `WriteNotApproved`
+raise stays as defence in depth behind all three.
 
 ## Caller re-resolution happens **outside** every node
 
@@ -65,17 +70,21 @@ from typing import Any, Literal
 
 import structlog
 from langchain.agents import create_agent
-from langchain.agents.middleware import ToolCallLimitMiddleware
+from langchain.agents.middleware import (
+    AgentMiddleware,
+    HumanInTheLoopMiddleware,
+    ToolCallLimitMiddleware,
+)
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
-from agents import prompts, qas
+from agents import approval, prompts, qas
 from agents.context import CopilotContext
-from agents.registry import build_tools
-from agents.state import CallerRef, CopilotAgentState, CopilotState
+from agents.registry import WRITE_TOOLS, build_tools
+from agents.state import CallerRef, CopilotAgentState, CopilotState, ProposedWrite
 from data.context import CallerContext
 
 log = structlog.get_logger()
@@ -194,10 +203,22 @@ def route_entry(state: CopilotState) -> Route:
     is what `Route`'s comment claims and, until the review of this story, was
     not true of anything.
 
-    It reads `quick_action` and nothing else — no message body, no claim text,
+    It reads **two channels** and nothing else — no message body, no claim text,
     no model call. See the module docstring on why that is the AD-14/AD-16
     property rather than a simplification.
+
+    `proposed_write` is checked first and is Story 6.5's: a run carrying a write
+    drafted outside the model goes to the agent node, because that is where the
+    approval gate lives. It cannot conflict with a quick action — the runs
+    endpoint refuses a body carrying both — and it is checked first anyway, so
+    that the two orderings a reader might assume give the same answer.
+
+    **Not an eighth quick-action key.** The RTW letter's save reuses the `rtw`
+    key's whole surface (`QUICK_ACTIONS` above says so) and adds a channel
+    instead: a key routes a *question* to a node, and this is not a question.
     """
+    if state.get("proposed_write") is not None:
+        return CHAT_NODE
     key = state.get("quick_action")
     if key is not None and key in QUICK_ACTIONS:
         return QUICK_ACTIONS[key].node
@@ -240,6 +261,7 @@ def run_inputs(
     claim_business_id: str,
     message: str,
     quick_action: str | None = None,
+    proposed_write: ProposedWrite | None = None,
 ) -> dict[str, Any]:
     """The state update that starts one turn. **The only place run inputs are made.**
 
@@ -252,25 +274,29 @@ def run_inputs(
     The human message is appended by `add_messages` rather than replacing the
     history, which is what makes a thread a conversation.
 
-    `quick_action` is accepted and is `None` for every caller this story has;
-    Story 6.4 passes a key. It is written to state only when present, so a
-    free-text turn does not leave a stale key behind for the next one to
-    dispatch on.
+    `quick_action` carries one of Story 6.4's seven keys. `proposed_write`
+    carries Story 6.5's RTW letter save — a write drafted by a handler in the
+    modal, not by a model. Both are **always written**, `None` included, for the
+    same last-write-wins reason: a value left in a checkpoint would dispatch the
+    *next* free-text message down a quick action's node, or re-propose
+    yesterday's letter over a question somebody typed today.
+
+    The two are mutually exclusive in practice — `api/routers/copilot.py`
+    refuses a body carrying both — and this function does not enforce that,
+    deliberately: it is the single place run inputs are *made*, not the place
+    requests are validated, and a second refusal here would be a second answer
+    to "is this body well formed?".
     """
     update: dict[str, Any] = {
         "messages": [HumanMessage(content=message)],
         "caller": caller_ref(caller),
         "claim_business_id": claim_business_id,
+        # Cleared rather than omitted — see the docstring. Story 6.4 is where
+        # `quick_action` became a live bug; `proposed_write` joins it under the
+        # same rule rather than waiting to become one.
+        "quick_action": quick_action,
+        "proposed_write": proposed_write,
     }
-    if quick_action is not None:
-        update["quick_action"] = quick_action
-    else:
-        # Cleared rather than omitted: `quick_action` is last-write-wins, so an
-        # omitted key leaves the previous turn's value in the checkpoint and the
-        # router would dispatch this free-text message down a quick action's
-        # node. Story 6.4 is where that becomes a live bug; clearing it now
-        # means 6.4 does not have to find it.
-        update["quick_action"] = None
     return update
 
 
@@ -283,18 +309,21 @@ def resume_inputs(*, caller: CallerContext) -> dict[str, Any]:
 
     **And it clears `quick_action`, for `run_inputs`' reason.** That channel is
     last-write-wins, so an update that omits it leaves the previous turn's key
-    in the checkpoint — and `agents/state.py` now documents "the writer always
+    in the checkpoint — and `agents/state.py` documents "the writer always
     writes it" as an invariant of the channel rather than as a habit of one
-    function. It is inert today, because nothing interrupts and a resume
-    re-enters at the interrupted node rather than at the router. Story 6.5
-    raises the first interrupt against exactly this path, which is the story
-    that would otherwise have to find it.
+    function. Inert in practice, because a resume re-enters at the interrupted
+    node rather than at the router, and correct anyway.
 
-    Nothing raises an interrupt in this story (Story 6.5 owns the producers), so
-    this function has no live caller yet beyond the resume branch of the runs
-    endpoint and its test. It ships now because the alternative is 6.5 adding
-    the re-resolution at the same time as the thing that needs it, and the
-    review that catches a missing overwrite is the one that never happens.
+    **`proposed_write` is deliberately *not* cleared**, which is the one place
+    this function and `run_inputs` disagree and the disagreement is the whole
+    of the RTW save's second half. A resume continues the run that proposed the
+    letter: `agents/approval.py`'s middleware still has to recognise that this
+    run is the deterministic one, so that the confirmation or cancellation is
+    composed in committed code rather than by a model call the save path is not
+    allowed to make. Clearing it here would put an LLM on the one path AD-14
+    keeps deterministic — and would do it silently, because the run would still
+    answer. The channel is cleared by the next `run_inputs`, which is every
+    other way into the graph.
     """
     return {"caller": caller_ref(caller), "quick_action": None}
 
@@ -322,35 +351,99 @@ def build_graph(
     caller that could omit it.
     """
     system_prompt, version = prompts.chat_system_message()
-    # `create_agent`'s `ContextT` cannot be inferred from a frozen dataclass
-    # passed as `context_schema` — the vendor's overloads bind it from the
-    # model's own generic, which `BaseChatModel` does not carry. Ignored at the
-    # one call rather than widened to `Any`, so a genuinely wrong argument here
-    # still fails to type-check.
-    agent = create_agent(  # type: ignore[misc]
+    # **The middleware list is a named local with a widened element type**, and
+    # the widening is a vendor-typing accommodation rather than a loosening.
+    # `AgentMiddleware` is generic in its state schema and that parameter is
+    # invariant, so a list mixing this build's `CopilotAgentState`-typed
+    # middleware with the vendor's own — which bind their state schemas
+    # separately — has no common inferred element type and every entry is then
+    # checked against whichever one mypy picked first. Declaring the list is
+    # what lets the three approval middleware sit beside the two budget ones;
+    # each class still declares its real `state_schema`, which is what
+    # `create_agent` actually merges into the graph.
+    middleware: list[AgentMiddleware[Any, Any, Any]] = [
+        # **The write gate, and the order of these three is the gate.**
+        #
+        # `create_agent` chains `after_model` hooks in *reverse* list order, so
+        # what runs is Proposal → HumanInTheLoop → Outcome: the proposal is
+        # recorded on state, the vendor's middleware pauses the run on it, and
+        # the resolved decision is guarded, audited and marked. A reviewer who
+        # reorders these puts the guard on the wrong side of the pause —
+        # `agents/approval.py` says so at length, and
+        # `tests/test_copilot_approval.py` asserts the sequence rather than the
+        # list.
+        #
+        # `interrupt_on` is built from `registry.WRITE_TOOLS`, so a write entry
+        # added to the registry is gated by construction rather than by
+        # somebody remembering to widen a literal here.
+        approval.ApprovalOutcomeMiddleware(),
+        HumanInTheLoopMiddleware(interrupt_on=approval.interrupt_config()),
+        approval.WriteProposalMiddleware(),
+        # The run's tool budget, and **`exit_behavior` is passed** rather than
+        # left at the vendor's default (review of Story 6.3: it was argued here
+        # and never given, so the installed behaviour was `"continue"` — block
+        # the exceeded tool, hand the model an error message, and let it keep
+        # calling. The runaway loop this knob exists to stop was stopped by the
+        # 300-second wall clock instead, which is the bound in the dimension it
+        # was explicitly *not* supposed to be).
+        #
+        # `"end"` rather than `"error"`: a turn that exhausted its tools should
+        # finish with whatever it has and let the handler ask again, not
+        # terminate the stream with an error frame about an internal bound.
+        ToolCallLimitMiddleware(thread_limit=None, run_limit=max_tool_calls, exit_behavior="end"),
+        # **One call per run, per write tool** — the *repeat* half of AD-6's
+        # "at most one write pends at a time".
+        #
+        # **It is not the whole of that guarantee, and the comment here claimed
+        # it was** (review of Story 6.5). The vendor's limiter counts only the
+        # tool it names (`_matches_tool_filter`), so one `AIMessage` calling
+        # `save_rtw_letter` *and* `update_claim_field` passes both limiters
+        # untouched — and `HumanInTheLoopMiddleware` then emits two
+        # `action_requests` while `pending_approval` records one. The panel
+        # refuses a payload carrying anything but exactly one, so no card
+        # renders and the thread 409s every later message with no way forward.
+        # There is no vendor knob for "one across this *set* of tools":
+        # `tool_name` takes one name and `None` means every tool in the build.
+        # So the across-the-set cap lives in `agents/approval.py`, which drops
+        # every write call after the first and answers it with an error
+        # `ToolMessage` before the pause ever sees it.
+        #
+        # What these still buy is the per-tool budget across a run: a model that
+        # calls the same write tool again after one has resolved is refused
+        # here rather than proposing a second card in one turn.
+        #
+        # `"continue"` rather than `"end"`, unlike the budget above: a turn that
+        # asked for a second write should be told it cannot have one and be
+        # allowed to finish answering, where a turn that exhausted its *read*
+        # budget has probably looped and should stop. A call refused here
+        # carries a result before the gate looks at it, which is why
+        # `interrupt_config`'s `when` predicate skips answered calls — a card
+        # for a write that can never run would be audited as a rejection
+        # whatever the handler pressed.
+        *(
+            ToolCallLimitMiddleware(
+                tool_name=name,
+                thread_limit=None,
+                run_limit=approval.WRITE_CALLS_PER_RUN,
+                exit_behavior="continue",
+            )
+            for name in sorted(WRITE_TOOLS)
+        ),
+    ]
+    # **No `type: ignore` here since Story 6.5**, and the reason is the named
+    # `middleware` local above rather than anything about this call. The ignore
+    # was for `ContextT`, which the vendor's overloads bind from the model's own
+    # generic — something `BaseChatModel` does not carry — and giving the
+    # middleware list an explicit element type is what now lets the overload
+    # resolve. It is deliberately not re-added: an unused ignore is a comment
+    # claiming a constraint that is no longer there.
+    agent = create_agent(
         model,
         tools=list(tools) if tools is not None else list(build_tools()),
         system_prompt=system_prompt,
         state_schema=CopilotAgentState,
         context_schema=CopilotContext,
-        middleware=[
-            # The run's tool budget, and **`exit_behavior` is passed** rather
-            # than left at the vendor's default (review of Story 6.3: it was
-            # argued here and never given, so the installed behaviour was
-            # `"continue"` — block the exceeded tool, hand the model an error
-            # message, and let it keep calling. The runaway loop this knob
-            # exists to stop was stopped by the 300-second wall clock instead,
-            # which is the bound in the dimension it was explicitly *not*
-            # supposed to be).
-            #
-            # `"end"` rather than `"error"`: a turn that exhausted its tools
-            # should finish with whatever it has and let the handler ask again,
-            # not terminate the stream with an error frame about an internal
-            # bound.
-            ToolCallLimitMiddleware(
-                thread_limit=None, run_limit=max_tool_calls, exit_behavior="end"
-            ),
-        ],
+        middleware=middleware,
     )
 
     builder: StateGraph[Any, Any, Any, Any] = StateGraph(

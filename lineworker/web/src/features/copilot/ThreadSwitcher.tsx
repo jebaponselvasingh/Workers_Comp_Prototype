@@ -17,6 +17,17 @@
  * Selecting one shows its transcript with no composer beneath it (`ActionsTab`);
  * the server refuses a run against it regardless, so the UI and the API say the
  * same thing rather than the UI being the enforcement.
+ *
+ * **Both controls take `busy`, and the picker's half is Story 6.5's review.**
+ * `+ New` was disabled while a copilot command was in flight and the picker was
+ * not, which was harmless while the only thing a thread could be doing was
+ * answering. It stopped being harmless when a thread could be *paused on an
+ * approval*: moving the selection re-points the pane's resume at another
+ * conversation, so the next Approve answers the wrong thread, and minting a new
+ * conversation supersedes the paused one — which then refuses a resume as
+ * read-only, leaving a proposed write pending in the checkpoints with no route
+ * left that can answer it. `ActionsTab` folds the pending flag into the same
+ * expression, so one prop still means "the conversation is not free right now".
  */
 import { Button } from "@/components/ui/button";
 
@@ -33,7 +44,12 @@ export function ThreadSwitcher({
   selectedThreadId: string | null;
   onSelect: (threadId: string) => void;
   onNewConversation: () => void;
-  /** Whether a copilot command is in flight — see `useCopilotWriteInFlight`. */
+  /**
+   * Whether the conversation is unavailable right now — a copilot command is in
+   * flight (`useCopilotWriteInFlight`), a run is streaming, or a proposed write
+   * is waiting for a decision. Disables **both** controls; see the module
+   * docstring on why the picker is not exempt.
+   */
   busy?: boolean;
 }) {
   // One conversation is not a choice. The control is hidden rather than
@@ -64,6 +80,7 @@ export function ThreadSwitcher({
             data-testid="copilot-thread-picker"
             className="min-w-0 flex-1 rounded border border-border bg-surface px-1.5 py-0.5 text-[10px] text-text"
             value={selectedThreadId ?? ""}
+            disabled={busy}
             onChange={(event) => onSelect(event.target.value)}
           >
             {threads.map((thread) => (

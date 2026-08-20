@@ -1048,19 +1048,27 @@ async def test_the_labor_law_action_fences_and_tags_every_retrieved_passage(
 async def test_the_rtw_action_drafts_into_the_transcript_and_proposes_nothing(
     engine: Any, system: CallerContext, claim_id: str
 ) -> None:
-    """Story 6.5's seam, asserted from this side.
+    """**Amended by Story 6.5** (AD-15) — the seam is gone, the property is not.
 
-    Three things at once, and each is a way the seam could be crossed early:
-    `pending_approval` stays `None`, nothing registered is a write, and the
-    draft is an ordinary assistant message in `messages` rather than an
-    interrupt payload. A quick action that proposed a write here would produce
-    an interrupt shape 6.5 has not designed yet, against an approval lifecycle
-    that does not exist.
+    This asserted three things, one of which 6.5 falsifies: that nothing
+    registered is a write. Two writes are registered now, and both are bound to
+    the model, so that clause becomes the sharper claim AD-6 actually makes
+    about a quick-action node — **it holds no write tool of its own**. The node
+    calls `rtw_reader`, a `kind: read` entry, through a registry call that
+    passes an empty marker set; the draft is an ordinary assistant message; and
+    `pending_approval` is still `None`, because a quick action drafts and the
+    gated write step is somewhere else entirely.
 
-    The draft also names no return date, because no tool can supply one —
-    `Claim.rtw_rec` and `Claim.actual_rtw` are on no `ClaimDetail` field. The
-    figures section says so in as many words, which is the instruction the model
-    is given instead of a date.
+    That last assertion is now the load-bearing one rather than a scope line: a
+    QAS node that *did* propose a write would produce a second interrupt origin,
+    and AD-6's "one wire contract, not two" rests on there being exactly one.
+
+    The draft also names no return date, because no tool available to it can
+    supply one — `Claim.rtw_rec` and `Claim.actual_rtw` are on no `ClaimDetail`
+    field. The figures section says so in as many words, which is the
+    instruction the model is given instead of a date. What it no longer says is
+    that the letter cannot be saved: Story 6.5 gives the handler a modal and an
+    approval gate, so that sentence stopped being true and was removed.
     """
     model = _model()
     graph = build_graph(model=model, checkpointer=InMemorySaver(), max_tool_calls=3, tools=[])
@@ -1086,11 +1094,19 @@ async def test_the_rtw_action_drafts_into_the_transcript_and_proposes_nothing(
     state = await graph.aget_state(config)
     assert state.values.get("pending_approval") is None
     assert state.tasks == (), "the run paused on something"
-    assert all(entry.kind is ToolKind.read for entry in REGISTRY.values())
+    # **No write tool is reachable from a quick-action node.** The registry has
+    # two since 6.5 and neither is one this node can call: `_call` passes an
+    # empty marker set, so a `kind: write` entry reached from here is refused by
+    # `invoke`'s gate before it validates an argument.
+    assert {name for name, entry in REGISTRY.items() if entry.kind is ToolKind.write}
+    assert REGISTRY["rtw_reader"].kind is ToolKind.read
 
     figures = _user_of(model).split(MATERIAL_HEADING, 1)[0]
     assert "Do not state a date" in figures
-    assert "not saved to the claim" in figures
+    # Amended into its opposite: the draft now says a handler will review it
+    # before anything is filed, because filing it is a thing that can happen.
+    assert "not saved to the claim" not in figures
+    assert "before anything is filed" in figures
 
 
 # --- data alignment: no model, no fence markup (AC 2) --------------------
@@ -1443,6 +1459,101 @@ async def test_a_narration_that_produced_nothing_becomes_a_note_not_a_blank_turn
 
 
 @requires_db
+async def test_a_draft_that_produced_nothing_publishes_no_version_pin(
+    monkeypatch: pytest.MonkeyPatch, engine: Any
+) -> None:
+    """The pin describes a draft, so an empty narration publishes none (6.5 review).
+
+    `RTW_DRAFT` is what tells the panel "a letter was drafted, and here is the
+    claim version its save pins" — and the panel opens the wide modal on it,
+    with the run's streamed text in the body and a live **Save to claim**
+    button. It was published *before* the completion was requested, so it went
+    out unchanged when the model answered nothing: the modal opened holding
+    `EMPTY_NARRATION_NOTE`, and "The copilot could not compose an answer for
+    this quick action" was one click from being a filed document on an injured
+    worker's case file, and one more from being the letter a claimant reads.
+
+    Two assertions, and the second is what stops the first passing vacuously: no
+    pin reached the custom stream, and the run genuinely took the empty-
+    narration path rather than failing somewhere earlier.
+    """
+    from agents.tools.rtw import RtwContext
+
+    _stub(
+        monkeypatch,
+        "rtw_reader",
+        ToolResult.succeeded(
+            RtwContext(
+                claim_id="WC-20017",
+                return_status="under_treatment",
+                version=3,
+                restrictions=(),
+            )
+        ),
+    )
+    _stub(monkeypatch, "claim_reader", ToolResult.failed("not needed for this assertion"))
+
+    parts = await _run_key(
+        model=_SilentChatModel(),
+        engine=engine,
+        ctx=_HANDLER,
+        claim="WC-20017",
+        key="rtw",
+        thread="t.rtw.silent",
+    )
+
+    published = [chunk for mode, chunk in parts if mode == "custom"]
+    assert all(qas_module.RTW_DRAFT not in chunk for chunk in published), (
+        "a version pin was published for a letter that was never drafted"
+    )
+    assert qas_module.EMPTY_NARRATION_NOTE in _streamed(parts)
+
+
+@requires_db
+async def test_a_draft_that_produced_text_publishes_its_version_pin(
+    monkeypatch: pytest.MonkeyPatch, engine: Any
+) -> None:
+    """…and the positive control, without which the test above proves nothing.
+
+    A pin that was never published at all would satisfy the previous assertion
+    perfectly, and the save has no other source for the version it
+    compare-and-swaps on — so "the modal cannot open" and "the modal opens on a
+    force-write" are the two failures this pair sits between.
+    """
+    from agents.tools.rtw import RtwContext
+
+    _stub(
+        monkeypatch,
+        "rtw_reader",
+        ToolResult.succeeded(
+            RtwContext(
+                claim_id="WC-20017",
+                return_status="under_treatment",
+                version=3,
+                restrictions=(),
+            )
+        ),
+    )
+    _stub(monkeypatch, "claim_reader", ToolResult.failed("not needed for this assertion"))
+
+    parts = await _run_key(
+        model=_model(),
+        engine=engine,
+        ctx=_HANDLER,
+        claim="WC-20017",
+        key="rtw",
+        thread="t.rtw.pinned",
+    )
+
+    pins = [
+        chunk[qas_module.RTW_DRAFT]
+        for mode, chunk in parts
+        if mode == "custom" and qas_module.RTW_DRAFT in chunk
+    ]
+    assert pins == [{"claimId": "WC-20017", "version": 3}]
+
+
+@requires_db
 async def test_an_absent_material_section_is_stated_in_the_figures(
     monkeypatch: pytest.MonkeyPatch, engine: Any
 ) -> None:
@@ -1467,7 +1578,16 @@ async def test_an_absent_material_section_is_stated_in_the_figures(
         monkeypatch,
         "rtw_reader",
         ToolResult.succeeded(
-            RtwContext(claim_id="WC-20017", return_status="under_treatment", restrictions=())
+            RtwContext(
+                claim_id="WC-20017",
+                return_status="under_treatment",
+                # The claim `version` the draft is composed against, and the
+                # number Story 6.5's save is compare-and-swapped on. Present on
+                # every `RtwContext` since that story, so a fixture that omitted
+                # it would be constructing a projection this build cannot make.
+                version=3,
+                restrictions=(),
+            )
         ),
     )
     _stub(monkeypatch, "claim_reader", ToolResult.failed("the claim is not in this caller's book"))

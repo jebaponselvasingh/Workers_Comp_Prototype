@@ -40,24 +40,70 @@ generated from claim and document columns, and `blob_key` is resolved through
 the one `BlobStore` protocol so the route already knows where to ask on the day
 a real PDF is attached. The MinIO-versus-volume decision stays deferred; the
 boundary is what this story binds.
+
+## The first writer (Story 6.5), and the one thing it deliberately does not do
+
+Until Story 6.5 this module was **entirely read-only** — the only writer of a
+`document` row was `set_document_review`, flipping two booleans, and every row
+in the table came from the Story 2.2 seed migration. `create_document` below is
+the first command that creates one, and it exists for exactly one caller: the
+copilot's approved return-to-work letter save. It is an AD-4 command in
+`add_additional_injury`'s shape — role gate, scoped re-read, version pre-check,
+compare-and-swapped `INSERT … SELECT`, audit and timeline in the same
+transaction, commit, re-read.
+
+**It does not call `services/rag.mark_claim_stale`, and the omission is a
+decision rather than a gap.** AD-12 asks a command that mutates an *embedded
+source field* to mark the claim's embedding stale in the same transaction, and
+`update_claim_fields`, `update_claim_severity`, `add_additional_injury` and
+`remove_additional_injury` all do. This one must not, because
+`services/rag/claim_text.py` composes the embeddable claim summary from clinical
+fields only — injury type, cause, body part, ICD-10, severity, disability,
+recovery window, surgery, sector, stage, status, the two return-to-work dates
+and the secondary injuries. Filing a letter writes none of them: the claim is
+not less similar to its neighbours than it was a moment ago, and re-embedding it
+would put a vector through the model to produce the same vector. A stale flag
+raised for a change the composer cannot see is noise in the queue the scheduled
+refresh drains first.
+
+`services/claims/comp_rate.py` is the precedent for writing this down rather
+than leaving a reader to wonder whether the call was forgotten — which is the
+only reason a deliberate absence is worth a paragraph at all.
+
+## Two imports are function-local, and the cycle is why
+
+`services/claims/detail.py` imports `documents_block` from *this* module — the
+Documents & ID tab is part of the case file it assembles — so this module cannot
+import `detail` (or `edit`, which imports `detail`) at module scope without a
+circular import at startup. `create_document` returns a `ClaimDetail` and reuses
+`edit.py`'s refusal ladder rather than restating it, both of which are the right
+shapes; so the two imports happen inside the function, under a `TYPE_CHECKING`
+block for the annotations. `api/routers/copilot.py` breaks the same kind of
+cycle the same way and records the same reason: a local import is a smaller
+price than a second `ClaimDetail` assembler or a fifth spelling of "only a
+handler may write to a case file".
 """
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date
-from typing import Any
+from datetime import UTC, date, datetime
+from typing import TYPE_CHECKING, Any, Final
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from data.context import CallerContext
 from data.models.core import Claim, Document
-from data.models.enums import ClaimPath, DocType
+from data.models.enums import ClaimPath, DocType, TimelineTag, UserRole
 from data.repositories import claims as claim_repo
 from data.repositories import statutory_forms as forms_repo
 from rules.parameters import DerivationThresholds
-from services import derivations
+from services import audit, derivations
 from services.blobstore import BlobStore
+from services.claims import timeline
+
+if TYPE_CHECKING:  # pragma: no cover - see the module docstring on the cycle
+    from services.claims.detail import ClaimDetail
 
 #: The sheet a first report of injury renders, versus the sheet everything else
 #: renders. Two variants, discriminated on the wire, for the reason the stage
@@ -66,6 +112,62 @@ from services.blobstore import BlobStore
 #: eleven truthiness checks where the prototype has one `if`.
 FROI_VARIANT = "froi"
 SUMMARY_VARIANT = "summary"
+
+#: The third variant (Story 6.5): a document that carries its own words.
+#:
+#: **Dispatched on `body_text is not None`, never on `doc_type`.** A document is
+#: rendered as a letter because it *is* one — because somebody's prose is stored
+#: on the row — and not because of how it was classified. The distinction has
+#: teeth for exactly the type this story files under: the 563 seeded rows include
+#: `rtw` documents with no body, filed by the prototype's data as a record that a
+#: return-to-work letter exists somewhere, and those keep the summary sheet they
+#: belong on. A `doc_type is DocType.rtw` test would have shown each of them a
+#: letter variant with an empty body.
+LETTER_VARIANT = "letter"
+
+#: How a filed generated letter is classified — **`create_document`'s decision,
+#: published so a caller can name it without importing an ORM enum**.
+#:
+#: The type itself is fixed inside the command and is not a parameter, for the
+#: reason `agents/tools/documents.py` gives at length: a model able to choose it
+#: could file chat-drafted prose as a claim's statutory First Report of Injury.
+#: What this constant is for is the *reporting* side — a tool that wants to tell
+#: the model what was filed needs the token, and reaching into
+#: `data/models/enums` for it made `agents/tools/documents.py` the one tool in
+#: the build importing `data/`, against AD-13's "a tool holds no session and
+#: touches no data layer" (review of Story 6.5). The owning service publishes
+#: the fact; the tool quotes it.
+#:
+#: A `str` rather than the member, because that is what crosses the envelope:
+#: `DocType` is a `StrEnum`, so the token is the same either way, and a plain
+#: string is what a JSON payload carries.
+RTW_DOC_TYPE: Final[str] = DocType.rtw.value
+
+#: The AD-4 `action` for a filed document — the command's own name, so an audit
+#: row read months later names the function that wrote it (`edit.py`'s rule).
+CREATE_ACTION: Final[str] = "create_document"
+DOCUMENT_ENTITY: Final[str] = "document"
+
+#: How long a document's name may be. The column is `Text`, so this is a product
+#: rule rather than a storage one: the name is rendered on one line of the
+#: documents list beside five other rows, and a paste accident should be refused
+#: at the boundary rather than discovered by a table that has stopped lining up.
+#: The seeded names are 12–34 characters.
+NAME_MAX_LENGTH: Final[int] = 120
+
+#: How long a generated letter may be, in characters.
+#:
+#: Generous — a return-to-work offer is two or three hundred words — and present
+#: for `MAX_LENGTHS`' reason in `edit.py`: an unbounded body is a column a
+#: mis-configured client can put a megabyte of prose in, on a table with a
+#: seven-year retention floor behind it. The run endpoint caps a *message* at
+#: 4,000 characters; a letter the handler has edited is a different kind of
+#: payload and gets its own, larger, bound.
+BODY_MAX_LENGTH: Final[int] = 20_000
+
+#: The field names the two length rules above are reported against.
+NAME_FIELD: Final[str] = "name"
+BODY_FIELD: Final[str] = "body_text"
 
 
 @dataclass(frozen=True)
@@ -188,6 +290,17 @@ class DocumentSheet:
     signatures: tuple[str, ...]
     has_blob: bool
     blob_url: str | None
+    #: The document's own words, for the `letter` variant (Story 6.5).
+    #:
+    #: `None` for every other variant and for every seeded row, which is what
+    #: the variant is dispatched on — see `LETTER_VARIANT`. It travels as text
+    #: rather than as `SheetRow`s because it is *prose*: a letter has
+    #: paragraphs, not labelled fields, and forcing one into a row list would
+    #: mean this service deciding where its line breaks are. **The viewer
+    #: renders it as pre-wrapped plain text and never as markup** — the body
+    #: began as model output that a handler edited, so `Transcript.tsx`'s
+    #: sanitized-only discipline is the standard it has to meet (AD-16).
+    body_text: str | None = None
 
 
 SIGNATURE_LINES: tuple[str, ...] = ("Supervisor / Date", "Adjuster / Date")
@@ -253,6 +366,200 @@ async def documents_block(
     )
 
 
+@dataclass(frozen=True)
+class NewDocument:
+    """A validated document, ready to insert (Story 6.5).
+
+    Returned by `normalise_new_document` so that validation is callable — and
+    testable — without a database, exactly as `edit.normalise` and
+    `injuries.normalise_new_injury` are.
+
+    `doc_type` is **not** a field, and its absence is the point: `create_document`
+    fixes it, so nothing a caller can send decides how a filing is classified.
+    See that function.
+    """
+
+    name: str
+    body_text: str
+
+
+def normalise_new_document(name: object, body_text: object) -> "NewDocument":
+    """Check a filed document's two free-text fields, or raise `InvalidPatch` (a 422).
+
+    Its own validator rather than `edit.require_text`, and the reason is one
+    character: **a letter contains newlines**. `require_text` refuses the whole
+    C0 range because none of it means anything in a clinical field and all of it
+    corrupts a log line downstream — which is right for `injury_type` and wrong
+    for a document body, where a paragraph break is the formatting. So the body
+    keeps the NUL refusal (PostgreSQL `text` cannot hold one and asyncpg raises
+    rather than truncating, which reached a request as an unhandled 500 before
+    Story 2.3's review caught it) and admits the two whitespace controls a
+    handler can actually type.
+
+    Messages name the field and the rule and never echo the value (AD-11) — a
+    validation message that quoted a rejected body would put a letter about an
+    injured worker into an error response and, from there, into a log.
+    """
+    from services.claims.edit import InvalidPatch
+
+    if not isinstance(name, str):
+        raise InvalidPatch("the document name must be text")
+    trimmed = name.strip()
+    if not trimmed:
+        raise InvalidPatch("the document name cannot be empty")
+    if any(character < " " or character == "\x7f" for character in trimmed):
+        raise InvalidPatch("the document name cannot contain control characters")
+    if len(trimmed) > NAME_MAX_LENGTH:
+        raise InvalidPatch(f"the document name must be {NAME_MAX_LENGTH} characters or fewer")
+
+    if not isinstance(body_text, str):
+        raise InvalidPatch("the document body must be text")
+    body = body_text.strip()
+    if not body:
+        raise InvalidPatch("the document body cannot be empty")
+    if any(
+        character < " " and character not in "\n\r\t" or character == "\x7f" for character in body
+    ):
+        raise InvalidPatch("the document body cannot contain control characters")
+    if len(body) > BODY_MAX_LENGTH:
+        raise InvalidPatch(f"the document body must be {BODY_MAX_LENGTH} characters or fewer")
+
+    return NewDocument(name=trimmed, body_text=body)
+
+
+async def create_document(
+    db: AsyncSession,
+    ctx: CallerContext,
+    claim_business_id: str,
+    *,
+    expected_version: int,
+    name: object,
+    body_text: object,
+    as_of: date | None = None,
+    now: datetime | None = None,
+) -> "ClaimDetail":
+    """File one generated document on a claim, audited (Story 6.5, AD-4, AD-12).
+
+    Returns the freshly assembled case file, like every other command in this
+    package — the new row is in `documents.documents`, the timeline carries the
+    event, and the caller needs no second request to see either.
+
+    Raises `EditNotPermitted` (403), `ClaimNotVisible` (404), `InvalidPatch`
+    (422) or `StaleClaim` (409), in that order and for
+    `services/claims/edit.py`'s reasons: role before scope so that a supervisor
+    learns nothing about which claims exist, the patch before the version
+    because a 422 tells the caller something actionable about what they sent.
+
+    **`doc_type` is fixed to `DocType.rtw` here and is not a parameter.** The
+    only caller is the copilot's `save_rtw_letter` write tool, whose arguments
+    are model-facing (AD-16): a `doc_type` argument would be a field a hijacked
+    model could set to `froi`, filing a chat-drafted letter as this claim's
+    statutory First Report of Injury. The type is a property of the command, so
+    it lives in the command. A second kind of generated document is a second
+    command, or a parameter added deliberately with its own argument.
+
+    **The version is the claim's, not the document's**, which is
+    `add_additional_injury`'s precedent: a command that inserts a child row
+    compare-and-swaps on the parent the handler was actually looking at. It is
+    also what gives Story 6.5's approval gate something real to pin — the claim
+    `version` is read at draft time, travels in the proposal's arguments, and is
+    the predicate inside `insert_document_cas`' `INSERT … SELECT`. A claim that
+    moved between the draft and the approval inserts nothing.
+
+    **The claim's own `version` is deliberately not bumped**, `add_additional_
+    injury`'s decision and its reasoning: no column of `claim` changed, so the
+    case file a client is already holding stays a valid basis for its next edit,
+    and two handlers filing two documents on one claim are recording two things
+    rather than overwriting one.
+
+    **No `mark_claim_stale`** — see the module docstring, where the omission is
+    argued rather than assumed.
+    """
+    from services.claims.detail import ClaimNotVisible, claim_detail
+    from services.claims.edit import EditNotPermitted, conflict
+
+    if ctx.role is not UserRole.handler:
+        raise EditNotPermitted("Only a claims handler can file a document on a case file.")
+
+    row = await claim_repo.select_claim_detail(db, ctx, claim_business_id)
+    if row is None:
+        raise ClaimNotVisible(claim_business_id)
+    claim: Claim = row.Claim
+
+    document = normalise_new_document(name, body_text)
+
+    at = now or datetime.now(UTC)
+
+    # The pre-check answers a *stale* client before the statement runs, for
+    # `update_claim_fields`' reason: it is the more useful answer, and the
+    # statement's own predicate below is still what makes the guard sound.
+    if claim.version != expected_version:
+        return await conflict(db, ctx, claim_business_id, as_of)
+
+    document_id = await claim_repo.insert_document_cas(
+        db,
+        ctx,
+        claim_business_id,
+        expected_version,
+        {
+            "name": document.name,
+            "doc_type": DocType.rtw,
+            "filed_date": at.date(),
+            "body_text": document.body_text,
+        },
+    )
+    if document_id is None:
+        # The claim moved between the SELECT above and the INSERT. Nothing was
+        # written — the source query matched no rows — but the transaction has
+        # taken a snapshot, so roll it back before re-reading or the "fresh"
+        # entity would be the stale one we already have.
+        await db.rollback()
+        return await conflict(db, ctx, claim_business_id, as_of)
+
+    await audit.record(
+        db,
+        ctx,
+        action=CREATE_ACTION,
+        entity=DOCUMENT_ENTITY,
+        entity_id=str(document_id),
+        before=None,
+        # **The row's identity, never its body** (AD-11). `injuries._diff`
+        # records the whole inserted row because the row *is* the change and a
+        # secondary injury is four short typed fields; a letter's change is
+        # three hundred words of prose about an injured worker, and an audit
+        # table with a seven-year retention floor is the last place to copy it.
+        # The document id resolves to the row for as long as the claim exists,
+        # and `claim_id` is here for `injuries._diff`'s reason: Story 8.1's
+        # purge cascade needs to find this event from the claim it belongs to.
+        after={
+            "claim_id": claim.claim_id,
+            "name": document.name,
+            "doc_type": DocType.rtw.value,
+            "filed_date": at.date().isoformat(),
+        },
+        at=at,
+    )
+    await timeline.append(
+        db,
+        claim_pk=claim.id,
+        # The **document's own name**, which is server-composed for the only
+        # caller there is — `agents/tools/documents.py` does not take it from
+        # the model. `injuries.py` records why this matters: a timeline
+        # description that echoed arbitrary caller text would be a log a tool's
+        # untrusted arguments could write prose into (AD-16).
+        description=f"Return-to-work letter filed ({document.name})",
+        tag=TimelineTag.rtw,
+        event_date=at.date(),
+    )
+    # No `rag.mark_claim_stale` — the deliberate omission, argued in the module
+    # docstring. This line exists so that a reader comparing this command with
+    # its four siblings finds an answer here rather than a difference.
+    await db.commit()
+
+    db.expire_all()
+    return await claim_detail(db, ctx, claim_business_id, as_of=as_of)
+
+
 class DocumentNotVisible(LookupError):
     """No such document on a claim in the caller's scope.
 
@@ -297,7 +604,23 @@ async def document_content(
     )
 
     rows: tuple[SheetRow, ...]
-    if document.doc_type is DocType.froi:
+    if document.body_text is not None:
+        # **The letter variant (Story 6.5), dispatched on the body and not on
+        # the type.** See `LETTER_VARIANT`: a document renders as a letter
+        # because it carries one, so a `doc_type: rtw` row from the Story 2.2
+        # seed — which records that a letter exists somewhere without holding
+        # its words — keeps the summary sheet below, where it belongs.
+        #
+        # The header rows, then the filing date and the handler who filed it.
+        # Everything a reader needs to know *about* the filing stays a labelled
+        # row; the letter itself is prose and travels as `body_text`.
+        rows = (
+            *header,
+            SheetRow.of_date("Filed", document.filed_date),
+            SheetRow.of_text("Handler", row.handler_name),
+        )
+        variant = LETTER_VARIANT
+    elif document.doc_type is DocType.froi:
         rows = (
             *header,
             SheetRow.of_date("Date of Injury", claim.doi),
@@ -347,4 +670,5 @@ async def document_content(
             if store is not None and document.blob_key is not None
             else None
         ),
+        body_text=document.body_text,
     )

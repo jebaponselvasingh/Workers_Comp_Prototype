@@ -435,28 +435,31 @@ def test_a_note_does_not_summon_the_check_in_on_a_claim_that_is_not_in_treatment
 # --- the seam: disabled targets and their sentences ---------------------
 
 
-def test_every_seam_target_renders_disabled_with_the_epic_that_enables_it() -> None:
-    """AC 3, and the property Stories 4.2 and 6.2 both flipped.
+def test_the_seam_table_is_empty_and_every_target_is_therefore_live() -> None:
+    """**Amended into its opposite by Story 6.5** (AD-15), and it had to be.
 
-    The sentence is asserted to be the *server's* — the same string the
-    generator's table holds — because the whole point of publishing it is that
-    the browser never decides which epics have shipped.
+    This read `test_every_seam_target_renders_disabled_with_the_epic_that_
+    enables_it` and looped over `SEAM_REASONS` asserting each entry rendered
+    refused with the server's own sentence. 6.5 deleted the last entry —
+    `rtw_letter` is the copilot's return-to-work modal, and it now drafts,
+    edits and files a letter — so there is nothing left to loop over and the old
+    assertion (`assert SEAM_REASONS`) is false by construction.
 
-    **One target left, and the loop is now over `SEAM_REASONS` itself** rather
-    than over a hand-written list beside it. That was the right shape while
-    there were three and it is the necessary one now there is one: a
-    hand-written list that fell out of step with the table would assert the seam
-    behaviour of a target that no longer has any, which is exactly what this
-    story's change to `siu_escalation` would have done silently. Driving off the
-    table means adding or removing an entry needs no edit here at all.
+    The claim becomes the other side of the same fact: **the table is empty, and
+    every target the generator can emit is therefore enabled with no sentence
+    attached.** That is stronger than "the loop found nothing", which an empty
+    table would satisfy vacuously — and it is what a reader of this file needs
+    to know, because "why does this row render a live link?" is now answered
+    here rather than three files away.
+
+    The mechanism itself is asserted separately below, on a fabricated entry, so
+    that a future story shipping a deep link ahead of its destination inherits a
+    tested device rather than an archaeological one.
+
+    `under_treatment` on the fixture is Story 6.2's and is kept: `_overdue_rtw`
+    returns `None` for a worker who has gone back, so this is the claim that
+    fires the `rtw_letter` row at all.
     """
-    # `under_treatment` rather than the previous fixture's
-    # `returned_and_under_therapy`, and the change came with this story rather
-    # than being cosmetic: `_overdue_rtw` returns `None` for a worker who has
-    # gone back, so the old claim fired only `siu_escalation` and the loop was
-    # carried entirely by the target Story 6.2 has just made live. A claim that
-    # fires no seam row at all would have left this test green and vacuous,
-    # which is what the `checked` counter below now refuses.
     loud = FakeClaim(stage=Stage.treatment, return_status=ReturnStatus.under_treatment)
     actions = {
         action.target: action
@@ -465,18 +468,44 @@ def test_every_seam_target_renders_disabled_with_the_epic_that_enables_it() -> N
         )
     }
 
-    assert SEAM_REASONS, "the seam mechanism is untested once every target is built"
-    checked = 0
-    for target, reason in SEAM_REASONS.items():
-        action = actions.get(target)
-        # Not every seam target fires on this claim; the ones that do must be
-        # disabled, and the assertion is about them.
-        if action is None:
-            continue
-        assert action.enabled is False
-        assert action.disabled_reason == reason
-        checked += 1
-    assert checked, "no seam row fired on the loud claim — the fixture stopped exercising this"
+    assert dict(SEAM_REASONS) == {}
+    assert actions, "the fixture fired no actions at all"
+    for action in actions.values():
+        assert action.enabled is True
+        assert action.disabled_reason is None
+
+
+def test_the_seam_mechanism_still_refuses_a_target_that_has_a_reason() -> None:
+    """The device, kept tested after its last user went away (Story 6.5).
+
+    `SEAM_REASONS` is empty and the constant is deliberately not deleted — four
+    stories have shipped a deep link ahead of its destination and a fifth will.
+    An empty table means the *mechanism* has no live coverage, which is exactly
+    how a device rots: the next story to need it discovers it stopped working
+    two epics ago.
+
+    So one target is put back into the table for the length of this test, and
+    the row that points at it is asserted to render refused with the server's
+    own sentence. `monkeypatch` rather than a fixture, because the module-level
+    constant is what `_action` reads.
+    """
+    from services.worklist import actions as actions_module
+
+    reason = "Available with something that has not shipped"
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(actions_module, "SEAM_REASONS", {ActionTarget.rtw_letter: reason})
+        loud = FakeClaim(stage=Stage.treatment, return_status=ReturnStatus.under_treatment)
+        row = next(
+            action
+            for action in run(
+                loud,
+                flags=ClaimFlags(siu_review=True, rtw_blocked=True, payment_due=False),
+            )
+            if action.target is ActionTarget.rtw_letter
+        )
+
+    assert row.enabled is False
+    assert row.disabled_reason == reason
 
 
 def test_the_meetings_target_is_live_since_story_4_1() -> None:

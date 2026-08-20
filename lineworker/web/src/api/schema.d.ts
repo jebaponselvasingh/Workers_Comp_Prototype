@@ -952,7 +952,9 @@ export interface paths {
          *        `api.deps.get_caller_context` on *this* request, so the ownership and
          *        scope checks are against who the caller is now — not against anything a
          *        checkpoint remembers (AD-7). A thread that is not this caller's, or whose
-         *        claim has left their book, is the `_thread_not_found` 404.
+         *        claim has left their book, is the `_thread_not_found` 404 — **except on a
+         *        resume**, where another handler's thread inside the caller's own employer
+         *        scope is 403 (AD-6, and see `_not_owner`).
          *     2. **Refuse a superseded thread**, 409 `/problems/thread-read-only`.
          *     3. **Refuse a busy thread**, 409 `/problems/thread-busy`, for either of its
          *        two causes: the advisory lock is held, or the saver reports a pending
@@ -2343,11 +2345,16 @@ export interface components {
          * DocumentSheetResponse
          * @description A document viewer's whole content, assembled server-side (AC 4).
          *
-         *     `sheetVariant` discriminates the two layouts the prototype's `openDoc`
-         *     branches between: a first report of injury renders the full injury detail,
-         *     everything else a short summary. The dispatch is the server's (AD-1) and so
-         *     are the rows, their order and their labels — what fields a statutory filing
-         *     shows is not a layout choice.
+         *     `sheetVariant` discriminates the layouts the prototype's `openDoc` branches
+         *     between: a first report of injury renders the full injury detail, everything
+         *     else a short summary. The dispatch is the server's (AD-1) and so are the
+         *     rows, their order and their labels — what fields a statutory filing shows is
+         *     not a layout choice.
+         *
+         *     **A third variant since Story 6.5**, `letter`, for a document that carries
+         *     its own words. It is chosen on the *body* rather than on `docType` — see
+         *     `services/claims/documents.LETTER_VARIANT` — so a `rtw`-typed seeded row
+         *     with no body keeps the summary sheet it belongs on.
          *
          *     **Read-only, structurally.** There is no PATCH beside this route and no
          *     `version` on this model: the viewer displays a filing, and editing a claim
@@ -2361,6 +2368,11 @@ export interface components {
         DocumentSheetResponse: {
             /** Bloburl */
             blobUrl: string | null;
+            /**
+             * Bodytext
+             * @description A generated document's own text, for the `letter` variant; null for every other sheet. **Rendered as plain text, never as markup** — it began as model output that a handler edited (AD-16).
+             */
+            bodyText?: string | null;
             docType: components["schemas"]["DocType"];
             /** Documentid */
             documentId: number;
@@ -2374,7 +2386,7 @@ export interface components {
              * Sheetvariant
              * @enum {string}
              */
-            sheetVariant: "froi" | "summary";
+            sheetVariant: "froi" | "summary" | "letter";
             /** Signatures */
             signatures: string[];
         };
@@ -4597,6 +4609,45 @@ export interface components {
          */
         RiskBand: "high" | "med" | "low";
         /**
+         * RtwLetterProposal
+         * @description The handler's edited letter, and the version it was drafted against (6.5).
+         *
+         *     The whole of what the RTW modal's "Save to claim" sends. Two fields, and the
+         *     absence of every other one is the design:
+         *
+         *     - No `claimId`: the thread is on a claim, and `resolve_thread` is what says
+         *       which. A claim on this body would be a caller-supplied scope (AD-7).
+         *     - No `docType`: `services/claims/documents.create_document` fixes it, so
+         *       nothing on a wire decides how a filing is classified (AD-16).
+         *     - No `name`: `RTW_LETTER_NAME` above.
+         *     - No return date: the handler types theirs into `bodyText`, which is the
+         *       whole reason the modal is editable — no reader in this build projects one
+         *       and AD-2 forbids the model originating one.
+         *
+         *     **`bodyText` is the handler's, verbatim.** It is what gets filed, it is what
+         *     the approval card renders, and no model call happens between this request
+         *     and the row: regenerating it would discard the edit they just made.
+         *
+         *     `expectedVersion` is the claim's `version` as the draft was composed against
+         *     it, published by the `rtw` quick action on its own run (`agents/qas.
+         *     RTW_DRAFT`). It is echoed back rather than re-read here for the reason the
+         *     whole gate exists: re-reading it would refresh the pin and turn every stale
+         *     approval into a silent force-write.
+         */
+        RtwLetterProposal: {
+            /**
+             * Bodytext
+             * @description The letter as the handler edited it. Filed verbatim — nothing regenerates or rewrites it.
+             */
+            bodyText: string;
+            /**
+             * Expectedversion
+             * @description The claim's `version` when the letter was drafted. The save is refused if the claim has changed since.
+             * @example 3
+             */
+            expectedVersion: number;
+        };
+        /**
          * RunRequest
          * @description What starts a run: a message, or a resume decision. Never a thread id.
          *
@@ -4659,6 +4710,8 @@ export interface components {
              * @example reserve
              */
             quickAction?: string | null;
+            /** @description The RTW letter's save (Story 6.5). Rides **with** a message, like `quickAction` and unlike `command`: it says that this turn is a write the handler drafted rather than a question. No model is called on it — the run synthesises the write tool call from this payload, pauses at the same approval gate a model-selected write pauses at, and files the text verbatim on approval. Refused alongside `command` or `quickAction`. */
+            rtwLetter?: components["schemas"]["RtwLetterProposal"] | null;
         };
         /**
          * ScheduleWeekResponse
@@ -5198,12 +5251,41 @@ export interface components {
          *     makes "new conversation freezes the prior thread" a freeze of *posting*
          *     rather than of reading: the transcript stays available for as long as the
          *     checkpoints do (`copilot_checkpoint_retention_days`, purged by Epic 8).
+         *
+         *     ## …and what the conversation is *waiting on*, since Story 6.5's review
+         *
+         *     A thread paused on an approval refuses every new message with a 409, and the
+         *     only way forward is a resume. The payload a handler resumes from reached the
+         *     client on the run's terminal frame and nowhere else — so it lived in the
+         *     browser's runtime state and nowhere else, and switching tab, reloading or
+         *     coming back tomorrow discarded the card while leaving the thread paused.
+         *     That is a conversation with no reachable way out, produced by an ordinary
+         *     click.
+         *
+         *     The pause is durable in the checkpoints, so its description is published
+         *     here: the transcript is already the route that reads a conversation back
+         *     across a reload, and "what is this thread waiting for?" is the same kind of
+         *     fact as "what has been said in it?". It costs no extra request — the route
+         *     already reads the snapshot to build `messages`.
          */
         TranscriptResponse: {
+            /**
+             * Interruptpending
+             * @description Whether this conversation is paused waiting for a decision on a proposed write. While it is, every new message is refused 409 and a resume is the only way forward.
+             * @default false
+             */
+            interruptPending: boolean;
             /** Iscurrent */
             isCurrent: boolean;
             /** Messages */
             messages: components["schemas"]["TranscriptMessage"][];
+            /**
+             * Pendingapproval
+             * @description The pending tool call, in the middleware's own `HITLRequest` shape — `action_requests[{name, args, description}]` plus `review_configs[{action_name, allowed_decisions}]`, byte-identical to what the run's terminal `interrupt` frame carried. It is the server's rendering of the call that will execute, never a paraphrase of it (AD-16). `null` unless `interruptPending`.
+             */
+            pendingApproval?: {
+                [key: string]: unknown;
+            } | null;
             /** Threadid */
             threadId: string;
         };
@@ -8397,7 +8479,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description A `text/event-stream` of the run. Frames are `messages` (assistant tokens, as they are decoded) and `updates` (a node finished), followed by **exactly one** terminal frame: `done`, `interrupt`, or `error`. An `error` frame's payload is an RFC 9457 problem document, because by the time a stream has started the status is already 200. */
+            /** @description A `text/event-stream` of the run. Frames are `messages` (assistant tokens, as they are decoded) and `updates` (a node finished), followed by **exactly one** terminal frame: `done`, `interrupt`, or `error`. An `error` frame's payload is an RFC 9457 problem document, because by the time a stream has started the status is already 200. An `interrupt` frame carries the middleware's pending tool call — its name and its typed arguments — under `value`, which is what the approval card renders (AD-16). */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8408,6 +8490,24 @@ export interface operations {
             };
             /** @description No valid session (RFC 9457 problem document). */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description `/problems/thread-not-owned` — a resume decision was posted to a conversation belonging to another handler. Only reachable on a `command` body, and only for a thread inside the caller's own employer scope: an out-of-scope or unknown thread keeps the byte-identical 404 above, so this cannot be used to enumerate conversations (RFC 9457 problem document). */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -31,7 +31,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { useDocumentSheet } from "@/api/claims";
+import { useDocumentSheet, type DocumentSheet } from "@/api/claims";
 import { formatCents } from "@/lib/money";
 
 /**
@@ -41,10 +41,26 @@ import { formatCents } from "@/lib/money";
  */
 const EMPTY = "—";
 
-/** What each sheet variant is called, for the dialog's own subtitle. */
-const VARIANT_LABEL = {
+/**
+ * What each sheet variant is called, for the dialog's own subtitle.
+ *
+ * **Keyed by the generated union, so a new server variant fails `tsc` here.**
+ * Story 6.5 added `letter` and widened this to `Record<string, string>` with a
+ * `?? summary` fallback, which type-checks against anything and therefore
+ * checks nothing: the fourth variant would have shipped silently labelled
+ * "Document summary sheet", which is a subtitle that contradicts the sheet
+ * underneath it. The index signature is the *only* thing that made the fallback
+ * necessary, so both are gone. A missing key is now a compile error naming this
+ * constant, which is exactly the reminder the next variant needs.
+ */
+const VARIANT_LABEL: Record<DocumentSheet["sheetVariant"], string> = {
   froi: "First report of injury — full detail",
   summary: "Document summary sheet",
+  // Story 6.5's third variant: a document that carries its own words. The
+  // server dispatches on `bodyText is not None` rather than on the document
+  // type, so a `rtw`-typed seeded row with no body keeps the summary sheet —
+  // see `services/claims/documents.LETTER_VARIANT`.
+  letter: "Generated letter",
 } as const;
 
 /**
@@ -76,13 +92,25 @@ export function DocumentViewerDialog({
   const sheet = useDocumentSheet(claimId, documentId);
 
   return (
-    <Dialog open={documentId !== null} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent data-testid="document-viewer" className="max-h-[85vh] overflow-y-auto">
+    <Dialog
+      open={documentId !== null}
+      onOpenChange={(open) => !open && onClose()}
+    >
+      <DialogContent
+        data-testid="document-viewer"
+        className="max-h-[85vh] overflow-y-auto"
+      >
         <DialogHeader>
-          <DialogTitle data-testid="document-viewer-title" className="text-[13px]">
+          <DialogTitle
+            data-testid="document-viewer-title"
+            className="text-[13px]"
+          >
             {sheet.data?.name ?? "Document"}
           </DialogTitle>
-          <DialogDescription data-testid="document-viewer-subtitle" className="text-[11px]">
+          <DialogDescription
+            data-testid="document-viewer-subtitle"
+            className="text-[11px]"
+          >
             {sheet.data
               ? VARIANT_LABEL[sheet.data.sheetVariant]
               : sheet.isError
@@ -92,18 +120,29 @@ export function DocumentViewerDialog({
         </DialogHeader>
 
         {sheet.isPending ? (
-          <div data-testid="document-viewer-skeleton" aria-hidden className="flex flex-col gap-2">
+          <div
+            data-testid="document-viewer-skeleton"
+            aria-hidden
+            className="flex flex-col gap-2"
+          >
             <span className="block h-4 w-2/3 animate-pulse rounded bg-surface-2" />
             <span className="block h-4 w-1/2 animate-pulse rounded bg-surface-2" />
             <span className="block h-4 w-3/4 animate-pulse rounded bg-surface-2" />
           </div>
         ) : sheet.isError ? (
-          <p role="alert" data-testid="document-viewer-error" className="text-[11.5px] text-error">
+          <p
+            role="alert"
+            data-testid="document-viewer-error"
+            className="text-[11.5px] text-error"
+          >
             ⚠ This document could not be loaded. Try again in a moment.
           </p>
         ) : (
           <>
-            <dl data-testid="document-sheet" data-variant={sheet.data.sheetVariant}>
+            <dl
+              data-testid="document-sheet"
+              data-variant={sheet.data.sheetVariant}
+            >
               {sheet.data.rows.map((row) => (
                 <div
                   key={row.label}
@@ -111,7 +150,9 @@ export function DocumentViewerDialog({
                   data-label={row.label}
                   className="flex items-baseline justify-between gap-3 border-b border-hairline py-[5px] last:border-b-0"
                 >
-                  <dt className="shrink-0 text-[11px] text-muted-text">{row.label}</dt>
+                  <dt className="shrink-0 text-[11px] text-muted-text">
+                    {row.label}
+                  </dt>
                   <dd className="min-w-0 text-right font-mono text-[11px] text-text">
                     {/* `cents` and `text` are mutually exclusive by
                         construction on the server (`SheetRow.of_*`), so the
@@ -139,12 +180,35 @@ export function DocumentViewerDialog({
               ))}
             </dl>
 
+            {/* **The letter's body, as pre-wrapped plain text** (Story 6.5).
+                Never `dangerouslySetInnerHTML` and never markdown: this began
+                as model output that a handler edited and then filed, so what a
+                reader sees has to be literally what was stored — AD-16's
+                output discipline, and the same reason `Transcript.tsx` renders
+                assistant prose through a parser that cannot produce an element
+                from a `<script>`.
+
+                Rendered above the signature lines and below the labelled rows,
+                which is where a letter sits on a filing: the rows say what the
+                document *is*, the body is the document. */}
+            {sheet.data.bodyText ? (
+              <div
+                data-testid="document-sheet-body"
+                className="mt-3 border-t border-border pt-3 text-[11.5px] whitespace-pre-wrap text-text"
+              >
+                {sheet.data.bodyText}
+              </div>
+            ) : null}
+
             <div
               data-testid="document-sheet-signatures"
               className="mt-3 grid grid-cols-2 gap-4 border-t border-border pt-3"
             >
               {sheet.data.signatures.map((line) => (
-                <span key={line} className="border-t border-faint pt-1 text-[10px] text-faint">
+                <span
+                  key={line}
+                  className="border-t border-faint pt-1 text-[10px] text-faint"
+                >
                   {line}
                 </span>
               ))}

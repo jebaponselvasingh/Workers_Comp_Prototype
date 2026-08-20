@@ -96,6 +96,7 @@ import hashlib
 import json
 import math
 import os
+import re
 from collections.abc import Iterator
 from typing import Any
 
@@ -128,6 +129,53 @@ EMBEDDING_DIMENSIONS = int(os.environ.get("STUB_EMBEDDING_DIMENSIONS", "1024"))
 #: line is a stream that says nothing, which is a state the real server does not
 #: produce and which no caller should have to handle.
 STUB_CHAT_CHUNKS = max(1, int(os.environ.get("STUB_CHAT_CHUNKS", "3")))
+
+#: The phrase that makes this stub propose a claim-field write (Story 6.5).
+#:
+#: **Request-shape-driven, like everything else here**, and there is no control
+#: endpoint and no state: the stub answers a tool call when — and only when —
+#: the request both *offers* a write tool and carries this phrase in its
+#: messages. Two conditions rather than one, because each rules out a different
+#: kind of accident: a request with no `tools` cannot be answered with a tool
+#: call at all, and a request that merely mentions editing a claim should get
+#: prose.
+#:
+#: Parsing the handler's own words is what a real model does, which is the
+#: reason this is honest rather than a back door. It is also what makes AD-16's
+#: injection-shaped scenario reachable end to end: a *claim field* seeded with
+#: this phrase produces a proposed write the handler never asked for, through
+#: the same path a genuine request takes, and the spec then asserts that the
+#: gate contained it.
+STUB_WRITE_PHRASE = os.environ.get("STUB_WRITE_PHRASE", "propose a claim edit")
+
+#: Which registered write tool the phrase above proposes.
+#:
+#: `update_claim_field` rather than `save_rtw_letter`, deliberately: the letter's
+#: save has a deterministic origin of its own that never involves a model, so
+#: the *model-selected* write path needs the other one. A stub that could only
+#: propose the letter would have left half of AD-6's "one wire contract, not
+#: two" untested, because both halves would have been the same half.
+STUB_WRITE_TOOL = "update_claim_field"
+
+#: Which field the proposed edit names, and what it proposes putting in it.
+#:
+#: A whitelisted free-text column with no derivation behind it, so an approved
+#: proposal changes something a spec can read back off the case file without
+#: moving a risk band, a score or a flag. The value is fixed rather than
+#: hash-derived, because an e2e spec asserting "the approval card shows the
+#: payload that will execute" needs a string it can name.
+STUB_WRITE_FIELD = "icd_desc"
+STUB_WRITE_VALUE = "Laceration of left hand, deterministic stub"
+
+#: How the claim and its version are read out of the request's own messages.
+#:
+#: The claim id because a write has to name one and the stub has no other way to
+#: know which conversation it is in; the version because AD-6's approvals are
+#: version-pinned and an invented number would make every proposal fail stale.
+#: Both are read from the text a caller sent, which is the only input this
+#: container has and the only one it is allowed to have.
+_CLAIM_PATTERN = re.compile(r"\bWC-\d+\b")
+_VERSION_PATTERN = re.compile(r"\bversion\s+(\d+)\b", re.IGNORECASE)
 
 app = FastAPI(title="LINEWORKER model-stub", docs_url=None, redoc_url=None)
 
@@ -345,9 +393,7 @@ def synthesize(schema: dict[str, Any], root: dict[str, Any], path: str, prompt: 
         high = int(schema.get("maxItems", low)) or low
         count = max(1, min(low, high))
         items = schema.get("items", {})
-        return [
-            synthesize(items, root, f"{path}[{index}]", prompt) for index in range(count)
-        ]
+        return [synthesize(items, root, f"{path}[{index}]", prompt) for index in range(count)]
 
     if kind == "integer":
         low = int(schema.get("minimum", MIN_NUMBER))
@@ -387,12 +433,86 @@ def _content(body: dict[str, Any]) -> str:
     return PLAIN_REPLY
 
 
+def _message_text(body: dict[str, Any]) -> str:
+    """Every message's content, concatenated — the request's own words.
+
+    Concatenated rather than "the last user turn", because the phrase can arrive
+    in a message a *tool* returned: that is the AD-16 scenario, where a claim
+    field somebody else wrote is quoted back into the model's context and tries
+    to make it act. A stub that only read the human turn could not reproduce it.
+    """
+    parts: list[str] = []
+    for message in body.get("messages", []):
+        if isinstance(message, dict):
+            content = message.get("content")
+            if isinstance(content, str):
+                parts.append(content)
+    return "\n".join(parts)
+
+
+def _offered_tools(body: dict[str, Any]) -> set[str]:
+    """The names of the tools the request bound, in Ollama's own shape."""
+    names: set[str] = set()
+    for tool in body.get("tools", []) or []:
+        if isinstance(tool, dict):
+            function = tool.get("function")
+            if isinstance(function, dict) and isinstance(function.get("name"), str):
+                names.add(function["name"])
+    return names
+
+
+def _proposed_write(body: dict[str, Any]) -> dict[str, Any] | None:
+    """The tool call this request asks for, or `None` (Story 6.5).
+
+    Both conditions, and a claim id, or nothing — see `STUB_WRITE_PHRASE`. The
+    absence of any one of them is answered with ordinary prose, which is what
+    every other request in every other spec gets.
+
+    **It proposes at most one write**, which is not an accident of this function
+    but the property AD-6 asks the whole gate to have: `pending_approval` is
+    singular, the graph caps a run at one pending write, and a stub that emitted
+    two would be testing a shape the build refuses to produce.
+    """
+    if STUB_WRITE_TOOL not in _offered_tools(body):
+        return None
+    text = _message_text(body)
+    if STUB_WRITE_PHRASE not in text:
+        return None
+    claim = _CLAIM_PATTERN.search(text)
+    if claim is None:
+        return None
+    version = _VERSION_PATTERN.search(text)
+    return {
+        "function": {
+            "name": STUB_WRITE_TOOL,
+            "arguments": {
+                "claim_business_id": claim.group(0),
+                "field": STUB_WRITE_FIELD,
+                "value": STUB_WRITE_VALUE,
+                "expected_version": int(version.group(1)) if version else 1,
+            },
+        }
+    }
+
+
 def _envelope(body: dict[str, Any], content: str) -> dict[str, Any]:
-    """One Ollama chat response object, done in a single turn."""
+    """One Ollama chat response object, done in a single turn.
+
+    Carries `tool_calls` when the request asked for a write (Story 6.5), in
+    Ollama's own shape — `message.tool_calls[].function.{name, arguments}` —
+    which is what `ChatOllama` reads into an `AIMessage`'s `tool_calls`. The
+    content is empty on that turn, because a turn that calls a tool has not said
+    anything yet, and a stub that put prose beside a tool call would be teaching
+    the transcript to render a paraphrase of a pending write (AD-16).
+    """
+    proposed = _proposed_write(body)
+    message: dict[str, Any] = {"role": "assistant", "content": "" if proposed else content}
+    if proposed is not None:
+        message["tool_calls"] = [proposed]
     return {
         "model": body.get("model", "model-stub"),
         "created_at": "2026-01-01T00:00:00Z",
-        "message": {"role": "assistant", "content": content},
+        "message": message,
         "done": True,
         "done_reason": "stop",
     }
@@ -449,6 +569,22 @@ def chat(body: dict[str, Any]) -> Any:
     call shapes exercise the real client against the real wire format.
     """
     content = _content(body)
+    # **A proposed write is one terminal line and nothing before it** (Story
+    # 6.5). Real Ollama streams a tool call on the turn that ends, not as
+    # content chunks, and the client accumulates it from the final message —
+    # so chunking here would emit three lines of empty content and one tool
+    # call, which is a stream that says nothing three times before doing
+    # something. The single line is also the honest shape for a turn whose
+    # whole meaning is "pause and ask the human".
+    if _proposed_write(body) is not None:
+        if not body.get("stream", False):
+            return _envelope(body, content)
+
+        def one_line() -> Iterator[bytes]:
+            yield (json.dumps(_envelope(body, "")) + "\n").encode()
+
+        return StreamingResponse(one_line(), media_type="application/x-ndjson")
+
     if not body.get("stream", False):
         return _envelope(body, content)
 

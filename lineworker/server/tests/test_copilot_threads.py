@@ -22,7 +22,7 @@ import asyncio
 import contextlib
 import dataclasses
 import json
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Iterator, Sequence
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -192,6 +192,7 @@ async def make_client(
     *,
     model: GenericFakeChatModel | None = None,
     run_timeout_seconds: float | None = None,
+    tools: Sequence[Any] | None = None,
 ) -> AsyncIterator[httpx.AsyncClient]:
     """The shipped app, with the model swapped and — optionally — a shorter wall clock.
 
@@ -199,10 +200,17 @@ async def make_client(
     than in `Settings`, which is the same distinction the runtime's own docstring
     draws: the bounds are values on that object precisely so a route cannot widen
     its own, and a test that wants a different one replaces the object.
+
+    `tools` is `None` — meaning *none at all* — for almost every test here, and
+    that is right for them: they assert transport, and a bound registry would
+    put a database read behind every scripted answer. Story 6.5's interrupt
+    tests are the exception, because a write that pauses has to be a write that
+    can then *execute*, and an unbound tool is a `ToolMessage` reading "not a
+    valid tool" where the approved row should be.
     """
     app = create_app(Settings(database_url=db_url, env="e2e"))  # type: ignore[arg-type]
     async with app.router.lifespan_context(app):
-        _replace_model(app, model or _ScriptedChatModel())
+        _replace_model(app, model or _ScriptedChatModel(), tools=tools)
         if run_timeout_seconds is not None:
             app.state.copilot = dataclasses.replace(
                 app.state.copilot, run_timeout_seconds=run_timeout_seconds
@@ -212,7 +220,9 @@ async def make_client(
             yield client
 
 
-def _replace_model(app: object, model: GenericFakeChatModel) -> None:
+def _replace_model(
+    app: object, model: GenericFakeChatModel, *, tools: Sequence[Any] | None = None
+) -> None:
     """Recompile the graph over the same saver, with a scripted model.
 
     **The saver is reused rather than reconstructed**, which is why
@@ -228,7 +238,7 @@ def _replace_model(app: object, model: GenericFakeChatModel) -> None:
             model=model,
             checkpointer=runtime.checkpointer,
             max_tool_calls=runtime.max_tool_calls,
-            tools=[],
+            tools=list(tools) if tools is not None else [],
         ),
     )
 
@@ -778,6 +788,32 @@ async def test_a_run_that_answers_nothing_is_an_error_rather_than_a_done(
         assert payloads[-1]["type"] == "/problems/copilot-empty-answer"
 
 
+async def read_save_stream(
+    client: httpx.AsyncClient, thread_id: str, claim_id: str
+) -> tuple[list[str], list[Any]]:
+    """Post the RTW letter's save and read the stream it pauses on.
+
+    The one helper the interrupt tests below share. It reads the claim's real
+    `version` first, because the save compare-and-swaps on it — see
+    `_claim_version` — and returns the same `(events, payloads)` pair
+    `read_stream_with_payloads` does, since the interrupt frame's payload is
+    structure this build owns rather than anybody's prose (AD-15).
+    """
+    events: list[str] = []
+    payloads: list[Any] = []
+    version = await _claim_version(client, claim_id)
+    async with client.stream(
+        "POST", f"/copilot/threads/{thread_id}/runs", json=_save_letter(version)
+    ) as response:
+        assert response.status_code == 200, await response.aread()
+        async for line in response.aiter_lines():
+            if line.startswith("event: "):
+                events.append(line.removeprefix("event: "))
+            elif line.startswith("data: "):
+                payloads.append(json.loads(line.removeprefix("data: ")))
+    return events, payloads
+
+
 async def read_stream_with_payloads(
     client: httpx.AsyncClient, thread_id: str, message: str
 ) -> tuple[list[str], list[Any]]:
@@ -805,50 +841,64 @@ async def read_stream_with_payloads(
 # --- the interrupt, and the 409 it causes --------------------------------
 
 
-def _interrupting_graph(checkpointer: Any) -> Any:
-    """A graph whose chat node pauses on a human. **A test's graph, not the build's.**
+#: A letter body a handler could plausibly have typed into the RTW modal.
+#:
+#: Short, and deliberately not prose about anybody: everything on this path is
+#: real — a real `document` row lands on a seeded claim — so the body is the
+#: shortest thing that satisfies the command's own validation.
+LETTER_BODY = "We are pleased to offer modified duty from a date to be confirmed."
 
-    Story 6.5 owns the first shipped `interrupt()` producer, and this is not it:
-    nothing in `agents/` raises one, and `test_copilot_graph.py` asserts that
-    from the other side. What this exists for is the *transport*, which ships
-    now — the `interrupt` terminal frame, the saver-derived interrupt-pending
-    409, and the resume round trip — and which had no test at all because there
-    was nothing in the build that could produce the state it handles.
 
-    Built on `CopilotState` and `CopilotContext` so the saver, the config and the
-    run inputs are the shipped ones; only the node's body is the test's.
+def _save_letter(version: int) -> dict[str, Any]:
+    """The body the RTW modal's Save button posts — the run that pauses.
+
+    **The real producer, and it needs no model.** Story 6.5 replaced this
+    module's hand-written `_interrupting_graph` with this: a body carrying
+    `rtwLetter` makes the shipped graph synthesise a write tool call and pause
+    on it, through `HumanInTheLoopMiddleware`, with no completion requested from
+    anything. So the transport tests below now exercise the interrupt this build
+    actually raises rather than one written to stand in for it — which is the
+    whole point of the replacement, since a scaffold's interrupt cannot tell you
+    that the shipped one reaches the wire.
+
+    The scaffold's docstring used to say "Story 6.5 owns the first shipped
+    `interrupt()` producer, and this is not it". It is now.
     """
-    from langgraph.graph import END, START, StateGraph
-    from langgraph.types import interrupt
+    return {
+        "message": "Save the return-to-work letter to this claim.",
+        "rtwLetter": {"bodyText": LETTER_BODY, "expectedVersion": version},
+    }
 
-    from agents.context import CopilotContext
-    from agents.state import CopilotState
 
-    def pause(state: CopilotState) -> dict[str, Any]:
-        answer = interrupt({"question": "approve?"})
-        return {"messages": [AIMessage(content=f"resumed with {answer}")]}
+async def _claim_version(client: httpx.AsyncClient, claim_id: str) -> int:
+    """The claim's `version`, read the way the modal's own draft reads it.
 
-    builder: StateGraph[Any, Any, Any, Any] = StateGraph(
-        CopilotState, context_schema=CopilotContext
-    )
-    builder.add_node("grounded_chat", pause)
-    builder.add_edge(START, "grounded_chat")
-    builder.add_edge("grounded_chat", END)
-    return builder.compile(checkpointer=checkpointer)
+    A real number rather than a literal, because the save compare-and-swaps on
+    it: a hard-coded `1` would pass today and would fail silently the day the
+    seed writes a claim twice.
+    """
+    detail = await client.get(f"/claims/{claim_id}")
+    assert detail.status_code == 200, detail.text
+    version: int = detail.json()["version"]
+    return version
 
 
 @asynccontextmanager
 async def interrupting_client(db_url: str) -> AsyncIterator[httpx.AsyncClient]:
-    """`make_client`, with the test's interrupting graph over the real saver."""
-    app = create_app(Settings(database_url=db_url, env="e2e"))  # type: ignore[arg-type]
-    async with app.router.lifespan_context(app):
-        runtime = app.state.copilot
-        app.state.copilot = dataclasses.replace(
-            runtime, graph=_interrupting_graph(runtime.checkpointer)
-        )
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            yield client
+    """`make_client` — **unchanged, because the shipped graph interrupts now**.
+
+    This used to swap the compiled graph for a scaffold whose node called
+    `interrupt()` directly, because nothing in `agents/` could. Story 6.5
+    registered two write tools and installed the gate, so the alias survives as
+    a name the tests below read well under and delegates to the real thing.
+    """
+    # **With the real registry bound**, unlike every other client here: the
+    # write this pauses on has to be able to execute on approval, and a tool
+    # that is not bound answers "not a valid tool" instead of filing a letter.
+    from agents.registry import build_tools
+
+    async with make_client(db_url, tools=list(build_tools())) as client:
+        yield client
 
 
 async def test_an_interrupt_pending_thread_refuses_a_second_message(seeded_db_url: str) -> None:
@@ -870,10 +920,19 @@ async def test_an_interrupt_pending_thread_refuses_a_second_message(seeded_db_ur
         claim_id = a_claim_of(HANDLER)
         thread = (await client.post(f"/copilot/claims/{claim_id}/threads")).json()["threadId"]
 
-        events = await read_stream(client, thread, "please do the thing")
+        events, payloads = await read_save_stream(client, thread, claim_id)
         assert [event for event in events if event in {"done", "interrupt", "error"}] == [
             "interrupt"
         ]
+        # **The frame carries the pending call** (Story 6.5, AC 5), which is
+        # what makes it renderable — it carried a `threadId` and nothing else
+        # until this story. The tool name and its typed arguments are the
+        # middleware's own, so the handler approves the payload that will
+        # execute rather than a paraphrase of it (AD-16).
+        request = payloads[-1]["value"]
+        assert [action["name"] for action in request["action_requests"]] == ["save_rtw_letter"]
+        assert request["action_requests"][0]["args"]["body_text"] == LETTER_BODY
+        assert request["review_configs"][0]["allowed_decisions"] == ["approve", "edit", "reject"]
 
         # The lock is long gone — the run ended — so this 409 can only come from
         # the saver's own state.
@@ -899,12 +958,18 @@ async def test_a_resume_is_accepted_while_a_message_is_refused(seeded_db_url: st
         await login_as(client, *HANDLER)
         claim_id = a_claim_of(HANDLER)
         thread = (await client.post(f"/copilot/claims/{claim_id}/threads")).json()["threadId"]
-        await read_stream(client, thread, "please do the thing")
+        before = len((await client.get(f"/claims/{claim_id}")).json()["documents"]["documents"])
+        await read_save_stream(client, thread, claim_id)
 
         async with client.stream(
             "POST",
             f"/copilot/threads/{thread}/runs",
-            json={"command": {"resume": "approved"}},
+            # **The real decision shape** (Story 6.5). It was `"approved"`, a
+            # bare string, because nothing consumed it; the resume body now
+            # carries `HITLResponse` — `{decisions: [{type: …}]}` — and the
+            # round trip this test exists for is the one the gate actually
+            # speaks.
+            json={"command": {"resume": {"decisions": [{"type": "approve"}]}}},
         ) as response:
             assert response.status_code == 200, await response.aread()
             events = [
@@ -916,6 +981,73 @@ async def test_a_resume_is_accepted_while_a_message_is_refused(seeded_db_url: st
         assert [event for event in events if event in {"done", "interrupt", "error"}] == ["done"]
         body = (await client.get(f"/copilot/threads/{thread}/messages")).json()
         assert [m["role"] for m in body["messages"]] == ["user", "assistant"]
+        # …and the approved write actually happened, against a real database
+        # through the real AD-4 command. A round trip that resumed cleanly and
+        # wrote nothing would satisfy every assertion above it.
+        after = (await client.get(f"/claims/{claim_id}")).json()["documents"]["documents"]
+        assert len(after) == before + 1
+        assert after[-1]["docType"] == "rtw"
+
+
+async def test_a_foreign_handler_resuming_gets_403_and_a_stranger_still_gets_404(
+    seeded_db_url: str,
+) -> None:
+    """AD-6 and AC 6: **the one place a thread is not a 404** (Story 6.5).
+
+    A paused conversation resumes only on a decision from the thread's own user.
+    Every other refusal on this router is the byte-identical 404 that keeps
+    thread ids from being an enumeration oracle, and that rule is not weakened
+    here — it is *bounded*: the resume-only lookup keeps `employer_scope` and
+    drops only the owner predicate, so a 403 means "inside your own book of
+    business, another handler's conversation" and reveals nothing across
+    employers.
+
+    Both halves are asserted in one test because the property is the pair. A 403
+    on a colleague's thread is only safe while an out-of-scope one is still
+    indistinguishable from an id nobody minted — so the second and third
+    requests are exactly those two, and their documents are compared byte for
+    byte.
+
+    The colleague's thread is genuinely interrupt-pending, so the 403 is decided
+    before the single-flight check rather than instead of it.
+    """
+    # **Liam and Kaya both cover John Deere**, which is what makes this test
+    # possible at all: the 403 is bounded by employer scope, so it needs two
+    # handlers whose books of business overlap. `HANDLER` is Sarah Williams,
+    # whose single employer nobody else covers — a colleague of hers would get
+    # the ordinary 404 and the assertion would be vacuous.
+    owner = ("Liam O'Sullivan", "handler")
+    colleague = OTHER_HANDLER
+
+    async with interrupting_client(seeded_db_url) as client:
+        await login_as(client, *owner)
+        claim_id = a_claim_of(owner)
+        thread = (await client.post(f"/copilot/claims/{claim_id}/threads")).json()["threadId"]
+        await read_save_stream(client, thread, claim_id)
+
+        await login_as(client, *colleague)
+        foreign = await client.post(
+            f"/copilot/threads/{thread}/runs",
+            json={"command": {"resume": {"decisions": [{"type": "approve"}]}}},
+        )
+        assert foreign.status_code == 403, foreign.text
+        assert foreign.json()["type"] == "/problems/thread-not-owned"
+
+        # …and the two refusals that must stay identical: a well-formed id on a
+        # claim outside this caller's book, and a well-formed id for a user who
+        # does not exist. The second is the 6-3 e2e spec's forged-id shape.
+        outside = mint_thread_id(a_claim_outside(colleague), 1, 1)
+        unknown = mint_thread_id(a_claim_of(colleague), 99999, 1)
+        refusals = [
+            await client.post(
+                f"/copilot/threads/{candidate}/runs",
+                json={"command": {"resume": {"decisions": [{"type": "approve"}]}}},
+            )
+            for candidate in (outside, unknown)
+        ]
+        assert [response.status_code for response in refusals] == [404, 404]
+        assert refusals[0].json() == refusals[1].json()
+        assert refusals[0].json()["type"] == "/problems/thread-not-found"
 
 
 async def test_a_body_carrying_both_a_message_and_a_command_is_refused(
@@ -937,7 +1069,7 @@ async def test_a_body_carrying_both_a_message_and_a_command_is_refused(
         await login_as(client, *HANDLER)
         claim_id = a_claim_of(HANDLER)
         thread = (await client.post(f"/copilot/claims/{claim_id}/threads")).json()["threadId"]
-        await read_stream(client, thread, "please do the thing")
+        await read_save_stream(client, thread, claim_id)
 
         smuggled = await client.post(
             f"/copilot/threads/{thread}/runs",
@@ -969,6 +1101,183 @@ async def test_a_command_without_a_resume_value_is_refused(seeded_db_url: str) -
 
         assert refused.status_code == 422
         assert refused.json()["type"] == "/problems/validation-error"
+
+
+@pytest.mark.parametrize(
+    "resume",
+    [
+        pytest.param("approve", id="a-bare-string"),
+        pytest.param({}, id="no-decisions-key"),
+        pytest.param({"decisions": []}, id="no-decisions"),
+        pytest.param({"decisions": [{"type": "approved"}]}, id="a-type-nobody-defines"),
+        pytest.param({"decisions": [{"type": "respond", "message": "x"}]}, id="an-unused-type"),
+        pytest.param({"decisions": [{"type": "edit"}]}, id="an-edit-with-no-action"),
+        pytest.param(
+            {"decisions": [{"type": "edit", "edited_action": {"name": "save_rtw_letter"}}]},
+            id="an-edit-with-no-args",
+        ),
+        pytest.param({"decisions": [{"type": "approve"}, {"type": "approve"}]}, id="two-decisions"),
+    ],
+)
+async def test_a_malformed_resume_is_422_and_leaves_the_pause_intact(
+    seeded_db_url: str, resume: Any
+) -> None:
+    """A decision this build cannot read is a refusal, not a 503 (Story 6.5 review).
+
+    The resume value used to be handed to the graph untouched, so a malformed
+    one raised *inside* `HumanInTheLoopMiddleware` — a `KeyError` for a missing
+    `decisions`, a `ValueError` for a type it does not allow or a count that
+    does not match. By then the run had started, so the status was already 200
+    and the only place the failure could go was a generic `error` frame reading
+    "The copilot could not finish answering". A caller cannot act on that: the
+    thread is still paused, the sentence blames the copilot, and the fault is in
+    the body they sent.
+
+    So each of these is refused before a token is streamed. **And the pause has
+    to survive it**, which is the half a status-code assertion would miss: a
+    refusal that consumed the interrupt would leave the handler with no card and
+    a claim that was never written to.
+    """
+    async with interrupting_client(seeded_db_url) as client:
+        await login_as(client, *HANDLER)
+        claim_id = a_claim_of(HANDLER)
+        thread = (await client.post(f"/copilot/claims/{claim_id}/threads")).json()["threadId"]
+        await read_save_stream(client, thread, claim_id)
+
+        refused = await client.post(
+            f"/copilot/threads/{thread}/runs", json={"command": {"resume": resume}}
+        )
+
+        assert refused.status_code == 422, refused.text
+        assert refused.json()["type"] == "/problems/validation-error"
+        # The thread is still waiting for a decision it can read — which the
+        # 409 on a message is the observable proof of.
+        still_pending = await client.post(
+            f"/copilot/threads/{thread}/runs", json={"message": "anything"}
+        )
+        assert still_pending.status_code == 409
+        assert still_pending.json()["type"] == "/problems/thread-busy"
+
+
+async def test_the_transcript_publishes_the_pause_a_thread_is_holding(
+    seeded_db_url: str,
+) -> None:
+    """FR-CP-2 applied to the approval, not just to the messages (6.5 review).
+
+    The interrupt payload reached the client on the run's terminal frame and
+    nowhere else, so the approval card lived in the browser's runtime state and
+    nowhere else: switching to 📓 Diary, reloading, or coming back tomorrow
+    discarded it while the thread stayed interrupt-pending — a conversation that
+    409s every message with no reachable way to answer it. The pause was always
+    durable in the checkpoints; only the description of it was not.
+
+    Asserted against the run's own frame rather than against a shape spelled
+    twice: what the transcript publishes has to be what the handler would have
+    approved, byte for byte, or the card re-seeded from it is a different card
+    (AD-16).
+    """
+    async with interrupting_client(seeded_db_url) as client:
+        await login_as(client, *HANDLER)
+        claim_id = a_claim_of(HANDLER)
+        thread = (await client.post(f"/copilot/claims/{claim_id}/threads")).json()["threadId"]
+
+        _events, payloads = await read_save_stream(client, thread, claim_id)
+        streamed = payloads[-1]["value"]
+
+        body = (await client.get(f"/copilot/threads/{thread}/messages")).json()
+        assert body["interruptPending"] is True
+        assert body["pendingApproval"] == streamed
+
+        # …and it clears when the decision is taken, so a resolved thread does
+        # not re-seed a card for a write that has already happened.
+        async with client.stream(
+            "POST",
+            f"/copilot/threads/{thread}/runs",
+            json={"command": {"resume": {"decisions": [{"type": "approve"}]}}},
+        ) as response:
+            assert response.status_code == 200, await response.aread()
+            async for _line in response.aiter_lines():
+                pass
+
+        settled = (await client.get(f"/copilot/threads/{thread}/messages")).json()
+        assert settled["interruptPending"] is False
+        assert settled["pendingApproval"] is None
+
+
+async def test_a_thread_nobody_has_messaged_reports_no_pending_approval(
+    seeded_db_url: str,
+) -> None:
+    """The default, stated: a fresh conversation is not waiting for anything.
+
+    The positive control's negative half. `interruptPending` defaults to `False`
+    and `pendingApproval` to `null`, so a client that re-seeds its approval state
+    from every transcript read gets "nothing pends" rather than `undefined` — and
+    a thread with no checkpoint at all answers it without erroring, which is the
+    first-class state `thread_state` documents.
+    """
+    async with make_client(seeded_db_url) as client:
+        await login_as(client, *HANDLER)
+        claim_id = a_claim_of(HANDLER)
+        thread = (await client.post(f"/copilot/claims/{claim_id}/threads")).json()["threadId"]
+
+        body = (await client.get(f"/copilot/threads/{thread}/messages")).json()
+
+        assert body["messages"] == []
+        assert body["interruptPending"] is False
+        assert body["pendingApproval"] is None
+
+
+async def test_a_pause_with_no_readable_payload_ends_the_run_as_an_error() -> None:
+    """An `interrupt` frame carrying `null` is a card with nothing on it.
+
+    The approval UI renders from the payload, so a frame with no `value`
+    renders nothing — while the thread stays interrupt-pending and 409s every
+    later message. That is a conversation with no reachable way forward and no
+    notice that anything is wrong, produced by a defect the handler cannot see:
+    an `Interrupt` object whose `.value` this build cannot read after a vendor
+    bump, or a future producer pausing on something other than a `HITLRequest`.
+
+    So the run ends `error` instead. The pause is still real and still
+    checkpointed — nothing here resolves it — but the handler is told the
+    copilot could not finish and that nothing was written, which is a sentence
+    they can act on.
+
+    Driven at `_stream` against a graph that reports a valueless `__interrupt__`,
+    because there is no way to produce one through the shipped gate — which is
+    the point: this is the branch for the day something changes underneath it.
+    """
+    from api.routers import copilot as router_module
+
+    class _ValuelessInterruptGraph:
+        async def astream(self, *args: Any, **kwargs: Any) -> AsyncIterator[Any]:
+            # `(namespace, mode, chunk)` — the shape `subgraphs=True` yields.
+            yield ((), "updates", {"__interrupt__": ()})
+
+    class _Lock:
+        async def __aenter__(self) -> bool:  # pragma: no cover - not used here
+            return True
+
+        async def __aexit__(self, *exc: Any) -> bool:
+            return False
+
+    runtime = dataclasses.replace(_runtime_stub(), graph=_ValuelessInterruptGraph())
+    frames = [
+        frame
+        async for frame in router_module._stream(
+            lock=_Lock(),
+            copilot=runtime,
+            ctx=_a_context(),
+            thread_id="claim.WC-20017.u7.s1",
+            claim_business_id="WC-20017",
+            inputs={},
+            resume=None,
+        )
+    ]
+
+    text = b"".join(frames).decode()
+    assert "event: interrupt" not in text
+    assert "event: error" in text
+    assert "/problems/copilot-approval-unreadable" in text
 
 
 @pytest.mark.parametrize("blank", ["", "   ", "\n\t "])

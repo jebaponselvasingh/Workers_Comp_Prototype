@@ -39,13 +39,16 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 import { createQueryClient } from "@/api/queryClient";
 import {
+  COPILOT_RUN_INTERRUPT,
   COPILOT_RUN_OK,
+  COPILOT_RUN_RTW_DRAFT,
   COPILOT_THREAD_BUSY,
   COPILOT_THREADS,
   COPILOT_THREADS_EMPTY,
   COPILOT_THREADS_TWO,
   COPILOT_TRANSCRIPT,
   COPILOT_TRANSCRIPT_EMPTY,
+  COPILOT_TRANSCRIPT_PENDING,
   copilotRunBodies,
   sseFrame,
   stubApi,
@@ -55,7 +58,10 @@ import {
 import { ActionsTab } from "./ActionsTab";
 import { COPILOT_DISCLAIMER } from "./disclaimer";
 
-function renderTab(routes: Partial<StubRoutes> = {}, claimId: string | null = "WC-20017") {
+function renderTab(
+  routes: Partial<StubRoutes> = {},
+  claimId: string | null = "WC-20017",
+) {
   stubApi({
     copilotThreads: COPILOT_THREADS,
     copilotTranscript: COPILOT_TRANSCRIPT,
@@ -147,7 +153,9 @@ test("a claim with no conversation is minted by the SPA, exactly once (AC 1)", a
   await waitFor(() => expect(minted).toHaveLength(1));
   // The greeting is there regardless — it is a property of the claim, not of a
   // conversation — and this is not an error state.
-  expect(screen.getByTestId("copilot-greeting")).toHaveTextContent("Case summary for WC-20017");
+  expect(screen.getByTestId("copilot-greeting")).toHaveTextContent(
+    "Case summary for WC-20017",
+  );
   expect(screen.getByTestId("copilot-new-thread")).toBeEnabled();
   expect(screen.queryByTestId("copilot-error")).not.toBeInTheDocument();
 
@@ -169,7 +177,8 @@ test("a refused mint is an inline notice, not a dead click", async () => {
         type: "/problems/thread-busy",
         title: "Conflict",
         status: 409,
-        detail: "A new conversation cannot be started while the current one is still answering.",
+        detail:
+          "A new conversation cannot be started while the current one is still answering.",
       },
     },
   });
@@ -199,7 +208,9 @@ test("the seeded greeting and the disclaimer both render (UX-DR8)", async () => 
   expect(await screen.findByTestId("copilot-greeting")).toHaveTextContent(
     "Case summary for WC-20017",
   );
-  expect(screen.getByTestId("copilot-disclaimer")).toHaveTextContent(COPILOT_DISCLAIMER);
+  expect(screen.getByTestId("copilot-disclaimer")).toHaveTextContent(
+    COPILOT_DISCLAIMER,
+  );
 });
 
 // --- the transcript ------------------------------------------------------
@@ -260,21 +271,27 @@ test("switching conversation never shows the previous one under the new one", as
     "claim.WC-20017.u1.s1",
   );
   await screen.findByTestId("copilot-transcript");
-  expect(screen.getByTestId("copilot-transcript")).toHaveTextContent("the first conversation");
+  expect(screen.getByTestId("copilot-transcript")).toHaveTextContent(
+    "the first conversation",
+  );
 
   await userEvent.selectOptions(
     screen.getByTestId("copilot-thread-picker"),
     "claim.WC-20017.u1.s2",
   );
 
-  expect(await screen.findByTestId("copilot-transcript-loading")).toBeInTheDocument();
+  expect(
+    await screen.findByTestId("copilot-transcript-loading"),
+  ).toBeInTheDocument();
   expect(screen.queryByText("the first conversation")).not.toBeInTheDocument();
 });
 
 test("an empty conversation says so rather than rendering a blank list", async () => {
   renderTab({ copilotTranscript: COPILOT_TRANSCRIPT_EMPTY });
 
-  expect(await screen.findByTestId("copilot-transcript-empty")).toBeInTheDocument();
+  expect(
+    await screen.findByTestId("copilot-transcript-empty"),
+  ).toBeInTheDocument();
   expect(screen.getByTestId("copilot-composer")).toBeInTheDocument();
 });
 
@@ -292,7 +309,8 @@ test("raw HTML in an assistant turn renders as text and creates no element", asy
         messages: [
           {
             role: "assistant",
-            content: '<script>alert(1)</script><img src="x" onerror="alert(2)">',
+            content:
+              '<script>alert(1)</script><img src="x" onerror="alert(2)">',
           },
         ],
       },
@@ -315,7 +333,12 @@ test("a link in an assistant turn is rendered as text, never as an anchor", asyn
       body: {
         threadId: "claim.WC-20017.u1.s1",
         isCurrent: true,
-        messages: [{ role: "assistant", content: "See [the policy](https://example.test/x)." }],
+        messages: [
+          {
+            role: "assistant",
+            content: "See [the policy](https://example.test/x).",
+          },
+        ],
       },
     },
   });
@@ -328,9 +351,15 @@ test("a link in an assistant turn is rendered as text, never as an anchor", asyn
 // --- the run and its refusals -------------------------------------------
 
 test("sending a message streams an answer into the transcript", async () => {
-  renderTab({ copilotTranscript: COPILOT_TRANSCRIPT_EMPTY, copilotRun: { sse: COPILOT_RUN_OK } });
+  renderTab({
+    copilotTranscript: COPILOT_TRANSCRIPT_EMPTY,
+    copilotRun: { sse: COPILOT_RUN_OK },
+  });
 
-  await userEvent.type(await screen.findByTestId("copilot-input"), "what next?");
+  await userEvent.type(
+    await screen.findByTestId("copilot-input"),
+    "what next?",
+  );
   await userEvent.click(screen.getByTestId("copilot-send"));
 
   // The two `messages` frames are accumulated into one assistant turn by the
@@ -352,10 +381,16 @@ test("a new turn scrolls the transcript to the bottom", async () => {
   // jsdom has no layout, so `scrollHeight` is stubbed: what is under test is
   // that the component *assigns* `scrollTop` when the conversation grows, which
   // is the whole of the behaviour.
-  renderTab({ copilotTranscript: COPILOT_TRANSCRIPT_EMPTY, copilotRun: { sse: COPILOT_RUN_OK } });
+  renderTab({
+    copilotTranscript: COPILOT_TRANSCRIPT_EMPTY,
+    copilotRun: { sse: COPILOT_RUN_OK },
+  });
 
   const scroller = await screen.findByTestId("copilot-scroller");
-  Object.defineProperty(scroller, "scrollHeight", { value: 640, configurable: true });
+  Object.defineProperty(scroller, "scrollHeight", {
+    value: 640,
+    configurable: true,
+  });
 
   await userEvent.type(screen.getByTestId("copilot-input"), "what next?");
   await userEvent.click(screen.getByTestId("copilot-send"));
@@ -369,7 +404,10 @@ test("a 409 is an inline notice, never a dialog", async () => {
     copilotRun: COPILOT_THREAD_BUSY,
   });
 
-  await userEvent.type(await screen.findByTestId("copilot-input"), "second question");
+  await userEvent.type(
+    await screen.findByTestId("copilot-input"),
+    "second question",
+  );
   await userEvent.click(screen.getByTestId("copilot-send"));
 
   const refusal = await screen.findByTestId("copilot-refusal");
@@ -390,7 +428,10 @@ test("a refusal does not follow the handler onto another conversation", async ()
     copilotRun: COPILOT_THREAD_BUSY,
   });
 
-  await userEvent.type(await screen.findByTestId("copilot-input"), "second question");
+  await userEvent.type(
+    await screen.findByTestId("copilot-input"),
+    "second question",
+  );
   await userEvent.click(screen.getByTestId("copilot-send"));
   await screen.findByTestId("copilot-refusal");
 
@@ -429,7 +470,9 @@ test("a superseded conversation is read-only and has no composer at all", async 
   expect(await screen.findByTestId("copilot-read-only")).toBeInTheDocument();
   expect(screen.queryByTestId("copilot-composer")).not.toBeInTheDocument();
   // …and its transcript is still readable, which is the point of keeping it.
-  expect(screen.getByTestId("copilot-transcript")).toHaveTextContent("the first conversation");
+  expect(screen.getByTestId("copilot-transcript")).toHaveTextContent(
+    "the first conversation",
+  );
 });
 
 test("the switcher is hidden while there is only one conversation", async () => {
@@ -455,19 +498,24 @@ test("the frames of a run that ends in an error surface as a notice", async () =
           type: "/problems/copilot-run-failed",
           title: "Copilot unavailable",
           status: 503,
-          detail: "The copilot could not finish answering. Nothing was changed on the claim.",
+          detail:
+            "The copilot could not finish answering. Nothing was changed on the claim.",
         }),
       ],
     },
   });
 
-  await userEvent.type(await screen.findByTestId("copilot-input"), "what is the reserve?");
+  await userEvent.type(
+    await screen.findByTestId("copilot-input"),
+    "what is the reserve?",
+  );
   await userEvent.click(screen.getByTestId("copilot-send"));
 
-  await waitFor(() => expect(screen.getByTestId("copilot-refusal")).toBeInTheDocument());
+  await waitFor(() =>
+    expect(screen.getByTestId("copilot-refusal")).toBeInTheDocument(),
+  );
   expect(screen.getByTestId("copilot-refusal")).toHaveTextContent(/could not/i);
 });
-
 
 // --- Story 6.4: the quick actions ----------------------------------------
 
@@ -483,8 +531,12 @@ test("the seven quick actions render above the transcript", async () => {
 
   const greeting = screen.getByTestId("copilot-greeting");
   const scroller = screen.getByTestId("copilot-scroller");
-  expect(greeting.compareDocumentPosition(strip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(strip.compareDocumentPosition(scroller) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(
+    greeting.compareDocumentPosition(strip) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(
+    strip.compareDocumentPosition(scroller) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
 });
 
 test("clicking a quick action posts its key with the button's label", async () => {
@@ -495,7 +547,10 @@ test("clicking a quick action posts its key with the button's label", async () =
   // recorded body is the only place they differ, and the key had to reach
   // `streamRun`'s body rather than the runtime config, which the `stream`
   // callback discards.
-  renderTab({ copilotTranscript: COPILOT_TRANSCRIPT_EMPTY, copilotRun: { sse: COPILOT_RUN_OK } });
+  renderTab({
+    copilotTranscript: COPILOT_TRANSCRIPT_EMPTY,
+    copilotRun: { sse: COPILOT_RUN_OK },
+  });
 
   const reserve = (await screen.findAllByTestId("copilot-quick-action")).find(
     (button) => button.dataset.quickAction === "reserve",
@@ -521,7 +576,10 @@ test("a typed question after a quick action carries no key", async () => {
   // that, the next thing a handler typed would be silently answered by a
   // deterministic node — a chat message routed to a quick action, with nothing
   // on screen to say so.
-  renderTab({ copilotTranscript: COPILOT_TRANSCRIPT_EMPTY, copilotRun: { sse: COPILOT_RUN_OK } });
+  renderTab({
+    copilotTranscript: COPILOT_TRANSCRIPT_EMPTY,
+    copilotRun: { sse: COPILOT_RUN_OK },
+  });
 
   const fraud = (await screen.findAllByTestId("copilot-quick-action")).find(
     (button) => button.dataset.quickAction === "fraud",
@@ -567,10 +625,15 @@ test("a quick action clicked while a run is in flight posts nothing", async () =
   // have avoided. So the buttons disable, and the assertion is that **no second
   // body reached the wire**, which is stronger than the disabled attribute: a
   // handler could not have clicked it, and neither could anything else.
-  renderTab({ copilotTranscript: COPILOT_TRANSCRIPT_EMPTY, copilotRun: "pending" });
+  renderTab({
+    copilotTranscript: COPILOT_TRANSCRIPT_EMPTY,
+    copilotRun: "pending",
+  });
 
   const buttons = await screen.findAllByTestId("copilot-quick-action");
-  await userEvent.click(buttons.find((b) => b.dataset.quickAction === "similar")!);
+  await userEvent.click(
+    buttons.find((b) => b.dataset.quickAction === "similar")!,
+  );
 
   await waitFor(() => expect(copilotRunBodies).toHaveLength(1));
   await waitFor(() =>
@@ -598,11 +661,18 @@ test("two quick actions clicked in one tick cannot swap keys", async () => {
   // clicks, because `userEvent` awaits between them and React commits in
   // between — which is the case the existing disabled-strip test covers, and
   // not this one.
-  renderTab({ copilotTranscript: COPILOT_TRANSCRIPT_EMPTY, copilotRun: { sse: COPILOT_RUN_OK } });
+  renderTab({
+    copilotTranscript: COPILOT_TRANSCRIPT_EMPTY,
+    copilotRun: { sse: COPILOT_RUN_OK },
+  });
 
   const buttons = await screen.findAllByTestId("copilot-quick-action");
-  const reserve = buttons.find((button) => button.dataset.quickAction === "reserve")!;
-  const fraud = buttons.find((button) => button.dataset.quickAction === "fraud")!;
+  const reserve = buttons.find(
+    (button) => button.dataset.quickAction === "reserve",
+  )!;
+  const fraud = buttons.find(
+    (button) => button.dataset.quickAction === "fraud",
+  )!;
 
   await act(async () => {
     reserve.click();
@@ -612,7 +682,10 @@ test("two quick actions clicked in one tick cannot swap keys", async () => {
   // One run, and it is the one that was clicked first — never a body carrying
   // the first run's message under the second run's key.
   await waitFor(() => expect(copilotRunBodies).toHaveLength(1));
-  expect(copilotRunBodies[0]).toEqual({ message: "Reserve review", quickAction: "reserve" });
+  expect(copilotRunBodies[0]).toEqual({
+    message: "Reserve review",
+    quickAction: "reserve",
+  });
 
   // …and the queue drained with it, so the next action takes its own key rather
   // than the one the dropped click left behind.
@@ -625,5 +698,299 @@ test("two quick actions clicked in one tick cannot swap keys", async () => {
       .find((button) => button.dataset.quickAction === "fraud")!,
   );
   await waitFor(() => expect(copilotRunBodies).toHaveLength(2));
-  expect(copilotRunBodies[1]).toEqual({ message: "Fraud risk check", quickAction: "fraud" });
+  expect(copilotRunBodies[1]).toEqual({
+    message: "Fraud risk check",
+    quickAction: "fraud",
+  });
+});
+
+// --- Story 6.5: the approval gate, and the RTW letter --------------------
+
+test("an interrupt renders the server's pending tool call, not a paraphrase", async () => {
+  // AC 5 / AD-16. The card shows the tool name and **every** typed argument the
+  // middleware is holding, because a card that curated them would be a
+  // paraphrase one layer down — and a handler approving a paraphrase has
+  // approved something they were not shown.
+  renderTab({
+    copilotTranscript: COPILOT_TRANSCRIPT_EMPTY,
+    copilotRun: { sse: COPILOT_RUN_INTERRUPT },
+  });
+
+  await userEvent.click(
+    (await screen.findAllByTestId("copilot-quick-action")).find(
+      (button) => button.dataset.quickAction === "reserve",
+    )!,
+  );
+
+  const card = await screen.findByTestId("copilot-approval");
+  expect(card.dataset.tool).toBe("update_claim_field");
+  expect(screen.getByTestId("copilot-approval-tool")).toHaveTextContent(
+    "update_claim_field",
+  );
+
+  const shown = screen
+    .getAllByTestId("copilot-approval-arg")
+    .map((row) => row.dataset.arg)
+    .sort();
+  expect(shown).toEqual([
+    "claim_business_id",
+    "expected_version",
+    "field",
+    "value",
+  ]);
+  expect(card).toHaveTextContent("Laceration of left hand");
+  expect(card).toHaveTextContent("4");
+});
+
+test("a pending approval disables the composer and the quick actions", async () => {
+  // The client half of the server's interrupt-pending 409. A composer left live
+  // while a write awaits a decision is a message the server refuses, and the
+  // handler is told the conversation is busy for a control nothing stopped them
+  // using. Resume is the only way forward, and the card is the only thing that
+  // offers one.
+  renderTab({
+    copilotTranscript: COPILOT_TRANSCRIPT_EMPTY,
+    copilotRun: { sse: COPILOT_RUN_INTERRUPT },
+  });
+
+  await userEvent.click(
+    (await screen.findAllByTestId("copilot-quick-action")).find(
+      (button) => button.dataset.quickAction === "reserve",
+    )!,
+  );
+  await screen.findByTestId("copilot-approval");
+
+  await waitFor(() =>
+    expect(screen.getAllByTestId("copilot-quick-action")[0]).toBeDisabled(),
+  );
+  expect(screen.getByTestId("copilot-input")).toBeDisabled();
+});
+
+test("approving resumes with a decision and carries no quick-action key", async () => {
+  // **The half a resume could break** (Story 6.4's review, one story on): the
+  // run queue carries a body per run, so a resume enqueues one with a `command`
+  // and no `quickAction`. A resume that pushed a quick-action entry would steal
+  // the *next* run's key, which is the determinism break this pane has already
+  // had once.
+  renderTab({
+    copilotTranscript: COPILOT_TRANSCRIPT_EMPTY,
+    copilotRunSequence: [COPILOT_RUN_INTERRUPT, COPILOT_RUN_OK],
+  });
+
+  await userEvent.click(
+    (await screen.findAllByTestId("copilot-quick-action")).find(
+      (button) => button.dataset.quickAction === "reserve",
+    )!,
+  );
+  await screen.findByTestId("copilot-approval");
+
+  await userEvent.click(screen.getByTestId("copilot-approve"));
+
+  await waitFor(() => expect(copilotRunBodies).toHaveLength(2));
+  expect(copilotRunBodies[1]).toEqual({
+    command: { resume: { decisions: [{ type: "approve" }] } },
+  });
+  // …and the card is gone, so the decision cannot be given twice.
+  await waitFor(() =>
+    expect(screen.queryByTestId("copilot-approval")).toBeNull(),
+  );
+});
+
+test("rejecting resumes with a reject decision and writes nothing else", async () => {
+  renderTab({
+    copilotTranscript: COPILOT_TRANSCRIPT_EMPTY,
+    copilotRunSequence: [COPILOT_RUN_INTERRUPT, COPILOT_RUN_OK],
+  });
+
+  await userEvent.click(
+    (await screen.findAllByTestId("copilot-quick-action")).find(
+      (button) => button.dataset.quickAction === "reserve",
+    )!,
+  );
+  await screen.findByTestId("copilot-approval");
+  await userEvent.click(screen.getByTestId("copilot-reject"));
+
+  await waitFor(() => expect(copilotRunBodies).toHaveLength(2));
+  expect(copilotRunBodies[1]).toEqual({
+    command: { resume: { decisions: [{ type: "reject" }] } },
+  });
+});
+
+test("the RTW action opens the modal, and print and copy post nothing", async () => {
+  // AC 4 and the story's own I/O row: Print and Copy are gate-free because they
+  // are not writes. The assertion is a request count, because "no proposal was
+  // made" and "a proposal was made and refused" are indistinguishable from the
+  // modal.
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+  const print = vi.fn();
+  vi.stubGlobal("print", print);
+
+  renderTab({
+    copilotTranscript: COPILOT_TRANSCRIPT_EMPTY,
+    copilotRun: { sse: COPILOT_RUN_RTW_DRAFT },
+  });
+
+  await userEvent.click(
+    (await screen.findAllByTestId("copilot-quick-action")).find(
+      (button) => button.dataset.quickAction === "rtw",
+    )!,
+  );
+
+  const body = await screen.findByTestId("rtw-body");
+  expect(body).toHaveTextContent("Modified duty is available.");
+
+  await userEvent.click(screen.getByTestId("rtw-print"));
+  await userEvent.click(screen.getByTestId("rtw-copy"));
+
+  expect(print).toHaveBeenCalledTimes(1);
+  await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+  // One run — the draft's — and nothing else.
+  expect(copilotRunBodies).toHaveLength(1);
+});
+
+test("saving the letter sends the handler's edit and the drafted version", async () => {
+  // AC 10's client half. The body that reaches the wire is what the handler
+  // typed, and the version is the one the *draft* was pinned to — not one the
+  // modal fetched, which would be newer and would let a save succeed against a
+  // claim that had moved.
+  renderTab({
+    copilotTranscript: COPILOT_TRANSCRIPT_EMPTY,
+    copilotRunSequence: [COPILOT_RUN_RTW_DRAFT, COPILOT_RUN_INTERRUPT],
+  });
+
+  await userEvent.click(
+    (await screen.findAllByTestId("copilot-quick-action")).find(
+      (button) => button.dataset.quickAction === "rtw",
+    )!,
+  );
+  await screen.findByTestId("rtw-body");
+
+  await userEvent.click(screen.getByTestId("rtw-edit"));
+  const input = screen.getByTestId("rtw-body-input");
+  await userEvent.clear(input);
+  await userEvent.type(input, "Handler wrote this.");
+  await userEvent.click(screen.getByTestId("rtw-save"));
+
+  await waitFor(() => expect(copilotRunBodies).toHaveLength(2));
+  expect(copilotRunBodies[1]).toEqual({
+    message: "Save the return-to-work letter to this claim.",
+    rtwLetter: { bodyText: "Handler wrote this.", expectedVersion: 4 },
+  });
+  // …and the save's own run pauses at the gate, which is the whole point of it.
+  await screen.findByTestId("copilot-approval");
+});
+
+test("a thread paused on an approval re-seeds its card on mount", async () => {
+  // **The card outlives this component, because the pause does** (review of
+  // Story 6.5). The interrupt payload used to reach the browser on a run's
+  // terminal frame and live in the runtime's state alone, so switching to 📓
+  // Diary and back — or reloading, or opening the claim the next morning —
+  // discarded it while the server kept the thread paused. A paused thread 409s
+  // every message, so the conversation had no reachable way forward and nothing
+  // on screen said why.
+  //
+  // This mount has seen no run at all: the card can only come from the
+  // transcript the server just answered with.
+  renderTab({ copilotTranscript: COPILOT_TRANSCRIPT_PENDING });
+
+  const card = await screen.findByTestId("copilot-approval");
+  expect(card.dataset.tool).toBe("update_claim_field");
+  expect(card).toHaveTextContent("Laceration of left hand");
+  // …and it is a real pause, so the controls a 409 would refuse are shut.
+  expect(screen.getByTestId("copilot-input")).toBeDisabled();
+  expect(copilotRunBodies).toHaveLength(0);
+});
+
+test("a thread with no pause re-seeds no card", async () => {
+  // The negative control the test above needs to mean anything: a card that
+  // appeared on every mount would satisfy it and would show one conversation's
+  // approval over another's transcript.
+  renderTab({ copilotTranscript: COPILOT_TRANSCRIPT });
+
+  await screen.findByTestId("copilot-transcript");
+  expect(screen.queryByTestId("copilot-approval")).toBeNull();
+  expect(screen.getByTestId("copilot-input")).toBeEnabled();
+});
+
+test("a refused resume puts the approval card back", async () => {
+  // The card is cleared optimistically so it cannot be answered twice while the
+  // run is in flight — and it was cleared *unconditionally*, so a 409, a 503 or
+  // a dropped connection left the handler with no card and a thread the server
+  // still considered paused. The write became unanswerable from this pane, and
+  // the only recovery was a reload.
+  //
+  // A refused resume changed nothing on the server, so the approval is exactly
+  // as pending as it was.
+  renderTab({
+    copilotTranscript: COPILOT_TRANSCRIPT_EMPTY,
+    copilotRunSequence: [COPILOT_RUN_INTERRUPT, COPILOT_THREAD_BUSY],
+  });
+
+  await userEvent.click(
+    (await screen.findAllByTestId("copilot-quick-action")).find(
+      (button) => button.dataset.quickAction === "reserve",
+    )!,
+  );
+  await screen.findByTestId("copilot-approval");
+
+  await userEvent.click(screen.getByTestId("copilot-approve"));
+
+  await screen.findByTestId("copilot-refusal");
+  const restored = await screen.findByTestId("copilot-approval");
+  expect(restored.dataset.tool).toBe("update_claim_field");
+  expect(restored).toHaveTextContent("Laceration of left hand");
+});
+
+test("a pending approval also shuts the conversation switcher", async () => {
+  // The strip is the one control that can make a paused thread *unanswerable*.
+  // Selecting another conversation re-points the pane's resume at that thread,
+  // so the next Approve answers the wrong one; "+ New" supersedes the paused
+  // thread, which then refuses a resume as read-only for ever and leaves the
+  // proposed write pending in the checkpoints with no route that can answer it.
+  renderTab({
+    copilotThreads: COPILOT_THREADS_TWO,
+    copilotTranscript: {
+      ...COPILOT_TRANSCRIPT_PENDING,
+      body: {
+        ...COPILOT_TRANSCRIPT_PENDING.body,
+        threadId: "claim.WC-20017.u1.s2",
+      },
+    },
+  });
+
+  await screen.findByTestId("copilot-approval");
+
+  expect(screen.getByTestId("copilot-new-thread")).toBeDisabled();
+  expect(screen.getByTestId("copilot-thread-picker")).toBeDisabled();
+});
+
+test("a refused save keeps the letter modal open with the handler's text", async () => {
+  // The modal closed before the run was accepted, so a refusal — the 409 on a
+  // busy thread, most of all — destroyed the letter the handler had just spent
+  // minutes editing. There was no way back to it: re-running 📄 Review RTW
+  // Policy drafts a *new* letter, and the edited one existed nowhere but in the
+  // closed dialog's state.
+  renderTab({
+    copilotTranscript: COPILOT_TRANSCRIPT_EMPTY,
+    copilotRunSequence: [COPILOT_RUN_RTW_DRAFT, COPILOT_THREAD_BUSY],
+  });
+
+  await userEvent.click(
+    (await screen.findAllByTestId("copilot-quick-action")).find(
+      (button) => button.dataset.quickAction === "rtw",
+    )!,
+  );
+  await screen.findByTestId("rtw-body");
+
+  await userEvent.click(screen.getByTestId("rtw-edit"));
+  const input = screen.getByTestId("rtw-body-input");
+  await userEvent.clear(input);
+  await userEvent.type(input, "Handler wrote this.");
+  await userEvent.click(screen.getByTestId("rtw-save"));
+
+  await screen.findByTestId("copilot-refusal");
+  expect(await screen.findByTestId("rtw-body-input")).toHaveValue(
+    "Handler wrote this.",
+  );
 });

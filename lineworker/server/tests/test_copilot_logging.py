@@ -109,7 +109,15 @@ def a_conversation_free_database(seeded_db_url: str) -> None:
 
 
 @asynccontextmanager
-async def make_client(db_url: str) -> AsyncIterator[httpx.AsyncClient]:
+async def make_client(db_url: str, *, bind_tools: bool = False) -> AsyncIterator[httpx.AsyncClient]:
+    """The shipped app with a scripted model, and — for Story 6.5 — real tools.
+
+    `bind_tools` is `False` for every test written before 6.5 and that is right
+    for them: they assert what a *streamed answer* does to a log, and a bound
+    registry would put a database read behind every scripted turn. The gate's
+    test needs the opposite, because the write it proposes has to execute for
+    the approval's log lines to exist at all.
+    """
     app = create_app(Settings(database_url=db_url, env="e2e"))  # type: ignore[arg-type]
     async with app.router.lifespan_context(app):
         runtime = app.state.copilot
@@ -119,7 +127,7 @@ async def make_client(db_url: str) -> AsyncIterator[httpx.AsyncClient]:
                 model=_ScriptedChatModel(),
                 checkpointer=runtime.checkpointer,
                 max_tool_calls=runtime.max_tool_calls,
-                tools=[],
+                tools=list(build_tools()) if bind_tools else [],
             ),
         )
         transport = httpx.ASGITransport(app=app)
@@ -520,3 +528,107 @@ async def test_a_quick_action_logs_its_prompt_key_and_none_of_its_content(
     assert money, "this claim has no reserve figures — the assertion below is vacuous"
     for amount in money:
         assert amount not in emitted, f"the reserve figure {amount} reached the log (AD-11)"
+
+
+# --- Story 6.5: a proposed write, its letter and its approval --------------
+
+#: The event an approved write emits. The positive control for everything below.
+#:
+#: A gate's log lines are the *most* tempting place to put content — "what was
+#: approved?" is exactly the question an operator debugging an approval asks —
+#: and the answer this build gives is a tool name and a tool-call id. So this
+#: test asserts what is present as carefully as what is not.
+APPROVAL_EVENT = "copilot.write_approved"
+
+#: A letter body with three distinctive strings in it: a name, a clinical
+#: restriction and a date. Each is the kind of value AD-11 bans from a log, and
+#: they are spelled unusually so a substring search cannot match by accident.
+LETTER_BODY = (
+    "Dear Ms Kowalski,\n\n"
+    "Your treating clinician records no lifting above four kilograms.\n"
+    "Modified duty is available from the 14th of Ferbrewary.\n\n"
+    "Regards,"
+)
+
+
+async def test_a_proposed_write_logs_its_tool_and_none_of_its_payload(
+    seeded_db_url: str,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """AD-11 on the gate: a whole letter passes through it and reaches no log line.
+
+    The run below is the real RTW save through the shipped route — the write is
+    proposed, paused on, approved and executed, and a real `document` row lands
+    on a seeded claim. Every step of that has a log line, and the letter is in
+    the payload of all of them.
+
+    **Four positive controls**, because "these strings are absent" passes
+    identically against a run that never happened, and this run has four
+    distinct stages that could each be the one that silently did not. A
+    proposal, an approval, an audit row and a filed document: without them the
+    absences below would be statements about a request that 422'd.
+
+    The three strings searched for are the three kinds of PHI a letter carries —
+    an injured worker's name, a clinical restriction, and a return date the
+    handler typed. Any of them in stderr means something logged a payload.
+    """
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from data.models.core import Claim, Document
+
+    configure_logging("INFO")
+
+    async with make_client(seeded_db_url, bind_tools=True) as client:
+        await login_as(client, *HANDLER)
+        claim_id = a_claim_of(HANDLER)
+        thread = (await client.post(f"/copilot/claims/{claim_id}/threads")).json()["threadId"]
+        version = (await client.get(f"/claims/{claim_id}")).json()["version"]
+        async with client.stream(
+            "POST",
+            f"/copilot/threads/{thread}/runs",
+            json={
+                "message": "Save the return-to-work letter to this claim.",
+                "rtwLetter": {"bodyText": LETTER_BODY, "expectedVersion": version},
+            },
+        ) as response:
+            assert response.status_code == 200, await response.aread()
+            async for _line in response.aiter_lines():
+                pass
+        async with client.stream(
+            "POST",
+            f"/copilot/threads/{thread}/runs",
+            json={"command": {"resume": {"decisions": [{"type": "approve"}]}}},
+        ) as response:
+            assert response.status_code == 200, await response.aread()
+            async for _line in response.aiter_lines():
+                pass
+
+    emitted = capfd.readouterr().err
+
+    assert "copilot.write_proposed" in emitted, "no write was proposed — the run did not happen"
+    assert APPROVAL_EVENT in emitted, "no approval was recorded — the absences below are vacuous"
+    assert '"action": "copilot_approval.approved"' in emitted, "the approval was not audited"
+    assert '"action": "create_document"' in emitted, "no document was filed"
+    # …and the ids that make a run investigable are there, which is the other
+    # half of AD-11: content-free is not the same as contentless.
+    assert '"tool": "save_rtw_letter"' in emitted
+    assert '"tool_call_id": "deterministic-' in emitted
+
+    for secret in ("Kowalski", "four kilograms", "Ferbrewary"):
+        assert secret not in emitted, f"the letter's {secret!r} reached the log (AD-11)"
+
+    # The row really exists, so the absences above are about a write that
+    # happened rather than about one that was refused before it could log.
+    engine = create_async_engine(seeded_db_url.replace("postgresql://", "postgresql+asyncpg://", 1))
+    try:
+        async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+            filed = (
+                await session.scalars(
+                    sa.select(Document)
+                    .join(Claim, Document.claim_id == Claim.id)
+                    .where(Claim.claim_id == claim_id, Document.body_text == LETTER_BODY)
+                )
+            ).all()
+        assert len(filed) == 1
+    finally:
+        await engine.dispose()

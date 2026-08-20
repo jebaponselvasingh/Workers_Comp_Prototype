@@ -47,7 +47,10 @@ async function openCopilot(page: Page, claimId: string): Promise<void> {
   // Clicking is idempotent and makes the spec independent of which tab the
   // panel opens on, which is a rendering decision rather than a contract.
   await byTestId(page, "copilot-tab-actions").click();
-  await expect(byTestId(page, "copilot-tab-actions")).toHaveAttribute("aria-selected", "true");
+  await expect(byTestId(page, "copilot-tab-actions")).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
 }
 
 /**
@@ -65,7 +68,9 @@ async function openCopilot(page: Page, claimId: string): Promise<void> {
  */
 async function currentThread(page: Page, claimId: string): Promise<string> {
   await expect(byTestId(page, "copilot-quick-actions")).toBeVisible();
-  const response = await page.request.get(`/api/copilot/claims/${claimId}/threads`);
+  const response = await page.request.get(
+    `/api/copilot/claims/${claimId}/threads`,
+  );
   expect(response.status(), await response.text()).toBe(200);
   const listed = (await response.json()) as { currentThreadId: string | null };
   expect(listed.currentThreadId).not.toBeNull();
@@ -80,20 +85,36 @@ function eventsOf(body: string): string[] {
     .map((line) => line.slice("event: ".length));
 }
 
-/** The `updates` frames' node names, in order. */
+/**
+ * The `updates` frames' node names, in order.
+ *
+ * **Frames carrying no `node` are skipped**, which Story 6.5 made necessary
+ * (AD-15: a later story amends the specs whose behaviour it changes, in its own
+ * PR). `updates` was "a node finished" and nothing else when this spec was
+ * written; 6.5 publishes the RTW draft's version pin on one too, because it is
+ * not assistant text and `updates` is already the frame that says "something
+ * happened in the graph that is not a token". Reading `.node` off it yielded
+ * `undefined` and put it in the middle of this spec's routing assertion.
+ *
+ * The routing property is unchanged and is still exactly what is asserted: the
+ * *nodes* that ran, in order.
+ */
 function nodesOf(body: string): string[] {
   const lines = body.split("\n");
   return lines
     .map((line, index) =>
       line.startsWith("data: ") && lines[index - 1] === "event: updates"
-        ? (JSON.parse(line.slice("data: ".length)) as { node: string }).node
+        ? ((JSON.parse(line.slice("data: ".length)) as { node?: string })
+            .node ?? null)
         : null,
     )
     .filter((node): node is string => node !== null);
 }
 
 test.describe("@story:6-4 @epic:6 deterministic quick actions", () => {
-  test("@smoke a quick action streams an answer from its own node", async ({ page }) => {
+  test("@smoke a quick action streams an answer from its own node", async ({
+    page,
+  }) => {
     await loginAs(page, PERSONAS.handler);
     const claimId = firstClaimInStage(KAYA.name, KAYA.role, "treatment");
     await openCopilot(page, claimId);
@@ -120,7 +141,9 @@ test.describe("@story:6-4 @epic:6 deterministic quick actions", () => {
     await expect(answer).not.toBeEmpty();
   });
 
-  test("each key routes to its own node and ends with one terminal event", async ({ page }) => {
+  test("each key routes to its own node and ends with one terminal event", async ({
+    page,
+  }) => {
     // AD-14 on the wire, key by key. The route is something the server
     // publishes — `updates` frames name the nodes that finished — so
     // determinism is assertable end to end without a word of prose being read.
@@ -145,23 +168,35 @@ test.describe("@story:6-4 @epic:6 deterministic quick actions", () => {
     };
 
     for (const [key, node] of Object.entries(expected)) {
-      const response = await page.request.post(`/api/copilot/threads/${threadId}/runs`, {
-        data: { message: `quick action ${key}`, quickAction: key },
-      });
+      const response = await page.request.post(
+        `/api/copilot/threads/${threadId}/runs`,
+        {
+          data: { message: `quick action ${key}`, quickAction: key },
+        },
+      );
       expect(response.status(), `${key}: ${await response.text()}`).toBe(200);
       expect(response.headers()["content-type"]).toContain("text/event-stream");
 
       const body = await response.text();
-      expect(nodesOf(body), `${key} routed elsewhere`).toEqual(["entry_router", node]);
-      expect(eventsOf(body), `${key} streamed no assistant content`).toContain("messages");
+      expect(nodesOf(body), `${key} routed elsewhere`).toEqual([
+        "entry_router",
+        node,
+      ]);
+      expect(eventsOf(body), `${key} streamed no assistant content`).toContain(
+        "messages",
+      );
       expect(
-        eventsOf(body).filter((event) => ["done", "interrupt", "error"].includes(event)),
+        eventsOf(body).filter((event) =>
+          ["done", "interrupt", "error"].includes(event),
+        ),
         `${key} did not end with exactly one terminal event`,
       ).toEqual(["done"]);
     }
   });
 
-  test("the model-free action answers with no model call at all", async ({ page }) => {
+  test("the model-free action answers with no model call at all", async ({
+    page,
+  }) => {
     // `data_alignment` declares `requires_llm: false`, and this is the false
     // path Story 6.6 gates degradation on. It is asserted here the only way a
     // black-box spec can: the run reaches its own node, streams content and
@@ -177,9 +212,12 @@ test.describe("@story:6-4 @epic:6 deterministic quick actions", () => {
     await openCopilot(page, claimId);
     const threadId = await currentThread(page, claimId);
 
-    const response = await page.request.post(`/api/copilot/threads/${threadId}/runs`, {
-      data: { message: "Data alignment note", quickAction: "data_alignment" },
-    });
+    const response = await page.request.post(
+      `/api/copilot/threads/${threadId}/runs`,
+      {
+        data: { message: "Data alignment note", quickAction: "data_alignment" },
+      },
+    );
     expect(response.status(), await response.text()).toBe(200);
 
     const body = await response.text();
@@ -203,22 +241,32 @@ test.describe("@story:6-4 @epic:6 deterministic quick actions", () => {
     await openCopilot(page, claimId);
     const threadId = await currentThread(page, claimId);
 
-    const refused = await page.request.post(`/api/copilot/threads/${threadId}/runs`, {
-      data: { message: "Labor law & state rules", quickAction: "laborlow" },
-    });
+    const refused = await page.request.post(
+      `/api/copilot/threads/${threadId}/runs`,
+      {
+        data: { message: "Labor law & state rules", quickAction: "laborlow" },
+      },
+    );
     expect(refused.status()).toBe(422);
-    expect(((await refused.json()) as { type: string }).type).toBe("/problems/validation-error");
+    expect(((await refused.json()) as { type: string }).type).toBe(
+      "/problems/validation-error",
+    );
 
     // …and the thread is untouched: a run that never started can be followed
     // immediately by one that does, with no 409 in between.
-    const accepted = await page.request.post(`/api/copilot/threads/${threadId}/runs`, {
-      data: { message: "Labor law & state rules", quickAction: "laborlaw" },
-    });
+    const accepted = await page.request.post(
+      `/api/copilot/threads/${threadId}/runs`,
+      {
+        data: { message: "Labor law & state rules", quickAction: "laborlaw" },
+      },
+    );
     expect(accepted.status(), await accepted.text()).toBe(200);
     await accepted.text();
   });
 
-  test("the buttons are disabled while a run is in flight", async ({ page }) => {
+  test("the buttons are disabled while a run is in flight", async ({
+    page,
+  }) => {
     // The client half of single-flight, against the composed stack. Driven
     // through the panel rather than through `page.request`, because what is
     // under test is what the browser does with a run it started: Playwright's
@@ -237,7 +285,9 @@ test.describe("@story:6-4 @epic:6 deterministic quick actions", () => {
     await expect(page.locator('[data-quick-action="reserve"]')).toBeDisabled();
 
     // …and it comes back when the run finishes, so the strip is not a one-shot.
-    await expect(byTestId(page, "copilot-turn-assistant").first()).toBeVisible();
+    await expect(
+      byTestId(page, "copilot-turn-assistant").first(),
+    ).toBeVisible();
     await expect(page.locator('[data-quick-action="reserve"]')).toBeEnabled();
   });
 });

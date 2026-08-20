@@ -298,6 +298,25 @@ class Document(Base):
     write rather than in the column: the compare-and-swap that sets `confirmed`
     also requires `reviewed`, so an out-of-order confirmation is a 409 rather
     than a row nobody can explain.
+
+    **`body_text` is Story 6.5's, and it is the one column a generated letter
+    needs that this table did not have.** It carries the words of a document
+    this console produced — today, the return-to-work letter the copilot drafts
+    and a handler edits before approving its save. It is **PHI-class** (AD-11)
+    exactly as `DiaryNote.note_text` and `EmailLog.body` are: a return-to-work
+    letter names the injured worker and quotes their clinical restrictions, so
+    it never reaches a log line and it is purged through the claim it hangs off.
+
+    It is **not** an alternative to `blob_key` and neither replaces the other.
+    `blob_key` is a handle to bytes that still do not exist and whose backing
+    store is a deferred decision; `body_text` is text this system generated, and
+    a letter stored as text is what let Story 6.5 ship a saved letter without
+    taking the volume-versus-object-store decision inside a copilot story.
+
+    Nullable, and every one of the 563 seeded rows leaves it null, which is the
+    truth about them: they are documents with no body. `document_content`
+    dispatches its letter variant on `body_text is not None` rather than on
+    `doc_type`, so "this row carries a letter" stays a fact about the row.
     """
 
     __tablename__ = "document"
@@ -308,6 +327,9 @@ class Document(Base):
     doc_type: Mapped[DocType] = mapped_column(_enum(DocType, "doc_type"))
     filed_date: Mapped[date | None] = mapped_column(Date)
     blob_key: Mapped[str | None] = mapped_column(Text)
+    #: A generated document's own words (Story 6.5). PHI-class — see the class
+    #: docstring on why this is not `blob_key` and why it is nullable.
+    body_text: Mapped[str | None] = mapped_column(Text)
     reviewed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     confirmed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")

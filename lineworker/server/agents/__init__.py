@@ -65,13 +65,25 @@ What Story 6.4 added, which is the deterministic half of the copilot:
   files keyed 1:1 to the quick actions that need one, composed on
   `copilot_system.md` by `prompts.qas_system_message`.
 
-What is still deliberately absent: the `interrupt()` producers, the
-approval-marker lifecycle and the RTW letter's modal and save (6.5 — 6.4's `rtw`
-node drafts into the transcript and proposes nothing), and the
-`ai_unavailable`/`ai_limit` degradation surface (6.6). The schema declares
-`pending_approval`, the stream speaks `interrupt`, the run bounds are wired, the
-`requires_llm` flags are declared — and nothing raises, fills or surfaces any of
-them yet.
+**Story 6.5 closed the write path**, which is the paragraph this one used to be
+the negative of:
+
+- `approval.py` — the gate, in one module: the `interrupt_on` configuration
+  `HumanInTheLoopMiddleware` is built from, the `pending_approval` lifecycle,
+  the approval marker a write must carry to reach `registry.invoke`, the
+  identity-and-version guard on an `edit`, the stale and scope fail-safes, the
+  content-free audit call, and the model-free hand-off that turns the RTW
+  letter's save into a tool call. There is exactly **one** `interrupt()` in the
+  build and it is the vendor's, inside that middleware.
+- `tools/documents.py` and `tools/claim_write.py` — the first two `kind: write`
+  entries, wrapping `services/claims.create_document` and
+  `services/claims.update_claim_fields`. Both are **bound to the model and
+  gated, never hidden** (AD-6, §5.2), which is why AC 6's unrequested-write
+  scenario is a thing that can be tested at all.
+
+What is still deliberately absent: the `ai_unavailable`/`ai_limit` degradation
+surface (6.6). The `requires_llm` flags are declared and nothing surfaces them
+yet.
 
 Re-exported here so a composition root writes `from agents import
 refresh_claim_insights` — the shape `services/rag` and `services/derivations`

@@ -133,6 +133,28 @@ export interface StubRoutes {
    * single-flight answer can be a status code at all.
    */
   copilotRun?: StubRoute | { sse: readonly string[] };
+  /**
+   * `POST /copilot/threads/{id}/runs`, **one entry per successive run** (6.5).
+   *
+   * The gate is a two-run interaction — a run that pauses, then a resume that
+   * resolves it — and `copilotRun` above is one fixed response for every call,
+   * so a test of an approval round trip could only ever assert half of it.
+   * Entries are consumed in order and the last one repeats, which is what lets
+   * a test script "pause, then finish" without having to say what a third run
+   * would do.
+   *
+   * Takes precedence over `copilotRun` when both are given, because a test that
+   * set both meant the sequence.
+   *
+   * **An entry may be a refusal rather than a stream** (review of Story 6.5).
+   * A run refused before it starts is an ordinary problem+json response with a
+   * non-200 status — the single-flight 409 above all — and the interactions
+   * this sequence exists to script now include "pause, then have the resume
+   * refused". Same shape `copilotRun` already accepts, for the same reason: a
+   * refusal is decided before the stream begins, which is the whole reason it
+   * can be a status code at all.
+   */
+  copilotRunSequence?: readonly (readonly string[] | StubRoute)[];
   /** `POST /claims/{id}/insights/refresh` (Story 6.2). Matched with the read
    * above — the two share a path prefix and differ only by method, so the
    * router branches on the method rather than on a longer substring. */
@@ -4134,6 +4156,72 @@ export function sseFrame(event: string, data: unknown): string {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 }
 
+/**
+ * The pending call a paused thread is holding — the `HITLRequest`, verbatim.
+ *
+ * The same object `COPILOT_RUN_INTERRUPT`'s terminal frame carries, because the
+ * server publishes the same thing in both places: the transcript's
+ * `pendingApproval` is what the run's frame carried, read back off the saver, so
+ * the card re-seeded after a remount is the card that was there before it.
+ * Spelled once and shared, so the two fixtures cannot drift into describing two
+ * different approvals.
+ */
+export const COPILOT_PENDING_APPROVAL = {
+  action_requests: [
+    {
+      name: "update_claim_field",
+      args: {
+        claim_business_id: "WC-20017",
+        field: "icd_desc",
+        value: "Laceration of left hand",
+        expected_version: 4,
+      },
+      description: "Tool execution requires approval",
+    },
+  ],
+  review_configs: [
+    {
+      action_name: "update_claim_field",
+      allowed_decisions: ["approve", "edit", "reject"],
+    },
+  ],
+};
+
+/**
+ * The frames a run that pauses for an approval emits (Story 6.5).
+ *
+ * One `updates`, no assistant content, and a terminal `interrupt` carrying the
+ * middleware's own `HITLRequest` under `value` — snake_case, because it is the
+ * vendor's payload passed through the server untouched rather than a Pydantic
+ * model with an alias generator behind it (see `api/copilot.ts::PendingAction`).
+ */
+export const COPILOT_RUN_INTERRUPT: readonly string[] = [
+  sseFrame("updates", { node: "entry_router" }),
+  sseFrame("interrupt", {
+    threadId: "claim.WC-20017.u1.s1",
+    // The same object the transcript republishes — see
+    // `COPILOT_PENDING_APPROVAL` just above.
+    value: COPILOT_PENDING_APPROVAL,
+  }),
+];
+
+/**
+ * The frames the 📄 RTW quick action emits: the draft, and its version pin.
+ *
+ * `rtwDraft` rides an `updates` frame because it is not assistant content — it
+ * is a claim id and an integer the modal pins its save on. See
+ * `agents/qas.RTW_DRAFT` for why the browser may not fetch a version of its
+ * own: one read when the modal opened would be newer than the one the letter
+ * was drafted against.
+ */
+export const COPILOT_RUN_RTW_DRAFT: readonly string[] = [
+  sseFrame("updates", { node: "entry_router" }),
+  sseFrame("updates", { rtwDraft: { claimId: "WC-20017", version: 4 } }),
+  sseFrame("messages", { content: "Dear worker,\n\n" }),
+  sseFrame("messages", { content: "Modified duty is available." }),
+  sseFrame("done", { threadId: "claim.WC-20017.u1.s1" }),
+];
+
 /** The frames a plain successful run emits: two chunks, then one `done`. */
 export const COPILOT_RUN_OK: readonly string[] = [
   sseFrame("updates", { node: "entry_router" }),
@@ -4215,6 +4303,25 @@ export const COPILOT_TRANSCRIPT = {
 export const COPILOT_TRANSCRIPT_EMPTY = {
   status: 200,
   body: { threadId: "claim.WC-20017.u1.s1", isCurrent: true, messages: [] },
+};
+
+/**
+ * A transcript read back on a thread that is **paused on an approval** (6.5).
+ *
+ * What the panel gets on a fresh mount of a conversation somebody left waiting
+ * — after a tab switch, a reload, or a night's sleep. The pause lives in the
+ * checkpoints, so the card is re-seeded from here rather than from a run frame
+ * the browser no longer has.
+ */
+export const COPILOT_TRANSCRIPT_PENDING = {
+  status: 200,
+  body: {
+    threadId: "claim.WC-20017.u1.s1",
+    isCurrent: true,
+    messages: [{ role: "user", content: "fix the ICD text" }],
+    interruptPending: true,
+    pendingApproval: COPILOT_PENDING_APPROVAL,
+  },
 };
 
 /**
@@ -4472,6 +4579,24 @@ export function stubApi(routes: StubRoutes): void {
               // nothing to do with the route.
             }
           }
+          if (routes.copilotRunSequence) {
+            // The run's ordinal is the number of bodies recorded so far, which
+            // is one *after* this call's own body was pushed above — so the
+            // first run reads index 0. The last entry repeats, which is what a
+            // test scripting "pause, then finish" means by leaving the third
+            // run unsaid.
+            const sequence = routes.copilotRunSequence;
+            const index = Math.min(
+              copilotRunBodies.length - 1,
+              sequence.length - 1,
+            );
+            const entry = sequence[Math.max(index, 0)] ?? COPILOT_RUN_OK;
+            // An array of frames is a stream; anything else is a refusal
+            // decided before one began. See the field's docstring.
+            return Array.isArray(entry)
+              ? sseResponse(entry)
+              : answer(entry as StubRoute);
+          }
           const route = routes.copilotRun ?? { sse: COPILOT_RUN_OK };
           if (typeof route === "object" && "sse" in route) {
             return sseResponse(route.sse);
@@ -4488,16 +4613,15 @@ export function stubApi(routes: StubRoutes): void {
               : (input as Request).method;
           if (method === "POST") {
             return answerFor(
-              routes.copilotNewThread ??
-                {
-                  status: 201,
-                  body: {
-                    threadId: "claim.WC-20017.u1.s2",
-                    conversationSeq: 2,
-                    isCurrent: true,
-                    createdAt: "2026-08-20T10:00:00Z",
-                  },
+              routes.copilotNewThread ?? {
+                status: 201,
+                body: {
+                  threadId: "claim.WC-20017.u1.s2",
+                  conversationSeq: 2,
+                  isCurrent: true,
+                  createdAt: "2026-08-20T10:00:00Z",
                 },
+              },
               url,
             );
           }

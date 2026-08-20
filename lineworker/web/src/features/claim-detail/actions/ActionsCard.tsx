@@ -46,7 +46,12 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 
-import type { ActionCommand, ActionTarget, ClaimAction, ClaimDetail } from "@/api/claims";
+import type {
+  ActionCommand,
+  ActionTarget,
+  ClaimAction,
+  ClaimDetail,
+} from "@/api/claims";
 import {
   useApproveAssessment,
   useClaimActions,
@@ -99,28 +104,35 @@ const CONTROL_CLASS =
  * epic is the point of it, and a control that says why it is refused is not a
  * dead click.
  */
-const NAVIGABLE_FROM_OVERVIEW: ReadonlySet<ActionTarget> = new Set<ActionTarget>([
-  "bills",
-  "documents",
-  // Story 4.1. Not a tab — it opens the *right* pane's Diary → Meetings and
-  // its scheduler, through the context `WorkspaceShell` provides. It belongs
-  // in this set for the same reason the two tabs do: the control goes
-  // somewhere, so rendering it is not a dead click.
-  "meetings",
-  // Story 4.2, and adding it here is **half** of enabling that seam — the
-  // other half is one deletion from `SEAM_REASONS` on the server. Without this
-  // line the row would render *no control at all*: the gate below is
-  // `!enabled || NAVIGABLE_FROM_OVERVIEW.has(target)`, so a target that became
-  // enabled and was not added here loses its disabled link and gains nothing.
-  // Story 4.1 hit exactly this with `meetings`.
-  "diary",
-  // Story 6.2, the third target enabled by deleting a `SEAM_REASONS` entry and
-  // the third time this line was the other half of it. "View Fraud Indicators →"
-  // switches the detail pane to AI Insights — see `ClaimDetailPane.navigate`,
-  // where `fraud` needs a branch of its own because it is the first target
-  // whose name is not also a tab key.
-  "fraud",
-]);
+const NAVIGABLE_FROM_OVERVIEW: ReadonlySet<ActionTarget> =
+  new Set<ActionTarget>([
+    "bills",
+    "documents",
+    // Story 4.1. Not a tab — it opens the *right* pane's Diary → Meetings and
+    // its scheduler, through the context `WorkspaceShell` provides. It belongs
+    // in this set for the same reason the two tabs do: the control goes
+    // somewhere, so rendering it is not a dead click.
+    "meetings",
+    // Story 4.2, and adding it here is **half** of enabling that seam — the
+    // other half is one deletion from `SEAM_REASONS` on the server. Without this
+    // line the row would render *no control at all*: the gate below is
+    // `!enabled || NAVIGABLE_FROM_OVERVIEW.has(target)`, so a target that became
+    // enabled and was not added here loses its disabled link and gains nothing.
+    // Story 4.1 hit exactly this with `meetings`.
+    "diary",
+    // Story 6.2, the third target enabled by deleting a `SEAM_REASONS` entry and
+    // the third time this line was the other half of it. "View Fraud Indicators →"
+    // switches the detail pane to AI Insights — see `ClaimDetailPane.navigate`,
+    // where `fraud` needs a branch of its own because it is the first target
+    // whose name is not also a tab key.
+    "fraud",
+    // Story 6.5, and **the last entry `SEAM_REASONS` had left**: the overdue
+    // return-to-work row's "Draft RTW Letter →" drafts the letter in the copilot
+    // and opens the wide modal on it. The fourth time this line was the other
+    // half of a seam deletion, and the fourth time forgetting it would have left
+    // an enabled row rendering no control at all.
+    "rtw_letter",
+  ]);
 
 /**
  * The row's "go to" control — a real navigation, or a visibly refused one.
@@ -170,7 +182,9 @@ function GoToControl({
           </button>
         </span>
       </TooltipTrigger>
-      <TooltipContent data-testid="action-goto-reason">{action.disabledReason}</TooltipContent>
+      <TooltipContent data-testid="action-goto-reason">
+        {action.disabledReason}
+      </TooltipContent>
     </Tooltip>
   );
 }
@@ -209,7 +223,10 @@ function ActionRow({
     >
       <div className="flex min-w-0 items-center gap-2">
         <UrgencyChip action={action} />
-        <span data-testid="action-label" className="min-w-0 text-[11.5px] text-text">
+        <span
+          data-testid="action-label"
+          className="min-w-0 text-[11.5px] text-text"
+        >
           {action.label}
         </span>
       </div>
@@ -235,7 +252,9 @@ function ActionRow({
             disabled={busy}
             className={`${CONTROL_CLASS} border-ok/40 bg-ok-soft text-ok hover:bg-ok-soft/70`}
           >
-            {pending ? COMMAND_LABEL[command].busy : COMMAND_LABEL[command].idle}
+            {pending
+              ? COMMAND_LABEL[command].busy
+              : COMMAND_LABEL[command].idle}
           </button>
         )}
         {(!action.enabled || NAVIGABLE_FROM_OVERVIEW.has(action.target)) && (
@@ -288,7 +307,9 @@ export function ActionsCard({
         return osha.isPending;
       case "mark_document_reviewed":
       case "confirm_document":
-        return review.isPending && review.variables?.documentId === action.documentId;
+        return (
+          review.isPending && review.variables?.documentId === action.documentId
+        );
       case null:
         return false;
     }
@@ -340,7 +361,11 @@ export function ActionsCard({
             Loading actions…
           </p>
         ) : actions.isError ? (
-          <p role="alert" data-testid="actions-error" className="text-[11.5px] text-error">
+          <p
+            role="alert"
+            data-testid="actions-error"
+            className="text-[11.5px] text-error"
+          >
             ⚠ The action checklist could not be loaded. Try again in a moment.
           </p>
         ) : actions.data.items.length === 0 ? (

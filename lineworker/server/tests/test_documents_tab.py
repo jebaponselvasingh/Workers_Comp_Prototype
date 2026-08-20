@@ -622,3 +622,261 @@ async def test_an_intake_case_file_reads_its_documents_once(seeded_db_url: str) 
         if "FROM document" in statement and "JOIN claim" in statement
     ]
     assert len(document_reads) == 1, f"the document table was read {len(document_reads)} times"
+
+
+# --- Story 6.5: `create_document`, the first writer of a document row ------
+
+
+async def _session_for(db_url: str, persona: tuple[str, str]) -> tuple[Any, Any, Any]:
+    """An engine, a sessionmaker and a caller context for one seeded persona.
+
+    Returned as a triple so a test can dispose the engine itself: these tests
+    commit, and a session left open across an assertion would hold the row locks
+    the next one needs.
+    """
+    # The driver prefix the rest of this module already applies: the fixture
+    # hands out a plain `postgresql://` URL and SQLAlchemy's default dialect for
+    # it is psycopg2, which this build does not install.
+    engine = create_async_engine(db_url.replace("postgresql://", "postgresql+asyncpg://", 1))
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    async with maker() as session:
+        user = (
+            await session.scalars(
+                sa.select(AppUser).where(AppUser.name == persona[0], AppUser.role == persona[1])
+            )
+        ).one()
+        ctx = CallerContext(
+            user_id=user.id,
+            role=user.role,
+            employer_ids=await employer_ids_for(session, user.id),
+        )
+    return engine, maker, ctx
+
+
+async def test_creating_a_document_files_it_audited_and_timelined(seeded_db_url: str) -> None:
+    """The AD-4 command, whole: the row, the audit event and the timeline event.
+
+    `create_document` is the first thing in this build that creates a `document`
+    row — every one of the 563 that existed before it came from the Story 2.2
+    seed migration — so what is asserted is the full `add_additional_injury`
+    shape it was modelled on rather than just "a row appeared".
+
+    Three things, and each is a different obligation. The row carries the
+    handler's text verbatim under `doc_type: rtw`. The audit event names the
+    command and the document and **contains no sentence of the letter**, which
+    is the AD-11 half: a diff copied into a table with a seven-year retention
+    floor is a copy of a letter about an injured worker that outlives the claim.
+    And the timeline event is tagged `rtw`, which is what puts it on the case
+    file's own chronology under the right chip.
+    """
+    from data.models import AuditEvent, TimelineEvent
+    from data.models.core import Claim, Document
+    from data.models.enums import DocType, TimelineTag
+    from services.claims.documents import CREATE_ACTION, create_document
+
+    body = "Dear worker,\n\nModified duty is available from a date to be confirmed.\n\nRegards,"
+    engine, maker, ctx = await _session_for(seeded_db_url, KAYA)
+    try:
+        claim_id = sorted(seed_fixture.expected_claim_ids(*KAYA))[0]
+        async with maker() as session:
+            claim = (
+                await session.scalars(sa.select(Claim).where(Claim.claim_id == claim_id))
+            ).one()
+            before = claim.version
+            detail = await create_document(
+                session,
+                ctx,
+                claim_id,
+                expected_version=before,
+                name="Return-to-work offer letter",
+                body_text=body,
+            )
+
+        async with maker() as session:
+            filed = (
+                await session.scalars(
+                    sa.select(Document)
+                    .join(Claim, Document.claim_id == Claim.id)
+                    .where(Claim.claim_id == claim_id, Document.body_text.is_not(None))
+                )
+            ).all()
+            assert len(filed) == 1
+            assert filed[0].body_text == body
+            assert filed[0].doc_type is DocType.rtw
+
+            events = (
+                await session.scalars(
+                    sa.select(AuditEvent).where(AuditEvent.action == CREATE_ACTION)
+                )
+            ).all()
+            assert len(events) == 1
+            assert events[0].entity_id == str(filed[0].id)
+            assert events[0].before is None
+            # The whole row, as a string, because "no sentence of the letter"
+            # has to hold over every field rather than over the one a test
+            # happened to name.
+            assert "Modified duty" not in json.dumps(events[0].after)
+            assert events[0].after is not None
+            assert events[0].after["claim_id"] == claim_id
+
+            timeline = (
+                await session.scalars(
+                    sa.select(TimelineEvent)
+                    .join(Claim, TimelineEvent.claim_id == Claim.id)
+                    .where(Claim.claim_id == claim_id, TimelineEvent.tag == TimelineTag.rtw.value)
+                )
+            ).all()
+            assert any("Return-to-work letter filed" in event.description for event in timeline)
+
+            # **The claim's own version did not move**, `add_additional_injury`'s
+            # decision: no column of `claim` changed, so the case file a client
+            # is already holding stays a valid basis for its next edit.
+            claim = (
+                await session.scalars(sa.select(Claim).where(Claim.claim_id == claim_id))
+            ).one()
+            assert claim.version == before
+        assert detail.version == before
+    finally:
+        await engine.dispose()
+
+
+async def test_a_stale_expected_version_files_nothing_at_all(seeded_db_url: str) -> None:
+    """AC 11, asserted **by row count** rather than by the presence of an error.
+
+    A `StaleClaim` and a silently swallowed failure and a correct fail-safe are
+    indistinguishable from outside unless something counts what was written. So
+    this counts: the claim's real version plus one is a version it has never
+    had, the command refuses, and the table is exactly as it was.
+    """
+    from data.models.core import Claim, Document
+    from services.claims.documents import create_document
+    from services.claims.edit import StaleClaim
+
+    engine, maker, ctx = await _session_for(seeded_db_url, KAYA)
+    try:
+        claim_id = sorted(seed_fixture.expected_claim_ids(*KAYA))[0]
+        async with maker() as session:
+            claim = (
+                await session.scalars(sa.select(Claim).where(Claim.claim_id == claim_id))
+            ).one()
+            before = (
+                await session.scalars(
+                    sa.select(sa.func.count())
+                    .select_from(Document)
+                    .join(Claim, Document.claim_id == Claim.id)
+                    .where(Claim.claim_id == claim_id)
+                )
+            ).one()
+
+            with pytest.raises(StaleClaim):
+                await create_document(
+                    session,
+                    ctx,
+                    claim_id,
+                    expected_version=claim.version + 1,
+                    name="Return-to-work offer letter",
+                    body_text="This must not be filed.",
+                )
+
+        async with maker() as session:
+            after = (
+                await session.scalars(
+                    sa.select(sa.func.count())
+                    .select_from(Document)
+                    .join(Claim, Document.claim_id == Claim.id)
+                    .where(Claim.claim_id == claim_id)
+                )
+            ).one()
+        assert after == before
+    finally:
+        await engine.dispose()
+
+
+async def test_a_read_only_role_cannot_file_a_document(seeded_db_url: str) -> None:
+    """Role gates capability (AD-7), checked before the claim is looked up.
+
+    A supervisor reading this claim is fine — the sheet test above asserts it —
+    and a supervisor *filing* on it is not. The refusal is `EditNotPermitted`
+    rather than a 404, which is the whole point of the ordering
+    `services/claims/edit.py` argues: role first means every non-handler gets
+    the same answer for every claim id and learns nothing about which exist.
+    """
+    from services.claims.documents import create_document
+    from services.claims.edit import EditNotPermitted
+
+    engine, maker, ctx = await _session_for(seeded_db_url, DAVID)
+    try:
+        claim_id = sorted(seed_fixture.expected_claim_ids(*KAYA))[0]
+        async with maker() as session:
+            with pytest.raises(EditNotPermitted):
+                await create_document(
+                    session,
+                    ctx,
+                    claim_id,
+                    expected_version=1,
+                    name="Return-to-work offer letter",
+                    body_text="This must not be filed.",
+                )
+    finally:
+        await engine.dispose()
+
+
+async def test_a_filed_letter_renders_the_letter_variant_with_its_body(
+    seeded_db_url: str,
+) -> None:
+    """AC 10's viewer half: the sheet says `letter` and carries the words.
+
+    And the other half of the dispatch, which is the one a `doc_type` test would
+    have got wrong: a **seeded** `rtw` document — one that records that a letter
+    exists somewhere without holding its text — keeps the summary sheet. The
+    variant follows the body, not the type.
+    """
+    from data.models.core import Claim, Document
+    from data.models.enums import DocType
+    from services.claims.documents import create_document
+
+    body = "Dear worker,\n\nPlease attend on a date to be confirmed.\n\nRegards,"
+    engine, maker, ctx = await _session_for(seeded_db_url, KAYA)
+    try:
+        claim_id = sorted(seed_fixture.expected_claim_ids(*KAYA))[0]
+        async with maker() as session:
+            claim = (
+                await session.scalars(sa.select(Claim).where(Claim.claim_id == claim_id))
+            ).one()
+            await create_document(
+                session,
+                ctx,
+                claim_id,
+                expected_version=claim.version,
+                name="Return-to-work offer letter",
+                body_text=body,
+            )
+
+        async with maker() as session:
+            rows = (
+                await session.scalars(
+                    sa.select(Document)
+                    .join(Claim, Document.claim_id == Claim.id)
+                    .where(Claim.claim_id == claim_id, Document.doc_type == DocType.rtw)
+                    .order_by(Document.id)
+                )
+            ).all()
+        # By its own body rather than by "the only one with a body": the
+        # database is seeded once for the module, so the test above has already
+        # filed a letter on this claim. Selecting *this* test's row is what
+        # keeps the assertion about what this test wrote.
+        filed = [row for row in rows if row.body_text == body]
+        assert len(filed) == 1
+
+        sheet = (await sheet_for(seeded_db_url, KAYA, claim_id, filed[0].id)).json()
+        assert sheet["sheetVariant"] == "letter"
+        assert sheet["bodyText"] == body
+        assert [row["label"] for row in sheet["rows"]][:1] == ["Claim ID"]
+
+        seeded = [row for row in rows if row.body_text is None]
+        if seeded:
+            other = (await sheet_for(seeded_db_url, KAYA, claim_id, seeded[0].id)).json()
+            assert other["sheetVariant"] == "summary"
+            assert other["bodyText"] is None
+    finally:
+        await engine.dispose()

@@ -42,6 +42,16 @@ did *not* add is a `kind` argument, a context parameter or a registry import:
 the entries stay ignorant of being registered, which is what keeps them
 testable as plain functions and what let 6.2's four be absorbed without a diff.
 
+**What 6.5 added here is the first two writes**, and they are the first entries
+in this package that are not projections of a read. `documents.py` wraps
+`services/claims/documents.create_document` (the letter's save) and
+`claim_write.py` wraps `services/claims/edit.update_claim_fields` (the
+version-carrying update exemplar). They keep this package's rule exactly — one
+service call, no business logic, no session — and they are safe for a reason
+that is deliberately *not* in either file: `HumanInTheLoopMiddleware` pauses the
+run before either can execute, and `agents/registry.invoke` refuses a call that
+arrives without the approval marker that pause produces.
+
 ## The rule these five keep
 
 One service call each. If a wrapper needs a threshold, it asks the rules tier
@@ -55,6 +65,8 @@ exactly one computer each, and a tool is not it.
 
 from agents.tools.actions import next_actions
 from agents.tools.claim import ClaimContext, claim_reader
+from agents.tools.claim_write import ClaimFieldUpdate, update_claim_field
+from agents.tools.documents import SavedLetter, save_rtw_letter
 from agents.tools.fraud import FraudSignals, fraud_signals
 from agents.tools.knowledge import (
     KNOWLEDGE_CHUNKS,
@@ -70,10 +82,12 @@ __all__ = [
     "KNOWLEDGE_CHUNKS",
     "NEIGHBOUR_COUNT",
     "ClaimContext",
+    "ClaimFieldUpdate",
     "FraudSignals",
     "KnowledgeHits",
     "KnowledgePassage",
     "RtwContext",
+    "SavedLetter",
     "SimilarCases",
     "claim_reader",
     "fraud_signals",
@@ -81,5 +95,7 @@ __all__ = [
     "next_actions",
     "reserve_check",
     "rtw_reader",
+    "save_rtw_letter",
     "similar_cases",
+    "update_claim_field",
 ]

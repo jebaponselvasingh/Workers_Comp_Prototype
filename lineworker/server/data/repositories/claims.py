@@ -1079,6 +1079,59 @@ async def insert_additional_injury_cas(
     return inserted.scalar_one_or_none()
 
 
+async def insert_document_cas(
+    db: AsyncSession,
+    ctx: CallerContext,
+    claim_business_id: str,
+    expected_version: int,
+    values: Mapping[str, Any],
+) -> int | None:
+    """File one document on a claim, guarded on the claim's version — scoped (6.5).
+
+    Returns the new row's id, or `None` when the claim is out of scope, absent,
+    or has moved on from `expected_version`. Which of those it was is the
+    service's question, and `create_document` answers it by re-reading — the
+    division of labour `insert_additional_injury_cas` and
+    `update_claim_fields_cas` both use.
+
+    **The same `INSERT … SELECT` shape as `insert_additional_injury_cas`, line
+    for line, and for its reason.** An INSERT has no WHERE clause, so the two
+    things this write must be guarded by — the caller's employer scope and the
+    version the handler was looking at when the letter was drafted — would
+    otherwise be a `SELECT` in Python followed by an unguarded insert: a
+    read-modify-write with a window in it (AD-4). Selecting the claim row *as
+    the source of the insert* puts both predicates inside one statement, so a
+    claim edited between the draft and the approval inserts nothing at all. That
+    is what makes a stale copilot approval fail safe rather than force-write.
+
+    **The parent's version, not the row's**, which is `add_additional_injury`'s
+    precedent for a command that inserts a *child*: the document has no version
+    to compare yet, and the thing the handler read before drafting was the
+    claim.
+
+    **The literals are typed.** `doc_type` is a native enum column and an
+    untyped parameter in an `INSERT … SELECT` reaches asyncpg with no type to
+    encode it as. Taking each literal's type from the column it lands in also
+    means a column that changes type does not need a second edit here.
+    """
+    columns = Document.__table__.c
+    fields = ("name", "doc_type", "filed_date", "body_text")
+    source = (
+        sa.select(
+            Claim.id,
+            *[sa.literal(values[field], columns[field].type).label(field) for field in fields],
+        )
+        .select_from(Claim)
+        .where(employer_scope(ctx))
+        .where(Claim.claim_id == claim_business_id)
+        .where(Claim.version == expected_version)
+    )
+    inserted = await db.execute(
+        sa.insert(Document).from_select(["claim_id", *fields], source).returning(Document.id)
+    )
+    return inserted.scalar_one_or_none()
+
+
 async def delete_additional_injury_cas(
     db: AsyncSession,
     ctx: CallerContext,

@@ -120,11 +120,24 @@ export function CopilotPane() {
   // and it re-renders before the browser paints, so a handler never sees ⚡
   // Actions flash before the diary arrives. An effect would show that flash and
   // would put the scheduler behind it for a frame.
-  const { diaryRequestSession } = useDiaryNav();
+  const { diaryRequestSession, rtwRequestSession } = useDiaryNav();
   const [seenDiaryRequest, setSeenDiaryRequest] = useState(diaryRequestSession);
   if (diaryRequestSession !== seenDiaryRequest) {
     setSeenDiaryRequest(diaryRequestSession);
     setTab("diary");
+  }
+
+  // **And the fourth deep link goes the other way** (Story 6.5). The action
+  // checklist's `rtw_letter` row asks for the return-to-work letter, which
+  // lives in ⚡ Actions — so this is the same two-line pattern pointed at the
+  // other tab, and `ActionsTab` owns the inner half (firing the quick action
+  // and opening the modal). Two counters rather than one with a payload,
+  // because a counter carrying "which tab?" would be a piece of state with a
+  // "when does it clear?" question attached.
+  const [seenRtwRequest, setSeenRtwRequest] = useState(rtwRequestSession);
+  if (rtwRequestSession !== seenRtwRequest) {
+    setSeenRtwRequest(rtwRequestSession);
+    setTab("actions");
   }
 
   return (
@@ -133,10 +146,16 @@ export function CopilotPane() {
         <h2 className="flex items-center gap-[6px] font-display text-[13px] font-bold text-text">
           {/* Decorative: the pulse says "the panel is live", which the title
               beside it already says in words. */}
-          <span aria-hidden className="size-[7px] shrink-0 rounded-full bg-ok" />
+          <span
+            aria-hidden
+            className="size-[7px] shrink-0 rounded-full bg-ok"
+          />
           AI Adjuster Copilot
         </h2>
-        <p data-testid="copilot-context" className="mt-[2px] text-[10px] text-faint">
+        <p
+          data-testid="copilot-context"
+          className="mt-[2px] text-[10px] text-faint"
+        >
           {claimId === null
             ? "Select a case"
             : workerName === null
@@ -191,7 +210,11 @@ export function CopilotPane() {
         {tab === "actions" ? (
           <ActionsTab claimId={claimId} />
         ) : (
-          <DiaryTab claimId={claimId} workerName={workerName} injuryType={injuryType} />
+          <DiaryTab
+            claimId={claimId}
+            workerName={workerName}
+            injuryType={injuryType}
+          />
         )}
       </div>
     </div>

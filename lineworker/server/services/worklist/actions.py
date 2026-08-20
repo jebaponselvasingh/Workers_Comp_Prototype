@@ -151,12 +151,25 @@ PAYMENT_DUE_WEEK_STATUSES: Final[frozenset[ScheduleWeekStatus]] = frozenset(
 #: `ClaimDetailPane.navigate`, which is new only because `fraud` is the first
 #: target whose name is not also a tab key.
 #:
-#: One entry left, and it names the story that closes it: `rtw_letter` is Story
-#: 6.5's modal (FR-H-11). While it stands, the seam remains a thing a reviewer
-#: can see working rather than a claim about a mechanism nothing exercises.
-SEAM_REASONS: Final[Mapping[ActionTarget, str]] = {
-    ActionTarget.rtw_letter: "Available with the RTW letter — Epic 6",
-}
+#: **And it is empty since Story 6.5**, which is the fourth and last deletion:
+#: `rtw_letter` is the copilot's return-to-work modal (FR-H-11), and it now
+#: drafts, edits and — through the approval gate — files a letter.
+#:
+#: An empty mapping rather than a deleted constant, and that is a decision
+#: rather than tidiness left undone. Three things still read it: `_action`
+#: below, which is where `enabled` and `disabled_reason` come from and which
+#: would otherwise need its own `if`; `tests/test_action_checklist.py`, which
+#: asserts the mechanism is still wired even with nothing in it; and the next
+#: epic that ships a deep link ahead of its destination, which is a shape this
+#: build has used four times and will use again. Deleting the mechanism the day
+#: its last user went away would mean re-deriving it from an audit trail.
+#:
+#: Enabling a target has been the same three-part move every time, and Stories
+#: 4.1 and 4.2 each forgot the third: this entry, the target's membership of
+#: `ActionsCard.NAVIGABLE_FROM_OVERVIEW` (whose render gate is `!enabled ||
+#: NAVIGABLE_FROM_OVERVIEW.has(target)`, so an enabled row outside the set
+#: renders *no control at all*), and a branch in `ClaimDetailPane.navigate`.
+SEAM_REASONS: Final[Mapping[ActionTarget, str]] = {}
 
 #: How long one diary note holds the weekly check-in closed.
 #:

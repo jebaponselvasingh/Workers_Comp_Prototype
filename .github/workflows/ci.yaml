@@ -28,7 +28,18 @@ jobs:
           python-version: "3.12"
       - run: uv sync --frozen
         working-directory: lineworker/server
-      - run: uv run ruff check . && uv run ruff format --check .
+      # `../deploy` is in scope since the review of Story 6.5. It holds one
+      # Python file — `deploy/model-stub/app.py`, the deterministic model the
+      # e2e stack runs against — and that file had grown the branch that makes
+      # the copilot's write path testable end to end while sitting outside
+      # every lint, format and typecheck scope in the repo. Ruff resolves
+      # settings from this directory's `pyproject.toml` for paths given on the
+      # command line, so the stub is held to the same line length and rule set
+      # as `server/` without a second config to keep in step. `mypy` is
+      # deliberately not widened: the stub is untyped by design (it answers
+      # arbitrary JSON schemas), and annotating it is a change to what it is
+      # rather than a check on what it does.
+      - run: uv run ruff check . ../deploy && uv run ruff format --check . ../deploy
         working-directory: lineworker/server
       - run: uv run mypy .
         working-directory: lineworker/server

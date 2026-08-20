@@ -58,7 +58,11 @@ function PaneShell({ children }: { children: React.ReactNode }) {
 
 function DetailSkeleton() {
   return (
-    <div data-testid="detail-skeleton" aria-hidden className="flex flex-col gap-[10px]">
+    <div
+      data-testid="detail-skeleton"
+      aria-hidden
+      className="flex flex-col gap-[10px]"
+    >
       <span className="block h-6 w-1/3 animate-pulse rounded bg-surface-2" />
       <span className="block h-4 w-1/2 animate-pulse rounded bg-surface-2" />
       <span className="block h-10 w-full animate-pulse rounded bg-surface-2" />
@@ -78,7 +82,7 @@ function DetailSkeleton() {
 function CaseFile({ claimId }: { claimId: string }) {
   const detail = useClaimDetail(claimId);
   const [activeTab, setActiveTab] = useDetailTab();
-  const { requestMeetings, requestNotes } = useDiaryNav();
+  const { requestMeetings, requestNotes, requestRtwLetter } = useDiaryNav();
 
   if (detail.isPending) return <DetailSkeleton />;
 
@@ -92,8 +96,8 @@ function CaseFile({ claimId }: { claimId: string }) {
       </p>
     ) : (
       <p role="alert" data-testid="detail-error" className="text-sm text-error">
-        ⚠ <span className="font-mono">{claimId}</span> could not be loaded. Try again in a
-        moment.
+        ⚠ <span className="font-mono">{claimId}</span> could not be loaded. Try
+        again in a moment.
       </p>
     );
   }
@@ -115,6 +119,11 @@ function CaseFile({ claimId }: { claimId: string }) {
    * in the right pane, so instead of moving this pane's tab state it raises an
    * intent on the context `WorkspaceShell` provides, and the copilot pane's
    * Diary tab picks it up.
+   *
+   * **`rtw_letter` is the last of the four** (Story 6.5) and is the second that
+   * is not a tab: it drafts the return-to-work letter in the copilot's ⚡
+   * Actions tab and opens the wide modal on it, through the same context
+   * `meetings` uses.
    *
    * **`fraud` is the first target whose name is not a `TabKey`** (Story 6.2),
    * which is why it needs a branch of its own rather than joining the
@@ -156,6 +165,23 @@ function CaseFile({ claimId }: { claimId: string }) {
       setActiveTab("insights");
       return;
     }
+    if (target === "rtw_letter") {
+      // Story 6.5's half of the last seam Epic 3 shipped disabled: the overdue
+      // return-to-work row's control drafts the letter in the copilot and opens
+      // the wide modal on it. Enabling it was one deletion from `SEAM_REASONS`
+      // on the server, this branch, and one entry in
+      // `ActionsCard.NAVIGABLE_FROM_OVERVIEW` — without that last one the row
+      // renders no control at all, which is the trap Stories 4.1 and 4.2 both
+      // hit and which 6.2 recorded again.
+      //
+      // Like `fraud`, the target's name is not a `TabKey`, so it cannot join
+      // the string-equality shortcut at the top of this function. Unlike
+      // `fraud`, it is not a *tab* at all: it is the right pane, two levels
+      // down, which is why it goes through the context rather than through
+      // `setActiveTab`.
+      requestRtwLetter();
+      return;
+    }
     if (target === "diary") {
       // Story 4.2's half of the same seam: Diary → Notes with the add-note
       // input focused, which is the control Story 3.5 shipped disabled. Same
@@ -190,7 +216,11 @@ function CaseFile({ claimId }: { claimId: string }) {
         {/* AC 2: the stepper is always the first element of Overview. */}
         <StageStepper steps={stepper} />
         {overview.stageVariant === "intake" ? (
-          <IntakeOverview claim={detail.data} overview={overview} onNavigate={navigate} />
+          <IntakeOverview
+            claim={detail.data}
+            overview={overview}
+            onNavigate={navigate}
+          />
         ) : overview.stageVariant === "investigation" ? (
           // The whole case file, not just its variant: the inline edits
           // (Story 2.3) send `version` as `expectedVersion` and build their
@@ -209,7 +239,11 @@ function CaseFile({ claimId }: { claimId: string }) {
             onNavigate={navigate}
           />
         ) : (
-          <SettledOverview claim={detail.data} overview={overview} onNavigate={navigate} />
+          <SettledOverview
+            claim={detail.data}
+            overview={overview}
+            onNavigate={navigate}
+          />
         )}
       </DetailTabs>
     </>

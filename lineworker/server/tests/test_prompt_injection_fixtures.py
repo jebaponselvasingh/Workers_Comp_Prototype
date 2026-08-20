@@ -690,12 +690,18 @@ async def test_the_injection_changes_no_route_and_reaches_no_write_tool(
     - The route comes from `route_entry`, which reads one channel and never a
       message. A poisoned `cause` sitting in the conversation cannot move it,
       because it is not an input.
-    - No `kind: write` tool is registered at all, so "no write tool is
-      reachable" is a property of the registry rather than of the prompt. A
-      fully hijacked model has nothing to select. **Seven entries since Story
-      6.4** — `similar_cases`, `labor_law_search` and `rtw_reader` joined — and
-      the assertion binds them because it is written over the registry rather
-      than over a list.
+    - **Amended by Story 6.5** (AD-15). This read "no `kind: write` tool is
+      registered at all, so a fully hijacked model has nothing to select",
+      which was true and is now false: two writes are registered, and both are
+      **bound to the model on purpose** — §5.2 says write tools are "gated, not
+      hidden", because a guarantee enforced by never showing a capability is a
+      guarantee that ends the day somebody shows it. So the claim becomes the
+      one AD-16 actually makes: a hijacked model may *select* a write, and it
+      still cannot *execute* one. Every write entry is in the gate's
+      `interrupt_on`, and `invoke` refuses any write that arrives without the
+      marker that gate produces. `tests/test_copilot_approval.py` drives the
+      unrequested write end to end; what is asserted here is the structure that
+      makes it safe.
 
     **The quick-action half is Story 6.4's addition to this test** (AD-15:
     amended into its opposite, never deleted). The dispatch map is now
@@ -705,8 +711,9 @@ async def test_the_injection_changes_no_route_and_reaches_no_write_tool(
     the channel is written by `run_inputs` from a validated request body and
     never parsed out of anything.
     """
+    from agents import approval
     from agents.graph import CHAT_NODE, QUICK_ACTIONS, caller_ref, route_entry
-    from agents.registry import REGISTRY, ToolKind
+    from agents.registry import REGISTRY, WRITE_TOOLS, ToolKind
     from agents.tools import claim_reader
     from data.models.enums import UserRole as _UserRole
 
@@ -724,8 +731,14 @@ async def test_the_injection_changes_no_route_and_reaches_no_write_tool(
     poisoned_turn["messages"] = [*context.narrative]
 
     assert route_entry(poisoned_turn) == CHAT_NODE  # type: ignore[arg-type]
-    assert all(entry.kind is ToolKind.read for entry in REGISTRY.values())
-    assert len(REGISTRY) == 7, "a tool was registered without this assertion being reconsidered"
+    # **Nine entries since Story 6.5: seven reads and two gated writes.** The
+    # count is asserted so that a tool registered without this test being
+    # reconsidered fails here; the *gating* is asserted so that a write
+    # registered without a gate does too, which is the failure that matters.
+    assert len(REGISTRY) == 9, "a tool was registered without this assertion being reconsidered"
+    writes = {name for name, entry in REGISTRY.items() if entry.kind is ToolKind.write}
+    assert writes == set(WRITE_TOOLS)
+    assert set(approval.interrupt_config()) == writes, "a write tool is not behind the gate"
 
     # A message that names a key, in the syntax the channel uses, and a message
     # carrying the whole injection. Neither is an input to the router.
@@ -776,7 +789,13 @@ async def test_a_poisoned_knowledge_chunk_steers_no_quick_action(
     any `<` at all to build one out of.
     """
     import agents.tools.knowledge as knowledge_tool
+    from agents import approval
     from agents.registry import REGISTRY, ToolKind, invoke
+
+    # The registry as it stands *before* anything untrusted is retrieved, so the
+    # assertion at the end of this test is a comparison rather than a restated
+    # literal — a literal is the copy that stops being updated.
+    kinds_before = {name: entry.kind for name, entry in REGISTRY.items()}
 
     # **The whole corpus, not the shipped three.** `FakeEmbeddingClient`'s
     # vectors are hash-derived, so neighbour *ordering* is stable but
@@ -853,7 +872,16 @@ async def test_a_poisoned_knowledge_chunk_steers_no_quick_action(
         assert "DETERMINISTIC" not in (item["state_code"] or "")
 
     # Nothing about the retrieval widened the registry or changed a kind.
-    assert all(entry.kind is ToolKind.read for entry in REGISTRY.values())
+    #
+    # **Amended by Story 6.5** (AD-15): "every entry is a read" was the claim
+    # while no write existed, and the property that survives is the one that was
+    # always the point — a retrieved passage cannot add a tool, change a tool's
+    # kind, or take one out from behind the gate. So the registry is compared
+    # against itself before and after, and every write is still gated.
+    assert {name: entry.kind for name, entry in REGISTRY.items()} == kinds_before
+    assert set(approval.interrupt_config()) == {
+        name for name, entry in REGISTRY.items() if entry.kind is ToolKind.write
+    }
     assert payload["data"]["query_k"] == 25
 
 

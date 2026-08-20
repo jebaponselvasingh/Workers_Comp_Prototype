@@ -97,9 +97,12 @@ export function useClaimThreads(claimId: string | null) {
   return useQuery({
     queryKey: queryKeys.copilot.threads(claimId ?? ""),
     queryFn: async (): Promise<CopilotThreads> => {
-      const { data } = await api.GET("/copilot/claims/{claim_business_id}/threads", {
-        params: { path: { claim_business_id: claimId! } },
-      });
+      const { data } = await api.GET(
+        "/copilot/claims/{claim_business_id}/threads",
+        {
+          params: { path: { claim_business_id: claimId! } },
+        },
+      );
       return data!;
     },
     enabled: claimId !== null,
@@ -127,9 +130,12 @@ export function useNewThread(claimId: string) {
   return useMutation({
     mutationKey: queryKeys.copilot.writes,
     mutationFn: async (): Promise<CopilotThread> => {
-      const { data } = await api.POST("/copilot/claims/{claim_business_id}/threads", {
-        params: { path: { claim_business_id: claimId } },
-      });
+      const { data } = await api.POST(
+        "/copilot/claims/{claim_business_id}/threads",
+        {
+          params: { path: { claim_business_id: claimId } },
+        },
+      );
       return data!;
     },
     onSuccess: () => {
@@ -174,6 +180,102 @@ export function useCopilotWriteInFlight(): boolean {
 }
 
 /**
+ * The pending tool call an approval card renders — the server's, verbatim.
+ *
+ * **`snake_case`, and that is not a slip.** Every other payload in this file is
+ * camelCase because it came through Pydantic's alias generator; this one is
+ * `HumanInTheLoopMiddleware`'s own `HITLRequest`, passed through the server
+ * untouched precisely so that what a handler approves is the payload that will
+ * execute rather than something this build reshaped on the way past (AD-16). A
+ * rename here would be the first step of a paraphrase.
+ *
+ * `args` is `Record<string, unknown>` because the shape is the write tool's own
+ * argument schema and differs per tool. The card renders it as labelled
+ * key/value rows without knowing which tool it belongs to, which is what keeps
+ * a third write tool from needing a third card.
+ */
+export interface PendingAction {
+  name: string;
+  args: Record<string, unknown>;
+  description?: string;
+}
+
+/** The whole interrupt payload: what is pending, and what may be decided. */
+export interface PendingApprovalRequest {
+  action_requests: PendingAction[];
+  review_configs: { action_name: string; allowed_decisions: string[] }[];
+}
+
+/**
+ * A decision, in the shape the resume body carries it.
+ *
+ * Three, matching `agents/approval.ALLOWED_DECISIONS`. `edit` is declared even
+ * though the v1 card offers two buttons: the server guards and tests it, and a
+ * type that omitted it would make adding the affordance a change to this file
+ * as well as to a component.
+ */
+export type ApprovalDecision =
+  | { type: "approve" }
+  | { type: "reject" }
+  | {
+      type: "edit";
+      edited_action: { name: string; args: Record<string, unknown> };
+    };
+
+/**
+ * The one pending action inside the runtime's interrupt state, or `null`.
+ *
+ * The runtime hands back `{value?: unknown}` because a LangGraph interrupt can
+ * carry anything. This narrows it once, here, so no component holds a cast —
+ * and it returns `null` rather than throwing for a shape it does not recognise,
+ * because a copilot pane that crashed on an unexpected payload would take the
+ * whole workspace column with it.
+ *
+ * Exactly one action, because AD-6 caps the graph at one pending write. A
+ * payload carrying two would be a server-side defect, and rendering only the
+ * first would hide half of it — so it is refused instead.
+ */
+export function pendingAction(
+  interrupt: { value?: unknown } | undefined,
+): PendingAction | null {
+  const value = interrupt?.value;
+  if (typeof value !== "object" || value === null) return null;
+  const requests = (value as { action_requests?: unknown }).action_requests;
+  if (!Array.isArray(requests) || requests.length !== 1) return null;
+  const [action] = requests as PendingAction[];
+  if (!action || typeof action.name !== "string") return null;
+  return action;
+}
+
+/**
+ * The RTW draft's version pin, out of an `updates` frame, or `null`.
+ *
+ * The number the letter's save is compare-and-swapped on, read at draft time by
+ * the server's `rtw_reader` and published on the run that drafted the letter
+ * (`agents/qas.RTW_DRAFT`). The modal cannot fetch its own: a version read when
+ * the modal *opened* would be newer than the one the letter was composed
+ * against, and saving under it would be the force-write the approval gate
+ * exists to prevent.
+ */
+export interface RtwDraft {
+  claimId: string;
+  version: number;
+}
+
+/** `rtwDraft` off one `updates` payload, narrowed — see `RtwDraft`. */
+export function rtwDraftOf(update: unknown): RtwDraft | null {
+  if (typeof update !== "object" || update === null) return null;
+  const draft = (update as { rtwDraft?: unknown }).rtwDraft;
+  if (typeof draft !== "object" || draft === null) return null;
+  const { claimId, version } = draft as {
+    claimId?: unknown;
+    version?: unknown;
+  };
+  if (typeof claimId !== "string" || typeof version !== "number") return null;
+  return { claimId, version };
+}
+
+/**
  * One frame of a run, in the vocabulary the assistant-ui runtime consumes.
  *
  * `data` is deliberately `unknown`-ish rather than a discriminated union: the
@@ -200,12 +302,32 @@ const SERVER_EVENTS = {
   done: "done",
 } as const;
 
-/** The three frames that end a run. Exactly one arrives — the server's invariant. */
+/**
+ * The three frames that end a run. Exactly one arrives — the server's invariant.
+ *
+ * **Read against the *server's* event name, never the translated one** (Story
+ * 6.5). `interrupt` is delivered to the runtime as an `updates` frame, because
+ * that is the only shape it reads — so a terminality check performed after
+ * translation would decide that a paused run had never terminated and would
+ * synthesise `TRUNCATED_STREAM` on top of a perfectly good approval. `translate`
+ * therefore reports terminality itself, from the name it read off the wire.
+ */
 const TERMINAL_EVENTS: ReadonlySet<string> = new Set([
   SERVER_EVENTS.interrupt,
   SERVER_EVENTS.error,
   SERVER_EVENTS.done,
 ]);
+
+/**
+ * One translated frame, plus whether the *server* called it a terminal one.
+ *
+ * The extra field exists only because the interrupt's translation changes its
+ * event name; see `TERMINAL_EVENTS`.
+ */
+interface TranslatedFrame {
+  frame: RunEvent;
+  terminal: boolean;
+}
 
 /**
  * The problem document a stream that simply stopped is reported as.
@@ -262,12 +384,15 @@ export async function* streamRun(
   body: CopilotRunRequest,
   signal?: AbortSignal,
 ): AsyncGenerator<RunEvent> {
-  const response = await fetch(`/api/copilot/threads/${encodeURIComponent(threadId)}/runs`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-    signal,
-  });
+  const response = await fetch(
+    `/api/copilot/threads/${encodeURIComponent(threadId)}/runs`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal,
+    },
+  );
 
   if (!response.ok || !response.body) {
     throw await problemFrom(response);
@@ -294,8 +419,8 @@ export async function* streamRun(
       for (const frame of frames) {
         const translated = translate(frame, messageId);
         if (!translated) continue;
-        if (TERMINAL_EVENTS.has(translated.event)) terminated = true;
-        yield translated;
+        if (translated.terminal) terminated = true;
+        yield translated.frame;
       }
     }
     drained = true;
@@ -309,8 +434,8 @@ export async function* streamRun(
     buffered += decoder.decode();
     const tail = translate(buffered, messageId);
     if (tail) {
-      if (TERMINAL_EVENTS.has(tail.event)) terminated = true;
-      yield tail;
+      if (tail.terminal) terminated = true;
+      yield tail.frame;
     }
 
     // **A stream that stopped is a failure, not a success.** The server's
@@ -352,7 +477,7 @@ export async function* streamRun(
  * hang up on a cold model, and no code above this line should have to know
  * about them.
  */
-function translate(frame: string, messageId: string): RunEvent | null {
+function translate(frame: string, messageId: string): TranslatedFrame | null {
   let name = "";
   const data: string[] = [];
   for (const line of frame.split("\n")) {
@@ -367,6 +492,9 @@ function translate(frame: string, messageId: string): RunEvent | null {
   } catch {
     return null;
   }
+
+  const terminal = TERMINAL_EVENTS.has(name);
+  const as = (event: RunEvent): TranslatedFrame => ({ frame: event, terminal });
 
   switch (name) {
     case SERVER_EVENTS.messages: {
@@ -389,21 +517,44 @@ function translate(frame: string, messageId: string): RunEvent | null {
       // by id means. `runSeq` is what makes the comment above true rather than
       // aspirational.
       const content = (payload as { content?: string }).content ?? "";
-      return {
+      return as({
         event: "messages",
         data: [{ id: messageId, type: "AIMessageChunk", content }, {}],
-      };
+      });
     }
     case SERVER_EVENTS.updates:
-      return { event: "updates", data: payload };
+      return as({ event: "updates", data: payload });
     case SERVER_EVENTS.interrupt:
-      // Story 6.5 raises the first one. The frame is translated now so the
-      // round trip does not need a client change when it does.
-      return { event: "interrupt", data: payload };
+      // **Translated into an `updates` frame carrying `__interrupt__`, because
+      // that is the only shape the vendored runtime reads** (Story 6.5, AD-9:
+      // the runtime's protocol wins). `@assistant-ui/react-langgraph` 0.14.24
+      // sets its interrupt state in exactly one place — the `Updates` branch of
+      // `useLangGraphMessages`, from `chunk.data.__interrupt__?.[0]` — and has
+      // no `interrupt` case at all. A frame emitted under that name was
+      // therefore parsed, dispatched and dropped: `interrupt` and `setInterrupt`
+      // stayed `undefined` and the approval card had nothing to render.
+      //
+      // The alternative was `onCustomEvent`, which would have meant this
+      // component owning the interrupt state the runtime already owns — and
+      // owning it in a second place is how the composer stays enabled while a
+      // write pends. So the server's frame is reshaped here, in the one file
+      // that already exists to reshape frames, and `interrupt`/`setInterrupt`
+      // come for free.
+      //
+      // `value` is the middleware's own `HITLRequest`, passed through untouched:
+      // the approval card renders the pending tool call the server is holding,
+      // never a paraphrase of it (AD-16), and a translation that summarised it
+      // here would be exactly that paraphrase.
+      return as({
+        event: "updates",
+        data: {
+          __interrupt__: [{ value: (payload as { value?: unknown }).value }],
+        },
+      });
     case SERVER_EVENTS.error:
-      return { event: "error", data: payload };
+      return as({ event: "error", data: payload });
     case SERVER_EVENTS.done:
-      return { event: "done", data: payload };
+      return as({ event: "done", data: payload });
     default:
       return null;
   }

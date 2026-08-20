@@ -48,19 +48,24 @@ missing *projection*, not a missing fact, and stating it the loose way had the
 two actions contradicting each other about one claim.
 
 A letter that says "the return date will be confirmed" is correct; one that
-names a Tuesday nobody chose is a letter an employer might act on. The gap is
-recorded as deferred work for Story 6.5, which owns the editable modal where a
-handler would type one.
+names a Tuesday nobody chose is a letter an employer might act on. **Story 6.5
+closed the gap the way this paragraph predicted** — not by projecting the
+columns, but by giving the handler an editable modal to type the date into. The
+tool still supplies none, the model still states none, and the date in a saved
+letter is a person's.
 
-## Nothing here proposes a write
+## Nothing here proposes a write — and that is still true
 
-The `rtw` quick action is **draft-only in this story** — a scope seam ruled at
-story creation. This wrapper is `kind: read` like the other six, there is no
-write tool to pair it with, and the node that uses it streams a draft into the
-transcript and leaves `pending_approval` `None`. The modal, the `interrupt()`
-gate and the save-to-claim are 6.5's, and the reason the seam is here rather
-than one story later is that the seven keys are the stable contract: 6.5 reuses
-`rtw` rather than adding an eighth.
+This wrapper is `kind: read` like the other six, and the `rtw` quick action
+still streams a draft into the transcript and proposes nothing. What Story 6.5
+added is one field, `version`, and it is the reason to read this docstring
+twice: the *reader* is where a save's version pin comes from, because the
+version that matters is the one the draft was composed against. The write tool
+is `save_rtw_letter` in `agents/tools/documents.py`; the gate is
+`HumanInTheLoopMiddleware` on the `create_agent` core; and the QAS node still
+holds neither (AD-6: quick-action nodes hold no write tools, they route
+proposals into the one gated step). 6.5 reused this key rather than adding an
+eighth, which is what makes the seven keys a stable contract.
 """
 
 from dataclasses import dataclass
@@ -97,6 +102,20 @@ class RtwContext:
 
     claim_id: str
     return_status: str | None
+    #: The claim's compare-and-swap column, **read at draft time** (Story 6.5).
+    #:
+    #: This is the number the letter's save is pinned on. The handler reads a
+    #: draft that was composed from this version of the case file, edits it, and
+    #: approves a save; `create_document`'s `INSERT … SELECT` carries this as its
+    #: predicate, so a claim somebody else edited in the meantime files nothing
+    #: and the approval fails safe instead of writing a letter about a case file
+    #: that has moved (AD-4's Write-concurrency convention, AD-6's version-pinned
+    #: approvals).
+    #:
+    #: It is on this projection rather than on `claim_reader`'s because this is
+    #: the tool the letter is drafted from, and a version read by some *other*
+    #: tool at some other moment is a number that pins nothing in particular.
+    version: int
     #: Fenced items: the treating clinician's contraindications, and the
     #: prognosis for returning to work. Empty strings are omitted rather than
     #: fenced — an empty fence is a boundary around nothing, and a model asked
@@ -137,6 +156,7 @@ def rtw_context(detail: ClaimDetail) -> RtwContext:
     return RtwContext(
         claim_id=detail.claim_id,
         return_status=_return_status(detail),
+        version=detail.version,
         restrictions=tuple(items),
     )
 

@@ -288,14 +288,31 @@ def saver_config(thread_id: str) -> RunnableConfig:
 class ThreadRunState:
     """What the saver knows about a thread right now.
 
-    Two booleans and a message list, so that the runs endpoint asks one question
-    and the history route asks another without either reaching into a checkpoint
-    structure itself.
+    Two booleans, a message list and the pending pause's payload, so that the
+    runs endpoint asks one question and the history route asks another without
+    either reaching into a checkpoint structure itself.
     """
 
     exists: bool
     interrupt_pending: bool
     messages: tuple[BaseMessage, ...]
+    #: The `HITLRequest` the thread is paused on, or `None` (Story 6.5 review).
+    #:
+    #: **Read from the saver, which is what makes an approval survive a
+    #: remount.** The interrupt payload reached the client on the run's terminal
+    #: frame and nowhere else, so it lived only in the browser's runtime state:
+    #: switching to 📓 Diary, reloading the page or coming back tomorrow
+    #: discarded the card while the thread stayed interrupt-pending — a
+    #: conversation that 409s every message with no reachable way to answer it.
+    #: The pause itself was always durable; only the description of it was not.
+    #:
+    #: Typed `Any` for `_interrupt_value`'s reason in the runs endpoint: this is
+    #: the vendored middleware's own payload, passed through untouched so the
+    #: approval card renders the server's pending call rather than a paraphrase
+    #: of it (AD-16). `None` whenever nothing pends, and also when something
+    #: pends whose payload this build cannot read — a client renders no card
+    #: either way, and the run endpoint is where that is reported as an error.
+    interrupt_value: Any = None
 
 
 async def thread_state(
@@ -321,14 +338,33 @@ async def thread_state(
     — answers `exists=False` with an empty transcript, which is a first-class
     state and not an error: the panel renders the deterministic greeting and an
     empty composer.
+
+    **The pause's payload comes back with it** (`interrupt_value`), off the same
+    snapshot rather than from a second read: "is this thread paused?" and "what
+    is it paused on?" are one question asked of one structure, and answering
+    them separately is how they come to disagree.
     """
     snapshot = await graph.aget_state(saver_config(thread_id))
     values = snapshot.values if snapshot is not None else None
     if not values:
         return ThreadRunState(exists=False, interrupt_pending=False, messages=())
-    pending = any(getattr(task, "interrupts", ()) for task in (snapshot.tasks or ()))
+    interrupts = [
+        item for task in (snapshot.tasks or ()) for item in getattr(task, "interrupts", ())
+    ]
     messages: Sequence[BaseMessage] = values.get("messages", ())
-    return ThreadRunState(exists=True, interrupt_pending=bool(pending), messages=tuple(messages))
+    return ThreadRunState(
+        exists=True,
+        interrupt_pending=bool(interrupts),
+        messages=tuple(messages),
+        # `.value` through `getattr` for the runs endpoint's recorded reason:
+        # the vendor's `Interrupt` is a dataclass in one version and a
+        # `NamedTuple` in another, and a client rendering no card is a better
+        # failure than a transcript read that raises.
+        interrupt_value=next(
+            (value for value in (getattr(item, "value", None) for item in interrupts) if value),
+            None,
+        ),
+    )
 
 
 async def discard_thread(
@@ -354,6 +390,7 @@ __all__ = [
     "ThreadList",
     "ThreadMintContended",
     "ThreadNotFound",
+    "ThreadNotOwned",
     "ThreadReadOnly",
     "ThreadView",
     "THREAD_ID_PATTERN",
@@ -422,6 +459,24 @@ class ThreadNotFound(Exception):
 
     One exception for three facts, deliberately, so the route cannot answer them
     differently. See `data/repositories/copilot.py::select_thread`.
+    """
+
+
+class ThreadNotOwned(Exception):
+    """A resume was posted to another handler's conversation — the route's 403.
+
+    **The one place this build distinguishes "not yours" from "not there"**, and
+    it is reachable only from a resume. AD-6 and Story 6.5's AC 2 require 403
+    when the thread's own user is not the caller; every other route on the
+    copilot router answers the same 404 for absent, foreign and out-of-scope
+    alike, deliberately, because thread ids are readable and a distinguishable
+    refusal would be an enumeration oracle.
+
+    The reconciliation is `copilot_repo.select_thread_in_scope`, which keeps the
+    employer predicate and drops only the owner one: a 403 therefore means
+    "inside your own book of business, somebody else's conversation" and says
+    nothing about any claim the caller cannot already see. Out of scope, or
+    never minted, stays `ThreadNotFound`.
     """
 
 
@@ -585,6 +640,7 @@ async def resolve_thread(
     *,
     thread_id: str,
     for_posting: bool,
+    for_resume: bool = False,
 ) -> ThreadView:
     """One thread, under a freshly resolved context. Raises the route's refusals.
 
@@ -596,9 +652,25 @@ async def resolve_thread(
 
     `for_posting` is what adds the read-only check. A superseded thread stays
     readable for as long as its checkpoints do; only a run against it is refused.
+
+    `for_resume` is Story 6.5's, and it is the **only** flag that can turn a 404
+    into a 403. AD-6 requires that a decision on a paused conversation be
+    refused 403 when the caller is not the thread's own user, and the second
+    lookup below is what tells "somebody else's" from "nowhere": it keeps the
+    employer predicate and drops only the owner one, so the distinction it draws
+    is bounded to claims the caller can already see. See `ThreadNotOwned` and
+    `copilot_repo.select_thread_in_scope`.
+
+    The extra query happens **only after the ordinary lookup has already failed**
+    and only on a resume, so the common path is unchanged and no message POST
+    can reach it — which is what keeps both shipped ownership tests green.
     """
     row = await copilot_repo.select_thread(db, ctx, thread_id=thread_id)
     if row is None:
+        if for_resume:
+            foreign = await copilot_repo.select_thread_in_scope(db, ctx, thread_id=thread_id)
+            if foreign is not None:
+                raise ThreadNotOwned(thread_id)
         raise ThreadNotFound(thread_id)
     claim_business_id = await copilot_repo.select_claim_business_id(db, ctx, claim_pk=row.claim_id)
     current = await copilot_repo.select_max_seq(db, ctx, claim_business_id=claim_business_id)

@@ -1753,11 +1753,16 @@ class SheetRowResponse(ApiModel):
 class DocumentSheetResponse(ApiModel):
     """A document viewer's whole content, assembled server-side (AC 4).
 
-    `sheetVariant` discriminates the two layouts the prototype's `openDoc`
-    branches between: a first report of injury renders the full injury detail,
-    everything else a short summary. The dispatch is the server's (AD-1) and so
-    are the rows, their order and their labels — what fields a statutory filing
-    shows is not a layout choice.
+    `sheetVariant` discriminates the layouts the prototype's `openDoc` branches
+    between: a first report of injury renders the full injury detail, everything
+    else a short summary. The dispatch is the server's (AD-1) and so are the
+    rows, their order and their labels — what fields a statutory filing shows is
+    not a layout choice.
+
+    **A third variant since Story 6.5**, `letter`, for a document that carries
+    its own words. It is chosen on the *body* rather than on `docType` — see
+    `services/claims/documents.LETTER_VARIANT` — so a `rtw`-typed seeded row
+    with no body keeps the summary sheet it belongs on.
 
     **Read-only, structurally.** There is no PATCH beside this route and no
     `version` on this model: the viewer displays a filing, and editing a claim
@@ -1772,11 +1777,19 @@ class DocumentSheetResponse(ApiModel):
     document_id: int
     name: str
     doc_type: DocType
-    sheet_variant: Literal["froi", "summary"]
+    sheet_variant: Literal["froi", "summary", "letter"]
     rows: list[SheetRowResponse]
     signatures: list[str]
     has_blob: bool
     blob_url: str | None
+    body_text: str | None = Field(
+        default=None,
+        description=(
+            "A generated document's own text, for the `letter` variant; null "
+            "for every other sheet. **Rendered as plain text, never as markup** "
+            "— it began as model output that a handler edited (AD-16)."
+        ),
+    )
 
 
 @router.get(

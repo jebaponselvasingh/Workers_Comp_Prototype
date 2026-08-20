@@ -72,7 +72,14 @@
  * usable modal over a diary list nobody can see; it is not a no-op there, and
  * an earlier draft of this comment claimed it was.
  */
-import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 export type DiarySubTab = "notes" | "meetings" | "emails";
 
@@ -123,7 +130,8 @@ export interface NoteDraft {
  * *inside* the open modal, from the row of six buttons, so it is that modal's
  * own state rather than something a caller can pre-select from outside.
  */
-export type ComposerPrefill = { kind: "blank" } | { kind: "meeting"; meetingId: number };
+export type ComposerPrefill =
+  { kind: "blank" } | { kind: "meeting"; meetingId: number };
 
 /**
  * The composer's whole navigation state, in one object.
@@ -217,6 +225,64 @@ export interface DiaryNav {
   lowerNoteFocus: () => void;
   /** The centre pane's other deep link: Diary → Notes, input focused. */
   requestNotes: () => void;
+  /**
+   * Increments every time something asks for the **return-to-work letter**
+   * (Story 6.5).
+   *
+   * The fourth deep link, and the first that does not land in the diary at all
+   * — which is why it is a counter here rather than a piece of state: this
+   * provider owns *where the workspace is being asked to go*, and the two
+   * components that answer own what that means. `CopilotPane` selects ⚡ Actions
+   * and `ActionsTab` fires the 📄 Review RTW Policy quick action, which drafts
+   * the letter and opens the modal.
+   *
+   * `schedulerSession`'s shape and its reason: "show me the letter" is an
+   * *event*, and a boolean would be a piece of state with a "when does it
+   * clear?" question attached that nothing has a good answer to. It does **not**
+   * bump `diaryRequestSession`, unlike the other three, because this link is the
+   * one that leaves the diary rather than entering it.
+   */
+  rtwRequestSession: number;
+  /**
+   * Claim the outstanding RTW request, if there is one — `true` at most once
+   * per click.
+   *
+   * **The one deep link whose consumer is not mounted when it is raised**, and
+   * that is what this exists for (review of Story 6.5). `CopilotPane` selects ⚡
+   * Actions in response to `rtwRequestSession`, which *mounts* `ActionsTab` —
+   * so by the time `ActionsTab` runs its first effect, the counter it is
+   * watching has already moved and its `useRef(rtwRequestSession)` initialises
+   * to the value it was supposed to react to. The effect saw no change and did
+   * nothing: "Draft RTW Letter →" was a dead click from the diary tab, which is
+   * the tab the panel opens on, which is to say from the default state.
+   *
+   * The obvious fixes are both wrong. Initialising the ref to zero makes the
+   * link work once and then re-fire on every later manual return to ⚡ Actions,
+   * because a remount cannot tell "I have not handled this" from "I handled it
+   * before I was unmounted". Holding the answer in this provider's *state* would
+   * mean `ActionsTab` calling a setter from an effect, which is the
+   * cascading-render pattern this file's whole design avoids.
+   *
+   * So the marker is a **ref in the provider** — which outlives every mount of
+   * either tab, changes nothing about rendering, and makes the question a
+   * consumer asks once: "is this session mine to act on?". `noteFocusPending` /
+   * `lowerNoteFocus` is the same shape one level down, an intent raised by the
+   * asker and lowered by whoever satisfies it; this pair is that, collapsed into
+   * one call because there is exactly one consumer and reading it *is*
+   * satisfying it.
+   */
+  takeRtwRequest: () => boolean;
+  /**
+   * The centre pane's fourth deep link: ⚡ Actions → the RTW letter.
+   *
+   * Story 3.5 shipped the `rtw_letter` action target refused, behind
+   * "Available with the RTW letter — Epic 6". Enabling it was the documented
+   * three-part move Stories 4.1 and 4.2 each half-forgot: one deletion from the
+   * server's `SEAM_REASONS`, one entry in
+   * `ActionsCard.NAVIGABLE_FROM_OVERVIEW`, and one branch in
+   * `ClaimDetailPane.navigate` — which is this call.
+   */
+  requestRtwLetter: () => void;
   /** The half-written note, kept across sub-tab switches. See `NoteDraft`. */
   noteDraft: NoteDraft;
   /**
@@ -272,7 +338,11 @@ const INITIAL_SUB_TAB: DiarySubTab = "notes";
 const EMPTY_NOTE_DRAFT: NoteDraft = { text: "", claimId: null };
 
 /** A composer nobody has opened — the value the provider starts from. */
-const CLOSED_COMPOSER: ComposerState = { open: false, session: 0, prefill: { kind: "blank" } };
+const CLOSED_COMPOSER: ComposerState = {
+  open: false,
+  session: 0,
+  prefill: { kind: "blank" },
+};
 
 const NO_DIARY_PANE: DiaryNav = {
   subTab: INITIAL_SUB_TAB,
@@ -287,6 +357,9 @@ const NO_DIARY_PANE: DiaryNav = {
   noteFocusPending: false,
   lowerNoteFocus: () => {},
   requestNotes: () => {},
+  rtwRequestSession: 0,
+  takeRtwRequest: () => false,
+  requestRtwLetter: () => {},
   noteDraft: EMPTY_NOTE_DRAFT,
   typeNoteDraft: () => {},
   clearNoteDraft: () => {},
@@ -305,7 +378,10 @@ export function DiaryNavProvider({ children }: { children: React.ReactNode }) {
   // link, which Story 6.3 made necessary by giving the copilot strip a second
   // live tab.
   const [diaryRequestSession, setDiaryRequestSession] = useState(0);
-  const requestDiary = useCallback(() => setDiaryRequestSession((n) => n + 1), []);
+  const requestDiary = useCallback(
+    () => setDiaryRequestSession((n) => n + 1),
+    [],
+  );
   const [schedulerSession, setSchedulerSession] = useState(0);
   const [noteFocusSession, setNoteFocusSession] = useState(0);
   const [noteFocusPending, setNoteFocusPending] = useState(false);
@@ -371,17 +447,45 @@ export function DiaryNavProvider({ children }: { children: React.ReactNode }) {
     setNoteFocusPending(true);
   }, [requestDiary]);
 
+  const [rtwRequestSession, setRtwRequestSession] = useState(0);
+  // The last session `ActionsTab` acted on. **A ref here rather than a ref
+  // there**, because the consumer is unmounted at the moment the link is
+  // raised — see `takeRtwRequest` on the interface, which argues it at length.
+  // It is written from a consumer's effect, which is where refs may be written,
+  // and it is never a rendering input: nothing re-renders because of it.
+  const handledRtwRequest = useRef(0);
+  const takeRtwRequest = useCallback(() => {
+    if (rtwRequestSession === handledRtwRequest.current) return false;
+    handledRtwRequest.current = rtwRequestSession;
+    return true;
+  }, [rtwRequestSession]);
+  const requestRtwLetter = useCallback(() => {
+    // **No `requestDiary()`**, unlike the three below it, and the asymmetry is
+    // the point: the other deep links move the copilot pane *to* the diary, and
+    // this one moves it to ⚡ Actions. `CopilotPane` watches this counter for
+    // exactly that, so bumping the diary's as well would select two tabs in one
+    // click and the loser would depend on the order of two `if`s.
+    setRtwRequestSession((session) => session + 1);
+  }, []);
+
   const requestEmails = useCallback(() => {
     requestDiary();
     // Through `selectSubTab`, never `setSubTab` — see the field's docstring.
     selectSubTab("emails");
   }, [requestDiary, selectSubTab]);
 
-  const openComposer = useCallback((prefill: ComposerPrefill = { kind: "blank" }) => {
-    // No sub-tab move — see the field's docstring. `DiaryTab` mounts the dialog
-    // outside the panel that swaps, so this works from any of the three.
-    setComposer((current) => ({ open: true, session: current.session + 1, prefill }));
-  }, []);
+  const openComposer = useCallback(
+    (prefill: ComposerPrefill = { kind: "blank" }) => {
+      // No sub-tab move — see the field's docstring. `DiaryTab` mounts the dialog
+      // outside the panel that swaps, so this works from any of the three.
+      setComposer((current) => ({
+        open: true,
+        session: current.session + 1,
+        prefill,
+      }));
+    },
+    [],
+  );
 
   const closeComposer = useCallback(() => {
     // The session is deliberately *not* advanced on close: the re-seed happens
@@ -407,6 +511,9 @@ export function DiaryNavProvider({ children }: { children: React.ReactNode }) {
       noteFocusPending,
       lowerNoteFocus,
       requestNotes,
+      rtwRequestSession,
+      takeRtwRequest,
+      requestRtwLetter,
       noteDraft,
       typeNoteDraft,
       clearNoteDraft,
@@ -428,6 +535,9 @@ export function DiaryNavProvider({ children }: { children: React.ReactNode }) {
       noteFocusPending,
       lowerNoteFocus,
       requestNotes,
+      rtwRequestSession,
+      takeRtwRequest,
+      requestRtwLetter,
       noteDraft,
       typeNoteDraft,
       clearNoteDraft,
@@ -438,7 +548,11 @@ export function DiaryNavProvider({ children }: { children: React.ReactNode }) {
     ],
   );
 
-  return <DiaryNavContext.Provider value={value}>{children}</DiaryNavContext.Provider>;
+  return (
+    <DiaryNavContext.Provider value={value}>
+      {children}
+    </DiaryNavContext.Provider>
+  );
 }
 
 export function useDiaryNav(): DiaryNav {

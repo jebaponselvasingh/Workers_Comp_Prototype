@@ -70,6 +70,7 @@ from agents.graph import (
 )
 from agents.registry import (
     REGISTRY,
+    WRITE_TOOLS,
     ClaimArgs,
     RegisteredTool,
     ToolKind,
@@ -243,21 +244,45 @@ def test_the_tool_budget_ends_the_turn_rather_than_letting_it_continue(
     _graph()
 
     limits = [entry for entry in built if isinstance(entry, ToolCallLimitMiddleware)]
-    assert len(limits) == 1
-    assert limits[0].run_limit == 3
-    assert limits[0].exit_behavior == "end"
+    # **Three since Story 6.5, and the split is the amendment** (AD-15). One
+    # un-scoped instance is still the run's whole tool budget; the other two are
+    # write-scoped, one per registered write tool, and cap a run at a single
+    # *pending* write (AD-6). Asserted by `tool_name` rather than by count alone
+    # so that a story registering a third write tool without gating its budget
+    # fails here.
+    overall = [entry for entry in limits if entry.tool_name is None]
+    assert len(overall) == 1
+    assert overall[0].run_limit == 3
+    assert overall[0].exit_behavior == "end"
+
+    scoped = {entry.tool_name: entry for entry in limits if entry.tool_name is not None}
+    assert set(scoped) == set(WRITE_TOOLS)
+    for entry in scoped.values():
+        assert entry.run_limit == 1
+        # `"continue"`, not `"end"`: a turn that asked for a second write is
+        # told it cannot have one and finishes answering. See `build_graph`.
+        assert entry.exit_behavior == "continue"
 
 
-def test_pending_approval_is_declared_and_never_populated() -> None:
-    """6.5's seam: the channel exists, and nothing in this story fills it.
+def test_pending_approval_is_declared_and_the_gate_is_installed() -> None:
+    """**Amended into its opposite by Story 6.5** (AD-15).
 
-    Both halves matter. Declared, so 6.5 does not have to add a channel to a
-    schema already carrying live conversations. Empty, because this story ships
-    no `interrupt()` producer and no approval lifecycle, and a `pending_approval`
-    that acquired a value here would mean one had arrived by accident.
+    This read `test_pending_approval_is_declared_and_never_populated` and
+    asserted the channel was declared and that nothing filled it — the honest
+    statement while 6.3 shipped the seam and 6.4 stayed clear of it. 6.5 owns
+    the `interrupt()` producer and the approval lifecycle, so the claim becomes
+    the same one from the other side: the channel is declared, the write gate is
+    installed on the compiled graph, and a run's *inputs* still do not carry a
+    `pending_approval` — because it is written by a middleware inside the run
+    and never by the thing that starts one.
+
+    The channels the lifecycle needs are asserted with it, since a middleware
+    writing an undeclared key is an update LangGraph drops silently.
     """
     assert "pending_approval" in DECLARED_CHANNELS
-    assert "pending_approval" in declared_channels(_graph())
+    assert {"approved_tool_call_id", "proposed_write", "write_outcome"} <= DECLARED_CHANNELS
+    compiled = _graph()
+    assert "pending_approval" in declared_channels(compiled)
     assert "pending_approval" not in run_inputs(
         caller=HANDLER_CTX, claim_business_id="WC-20017", message="hello"
     )
@@ -532,19 +557,46 @@ def test_the_caller_reference_carries_no_scope() -> None:
 # --- the registry -------------------------------------------------------
 
 
-def test_every_registered_tool_is_a_read_with_a_typed_schema() -> None:
-    """AD-13's declaration half, and the story's scope discipline in one line.
+def test_every_registered_tool_declares_a_kind_and_a_typed_schema() -> None:
+    """**Amended into its opposite by Story 6.5** (AD-15).
 
-    Nothing registered is a write, because 6.5 owns writes. Every entry carries
-    a Pydantic argument schema, because an argument the model invented has to be
-    refused by a schema rather than passed into a repository.
+    This read `test_every_registered_tool_is_a_read_with_a_typed_schema` and
+    asserted `entry.kind is ToolKind.read` over the whole registry, which was
+    true and load-bearing while no write existed. 6.5 registers exactly two, so
+    the assertion becomes the claim that actually matters now that both are
+    bound to the model: **every write entry is gated**, and gated by the
+    structure rather than by a list somebody remembered to widen.
+
+    Every entry still carries a Pydantic argument schema descended from
+    `ClaimArgs`, because an argument the model invented has to be refused by a
+    schema rather than passed into a repository — and because `invoke`'s AD-16
+    claim confinement is keyed on that field.
     """
     assert REGISTRY
     for name, entry in REGISTRY.items():
         assert entry.name == name
-        assert entry.kind is ToolKind.read
+        assert entry.kind in {ToolKind.read, ToolKind.write}
         assert issubclass(entry.args_schema, ClaimArgs) or entry.args_schema is ClaimArgs
         assert entry.description.strip()
+
+    # Exactly two writes, derived from the registry rather than restated.
+    assert set(WRITE_TOOLS) == {"save_rtw_letter", "update_claim_field"}
+    written = {name for name, entry in REGISTRY.items() if entry.kind is ToolKind.write}
+    assert written == set(WRITE_TOOLS)
+
+    # …and every one of them is in the gate's `interrupt_on`, with all three
+    # decisions. A write entry the middleware does not name would be a write
+    # tool bound to the model with nothing pausing before it executes.
+    from agents import approval
+
+    config = approval.interrupt_config()
+    assert set(config) == set(WRITE_TOOLS)
+    for entry_config in config.values():
+        # The vendor's `interrupt_on` also admits a bare `True`, which means
+        # "every decision including `respond`". Asserting the mapping form is
+        # what pins the three AD-6 names rather than four.
+        assert isinstance(entry_config, dict)
+        assert entry_config["allowed_decisions"] == ["approve", "edit", "reject"]
 
 
 def test_no_argument_schema_can_name_a_caller_an_employer_or_a_role() -> None:
@@ -596,11 +648,17 @@ async def test_the_registry_injects_the_session_and_the_scope() -> None:
 
 
 async def test_a_write_tool_without_an_approval_marker_raises() -> None:
-    """The AD-13 raise, shipped before any write tool exists to need it.
+    """The AD-13 raise, on a synthetic entry — the contract rather than the wiring.
 
     A raise rather than a structured failure, deliberately: a claim the caller
     cannot see is a normal outcome the model should narrate, and an ungated
     write reaching a command is a broken deployment that must stop the run.
+
+    Shipped by Story 6.3 before any write tool existed to need it, and kept on a
+    fixture entry now that two do: this asserts what `invoke` does with *any*
+    `kind: write`, and `tests/test_copilot_approval.py` asserts the same raise
+    against a registered one — which is the path `agents/qas.py::_call` takes on
+    every quick action, since a QAS node passes an empty marker set by design.
     """
 
     async def _never_called(db: Any, ctx: Any, **kwargs: Any) -> ToolResult[str]:
@@ -630,8 +688,14 @@ async def test_a_write_tool_without_an_approval_marker_raises() -> None:
 async def test_a_write_tool_with_a_matching_marker_is_allowed_through() -> None:
     """The other half — a gate that refused everything would be untestable.
 
-    This is the shape 6.5's `HumanInTheLoopMiddleware` produces on approval: a
-    marker keyed by the tool-call id. Nothing in *this* story creates one.
+    This is the shape the gate produces on approval: a marker keyed by the
+    tool-call id. **It has a real producer since Story 6.5** —
+    `agents/approval.ApprovalOutcomeMiddleware` writes it to state once
+    `HumanInTheLoopMiddleware` has resolved an `approve` or an accepted `edit`,
+    and `awrap_tool_call` carries it the last hop into this gate through
+    `registry.APPROVED_TOOL_CALL`. The synthetic entry stays, because what is
+    under test here is `invoke`'s contract rather than the middleware's;
+    `tests/test_copilot_approval.py` drives the real one end to end.
     """
     called: list[str] = []
 
@@ -952,12 +1016,19 @@ def test_the_registry_refuses_a_claim_the_thread_is_not_about() -> None:
     assert "WC-20017" in str(payload["error"])
 
 
-async def test_nothing_in_this_story_raises_an_interrupt() -> None:
-    """6.5's scope line, asserted from this side.
+async def test_an_ordinary_question_still_raises_no_interrupt() -> None:
+    """**Amended by Story 6.5** (AD-15) — the half of the old claim that survives.
 
-    The stream speaks `interrupt` and the schema declares `pending_approval` —
-    and a run that produced one *now* would mean a producer had arrived by
-    accident, in a story with no approval lifecycle to answer it.
+    This read `test_nothing_in_this_story_raises_an_interrupt` and asserted that
+    *no* run could pause, which was the honest statement while there was no
+    write tool and no gate. 6.5 installs both, so the claim splits in two: a
+    turn that proposes a write pauses (the test below), and a turn that does not
+    still runs to completion with `pending_approval` `None`.
+
+    The second half is worth keeping rather than deleting, because the way a
+    misconfigured gate fails is by pausing on things nobody proposed — a `when`
+    predicate inverted, an `interrupt_on` entry keyed on a read. The message is
+    deliberately one that *sounds* like a write.
     """
     graph = _graph()
     await _run(graph, "t-nointerrupt", "please update the reserve to $1")

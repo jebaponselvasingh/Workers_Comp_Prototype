@@ -71,10 +71,11 @@ run had released its lock and had not yet said it was finished.
 import asyncio
 import json
 import time
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, suppress
 from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Any, Literal
+from uuid import uuid4
 
 import anyio
 import structlog
@@ -83,19 +84,21 @@ from fastapi.responses import StreamingResponse
 from langchain_core.messages import BaseMessage
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
-from pydantic import ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agents.context import CopilotContext
 from agents.graph import QUICK_ACTIONS, resume_inputs, run_inputs
 from agents.greeting import claim_greeting
-from agents.qas import QAS_NOTE
+from agents.qas import QAS_NOTE, RTW_DRAFT
+from agents.state import ProposedWrite
 from agents.threads import (
     THREAD_ID_PATTERN,
     ClaimNotInBook,
     ThreadBusy,
     ThreadMintContended,
     ThreadNotFound,
+    ThreadNotOwned,
     ThreadReadOnly,
     ThreadRunState,
     ThreadView,
@@ -251,6 +254,21 @@ COPILOT_UNAVAILABLE_RESPONSE: dict[int | str, dict[str, object]] = {
     }
 }
 
+#: The resume endpoint's 403 — the only one on this router (Story 6.5, AD-6).
+THREAD_NOT_OWNED_RESPONSE: dict[int | str, dict[str, object]] = {
+    403: {
+        "description": (
+            "`/problems/thread-not-owned` — a resume decision was posted to a "
+            "conversation belonging to another handler. Only reachable on a "
+            "`command` body, and only for a thread inside the caller's own "
+            "employer scope: an out-of-scope or unknown thread keeps the "
+            "byte-identical 404 above, so this cannot be used to enumerate "
+            "conversations (RFC 9457 problem document)."
+        ),
+        "content": {PROBLEM_CONTENT_TYPE: {"schema": ProblemDocument.model_json_schema()}},
+    }
+}
+
 THREAD_NOT_FOUND_RESPONSE: dict[int | str, dict[str, object]] = {
     404: {
         "description": (
@@ -308,6 +326,34 @@ def _claim_not_found(claim_business_id: str) -> ProblemException:
         title="Not Found",
         detail=f"No claim {claim_business_id} in your caseload.",
         type_="/problems/claim-not-found",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def _not_owner() -> ProblemException:
+    """The resume 403 — **the one refusal on this router that is not a 404**.
+
+    AD-6: a paused run resumes only on a decision from the thread's own user;
+    others get 403. Every other unreachable-thread answer here is
+    `_thread_not_found`, deliberately, and this exception does not weaken that —
+    see `agents/threads.ThreadNotOwned` and
+    `data/repositories/copilot.select_thread_in_scope`. A caller who sees this
+    already covers the claim the conversation is about; what they are being told
+    is that a colleague is having it, which is a fact about their own book of
+    business rather than a disclosure across employers.
+
+    The detail names no thread, no colleague and no claim, for
+    `_thread_not_found`'s reason: the id is in the request URL and everything
+    else would be new information.
+    """
+    return ProblemException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        title="Forbidden",
+        detail=(
+            "This conversation belongs to another handler. Only the handler "
+            "who started it can answer what it is waiting for."
+        ),
+        type_="/problems/thread-not-owned",
         headers={"Cache-Control": "no-store"},
     )
 
@@ -490,11 +536,184 @@ class TranscriptResponse(ApiModel):
     makes "new conversation freezes the prior thread" a freeze of *posting*
     rather than of reading: the transcript stays available for as long as the
     checkpoints do (`copilot_checkpoint_retention_days`, purged by Epic 8).
+
+    ## …and what the conversation is *waiting on*, since Story 6.5's review
+
+    A thread paused on an approval refuses every new message with a 409, and the
+    only way forward is a resume. The payload a handler resumes from reached the
+    client on the run's terminal frame and nowhere else — so it lived in the
+    browser's runtime state and nowhere else, and switching tab, reloading or
+    coming back tomorrow discarded the card while leaving the thread paused.
+    That is a conversation with no reachable way out, produced by an ordinary
+    click.
+
+    The pause is durable in the checkpoints, so its description is published
+    here: the transcript is already the route that reads a conversation back
+    across a reload, and "what is this thread waiting for?" is the same kind of
+    fact as "what has been said in it?". It costs no extra request — the route
+    already reads the snapshot to build `messages`.
     """
 
     thread_id: str
     is_current: bool
     messages: list[TranscriptMessage]
+    interrupt_pending: bool = Field(
+        default=False,
+        description=(
+            "Whether this conversation is paused waiting for a decision on a "
+            "proposed write. While it is, every new message is refused 409 and "
+            "a resume is the only way forward."
+        ),
+    )
+    pending_approval: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "The pending tool call, in the middleware's own `HITLRequest` shape "
+            "— `action_requests[{name, args, description}]` plus "
+            "`review_configs[{action_name, allowed_decisions}]`, byte-identical "
+            "to what the run's terminal `interrupt` frame carried. It is the "
+            "server's rendering of the call that will execute, never a "
+            "paraphrase of it (AD-16). `null` unless `interruptPending`."
+        ),
+    )
+
+
+#: The registry entry the RTW letter's save is proposed against.
+#:
+#: Spelled here, once, rather than passed from the browser: the client sends a
+#: letter and a version, and *which tool files it* is the server's decision. A
+#: tool name on the wire would be a request body naming a capability, which is
+#: the one thing `RunRequest`'s `extra="forbid"` list exists to keep off it.
+RTW_LETTER_TOOL = "save_rtw_letter"
+
+#: What a filed return-to-work letter is called in the claim's document list.
+#:
+#: **Server-composed, and not a field on the request.** The name is rendered in
+#: the Documents tab beside statutory filings, so letting a client — or, one
+#: layer further out, a model that had talked a handler into a Save — choose it
+#: would be letting untrusted text name a document on a case file. There is one
+#: kind of generated document in this build and it has one name.
+RTW_LETTER_NAME = "Return-to-work offer letter"
+
+
+class RtwLetterProposal(ApiModel):
+    """The handler's edited letter, and the version it was drafted against (6.5).
+
+    The whole of what the RTW modal's "Save to claim" sends. Two fields, and the
+    absence of every other one is the design:
+
+    - No `claimId`: the thread is on a claim, and `resolve_thread` is what says
+      which. A claim on this body would be a caller-supplied scope (AD-7).
+    - No `docType`: `services/claims/documents.create_document` fixes it, so
+      nothing on a wire decides how a filing is classified (AD-16).
+    - No `name`: `RTW_LETTER_NAME` above.
+    - No return date: the handler types theirs into `bodyText`, which is the
+      whole reason the modal is editable — no reader in this build projects one
+      and AD-2 forbids the model originating one.
+
+    **`bodyText` is the handler's, verbatim.** It is what gets filed, it is what
+    the approval card renders, and no model call happens between this request
+    and the row: regenerating it would discard the edit they just made.
+
+    `expectedVersion` is the claim's `version` as the draft was composed against
+    it, published by the `rtw` quick action on its own run (`agents/qas.
+    RTW_DRAFT`). It is echoed back rather than re-read here for the reason the
+    whole gate exists: re-reading it would refresh the pin and turn every stale
+    approval into a silent force-write.
+    """
+
+    body_text: str = Field(
+        min_length=1,
+        max_length=20_000,
+        description=(
+            "The letter as the handler edited it. Filed verbatim — nothing "
+            "regenerates or rewrites it."
+        ),
+    )
+    expected_version: int = Field(
+        ge=1,
+        description=(
+            "The claim's `version` when the letter was drafted. The save is "
+            "refused if the claim has changed since."
+        ),
+        examples=[3],
+    )
+
+
+class _EditedAction(BaseModel):
+    """The revised call an `edit` decision carries — the vendor's `Action`.
+
+    Two fields, spelled as the vendored middleware spells them, because this is
+    not one of this build's own payloads: `HumanInTheLoopMiddleware` reads
+    `edited_action["name"]` and `["args"]` out of the resume value verbatim.
+
+    `name` is validated for *shape* only. Whether it may execute is
+    `agents/approval.py`'s question and it answers it against the pending
+    proposal — a decision naming a different tool than the one that pends is
+    refused there, where the drafted call is, rather than here where it is not.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1)
+    args: dict[str, Any]
+
+
+class _ApproveDecision(BaseModel):
+    """`{"type": "approve"}` and nothing else."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["approve"]
+
+
+class _EditDecision(BaseModel):
+    """`{"type": "edit", "edited_action": {…}}` — the revised call is required."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["edit"]
+    edited_action: _EditedAction
+
+
+class _RejectDecision(BaseModel):
+    """`{"type": "reject"}`, optionally carrying the sentence the model is told."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["reject"]
+    message: str | None = Field(default=None, max_length=1000)
+
+
+class _ResumeValue(BaseModel):
+    """The whole `resume` value, validated **before** it reaches the graph.
+
+    The resume body was passed through untouched, and a malformed one then
+    raised inside `HumanInTheLoopMiddleware` — a `KeyError` for a missing
+    `decisions`, a `ValueError` for a decision type it does not allow or a count
+    that does not match — which reached the client as a generic 503 `error`
+    frame on a run that had already started (review of Story 6.5). A caller
+    cannot act on that: the thread is still interrupt-pending, the frame says
+    the copilot is unavailable, and the actual fault is in the body they sent.
+    422 before the stream begins says what happened and leaves the pause intact.
+
+    **Exactly one decision**, because the gate produces exactly one
+    `action_request`: AD-6 caps a thread at one pending write and
+    `agents/approval.py` drops any second write call before the pause. The
+    vendor raises `ValueError` when the counts disagree, so a body carrying two
+    is a body that could only ever have ended the run in an error frame.
+
+    `respond` is deliberately not a member. It exists in the vendor's enum, AD-6
+    names it unused in v1, and `interrupt_config` does not offer it — so a
+    decision carrying it would be refused by the middleware after the run had
+    started. Refusing it here is the same answer, one round trip earlier.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    decisions: list[_ApproveDecision | _EditDecision | _RejectDecision] = Field(
+        min_length=1, max_length=1
+    )
 
 
 class RunRequest(ApiModel):
@@ -570,6 +789,18 @@ class RunRequest(ApiModel):
             "an unknown key is refused 422. Omit it for free text."
         ),
         examples=["reserve"],
+    )
+    rtw_letter: RtwLetterProposal | None = Field(
+        default=None,
+        description=(
+            "The RTW letter's save (Story 6.5). Rides **with** a message, like "
+            "`quickAction` and unlike `command`: it says that this turn is a "
+            "write the handler drafted rather than a question. No model is "
+            "called on it — the run synthesises the write tool call from this "
+            "payload, pauses at the same approval gate a model-selected write "
+            "pauses at, and files the text verbatim on approval. Refused "
+            "alongside `command` or `quickAction`."
+        ),
     )
 
 
@@ -807,6 +1038,14 @@ async def transcript(
             for role, text in (_rendered(message) for message in state.messages)
             if role is not None and text
         ],
+        interrupt_pending=state.interrupt_pending,
+        # Passed through untouched, and only when it is a mapping: the field's
+        # contract is the middleware's own payload, and anything this route
+        # reshaped on the way past would be the paraphrase AD-16 forbids
+        # standing between the handler and what will execute.
+        pending_approval=(
+            dict(state.interrupt_value) if isinstance(state.interrupt_value, Mapping) else None
+        ),
     )
 
 
@@ -845,6 +1084,7 @@ def _rendered(message: BaseMessage) -> tuple[str | None, str]:
     responses={
         **UNAUTHENTICATED_RESPONSE,
         **THREAD_NOT_FOUND_RESPONSE,
+        **THREAD_NOT_OWNED_RESPONSE,
         **THREAD_CONFLICT_RESPONSE,
         **COPILOT_UNAVAILABLE_RESPONSE,
         200: {
@@ -854,7 +1094,10 @@ def _rendered(message: BaseMessage) -> tuple[str | None, str]:
                 "finished), followed by **exactly one** terminal frame: `done`, "
                 "`interrupt`, or `error`. An `error` frame's payload is an RFC "
                 "9457 problem document, because by the time a stream has "
-                "started the status is already 200."
+                "started the status is already 200. An `interrupt` frame "
+                "carries the middleware's pending tool call — its name and its "
+                "typed arguments — under `value`, which is what the approval "
+                "card renders (AD-16)."
             ),
             "content": {"text/event-stream": {"schema": {"type": "string"}}},
         },
@@ -881,7 +1124,9 @@ async def run(
        `api.deps.get_caller_context` on *this* request, so the ownership and
        scope checks are against who the caller is now — not against anything a
        checkpoint remembers (AD-7). A thread that is not this caller's, or whose
-       claim has left their book, is the `_thread_not_found` 404.
+       claim has left their book, is the `_thread_not_found` 404 — **except on a
+       resume**, where another handler's thread inside the caller's own employer
+       scope is 403 (AD-6, and see `_not_owner`).
     2. **Refuse a superseded thread**, 409 `/problems/thread-read-only`.
     3. **Refuse a busy thread**, 409 `/problems/thread-busy`, for either of its
        two causes: the advisory lock is held, or the saver reports a pending
@@ -900,9 +1145,21 @@ async def run(
     _validate_run_body(body)
 
     try:
-        view = await resolve_thread(db, ctx, thread_id=thread_id, for_posting=True)
+        view = await resolve_thread(
+            db,
+            ctx,
+            thread_id=thread_id,
+            for_posting=True,
+            # **Only a resume may learn that a thread is somebody else's**
+            # (AD-6, AC 2). A message POST keeps the byte-identical 404 the
+            # ownership tests pin, because it has no decision to be refused the
+            # right to make.
+            for_resume=body.command is not None,
+        )
     except ThreadNotFound as exc:
         raise _thread_not_found() from exc
+    except ThreadNotOwned as exc:
+        raise _not_owner() from exc
     except ThreadReadOnly as exc:
         raise _read_only() from exc
 
@@ -948,6 +1205,7 @@ async def run(
                 # left in a checkpoint would dispatch the *next* free-text
                 # message down a quick action's node.
                 quick_action=body.quick_action,
+                proposed_write=_proposed_write(body, view.claim_business_id),
             )
             if body.message is not None
             else resume_inputs(caller=ctx)
@@ -976,6 +1234,51 @@ async def run(
             # looks exactly like a hung panel.
             "X-Accel-Buffering": "no",
             "Connection": "keep-alive",
+        },
+    )
+
+
+def _proposed_write(body: RunRequest, claim_business_id: str) -> ProposedWrite | None:
+    """The RTW letter's save as the graph's `proposed_write` channel, or `None`.
+
+    The one place the wire payload becomes a write proposal, and it is where the
+    two fields the client does *not* send are supplied: the tool name and the
+    document's name. Both are server constants (see `RTW_LETTER_TOOL` and
+    `RTW_LETTER_NAME`) precisely so that a request body cannot name a capability
+    or title a document on a case file.
+
+    The arguments it builds are the write tool's own schema
+    (`registry.RtwLetterArgs`), validated again by `invoke` before the command
+    ever sees them — so a shape drift between here and there is a structured
+    failure in the transcript rather than a bad row.
+
+    `claim_business_id` comes from the **resolved thread**, never from the body:
+    it is the same value `invoke`'s AD-16 confinement check compares against, so
+    a proposal naming any other claim could not execute even if something put
+    one here. It is on the arguments rather than left implicit because it is
+    half of the write's identity — the half an `edit` decision may not revise
+    (`agents/approval.IDENTITY_ARGUMENTS`).
+
+    **`proposal_id` is minted here, once per request, and it is what makes a
+    second save on one thread a second save** (review of Story 6.5). The
+    middleware synthesises the tool call carrying it and then recognises "this
+    proposal has already been drafted" by that id; keyed on the *tool name*
+    instead, the first letter's checkpointed call answered every later save on
+    the thread, which reported success while proposing nothing, gating nothing
+    and discarding the handler's second letter. A UUID rather than a hash of the
+    body or the version: two saves of the same letter at the same version are
+    two proposals, and the handler is entitled to be asked about each.
+    """
+    if body.rtw_letter is None:
+        return None
+    return ProposedWrite(
+        tool_name=RTW_LETTER_TOOL,
+        proposal_id=str(uuid4()),
+        arguments={
+            "claim_business_id": claim_business_id,
+            "name": RTW_LETTER_NAME,
+            "body_text": body.rtw_letter.body_text,
+            "expected_version": body.rtw_letter.expected_version,
         },
     )
 
@@ -1013,8 +1316,40 @@ def _validate_run_body(body: RunRequest) -> None:
         # length three that says nothing, and it used to be checkpointed into
         # the conversation for ever and answered with a whole model run.
         raise _unprocessable("A run's message cannot be blank.")
-    if body.command is not None and "resume" not in body.command:
-        raise _unprocessable('A resume command must carry a "resume" value.')
+    if body.command is not None:
+        if "resume" not in body.command:
+            raise _unprocessable('A resume command must carry a "resume" value.')
+        # **Shape-checked here rather than discovered inside the graph.** See
+        # `_ResumeValue`: an unreadable decision used to raise inside the
+        # vendored middleware and reach the client as a 503 `error` frame on a
+        # run that had already started, leaving a paused thread and a message
+        # about the copilot being unavailable.
+        try:
+            _ResumeValue.model_validate(body.command["resume"])
+        except ValidationError as exc:
+            raise _unprocessable(
+                "A resume command must carry exactly one decision, of type "
+                '"approve", "edit" or "reject" — and an "edit" must carry the '
+                'revised call in "edited_action".'
+            ) from exc
+    if body.rtw_letter is not None:
+        # **A save is a message run, not a third kind of run**, so it is refused
+        # beside the two things that would make it ambiguous. With a `command`
+        # it would be a decision that also proposed something; with a
+        # `quickAction` it would be a button press that also filed a letter.
+        # Both are bodies nobody sends and both would have to be answered by an
+        # ordering of `if`s rather than by a rule — which is exactly what the
+        # "both fields" refusal above exists to avoid.
+        if body.command is not None:
+            raise _unprocessable(
+                "Saving the letter is a message, not a resume command. Send the "
+                "letter on its own, or the command on its own."
+            )
+        if body.quick_action is not None:
+            raise _unprocessable(
+                "Saving the letter is not a quick action. Send the letter on "
+                "its own, or the quick action on its own."
+            )
     if body.quick_action is None:
         return
     # **The unknown-key refusal, and it happens here rather than in the graph**
@@ -1089,10 +1424,42 @@ class _Interrupted(Exception):
     is nonetheless something only that function can see, so it raises, and
     `_stream`'s `except` turns it into the single terminal `interrupt` frame.
 
-    Unreachable in this story: nothing registered is a `kind: write` tool and no
-    node calls `interrupt()`. Story 6.5 makes it live, and it ships now so that
-    the story which raises the first interrupt does not also have to invent the
-    path it takes to the wire.
+    **It carries the payload since Story 6.5**, which is what turned the frame
+    from a notification into something renderable. `value` is
+    `HumanInTheLoopMiddleware`'s own `HITLRequest` — `action_requests[{name,
+    args, description}]` plus `review_configs[{action_name, allowed_decisions}]`
+    — passed through untouched. Untouched is the AD-16 property rather than
+    laziness: the approval UI must render the middleware's *actual* pending tool
+    call, so anything this module reshaped, summarised or re-worded on the way
+    past would be a paraphrase standing between the handler and the payload
+    that will execute.
+    """
+
+    def __init__(self, value: Any) -> None:
+        super().__init__("the copilot paused for an approval")
+        self.value = value
+
+
+class _InterruptUnreadable(Exception):
+    """The graph paused, and this process could not read what it paused on.
+
+    A distinct exception rather than an `_Interrupted` carrying `None`, because
+    the two end the run differently and only one of them is actionable.
+
+    An `interrupt` frame whose `value` is absent is a frame a client can do
+    **nothing** with: the approval card renders from the payload, so it renders
+    nothing, while the thread stays interrupt-pending and 409s every later
+    message — a conversation with no reachable way forward and no notice that
+    anything is wrong (review of Story 6.5). It is reachable two ways, both of
+    them defects rather than states: an `Interrupt` object whose `.value` this
+    build cannot read after a vendor bump, and a future producer that paused on
+    something other than a `HITLRequest`.
+
+    So the run ends `error` instead. The pause is still real and still
+    checkpointed — nothing here resolves it — but a handler is told the copilot
+    could not finish and that nothing was written, which is a sentence they can
+    act on by starting a new conversation. The alternative is a card-shaped
+    hole.
     """
 
 
@@ -1265,7 +1632,33 @@ def _terminal_for(
             status_code=503,
         )
     if isinstance(failure, _Interrupted):
-        return "interrupt", {"threadId": thread_id}
+        # **The payload rides the terminal frame** (Story 6.5, AC 5). Until this
+        # story the frame carried a `threadId` and nothing else, which was
+        # honest while nothing could interrupt and useless the moment something
+        # could: a client cannot render an approval it has not been told the
+        # contents of, and the alternative — a second request to fetch the
+        # pending call — would put the payload the handler approves and the
+        # payload that executes one round trip apart.
+        #
+        # `value` is the middleware's own `HITLRequest`, verbatim. See
+        # `_Interrupted` on why nothing here reshapes it.
+        return "interrupt", {"threadId": thread_id, "value": failure.value}
+    if isinstance(failure, _InterruptUnreadable):
+        # A pause this process cannot describe. See `_InterruptUnreadable`: an
+        # `interrupt` frame with no payload is a card with nothing on it in
+        # front of a thread that will refuse every later message.
+        log.warning("copilot.interrupt_payload_unreadable", thread_id=thread_id)
+        return "error", _problem_frame(
+            title="Copilot could not present an approval",
+            detail=(
+                "The copilot paused to ask for approval but could not describe "
+                "what it was asking about, so there is nothing to approve. "
+                "Nothing was changed on the claim — start a new conversation "
+                "and try again."
+            ),
+            type_="/problems/copilot-approval-unreadable",
+            status_code=503,
+        )
     if isinstance(failure, TimeoutError):
         log.warning(
             "copilot.run_timed_out",
@@ -1287,6 +1680,25 @@ def _terminal_for(
         type_="/problems/copilot-run-failed",
         status_code=503,
     )
+
+
+def _interrupt_value(interrupts: Any) -> Any:
+    """The one pending approval's payload, out of LangGraph's `__interrupt__` list.
+
+    The channel is a *sequence* of `Interrupt` objects because the runtime
+    supports several tasks pausing in one super-step. This graph cannot produce
+    more than one — AD-6 caps the model at a single pending write and
+    `HumanInTheLoopMiddleware` batches every gated call in a super-step into one
+    `interrupt()` — so the first is the only one, and taking it is a narrowing
+    rather than a choice.
+
+    Written defensively about *shape* and not about content: `.value` is read
+    through `getattr` because the vendor's `Interrupt` is a dataclass in one
+    version and a `NamedTuple` in another, and a client rendering nothing is a
+    better failure than a run that ends `error` because a payload was a tuple.
+    """
+    first = next(iter(interrupts), None) if isinstance(interrupts, Sequence) else None
+    return getattr(first, "value", None)
 
 
 async def _run_frames(
@@ -1338,6 +1750,12 @@ async def _run_frames(
         embedding_client=copilot.embedding_client,
         embedding_staleness_days=copilot.embedding_staleness_days,
     )
+    # Every `__interrupt__` this run produced, in the order they arrived. A list
+    # rather than a flag because the payload is what the approval card renders,
+    # and a list rather than a single value because `subgraphs=True` reports the
+    # same pause at more than one level — the first one carrying a value is the
+    # one the gate raised.
+    interrupted: list[Any] = []
     payload: Any = inputs
     if resume is not None:
         payload = Command(resume=resume["resume"], update=dict(inputs))
@@ -1385,10 +1803,37 @@ async def _run_frames(
                     note = chunk.get(QAS_NOTE)
                     if isinstance(note, str) and note:
                         yield _sse("messages", {"content": note})
+                    # The RTW draft's version pin (Story 6.5). An `updates`
+                    # frame rather than a `messages` one, for the reason above
+                    # read the other way: it is *not* assistant content — it is
+                    # a claim id and an integer the modal pins its save on — and
+                    # `updates` is already the frame that says "something
+                    # happened in the graph that is not text".
+                    draft = chunk.get(RTW_DRAFT)
+                    if isinstance(draft, Mapping):
+                        yield _sse("updates", {"rtwDraft": dict(draft)})
             elif mode == "updates":
-                for node in dict(chunk):
+                update = dict(chunk)
+                for node in update:
                     if node == "__interrupt__":
-                        raise _Interrupted
+                        # **Recorded, not raised** (Story 6.5). Raising here
+                        # abandons `astream` mid-iteration, and the interrupt
+                        # this build actually produces happens *inside* the
+                        # `create_agent` subgraph — so the outer graph had not
+                        # yet written the task that carries the pause when the
+                        # frame appeared, and `thread_state` re-derived
+                        # "interrupt pending" as false. The visible symptom was
+                        # the single-flight 409 failing to fire on the one
+                        # condition it exists for: a second message on a thread
+                        # waiting for an approval was accepted.
+                        #
+                        # So the loop runs to completion — which is one more
+                        # step, since a paused graph has nothing further to
+                        # stream — and the raise happens below.
+                        value = _interrupt_value(update[node])
+                        if value is not None or not interrupted:
+                            interrupted.append(value)
+                        continue
                     # **Only the outer graph's nodes are published.** A
                     # namespace is non-empty for an update from inside the
                     # `create_agent` harness, whose internal node names
@@ -1396,9 +1841,19 @@ async def _run_frames(
                     # build's — publishing them would put a private structure on
                     # a public wire and would change under a dependency bump.
                     # An interrupt is checked at every level, because that is
-                    # where 6.5 will raise one.
+                    # where the gate raises one.
                     if not namespace:
                         yield _sse("updates", {"node": node})
+
+    # Outside the iteration, and outside the timeout: the graph has stopped and
+    # the only thing left is to tell `_terminal_for` how. See the branch above.
+    if interrupted:
+        value = next((item for item in interrupted if item is not None), None)
+        # **A pause with no readable payload is an `error`, not an `interrupt`
+        # carrying `null`** (review of Story 6.5). See `_InterruptUnreadable`.
+        if value is None:
+            raise _InterruptUnreadable
+        raise _Interrupted(value)
 
 
 __all__ = ["router"]

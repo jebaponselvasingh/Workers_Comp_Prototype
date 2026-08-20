@@ -159,6 +159,49 @@ async def select_thread(
     return found
 
 
+async def select_thread_in_scope(
+    db: AsyncSession,
+    ctx: CallerContext,
+    *,
+    thread_id: str,
+) -> CopilotThread | None:
+    """One thread by its minted id — **employer-scoped, owner-agnostic** (6.5).
+
+    `select_thread` above with the `user_id` predicate dropped and nothing else
+    changed. It exists for exactly one caller: the resume path, which AD-6 and
+    Story 6.5's AC 2 require to answer **403** when another handler posts a
+    decision on somebody else's paused conversation, where the shipped contract
+    answers 404 for every unreachable thread.
+
+    ## Why this does not reopen the enumeration oracle
+
+    `select_thread`'s single-answer rule exists because thread ids are readable
+    by design — `claim.WC-20017.u7.s1` spells its own claim, owner and sequence
+    — so a distinguishable refusal would let a caller enumerate other handlers'
+    conversations by guessing. That reasoning is about *reach*, and the employer
+    predicate is what bounds it: this function still joins `Claim` under
+    `employer_scope(ctx)`, so a row it finds is a conversation about a claim the
+    caller can already see, in a book of business they already have. A 403
+    derived from it therefore says "inside your own caseload, another handler's
+    conversation" and reveals nothing across employers; an out-of-scope thread
+    and an id nobody ever minted both still answer `None`, and both still become
+    the same byte-identical 404.
+
+    Two further containments, both deliberate. It is reached **only from the
+    resume branch** — a message POST never calls it, so both shipped ownership
+    tests keep their 404 — and it is reached only *after* `select_thread` has
+    already answered `None`, so the common path costs one query as before.
+    """
+    found: CopilotThread | None = await db.scalar(
+        sa.select(CopilotThread)
+        .select_from(CopilotThread)
+        .join(Claim, CopilotThread.claim_id == Claim.id)
+        .where(employer_scope(ctx))
+        .where(CopilotThread.thread_id == thread_id)
+    )
+    return found
+
+
 async def select_max_seq(
     db: AsyncSession,
     ctx: CallerContext,

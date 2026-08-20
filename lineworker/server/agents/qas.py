@@ -106,6 +106,28 @@ from agents.state import CopilotState
 
 log = structlog.get_logger()
 
+#: The key the RTW draft's structured pin travels under on the custom stream.
+#:
+#: **The one thing a quick action publishes that is not prose** (Story 6.5), and
+#: it exists because the letter's save has to pin a version. `rtw_reader` reads
+#: the claim's `version` at draft time; the handler then edits the letter in the
+#: modal and approves a save that compare-and-swaps on that number — so if the
+#: browser had to fetch a version of its own when the modal opened, a claim that
+#: moved between the draft and the modal would be saved against the *newer*
+#: version and the stale branch would never fire. That is the force-write this
+#: story exists to prevent, arrived at by omission.
+#:
+#: It travels on the custom stream beside `QAS_NOTE` rather than as a new SSE
+#: event, and the runs endpoint turns it into an ordinary `updates` frame: the
+#: client's vocabulary is unchanged, and `updates` is already the frame that
+#: carries "something happened in the graph that is not assistant text".
+#:
+#: Nothing here is claim content — a business id and an integer — so it is safe
+#: on a wire that also carries a transcript, and there is no second copy of the
+#: letter anywhere: the body the modal opens with is the transcript's, which is
+#: the copy the handler has already read.
+RTW_DRAFT = "rtw_draft"
+
 #: The key a model-free note travels under on LangGraph's custom stream.
 #:
 #: One key rather than a shape per node, because the runs endpoint's job is to
@@ -289,6 +311,7 @@ async def _narrate(
     figures: Sequence[str],
     untrusted: Sequence[str],
     trailer: str | None = None,
+    publish_on_success: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """One streamed completion. `agents/insights.py::_narrate`'s shape, minus the schema.
 
@@ -323,6 +346,22 @@ async def _narrate(
     goes out on the custom stream as well as into the checkpoint, because the
     tokens the panel already rendered came from `messages` and a trailer that
     existed only in state would appear on reload and not on screen.
+
+    **`publish_on_success` is a custom-stream payload written only when the
+    narration actually produced text**, and it exists because publishing one
+    before the completion started was a real defect (review of Story 6.5). The
+    RTW draft's version pin is what tells the panel "a letter was drafted, and
+    here is the version its save pins" — so the panel opens the modal on it. Sent
+    before the model was asked for anything, it was still sent when the model
+    answered nothing, and the modal then opened with `EMPTY_NARRATION_NOTE` in
+    the body and a live Save button under it: "The copilot could not compose an
+    answer for this quick action" was one click from being a filed document on
+    an injured worker's case file, and one more from being the letter a claimant
+    reads. A pin published after the text exists cannot describe a draft that
+    does not.
+
+    Ordering is unaffected on the success path: the payload goes out inside the
+    same run, before its terminal frame, which is all the panel requires.
     """
     system, version = prompts.qas_system_message(prompt_key)
     sections = [FIGURES_HEADING, *figures]
@@ -351,6 +390,11 @@ async def _narrate(
         # put one on neither and turned a working run into an `error` frame.
         log.info("copilot.quick_action_empty_narration", prompt_key=prompt_key)
         return _note(EMPTY_NARRATION_NOTE)
+
+    if publish_on_success is not None:
+        # See the docstring: the pin describes a draft, so it is published once
+        # there demonstrably is one.
+        get_stream_writer()(dict(publish_on_success))
 
     if trailer is not None and trailer not in answer:
         get_stream_writer()({QAS_NOTE: f"\n\n{trailer}"})
@@ -753,12 +797,20 @@ def _build_labor_law(*, model: BaseChatModel, prompt_key: str) -> QasNode:
 def _build_rtw(*, model: BaseChatModel, prompt_key: str) -> QasNode:
     """📄 Review RTW Policy — a draft in the transcript, and **no write at all**.
 
-    Draft-only in this story, which is a scope seam ruled at story creation
-    rather than an omission: Story 6.5 owns the editable modal, the `interrupt()`
-    gate and the save-to-claim, and it reuses this key rather than adding an
-    eighth. So this node holds no write tool, raises no interrupt, leaves
+    **Still no write, after Story 6.5.** That story added the editable modal,
+    the `interrupt()` gate and the save-to-claim, and it reused this key rather
+    than adding an eighth — but AD-6 is explicit that a quick-action node holds
+    no write tools of its own and routes any proposal into the one gated step.
+    So this node still calls one `kind: read` entry, raises no interrupt, leaves
     `pending_approval` `None`, and streams its letter as an ordinary assistant
-    message.
+    message. What it gained is one line: it publishes the claim `version` its
+    draft was composed against, on the custom stream, because that is the number
+    the handler's later save is pinned on (see `RTW_DRAFT`).
+
+    The save itself enters the graph as `proposed_write` on a *new* run, is
+    turned into a write tool call by `agents/approval.py` without a model call,
+    and pauses at the same gate a free-chat write pauses at. None of that is
+    here, and that is the AD-6 property rather than a division of labour.
 
     **It names no return date**, and the reason has to be stated precisely
     rather than broadly. `Claim.rtw_rec` and `Claim.actual_rtw` are ORM columns
@@ -793,9 +845,28 @@ def _build_rtw(*, model: BaseChatModel, prompt_key: str) -> QasNode:
             "No return date is available to this action: the case-file "
             "projection this letter is drafted from carries none. Do not state "
             "a date; say the start date will be confirmed by the handler.",
-            "This is a draft in the chat. It is not saved to the claim and it "
-            "has not been sent to anybody.",
+            # **The "not saved to the claim" sentence is gone since Story 6.5**,
+            # and its removal is the point rather than a tidy-up: the handler
+            # now opens this draft in a modal, edits it, and can file it on the
+            # claim through the approval gate. A figure telling them it cannot
+            # be saved would be a figure that is no longer true, stated in the
+            # half of the message the prompt grants quoting authority — so a
+            # compliant model would repeat it, in a letter, under a Save button.
+            "This is a draft. The handler will review and edit it before "
+            "anything is filed, and nothing has been sent to anybody.",
         ]
+        # The pin. See `RTW_DRAFT`: this is the claim `version` the save
+        # compare-and-swaps on, read at draft time by `rtw_reader` and carried
+        # no other way.
+        #
+        # **Handed to `_narrate` rather than published here**, so that it goes
+        # out only if a letter was actually drafted. Published before the
+        # completion — which is what this did — it was published even when the
+        # model answered nothing, and the modal then opened on
+        # `EMPTY_NARRATION_NOTE` with a live Save button under it (review of
+        # Story 6.5). See `_narrate`.
+        pin = {RTW_DRAFT: {"claimId": data["claim_id"], "version": data["version"]}}
+
         material = [str(item) for item in data["restrictions"]]
         if not material:
             figures.append(
@@ -805,7 +876,13 @@ def _build_rtw(*, model: BaseChatModel, prompt_key: str) -> QasNode:
             )
         claim_material, notes = await _claim_material(runtime, claim)
         material += claim_material
-        return await _narrate(model, prompt_key, figures=[*figures, *notes], untrusted=material)
+        return await _narrate(
+            model,
+            prompt_key,
+            figures=[*figures, *notes],
+            untrusted=material,
+            publish_on_success=pin,
+        )
 
     return node
 
@@ -940,6 +1017,7 @@ def build_node(key: str, *, prompt_key: str | None, model: BaseChatModel) -> Qas
 #: here to be reachable at all.
 __all__ = [
     "EMPTY_NARRATION_NOTE",
+    "RTW_DRAFT",
     "LEGAL_DISCLAIMER",
     "NO_CLAIM_NOTE",
     "NO_MATERIAL_NOTE",
