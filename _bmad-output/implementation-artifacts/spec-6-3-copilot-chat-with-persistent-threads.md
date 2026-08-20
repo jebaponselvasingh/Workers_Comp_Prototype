@@ -3,7 +3,8 @@ title: 'Story 6.3 — Copilot Chat with Persistent Threads'
 type: 'feature'
 created: '2026-08-20'
 baseline_revision: 'fe27b9f07a7975bf364a8353102202e1fa91ebaf'
-status: 'in-review'
+final_revision: '0f7f28fd3b271af1bae519b999344be83e3c1020'
+status: 'done'
 review_loop_iteration: 0
 followup_review_recommended: true # the review pass rewrote the stream lifecycle (lock acquisition, shielded release, producer await, terminal selection) and two AD-16 containment surfaces (tool-argument confinement, fencing three claim-derived fields) under review pressure — 9 high-severity fixes across security, concurrency and data-loss paths, several in code that had no test before this pass. The migration guards and the typing pass are settled; the streaming lifecycle and the containment changes are what a second pass should read
 context:

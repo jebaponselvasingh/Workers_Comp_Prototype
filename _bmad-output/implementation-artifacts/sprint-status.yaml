@@ -99,7 +99,7 @@ development_status:
   epic-6: in-progress
   6-1-local-model-serving-embedding-foundation: done
   6-2-ai-insight-cache-insights-tab: done
-  6-3-copilot-chat-with-persistent-threads: ready-for-dev
+  6-3-copilot-chat-with-persistent-threads: done
   6-4-deterministic-quick-actions-qas: ready-for-dev
   6-5-human-gated-writes-the-rtw-letter: ready-for-dev
   6-6-honest-degradation: ready-for-dev
