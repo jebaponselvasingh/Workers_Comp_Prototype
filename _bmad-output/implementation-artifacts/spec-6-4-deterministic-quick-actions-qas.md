@@ -3,6 +3,7 @@ title: 'Story 6.4 — Deterministic Quick Actions (QAS)'
 type: 'feature'
 created: '2026-08-20'
 baseline_revision: '37f56be723d5291b7c8a379c40adcf7fc9390084'
+final_revision: 'adf3a96a7c8de58498227e499c035011f84a7e58'
 status: 'done'
 review_loop_iteration: 0
 followup_review_recommended: true # the fix pass reopened an AD-16 containment surface (untrusted knowledge_chunk metadata reaching model context unfenced, in the section the prompt grants quoting authority) and rewrote a financial-narration branch that had been asserting a verdict the service never returned — 3 high and 8 medium fixes across security, correctness and frontend concurrency, two of them in code whose own test was passing against the defect. The routing map, the registry injection and the prompt composition are settled; the metadata normalisation, the reserve verdict branches and the quick-action key handoff are what a second pass should read
