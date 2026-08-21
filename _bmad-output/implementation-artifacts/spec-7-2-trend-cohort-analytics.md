@@ -3,6 +3,7 @@ title: 'Story 7.2 — Trend & Cohort Analytics'
 type: 'feature'
 created: '2026-08-21'
 baseline_revision: '807ab560a66a3b09fad00a3b1ddd94992dcd05cd'
+final_revision: '7e7187c5b0d2ad7cfd30e6315107010768bd9a53'
 status: 'done'
 review_loop_iteration: 0
 followup_review_recommended: true # sixteen findings were patched, three of them high and all three on the same misconception: a metric's population is the claims that fed it, not the claims in the bucket. That one idea had to be applied across the point count, the low-confidence flag, the total that decides emptiness, the drill filters, the empty-state copy and all three oracles — and the reason it survived implementation is that both oracles restated it, which is the Story 7.1 failure mode repeating one story later. The patch pass also changed the wire (a new 'partial' flag, and claimCount/seriesTotal now mean a different population than they did), narrowed two drill paths, and reached into sla.py for a new denominators_of. What a follow-up should read is whether any per-metric population is still conflated on a surface nobody named, whether the two restated oracles are genuinely independent of each other and not just of the server, and whether the partial-terminal-bucket marking holds at week and quarter grain where the partial period is a larger share of the point
@@ -211,3 +212,40 @@ This is the fourth zero-fill policy in the codebase, and it differs from all thr
 - Log in as the analyst, open Trends: exactly one nav entry is marked current on `/dashboard/trends`, and exactly one on `/dashboard` and `/dashboard/fraud`.
 - Switch grain to quarter: three buckets render (the seed spans 2026-01 → 2026-09) and the footnote states the window rather than implying more history exists.
 - Switch grain to week with the sector cohort: most cells are absent — confirm gaps, not zero lines, and that low-confidence buckets are marked.
+
+## Auto Run Result
+
+Status: done · baseline `807ab56` → final `7e7187c`
+
+### What shipped
+
+The Trends section of the analyst workspace. `GET /dashboard/trends` publishes five series — claim volume, average days open, settlement cycle time, RTW rate and paid — over a window bucketed at week, month or quarter grain against an FNOL or DOI anchor, optionally split one dimension at a time into severity-band, disability or sector cohorts. Every bucket reaches its claims through Story 5.5's existing list via six new drill facets. One new `trend_periods` rules document owns the window and the low-sample ceiling.
+
+Three decisions the data forced, each recorded in Design Notes rather than left implicit: settlement cycle time is a **cohort** metric because the schema has no closure date and `core.py` states its durations do not reconcile with its dates; the two SLA-derived series come from `sla.strip_of` per bucket rather than re-averaged, which is AD-2 and also why `trends.py` never names the three guarded columns; and zero and null are different answers, with counts and sums zero-filling while means and rates go null on the strip's own `no_data` vocabulary.
+
+### Files changed
+
+- `server/rules/documents/trend_periods.v1.jdm.json`, `server/rules/parameters.py`, `server/data/versions/20260821_0046_trend_periods.py` — the new rules document, its typed block, and the migration seeding it at the standard effective date.
+- `server/services/worklist/trends.py` — the aggregate: one scoped read, pure folds, one `await`.
+- `server/services/worklist/sla.py` — `denominators_of`, so a denominator and the figure that divided by it are read off one pass.
+- `server/api/routers/dashboard.py` — the read-only analyst-gated route, plus six facets appended to `/dashboard/claims`.
+- `server/services/worklist/drill_through.py`, `server/data/repositories/claims.py` — the facets applied, and the projection widened to carry them.
+- `web/src/features/dashboard/trends/` — `TrendsPage`, `TrendChartCard` (the codebase's first line chart), `trendColors`, and their tests.
+- `web/src/features/shell/WorkspaceNav.tsx` — Trends destination, and Portfolio's `owns` made the complement of *every* section rather than of one.
+- `web/src/api/{schema.d.ts,queryKeys.ts,dashboard.ts}`, `web/src/features/dashboard/drill/filters.ts`, `web/src/features/queue/noDerivation.test.ts` — client, keys, facet vocabulary, guard registration.
+- `server/tests/test_trend_analytics.py`, `server/tests/seed_fixture.py`, `e2e/fixtures/seed.ts`, `e2e/stories/7-2-trend-cohort-analytics.spec.ts` — the tests and the two independent oracles.
+
+### Review
+
+16 patched (3 high, 5 medium, 8 low), 2 deferred, 1 rejected, 0 intent gaps, 0 spec loopbacks. The three high findings were one misconception applied consistently — *a metric's population is the claims that fed it, not the claims in the bucket* — reaching the point count, the low-confidence flag, the total deciding emptiness, the drill filters, the empty-state copy and both oracles. It survived implementation because both oracles restated the conflation, which is Story 7.1's finding recurring one story later. Reintroducing it now fails nine pytest cases and two Playwright specs.
+
+### Verification
+
+Every layer re-run independently after patching, not taken on report: pytest **2976 passed / 1 skipped** (baseline 2871), vitest **731** (702), Playwright **233** (225) against the freshly reset compose stack, ruff and mypy clean over 273 files, `alembic check` clean. Guards re-checked: no guarded SLA column and no bare band number in `trends.py`; `noDerivation.test.ts` passes with the new files reported as scanned.
+
+### Residual risks
+
+- No HTTP test can demonstrate a *narrowed* analyst: the seed has one analyst and they are `scope_all`. AD-7 is asserted at the service level with a hand-built context, including the empty-book case. The gap stands in `deferred-work.md`.
+- The e2e oracle is clock-dependent by construction, since `asOf` is `utc_today()`. A run straddling UTC midnight could legitimately disagree with the stack; stated in the oracle rather than papered over with a pinned date.
+- The `from`/`to` range params are unreachable from the browser (no picker; the window is the server default), so the two 422 range problems are covered by pytest only.
+- `e2e/stories/7-1-fraud-analytics-workspace.spec.ts` was amended — its nav assertion moved from two destinations to three. Amended, not skipped, per AD-15.
