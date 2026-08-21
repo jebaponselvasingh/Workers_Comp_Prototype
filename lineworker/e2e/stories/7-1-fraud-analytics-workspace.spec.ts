@@ -119,6 +119,14 @@ test.describe("@story:7-1 @epic:7 fraud analytics workspace", () => {
     // The chip says what it is and can be cleared — both halves, because a chip
     // that rendered and did not clear would satisfy half of AC 4.
     await expect(byTestId(page, "drill-chip")).toHaveText(["Fraud band: High✕"]);
+    // The navigation still says where the analyst is. `/dashboard/claims` is
+    // where every chart and table in this section *goes*, and it used to mark
+    // neither destination — Portfolio matched exactly, Fraud matched by prefix,
+    // and the drill route is neither — so a click on a chart landed on a page
+    // whose nav had gone blank under a component that promises the opposite.
+    await expect(byTestId(page, "workspace-nav").locator("[aria-current='page']")).toHaveText(
+      "Portfolio",
+    );
 
     // A claim opens read-only: the case header renders and nothing on the page
     // can write.
@@ -233,6 +241,12 @@ test.describe("@story:7-1 @epic:7 fraud analytics workspace", () => {
       `Showing ${String(cut.shown)} of ${String(cut.total)} injury types.`,
     );
 
+    const injuryKeys = async (): Promise<string[]> =>
+      byTestId(page, "fraud-rate-injury-row").evaluateAll((rows) =>
+        rows.map((row) => row.getAttribute("data-row-key") ?? ""),
+      );
+    const before = await injuryKeys();
+
     // Changing the control issues a *request*; the rows that come back are the
     // server's. Alphabetical is the one permutation no plausible client-side
     // sort would produce from a rate ordering.
@@ -244,10 +258,21 @@ test.describe("@story:7-1 @epic:7 fraud analytics workspace", () => {
     await byTestId(page, "fraud-rate-injury-sort").selectOption("label_asc");
     await sorted;
 
-    const ordered = await byTestId(page, "fraud-rate-injury-row").evaluateAll((rows) =>
-      rows.map((row) => row.getAttribute("data-row-key") ?? ""),
-    );
+    const ordered = await injuryKeys();
     expect([...ordered].sort((a, b) => a.localeCompare(b))).toEqual(ordered);
+    // **And it is the same eight injury types**, which the ordering assertion
+    // above cannot see. A sort is a display preference; it must never change
+    // which rows exist. With the cut applied after the order — as it was — this
+    // table published a different eight of twenty under every option, worst of
+    // all under "Lowest rate", where a card headed "Flagged-claim rates" listed
+    // the eight injury types with no flagged claim in them and captioned it
+    // "Showing 8 of 20 injury types" with nothing naming which eight.
+    expect(new Set(ordered)).toEqual(new Set(before));
+    expect(ordered).toHaveLength(cut.shown);
+    // …and the caption still describes the same cut it did before the click.
+    await expect(byTestId(page, "fraud-rate-injury-truncation")).toHaveText(
+      `Showing ${String(cut.shown)} of ${String(cut.total)} injury types.`,
+    );
     // …and only that table moved: three independent controls, three parameters.
     expect(await topRateRow(page, "fraud-rate-employer")).toContain(
       expected.topEmployerRate.split(" ")[0],
@@ -279,10 +304,20 @@ test.describe("@story:7-1 @epic:7 fraud analytics workspace", () => {
       "data-status",
       "not_generated",
     );
-    await expect(byTestId(page, "fraud-red-flag-card-empty")).toBeVisible();
+    // **One** paragraph, about this portfolio. The shell's per-claim default —
+    // "Use Refresh above to generate this claim's insights" — names a control
+    // this page does not have, about a claim this card is not about; it rendered
+    // anyway, with a second paragraph beneath it saying something else.
+    const empty = byTestId(page, "fraud-red-flag-card-empty");
+    await expect(empty).toBeVisible();
+    await expect(empty).toContainText("No fraud narratives are cached for this portfolio yet");
+    await expect(empty).not.toContainText("Refresh");
+    await expect(byTestId(page, "fraud-red-flag-empty-note")).toHaveCount(0);
     // No provenance line, because there is no provenance.
     await expect(byTestId(page, "fraud-red-flag-card-generated")).toHaveCount(0);
-    await expect(byTestId(page, "fraud-red-flag-empty-note")).toContainText("of 100 claims");
+    // …and no chip: the payload carries no `outcome`, so an error-toned "Review
+    // indicated" over a cold cache was a verdict the browser invented.
+    await expect(page.getByText("Review indicated")).toHaveCount(0);
   });
 
   test("one generated claim puts its clauses on the card with a timestamp (AC 2, AD-10)", async ({

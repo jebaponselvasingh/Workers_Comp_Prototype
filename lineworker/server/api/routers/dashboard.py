@@ -1749,7 +1749,10 @@ class RateBreakdownResponse[RowT](ApiModel):
 
     `sort` echoes the order that was applied, so a stored response is
     self-describing and a control renders the server's answer rather than its own
-    last click — `appliedFilters`' reason on a different kind of input.
+    last click — `appliedFilters`' reason on a different kind of input, and read
+    the same way: `FraudRateTables.tsx` takes the `<select>`'s value from this
+    field once an answer is on screen, so a request that 422s or times out cannot
+    leave a control claiming an order the rows beside it are not in.
 
     `limit`, `totalCategories` and `truncated` are the truncation contract:
     `truncated` is decided here rather than left to a client comparing the other

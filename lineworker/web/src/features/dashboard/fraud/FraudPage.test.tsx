@@ -15,6 +15,7 @@ import {
   FRAUD_RATES,
   FRAUD_RATES_SORTED,
   FRAUD_RED_FLAGS,
+  FRAUD_RED_FLAGS_ALL_CLEAR,
   FRAUD_RED_FLAGS_EMPTY,
   stubApi,
 } from "@/test/api-mock";
@@ -150,7 +151,11 @@ test("a band with no claims keeps its segment rather than disappearing", async (
   // The server's zero-fill, which every other distribution on this dashboard
   // would have omitted. A donut that dropped zero-count segments draws two arcs
   // here, and a reader cannot tell that from a build that forgot the third.
-  renderPage({ fraudPanel: FRAUD_PANEL_EMPTY, drillClaims: DRILL_CLAIMS_EMPTY });
+  //
+  // Asserted on the **scoped** book rather than the empty one: a book with
+  // claims in it is where an empty band is a fact about the portfolio. An empty
+  // book has no claims to distribute at all and gets the sentence below instead.
+  renderPage({ fraudPanel: FRAUD_PANEL_SCOPED });
 
   await waitFor(() =>
     expect(screen.getByTestId("fraud-band-distribution-legend")).toBeInTheDocument(),
@@ -158,9 +163,26 @@ test("a band with no claims keeps its segment rather than disappearing", async (
 
   expect(rowsOf("fraud-band-distribution-legend-row")).toEqual([
     "Low:0",
-    "Medium (≥ 35):0",
-    "High (≥ 55):0",
+    "Medium (≥ 35):23",
+    "High (≥ 70):4",
   ]);
+});
+
+test("an empty book gets the donut's sentence, not three zeroes round a hole", async () => {
+  // The empty message was written for exactly this reader and never rendered:
+  // the server zero-fills the band vocabulary, so `items.length` is three for a
+  // portfolio with nothing in it, and the emptiness test never fired. What an
+  // analyst with no claims saw was a donut with no arcs over a legend of three
+  // "0" rows — which is what a *failed* chart looks like.
+  renderPage({ fraudPanel: FRAUD_PANEL_EMPTY, drillClaims: DRILL_CLAIMS_EMPTY });
+
+  await waitFor(() =>
+    expect(screen.getByTestId("fraud-band-distribution-empty")).toBeInTheDocument(),
+  );
+  expect(screen.getByTestId("fraud-band-distribution-empty")).toHaveTextContent(
+    "No claims in this portfolio yet.",
+  );
+  expect(screen.queryByTestId("fraud-band-distribution-legend")).not.toBeInTheDocument();
 });
 
 // --- the SIU pipeline (AC 1) --------------------------------------------
@@ -337,6 +359,85 @@ test("changing a sort control changes the request and the rendered order is the 
   expect(employers[0]).toBe("6");
 });
 
+test("sorting one table does not blank the other two", async () => {
+  // All three tables ride one query keyed on the whole sort set, so re-keying it
+  // used to drop `data` to `undefined` and put every table back into skeletons
+  // with `aria-busy` flipped — announcing a load for two tables nobody touched,
+  // to the reader least able to see that their rows had not moved.
+  renderPage({
+    fraudRates: (url) =>
+      url.includes("sort%5BinjuryType%5D=label_asc") || url.includes("sort[injuryType]=label_asc")
+        ? "pending"
+        : FRAUD_RATES,
+  });
+
+  await waitFor(() =>
+    expect(screen.getAllByTestId("fraud-rate-employer-row").length).toBeGreaterThan(0),
+  );
+
+  await userEvent.selectOptions(screen.getByTestId("fraud-rate-injury-sort"), "label_asc");
+
+  await waitFor(() =>
+    expect(screen.getByTestId("fraud-rate-injury")).toHaveAttribute("aria-busy", "true"),
+  );
+  // The untouched tables keep their rows and say nothing about being busy.
+  expect(screen.getByTestId("fraud-rate-employer")).toHaveAttribute("aria-busy", "false");
+  expect(screen.getByTestId("fraud-rate-handler")).toHaveAttribute("aria-busy", "false");
+  expect(screen.getAllByTestId("fraud-rate-employer-row").length).toBeGreaterThan(0);
+  expect(screen.queryAllByTestId("fraud-rate-row-skeleton")).toHaveLength(0);
+});
+
+test("the control renders the order the server says it applied, not the last click", async () => {
+  // `RateBreakdownResponse.sort` exists so a control can render the server's
+  // answer rather than its own last click, and it was structurally unreachable:
+  // the prop type did not carry the field and nothing read it. This is the
+  // property, made observable — the stub answers `sort: "rate_desc"` whatever is
+  // asked for, so a `<select>` echoing the response reads `rate_desc` and one
+  // rendering its own state reads `label_asc`. Which is the point: the order of
+  // these tables is the server's answer, including the part of it the reader
+  // sees.
+  renderPage({ fraudRates: FRAUD_RATES });
+
+  await waitFor(() =>
+    expect(screen.getAllByTestId("fraud-rate-injury-row").length).toBeGreaterThan(0),
+  );
+  await userEvent.selectOptions(screen.getByTestId("fraud-rate-injury-sort"), "label_asc");
+
+  await waitFor(() =>
+    expect(screen.getByTestId("fraud-rate-injury-sort")).toHaveValue("rate_desc"),
+  );
+  expect(screen.getByTestId("fraud-rate-injury")).toHaveAttribute("aria-busy", "false");
+});
+
+test("one rates outage names each table it took down", async () => {
+  // One failed request, three sections — so a screen reader reads three alerts
+  // back to back. Each has to say which table it is about; three copies of one
+  // sentence is a reader unable to tell an echo from a second failure.
+  // `PortfolioCharts` sets the precedent: six charts to one request, six alerts,
+  // six subjects.
+  renderPage({ fraudRates: NOT_FOUND });
+
+  await waitFor(() =>
+    expect(screen.getByTestId("fraud-rate-injury-error")).toBeInTheDocument(),
+  );
+  const alerts = screen.getAllByRole("alert").map((node) => node.textContent?.trim());
+  expect(new Set(alerts).size).toBe(alerts.length);
+  expect(screen.getByTestId("fraud-rate-employer-error")).toHaveTextContent(
+    "flagged-claim rates by employer",
+  );
+});
+
+test("a panel outage names each chart it took down", async () => {
+  // The same rule one query over: the two SIU bar charts were byte-identical.
+  renderPage({ fraudPanel: NOT_FOUND });
+
+  await waitFor(() =>
+    expect(screen.getByTestId("siu-pipeline-stage-error")).toBeInTheDocument(),
+  );
+  expect(screen.getByTestId("siu-pipeline-stage-error")).toHaveTextContent("by stage");
+  expect(screen.getByTestId("siu-pipeline-handler-error")).toHaveTextContent("by handler");
+});
+
 test("a rate row opens the claims behind it, on the identity and not the label", async () => {
   renderPage({ fraudRates: FRAUD_RATES });
   await waitFor(() =>
@@ -411,8 +512,16 @@ test("the red-flag card renders the ranking with its provenance", async () => {
   ).toEqual([
     "·Injury reported more than a week after the incident date — 3 claims",
     "·Treatment sought from a provider outside the employer network — 2 claims",
-    "·No witness named on the incident report — 1 claims",
+    // Singular, and it is the row that matters: exact-text grouping over
+    // model-authored prose makes a count of one the *most common* case, which
+    // the caption two lines down says outright — so "1 claims" was the first
+    // line an analyst read on the card arguing that one is ordinary.
+    "·No witness named on the incident report — 1 claim",
   ]);
+
+  // The chip labels the content, not the portfolio: this payload carries no
+  // `outcome`, so a verdict here would be the browser deciding one (AD-2).
+  expect(screen.getByText("Red-flag clauses")).toBeInTheDocument();
 
   // AD-10's whole rule: a narrative is rendered with the time it was generated
   // and the model that wrote it, never as claim data.
@@ -438,14 +547,47 @@ test("a cold cache renders a first-class empty card, not a spinner and not a gap
       "not_generated",
     ),
   );
-  expect(screen.getByTestId("fraud-red-flag-card-empty")).toBeInTheDocument();
-  expect(screen.getByTestId("fraud-red-flag-empty-note")).toHaveTextContent(
-    "0 of 100 claims",
-  );
+  // **One** paragraph, and it is about this portfolio. The shell's own default
+  // sentence — "Use Refresh above to generate this claim's insights" — names a
+  // control this page does not have, about a claim this card is not about; it
+  // used to render anyway, with a second paragraph underneath correcting it.
+  const empty = screen.getByTestId("fraud-red-flag-card-empty");
+  expect(empty).toHaveTextContent("No fraud narratives are cached for this portfolio yet");
+  expect(empty).not.toHaveTextContent(/Refresh/);
+  expect(empty).not.toHaveTextContent(/this claim/);
+  expect(screen.queryByTestId("fraud-red-flag-empty-note")).not.toBeInTheDocument();
+  // No chip either: the payload carries no `outcome`, and an error-toned
+  // "Review indicated" over a cold cache is the browser announcing a verdict it
+  // was never told (AD-2).
+  expect(screen.queryByText("Red-flag clauses")).not.toBeInTheDocument();
+  expect(screen.queryByText("Review indicated")).not.toBeInTheDocument();
   // No provenance line, because there is no provenance: a "Generated —" row
   // would read as a failed load rather than as an empty cache.
   expect(screen.queryByTestId("fraud-red-flag-card-generated")).not.toBeInTheDocument();
+  expect(screen.queryByTestId("fraud-red-flag-generated-empty")).not.toBeInTheDocument();
   expect(screen.queryByTestId("fraud-red-flags-skeleton")).not.toBeInTheDocument();
+});
+
+test("an analysed book with no red flags says so rather than 'not generated'", async () => {
+  // The second empty, and it is a *result*: every claim in the book has a cached
+  // narrative and every one of them came back low risk. `claimsWithInsight > 0`
+  // with an empty ranking used to read "Not generated yet", which is false — and
+  // on a fraud surface it is the more reassuring sentence being replaced by a
+  // wrong one.
+  renderPage({ fraudRedFlags: FRAUD_RED_FLAGS_ALL_CLEAR });
+
+  await waitFor(() =>
+    expect(screen.getByTestId("fraud-red-flag-card-body")).toHaveAttribute(
+      "data-status",
+      "not_generated",
+    ),
+  );
+  const empty = screen.getByTestId("fraud-red-flag-card-empty");
+  expect(empty).toHaveTextContent(
+    "100 of 100 claims in this portfolio have a cached fraud narrative",
+  );
+  expect(empty).toHaveTextContent("none of them raised a red flag");
+  expect(empty).not.toHaveTextContent(/Not generated yet/);
 });
 
 test("a clause is not a click target", async () => {

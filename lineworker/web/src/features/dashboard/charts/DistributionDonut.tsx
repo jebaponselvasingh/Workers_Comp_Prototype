@@ -115,7 +115,16 @@ export function DistributionDonut({
       height={CHART_HEIGHT.donut}
       isLoading={isLoading}
       isError={isError}
-      isEmpty={series !== undefined && series.items.length === 0}
+      // Two ways to be empty, and the second one only became reachable when a
+      // series arrived **zero-filled**. Every distribution before Story 7.1
+      // omitted a category the scope did not contain, so "no rows" and "no
+      // claims" were the same fact and `items.length` answered both. The fraud
+      // band vocabulary is a rule's rather than a column's, so an empty book
+      // arrives as three segments of zero — which drew a donut with no arcs in it
+      // over a legend of three "0" rows, and the sentence written for exactly
+      // that reader never rendered. The series total is the honest test: a chart
+      // of nothing is a chart of nothing however many keys it names.
+      isEmpty={series !== undefined && (series.items.length === 0 || series.total === 0)}
       errorMessage={errorMessage}
       emptyMessage={emptyMessage}
     >

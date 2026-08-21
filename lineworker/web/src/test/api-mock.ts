@@ -4833,6 +4833,34 @@ export const FRAUD_RED_FLAGS_EMPTY = {
   },
 };
 
+/**
+ * The **other** empty: a fully analysed book that raised nothing.
+ *
+ * The contrast fixture `FRAUD_RED_FLAGS_EMPTY` cannot provide, and the reason
+ * both exist. An empty `items` list has two causes that are not the same fact —
+ * no narrative has been generated for any claim in this portfolio, or every
+ * narrative that was generated came back low risk — and only the second is a
+ * *result*. A card that rendered one sentence for both told an analyst whose
+ * whole book had been analysed and cleared that nothing had been generated yet.
+ * Coverage is complete here and the generation range is real, so the two
+ * fixtures differ in every field that could carry the distinction.
+ */
+export const FRAUD_RED_FLAGS_ALL_CLEAR = {
+  status: 200,
+  body: {
+    items: [],
+    totalClauses: 0,
+    truncated: false,
+    limit: 10,
+    claimsWithInsight: 100,
+    claimsInScope: 100,
+    unreadable: 0,
+    generatedFrom: "2026-08-19T09:00:00Z",
+    generatedTo: "2026-08-20T09:00:00Z",
+    models: ["qwen3:8b"],
+  },
+};
+
 /** Install a fetch stub for `/api/*`; unmatched paths answer 404. */
 export function stubApi(routes: StubRoutes): void {
   // Story 6.4: each install starts a fresh recording, so a test never reads the

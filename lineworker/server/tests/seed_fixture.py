@@ -1359,7 +1359,7 @@ def _rate_bp(flagged: int, claims: int) -> int:
 def _rate_rows(
     tallies: dict[Any, tuple[str, int, int]], sort: str, limit: int | None
 ) -> list[dict[str, Any]]:
-    """One breakdown's rows, ordered and cut — the five orders restated.
+    """One breakdown's rows — **cut first, then ordered** — the five orders restated.
 
     `tallies` maps the drill key to `(label, flagged, claims)`. Every order ends
     in `(label, key)`, which is the half that matters: ties are reachable on real
@@ -1367,11 +1367,21 @@ def _rate_rows(
     so an order decided by the figure alone would leave the tail to whatever the
     dict happened to hold, and the oracle would disagree with a correct
     implementation for a reason neither of them could explain.
+
+    **The cut does not read `sort`**, and restating that here is the point of the
+    oracle rather than a detail of it: which eight injury types a capped breakdown
+    carries is a fact about the *population* (claim count descending, then label),
+    the same ranking the portfolio's injury-type chart cuts on, and a cut that
+    followed the caller's order would mean `sort=rate_asc` published the eight
+    buckets with no flagged claim in them under a heading about flagged rates.
+    `services/worklist/fraud.py::_breakdown` carries the argument in full.
     """
     rows = [
         (key, label, flagged, claims, _rate_bp(flagged, claims))
         for key, (label, flagged, claims) in tallies.items()
     ]
+    if limit is not None:
+        rows = sorted(rows, key=lambda row: (-row[3], row[1], str(row[0])))[:limit]
     keys: dict[str, Any] = {
         "rate_desc": lambda row: (-row[4], row[1], str(row[0])),
         "rate_asc": lambda row: (row[4], row[1], str(row[0])),
@@ -1381,10 +1391,9 @@ def _rate_rows(
     }
     if sort not in keys:
         raise AssertionError(f"no seeded oracle for sort {sort!r}")
-    ordered = sorted(rows, key=keys[sort])
     return [
         {"key": key, "label": label, "flagged": flagged, "claims": claims, "rateBp": rate}
-        for key, label, flagged, claims, rate in (ordered if limit is None else ordered[:limit])
+        for key, label, flagged, claims, rate in sorted(rows, key=keys[sort])
     ]
 
 

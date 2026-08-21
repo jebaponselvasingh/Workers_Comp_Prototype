@@ -101,6 +101,37 @@ test("an analyst sees exactly two workspace destinations", async () => {
     "Portfolio",
     "Fraud",
   ]);
+  expect(within(nav).getByTestId("nav-portfolio")).toHaveAttribute("aria-current", "page");
+  expect(within(nav).getByTestId("nav-fraud")).not.toHaveAttribute("aria-current");
+});
+
+test("the fraud route marks the fraud destination and not the portfolio one", async () => {
+  stubApi({ me: ANALYST });
+  renderAt("/dashboard/fraud");
+
+  const nav = await screen.findByRole("navigation", { name: /Analyst workspace/ });
+  expect(within(nav).getByTestId("nav-fraud")).toHaveAttribute("aria-current", "page");
+  // `/dashboard` is a prefix of `/dashboard/fraud`, and marking both would be a
+  // navigation that cannot say where you are.
+  expect(within(nav).getByTestId("nav-portfolio")).not.toHaveAttribute("aria-current");
+});
+
+test("a drill route still has exactly one destination marked current", async () => {
+  // The route the Fraud section's own charts and tables navigate to. The nav is
+  // rendered on it — `DashboardShell` wraps every dashboard child — and it used
+  // to mark **neither** entry: Portfolio matched exactly and Fraud matched by
+  // prefix, and `/dashboard/claims` is neither. An analyst who clicked a band
+  // segment landed on a page whose navigation had gone blank.
+  stubApi({ me: ANALYST });
+  renderAt("/dashboard/claims?filter[fraudBand]=high");
+
+  const nav = await screen.findByRole("navigation", { name: /Analyst workspace/ });
+  expect(
+    within(nav)
+      .getAllByRole("link")
+      .filter((link) => link.getAttribute("aria-current") === "page")
+      .map((link) => link.textContent),
+  ).toEqual(["Portfolio"]);
 });
 
 test("an analyst reaches the fraud workspace", async () => {

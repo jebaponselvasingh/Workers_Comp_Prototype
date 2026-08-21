@@ -599,8 +599,103 @@ def test_the_injury_cut_is_the_injury_charts_cut() -> None:
     "8 of 20 injury types" on the portfolio chart and an analyst reading a
     differently-cut list of the same dimension would have no way to reconcile
     them, and neither caption would be wrong.
+
+    **Equal integers are the weaker half of this property and were once the only
+    half asserted.** Two cuts at eight over one dimension can still be two
+    different eights, which is what the two tests below are for.
     """
     assert fraud_service.INJURY_TYPE_LIMIT == charts.INJURY_TYPE_LIMIT
+
+
+def _cut_injury_caseload() -> list[FraudClaim]:
+    """Twelve injury types where the count order and the rate order disagree.
+
+    Built so no sort can be mistaken for another. The four largest buckets carry
+    six claims each and **no flagged claim at all**, so they rank first by
+    population and last by rate; the eight small buckets carry one claim each, of
+    which four are flagged at 100%. A cut that read the caller's sort would keep
+    a different eight under every one of the five orders — and under `rate_desc`
+    it would keep exactly the rows the population ranking puts last.
+    """
+    caseload: list[FraudClaim] = []
+    for bucket in range(4):
+        caseload.extend(
+            claim(f"WC-big-{bucket}-{n}", injury_type=f"Bulk {bucket:02d}") for n in range(6)
+        )
+    for bucket in range(8):
+        caseload.append(
+            claim(
+                f"WC-thin-{bucket}",
+                injury_type=f"Thin {bucket:02d}",
+                fraud_flag=bucket % 2 == 0,
+                fraud_score=90 if bucket % 2 == 0 else 10,
+            )
+        )
+    return caseload
+
+
+def test_the_kept_injury_types_are_the_same_eight_under_every_sort(
+    computers: fraud_service._Computers,
+) -> None:
+    """A sort is a display preference and must never change which rows exist.
+
+    The failure this refuses is a fraud table that hides its own subject on a
+    click: with the cut applied *after* the order, `sort[injuryType]=rate_asc`
+    published the eight injury types with the **lowest** flagged rate — on the
+    caseload above, eight buckets with no flagged claim in any of them — under a
+    card headed "Flagged-claim rates" and captioned "Showing 8 of 20 injury
+    types", with nothing on screen naming which eight.
+
+    Asserted as a **set** rather than as a length, because two cuts at eight are
+    the thing that used to agree while the tables disagreed.
+    """
+    caseload = _cut_injury_caseload()
+
+    kept = {
+        sort: {
+            row.injury_type
+            for row in rates_of(
+                caseload, computers, FraudRateSorts(injury_type=sort)
+            ).by_injury_type.items
+        }
+        for sort in FraudRateSort
+    }
+
+    assert all(rows == kept[FraudRateSort.rate_desc] for rows in kept.values()), kept
+    # …and it is the *population's* eight, not the rate's: the four bulk buckets
+    # are on the table under every order, and four of the thin ones are not.
+    assert {f"Bulk {n:02d}" for n in range(4)} <= kept[FraudRateSort.rate_desc]
+    assert len(kept[FraudRateSort.rate_desc]) == fraud_service.INJURY_TYPE_LIMIT
+
+
+def test_the_kept_injury_types_are_the_injury_charts_eight(
+    computers: fraud_service._Computers,
+) -> None:
+    """The same eight *rows* the portfolio chart cuts to, on one caseload.
+
+    Two live folds compared to each other rather than to a written-out list —
+    `test_drill_through.py`'s reconciliation discipline. `charts._ranked` cuts the
+    injury-type chart by claim count descending then label ascending, and
+    `fraud._breakdown` now selects its kept set the same way, so a supervisor
+    reading "8 of 20 injury types" on one route and an analyst reading it on the
+    other are reading about the same eight injury types. Asserted under **every**
+    order, because the whole defect was that one of them silently was not.
+    """
+    caseload = _cut_injury_caseload()
+    charted = {
+        item.label
+        for item in charts._ranked(
+            {
+                injury: sum(1 for row in caseload if row.injury_type == injury)
+                for injury in {row.injury_type for row in caseload}
+            },
+            charts.INJURY_TYPE_LIMIT,
+        ).items
+    }
+
+    for sort in FraudRateSort:
+        rates = rates_of(caseload, computers, FraudRateSorts(injury_type=sort))
+        assert {row.injury_type for row in rates.by_injury_type.items} == charted, sort
 
 
 # --- the red-flag frequency fold ----------------------------------------
@@ -745,6 +840,27 @@ def test_a_low_risk_row_raises_the_coverage_and_contributes_no_clause() -> None:
     assert ranked.total_clauses == 1
 
 
+def test_the_coverage_pair_can_never_read_more_than_the_whole_book() -> None:
+    """ "5 of 4 claims have a cached narrative" is not a sentence a card may draw.
+
+    The two halves of the coverage figure come from two statements — the insight
+    join for the numerator, `count_claims_matching` for the denominator — under
+    READ COMMITTED, so a claim inserted between them lands in the first and not in
+    the second. The skew is constructed by hand here rather than raced against the
+    database, which is the whole reason the reconciliation lives in the fold: a
+    coverage above 100% on the surface whose subject *is* coverage is the one
+    number on this card that must not be able to lie in the flattering direction.
+    """
+    ranked = red_flags_of(
+        [red_flag_row(f"WC-{n}", "Late reporting of the injury") for n in range(3)],
+        claims_in_scope=2,
+        read_clauses=read_fraud_clauses,
+    )
+
+    assert ranked.claims_with_insight == 3
+    assert ranked.claims_in_scope == 3
+
+
 def test_an_unreadable_row_is_excluded_and_counted_rather_than_raised() -> None:
     """`api/routers/claims.py::_slot`'s tolerance, applied to a portfolio fold.
 
@@ -811,12 +927,59 @@ def test_clauses_differing_only_in_case_and_punctuation_are_one_row() -> None:
     ]
 
 
+def test_the_published_spelling_is_collapsed_even_when_the_wrapped_row_is_first() -> None:
+    """The display half is folded by the same first step the grouping key is.
+
+    The case the previous test cannot reach: it is the *wrapped* transcription
+    that arrives first by claim id, so a fold publishing the raw stored string
+    would put a newline and a double space on the wire. That renders identically
+    in HTML, which is exactly why it survived — and it is wrong in a CSV, a log
+    line, a copied cell and any assertion that reads the payload as text. Group on
+    the collapsed form and display the collapsed form; the only difference left
+    between the two is the case and the trailing stop.
+    """
+    ranked = red_flags_of(
+        [
+            red_flag_row("WC-1", "Late  reporting of the\ninjury"),
+            red_flag_row("WC-2", "Late reporting of the injury."),
+        ],
+        claims_in_scope=2,
+        read_clauses=read_fraud_clauses,
+    )
+
+    assert [(row.clause, row.claims) for row in ranked.items] == [
+        ("Late reporting of the injury", 2)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("written", "collapsed"),
+    [
+        ("Late  reporting of the\ninjury", "Late reporting of the injury"),
+        ("  Late reporting of the injury  ", "Late reporting of the injury"),
+        # Case and the trailing stop are the grouping key's business and are
+        # deliberately *not* the display form's: the row reads the way the model
+        # wrote it, minus the transcription of the line break.
+        ("LATE REPORTING OF THE INJURY.", "LATE REPORTING OF THE INJURY."),
+    ],
+)
+def test_the_display_fold_collapses_whitespace_and_nothing_else(
+    written: str, collapsed: str
+) -> None:
+    """`collapse_clause` is the display half of `normalise_clause`'s first step."""
+    assert fraud_service.collapse_clause(written) == collapsed
+
+
 @pytest.mark.parametrize(
     ("written", "normalised"),
     [
         ("Late reporting of the injury.", "late reporting of the injury"),
         ("  Late   reporting\tof the injury  ", "late reporting of the injury"),
         ("LATE REPORTING OF THE INJURY", "late reporting of the injury"),
+        # The space a model wrote *in front of* its full stop — the one thing the
+        # `strip` after `removesuffix` is there for, and the reason it is not the
+        # dead call it looks like.
+        ("Late reporting of the injury .", "late reporting of the injury"),
         # Only *one* trailing stop, and nothing else about the punctuation: an
         # ellipsis is not a full stop the model forgot, and a question mark is a
         # different clause.
@@ -1169,6 +1332,36 @@ async def test_the_rate_breakdowns_are_the_seeds_own_figures(seeded_db_url: str)
     ]
     assert payload["claimsInScope"] == expected["claimsInScope"]
     assert payload["flaggedClaims"] == expected["flaggedClaims"]
+
+
+@requires_db
+async def test_the_rate_tables_cut_the_seeds_injury_types_where_the_chart_does(
+    seeded_db_url: str,
+) -> None:
+    """The injury cut is the injury chart's, on the seeded book, through both routes.
+
+    Two live aggregates on one scope rather than either of them against a written
+    list — `test_drill_through.py`'s reconciliation discipline. The pure half
+    proves the rule over a caseload built to make the orders disagree; this proves
+    the two *endpoints* agree on the portfolio a reader actually has, under every
+    order rather than only the default, which is the request the defect was only
+    ever reachable through: a cut that followed the caller's sort published the
+    eight lowest-rate injury types under `sort[injuryType]=rate_asc` while the
+    caption still read "Showing 8 of 20".
+
+    The chart is read as the supervisor because `/dashboard/charts` is theirs and
+    `/dashboard/fraud/rates` is the analyst's; both personas here are `scope_all`,
+    so the two answers are over the same hundred claims.
+    """
+    charted = await get_json(seeded_db_url, *SUPERVISOR, "/dashboard/charts")
+    chart_types = {item["label"] for item in charted["byInjuryType"]["items"]}
+    assert charted["byInjuryType"]["truncated"] is True
+
+    for sort in sorted(FraudRateSort):
+        payload = await get_json(
+            seeded_db_url, *ANALYST, RATES, params={"sort[injuryType]": sort.value}
+        )
+        assert {row["injuryType"] for row in payload["byInjuryType"]["items"]} == chart_types, sort
 
 
 @requires_db

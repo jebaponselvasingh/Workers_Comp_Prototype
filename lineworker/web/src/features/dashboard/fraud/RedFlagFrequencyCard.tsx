@@ -35,11 +35,25 @@
  * (NFR-3). It is the seeded state and the ordinary one — nothing is generated for
  * a claim until a refresh reaches it — and this surface cannot start one:
  * `services/rag` owns the writes (AD-12), and the affordance that regenerates an
- * insight is on the claim, where the handler who edited it is standing.
+ * insight is on the claim, where the handler who edited it is standing. So the
+ * empty state is **one** sentence, supplied through `InsightShell`'s
+ * `emptyMessage` prop rather than left to that component's per-claim default:
+ * telling an analyst on a portfolio page to "use Refresh above to generate this
+ * claim's insights" names a control that is not there, about a claim this card is
+ * not about, and appending a correction underneath it made two paragraphs that
+ * disagreed.
+ *
+ * **And there are two empties, which is why the sentence is chosen rather than
+ * fixed.** "No narrative has been generated for any claim in this book" and "every
+ * narrative in this book came back low-risk" are different facts, and the second
+ * is a *result* — on a fraud surface, the reassuring one. Treating both as
+ * `not_generated` is still right, because `InsightShell`'s ready branch draws a
+ * provenance line and a provenance line over an empty list is a card claiming to
+ * have said something; conflating what they *say* was not.
  */
 import type { FraudRedFlags } from "@/api/dashboard";
 import { InsightBullets, InsightShell } from "@/features/claim-detail/insights/InsightShell";
-import { FRAUD_OUTCOME_LABEL, FRAUD_OUTCOME_TONE } from "@/features/claim-detail/insights/insightTone";
+import { FRAUD_OUTCOME_TONE } from "@/features/claim-detail/insights/insightTone";
 import { formatNotedAt } from "@/lib/clock";
 import { CHIP_CLASS } from "@/features/claim-detail/bills/statusTone";
 
@@ -52,8 +66,25 @@ import { CHIP_CLASS } from "@/features/claim-detail/bills/statusTone";
  */
 const KIND = "fraud_risk_indicators";
 
-/** The unknown-value glyph, `HandlerBenchmarkTable`'s. */
-const EM_DASH = "—";
+/**
+ * What the chip says, and why it is not `FRAUD_OUTCOME_LABEL.red_flags`.
+ *
+ * That map's words — "Review indicated" / "Low risk" — are the *outcome*
+ * vocabulary, and `outcome` is a per-claim discriminator two registered
+ * derivations decide on the server (`insightTone.ts` says so outright: nothing in
+ * the browser decides which variant a claim gets). `FraudRedFlagsResponse`
+ * carries no outcome at all — it is a fold over a cache — so a card stamping
+ * "Review indicated" on it was the browser originating a verdict about a hundred
+ * claims from a payload that makes no such claim, and stamping it on a cold cache
+ * and on a book whose every narrative came back low-risk alike. That is precisely
+ * the AD-2 failure the modules either side of this one spend paragraphs refusing.
+ *
+ * So the chip labels the **kind of content** the card holds, and it is drawn only
+ * when there is content of that kind to label. `FRAUD_OUTCOME_TONE.red_flags`
+ * still supplies the colour, because the tone really is the same vocabulary: an
+ * analyst who has read this tint on a case file should read it here.
+ */
+const CLAUSE_CHIP_LABEL = "Red-flag clauses";
 
 /**
  * The generation range as one phrase, or `null` when there is nothing to date.
@@ -72,6 +103,44 @@ const EM_DASH = "—";
 function generationRange(data: FraudRedFlags): string | null {
   if (data.generatedFrom === null || data.generatedTo === null) return null;
   return `${formatNotedAt(data.generatedFrom)} to ${formatNotedAt(data.generatedTo)}`;
+}
+
+/**
+ * "1 claim" / "3 claims" — the caption below says a count of one is ordinary.
+ *
+ * Which is the whole reason this is a function and not an interpolation: exact-
+ * text grouping over model-authored prose makes the singular the *most common*
+ * row on the card, so "Late reporting of the injury — 1 claims" was the line an
+ * analyst read first, on the surface whose caption argues that a count of one is
+ * exactly what to expect.
+ */
+function claimTally(claims: number): string {
+  return `${String(claims)} ${claims === 1 ? "claim" : "claims"}`;
+}
+
+/**
+ * The one sentence a not-generated card says, chosen between two different facts.
+ *
+ * A book with no cached narrative at all has nothing to report. A book where
+ * every narrative came back low-risk has been analysed and *found nothing* —
+ * which is a result, is the more useful sentence on a fraud surface, and reading
+ * "Not generated yet" over it was simply false. Both are the empty card, for
+ * `InsightShell`'s reason (a provenance line over an empty list is a card
+ * claiming to have said something); only what they say differs.
+ */
+function emptyMessageFor(data: FraudRedFlags): string {
+  // Named in both branches rather than only where a ranking exists: a row this
+  // build could not read is a fact about the cache, and an empty card that
+  // quietly excluded one would be the state most likely to be *mistaken* for
+  // "nothing to report".
+  const degraded =
+    data.unreadable === 0
+      ? ""
+      : ` ${String(data.unreadable)} cached narratives could not be read and are excluded.`;
+  if (data.claimsWithInsight === 0) {
+    return `No fraud narratives are cached for this portfolio yet. Indicators appear here once claims have been analysed — this view reads the cache and never generates it.${degraded}`;
+  }
+  return `${String(data.claimsWithInsight)} of ${String(data.claimsInScope)} claims in this portfolio have a cached fraud narrative, and none of them raised a red flag.${degraded}`;
 }
 
 export function RedFlagFrequencyCard({
@@ -152,14 +221,16 @@ export function RedFlagFrequencyCard({
         title={
           <span className="flex flex-wrap items-center gap-2">
             Cached fraud indicators
-            {/* The per-claim fraud card's own vocabulary, reused: an analyst who
-                has read "Review indicated" on a case file should read the same
-                two words here. It labels the *kind of content* this card holds
-                — clauses the model wrote when the derivations said there was
-                something to look at — and never a verdict this surface reached. */}
-            <span className={`${CHIP_CLASS} ${FRAUD_OUTCOME_TONE.red_flags}`}>
-              {FRAUD_OUTCOME_LABEL.red_flags}
-            </span>
+            {/* Drawn only when there are clauses to label, and labelling *them*
+                rather than the portfolio. See `CLAUSE_CHIP_LABEL`: this payload
+                carries no `outcome`, so a chip rendered unconditionally was the
+                browser announcing a verdict — on a cold cache, and on a book
+                whose every narrative came back low risk, in error tokens. */}
+            {status === "ready" && (
+              <span className={`${CHIP_CLASS} ${FRAUD_OUTCOME_TONE.red_flags}`}>
+                {CLAUSE_CHIP_LABEL}
+              </span>
+            )}
           </span>
         }
         testId="fraud-red-flag-card"
@@ -174,11 +245,16 @@ export function RedFlagFrequencyCard({
         // range: the oldest end is in the coverage caption below, where it can be
         // labelled as one end of a range rather than read as a single instant.
         generatedAt={data?.generatedTo ?? null}
+        // The whole of the empty state, in one sentence, chosen between the two
+        // facts an empty ranking can be. Passed in rather than defaulted, because
+        // the shell's own line names a Refresh button this page does not have and
+        // speaks about "this claim" on a card describing a hundred.
+        emptyMessage={data === undefined ? undefined : emptyMessageFor(data)}
       >
         {data !== undefined && (
           <>
             <InsightBullets
-              items={data.items.map((item) => `${item.clause} — ${String(item.claims)} claims`)}
+              items={data.items.map((item) => `${item.clause} — ${claimTally(item.claims)}`)}
               testId="fraud-red-flag-clause"
             />
             <p data-testid="fraud-red-flag-coverage" className="mt-[10px] text-[10px] text-faint">
@@ -202,33 +278,20 @@ export function RedFlagFrequencyCard({
         )}
       </InsightShell>
 
-      {/* The empty state's own caption, outside the shell because the shell's
-          not-generated branch is one sentence about a *claim* ("Use Refresh
-          above") and this surface has no Refresh: the affordance lives on the
-          claim, where the handler who edited it is standing. Rendered beside the
-          shell's own empty line rather than instead of it, so the card is still
-          the same card in both states. */}
-      {status === "not_generated" && data !== undefined && (
-        <p data-testid="fraud-red-flag-empty-note" className="mt-[6px] text-[10px] text-faint">
-          {data.claimsWithInsight} of {data.claimsInScope} claims in this
-          portfolio have a cached fraud narrative. Indicators appear here once
-          claims have been analysed — this view reads the cache and never
-          generates it.
-          {data.unreadable === 0
-            ? ""
-            : ` ${String(data.unreadable)} cached narratives could not be read and are excluded.`}
-        </p>
-      )}
+      {/* Nothing follows the shell, and the two paragraphs that used to are the
+          reason this comment exists.
 
-      {/* A deliberately visible statement of what this card is not, drawn even
-          when there is nothing to date. `EM_DASH` rather than an omission,
-          because "this content has no generation time" is a fact worth showing
-          on the one surface whose whole subject is cached output. */}
-      {status === "not_generated" && (
-        <p data-testid="fraud-red-flag-generated-empty" className="sr-only">
-          Generated {EM_DASH}
-        </p>
-      )}
+          One was a second coverage line correcting the shell's default sentence
+          instead of replacing it; `emptyMessage` above replaces it, so the empty
+          card is one paragraph saying one thing. The other was an `sr-only`
+          "Generated —" whose own comment called it "deliberately visible" —
+          prose and code disagreeing about the same element, which is a
+          reviewer's coin toss over which was meant. It is gone rather than
+          un-hidden: `InsightShell` already omits the provenance line on a
+          not-generated card *because* there is nothing to date, and a hidden row
+          reading "Generated —" announced the opposite of that decision to the
+          one reader who could not see it was hidden. What this card is and is
+          not is stated in the coverage caption, visibly, to everybody. */}
     </div>
   );
 }

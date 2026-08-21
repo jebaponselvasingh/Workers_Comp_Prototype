@@ -16,6 +16,11 @@
  * single most valuable thing this chart can say, and a two-segment donut is
  * indistinguishable from a build that forgot to draw the third.
  *
+ * The one exception is a book with **no claims at all**, where three zeroes say
+ * nothing a sentence does not say better: `DistributionDonut` renders the empty
+ * message when the series total is zero, which is a state the zero-fill made
+ * reachable and a row-count test could never see.
+ *
  * **The legend quotes the server's edges.** "High (≥ N)" reads `fraudBandHighMin`
  * off the response, exactly as the severity legend reads `highRiskSeverityMin`,
  * so superseding the rule document moves the segment and the caption together. A
@@ -87,8 +92,11 @@ export function FraudDistributionCard({
       label={bandLabels(data?.fraudBandHighMin, data?.fraudBandMedMin)}
       fill={FRAUD_BAND_FILL}
       centreCaption="Claims in this portfolio"
-      // Reachable only for a scope with no claims at all: the server zero-fills
-      // the vocabulary, so a book with claims always has three segments.
+      // Reached for a scope with no claims at all — and only reachable because
+      // `DistributionDonut` tests the series *total* rather than its row count.
+      // The zero-fill means an empty book still arrives as three segments, so a
+      // row-count test never fired here and the analyst got a donut with no arcs
+      // over three "0" legend rows instead of this sentence.
       emptyMessage="No claims in this portfolio yet."
       errorMessage="⚠ The fraud score distribution could not be loaded."
       isPending={isPending}

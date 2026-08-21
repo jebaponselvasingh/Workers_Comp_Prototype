@@ -3,9 +3,18 @@
  *
  * `HandlerBenchmarkTable`'s idiom three times over: a hand-written semantic
  * `<table>`, a `ColumnSpec` list that generates the head and the body together,
- * one `isLoading` predicate driving both `aria-busy` and the skeletons, and a
- * fixed `isError → empty → data` branch order with the alert *replacing* the
- * table rather than sitting above an empty one.
+ * and a fixed `isError → empty → data` branch order with the alert *replacing*
+ * the table rather than sitting above an empty one.
+ *
+ * **Two busy predicates rather than one, and the split is this surface's own.**
+ * `HandlerBenchmarkTable` has one query per table and can therefore let one
+ * boolean drive both `aria-busy` and the skeletons. Here three tables ride one
+ * query keyed on the whole sort set, so a control change re-keys it and every
+ * table is technically in flight — while two of the three are showing rows that
+ * have not moved and an order nobody asked about. So `isLoading` (no payload at
+ * all: skeletons *and* busy) is separated from `isRefreshing` (a new order
+ * outstanding for *this* table: busy, previous rows kept). `FraudPage` decides
+ * which table that is; `useFraudRates` keeps the previous answer on screen.
  *
  * **The sort control sets a server parameter and nothing else.** Changing it
  * changes the TanStack key, which issues a request, which returns rows the
@@ -15,6 +24,13 @@
  * `services/worklist/fraud.py`, over a population the browser holds only eight
  * rows of, so a client-side re-order would disagree with the server about the
  * tail of a truncated table and would have no way to know.
+ *
+ * **…and the control renders the server's echoed order, not its own last click.**
+ * `RateBreakdownResponse.sort` exists for exactly that, and it is the failing
+ * request that needs it: a 422 or a timeout otherwise leaves a `<select>`
+ * claiming an order the rows beside it are not in, with no way back except
+ * another click. The requested value stands in only while its answer is
+ * outstanding, which is the one moment the echo is knowingly stale.
  *
  * (`noDerivation.test.ts` is the real guard and reads code with comments
  * stripped. The spec's own verification is a plain grep over this folder, which
@@ -231,6 +247,7 @@ function SkeletonRows({ columns }: { columns: number }) {
 function RateTable<RowT>({
   testId,
   title,
+  errorSubject,
   columns,
   breakdown,
   sort,
@@ -238,11 +255,22 @@ function RateTable<RowT>({
   truncationCaption,
   emptyMessage,
   isPending,
+  isRefreshing,
   isError,
   rowKey,
 }: {
   testId: string;
   title: string;
+  /**
+   * What this table's failure alert names itself.
+   *
+   * Its own sentence rather than the heading interpolated, because the heading is
+   * a column-relative fragment ("By employer") and an alert has to stand alone:
+   * all three of these fire at once — one query, three sections — and a screen
+   * reader reads three of them in a row. `PortfolioCharts` sets the precedent, six
+   * charts to one `/dashboard/charts` request, each naming its own subject.
+   */
+  errorSubject: string;
   columns: readonly ColumnSpec<RowT>[];
   breakdown:
     | {
@@ -250,28 +278,38 @@ function RateTable<RowT>({
         totalCategories: number;
         truncated: boolean;
         limit: number | null;
+        /** The order the server applied — what the control renders. */
+        sort: FraudRateSort;
       }
     | undefined;
+  /** The order this table has been *asked* for; the echo above wins once it lands. */
   sort: FraudRateSort;
   onSort: (next: FraudRateSort) => void;
   truncationCaption: (shown: number, total: number) => string;
   emptyMessage: string;
   isPending: boolean;
+  /** A new order is outstanding for this table, and the previous rows are on screen. */
+  isRefreshing: boolean;
   isError: boolean;
   rowKey: (row: RowT) => string;
 }) {
-  // `HandlerBenchmarkTable`'s one-predicate ruling: the section says it is busy
-  // exactly when it is drawing placeholders, because the same boolean decides
-  // both — and it is the conjunction rather than either half, so neither a query
-  // status without a payload nor a payload without a status can put the two
-  // branches out of step.
+  // `HandlerBenchmarkTable`'s conjunction — a query status without a payload and
+  // a payload without a status cannot put the skeletons and the busy flag out of
+  // step — but driving the *skeletons* only. There is nothing to draw yet.
   const isLoading = isPending && breakdown === undefined;
+  // …and the busy flag is the wider of the two, because "waiting for this table's
+  // new order" is also a load, just one with readable rows under it.
+  const isBusy = isLoading || isRefreshing;
+  // The server's answer once there is one, and the requested value only while
+  // that answer is outstanding. On a failed request the echo is the order the
+  // rows on screen are actually in, which is the state this field exists for.
+  const shownSort = breakdown === undefined || isRefreshing ? sort : breakdown.sort;
 
   return (
     <section
       data-testid={testId}
       aria-labelledby={`${testId}-heading`}
-      aria-busy={isLoading}
+      aria-busy={isBusy}
       className="rounded-lg border border-border bg-surface p-3"
     >
       <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
@@ -284,7 +322,7 @@ function RateTable<RowT>({
         <select
           data-testid={`${testId}-sort`}
           aria-label={`Sort ${title}`}
-          value={sort}
+          value={shownSort}
           onChange={(event) => onSort(event.target.value as FraudRateSort)}
           className="rounded border border-border bg-surface px-[6px] py-px text-[10px] text-muted-text focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none"
         >
@@ -300,12 +338,18 @@ function RateTable<RowT>({
         // Inline, never a dialog (NFR-3), and in place of the table rather than
         // above an empty one: a headless table reads as "this scope has nothing
         // in it", which is a different and much quieter lie than a failure.
+        //
+        // `errorSubject` rather than `title`: one failed request raises all three
+        // of these at once, so a reader hears them back to back and each has to
+        // say which table it is about. Three sentences reading "By employer could
+        // not be loaded" are one sentence heard three times with the subject
+        // hidden in a fragment.
         <p
           role="alert"
           data-testid={`${testId}-error`}
           className="rounded-md border border-border bg-error-soft px-3 py-2 text-[11.5px] font-semibold text-error"
         >
-          ⚠ {title} could not be loaded. Try again in a moment.
+          ⚠ {errorSubject} could not be loaded. Try again in a moment.
         </p>
       ) : breakdown !== undefined && breakdown.items.length === 0 ? (
         <p data-testid={`${testId}-empty`} className="text-[11.5px] text-faint">
@@ -380,6 +424,7 @@ export function FraudRateTables({
   data,
   sorts,
   onSort,
+  pendingSort,
   isPending,
   isError,
 }: {
@@ -388,6 +433,15 @@ export function FraudRateTables({
   sorts: FraudRateSorts;
   /** Set one table's order. The page owns the state; the request follows it. */
   onSort: (table: keyof FraudRateSorts, next: FraudRateSort) => void;
+  /**
+   * Which table is waiting on a new order, if any.
+   *
+   * The three tables are one request, so the *query* cannot say which of them a
+   * re-fetch is for — only the control that was used can, and `FraudPage` is
+   * where that is remembered. `null` while nothing is outstanding, which is
+   * every state except the moment after a click.
+   */
+  pendingSort: keyof FraudRateSorts | null;
   isPending: boolean;
   isError: boolean;
 }) {
@@ -410,9 +464,11 @@ export function FraudRateTables({
         <RateTable
           testId="fraud-rate-injury"
           title="By injury type"
+          errorSubject="The flagged-claim rates by injury type"
           columns={INJURY_COLUMNS}
           breakdown={data?.byInjuryType}
           sort={sorts.injuryType}
+          isRefreshing={pendingSort === "injuryType"}
           onSort={(next) => onSort("injuryType", next)}
           truncationCaption={(shown, total) =>
             `Showing ${String(shown)} of ${String(total)} injury types.`
@@ -425,9 +481,11 @@ export function FraudRateTables({
         <RateTable
           testId="fraud-rate-employer"
           title="By employer"
+          errorSubject="The flagged-claim rates by employer"
           columns={EMPLOYER_COLUMNS}
           breakdown={data?.byEmployer}
           sort={sorts.employer}
+          isRefreshing={pendingSort === "employer"}
           onSort={(next) => onSort("employer", next)}
           // Uncapped on the server — the employers in a book are bounded by the
           // assignment rather than by the data — so this is unreachable and says
@@ -443,9 +501,11 @@ export function FraudRateTables({
         <RateTable
           testId="fraud-rate-handler"
           title="By handler"
+          errorSubject="The flagged-claim rates by handler"
           columns={HANDLER_COLUMNS}
           breakdown={data?.byHandler}
           sort={sorts.handler}
+          isRefreshing={pendingSort === "handler"}
           onSort={(next) => onSort("handler", next)}
           truncationCaption={(shown, total) =>
             `Showing ${String(shown)} of ${String(total)} handlers.`

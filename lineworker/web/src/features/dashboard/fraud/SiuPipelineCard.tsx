@@ -30,6 +30,13 @@
  * queue's SIU *referral* rule and the Fraud Flags card is the wider *review*
  * one — 9 seeded claims against 13. Both are on the same screen a card apart,
  * which is exactly the arrangement that makes the wrong facet look right.
+ *
+ * **The two charts' failure messages name their own grouping.** They share one
+ * `/dashboard/fraud` query, so one outage raises both alerts at once and a screen
+ * reader reads them back to back — and they were byte-identical, so what a reader
+ * heard was one sentence twice with no way to tell whether that was two failures
+ * or an echo. `PortfolioCharts` is the precedent and the rule: six charts to one
+ * request, six alerts, each naming its own subject.
  */
 import { useNavigate } from "react-router";
 
@@ -97,7 +104,7 @@ export function SiuPipelineCard({
         // chart already does.
         truncationCaption={() => ""}
         emptyMessage="No claim in this portfolio is under SIU review."
-        errorMessage="⚠ The SIU pipeline could not be loaded."
+        errorMessage="⚠ The SIU pipeline by stage could not be loaded."
         onSelect={(stage) =>
           void navigate(drillHref({ siuReview: "true", stage }))
         }
@@ -119,7 +126,7 @@ export function SiuPipelineCard({
         formatValue={asCount}
         truncationCaption={() => ""}
         emptyMessage="No handler in this portfolio carries an SIU review."
-        errorMessage="⚠ The SIU pipeline could not be loaded."
+        errorMessage="⚠ The SIU pipeline by handler could not be loaded."
         onSelect={(handlerId) =>
           void navigate(drillHref({ siuReview: "true", handlerId }))
         }

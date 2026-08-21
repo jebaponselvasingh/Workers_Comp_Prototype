@@ -129,6 +129,16 @@ FRAUD_ANALYTICS_ROLES: Final[frozenset[UserRole]] = frozenset({UserRole.analyst}
 #: differently-cut list of the same dimension one route over would have no way to
 #: reconcile them, and neither caption would be wrong.
 #:
+#: Matching the *number* is only half of that, and the half that was wrong first.
+#: A cut applied after the caller's sort makes the eight kept rows a function of
+#: a display preference: `sort[injuryType]=rate_asc` would have kept the eight
+#: injury types with the **lowest** flagged rate — eight buckets with no flagged
+#: claim at all — under a heading reading "Flagged-claim rates" and a caption
+#: reading "Showing 8 of 20 injury types", with nothing on screen to say which
+#: eight. `_breakdown` therefore selects the kept set by the *population*
+#: ranking `charts._ranked` uses (claim count descending, then label ascending)
+#: and orders only what survives; see its docstring for the rule in full.
+#:
 #: Restated rather than imported for `rules.CURSOR_PAGE_CEILING`'s reason — the
 #: duplication is made safe by a test rather than by a comment, and
 #: `tests/test_fraud_analytics.py::test_the_injury_cut_is_the_injury_charts_cut`
@@ -692,9 +702,14 @@ class RateBreakdown[RowT]:
     rows on the full portfolio.
 
     `sort` echoes the order that was applied. It rides along so a stored or
-    forwarded response is self-describing and so the UI's control can render the
+    forwarded response is self-describing and so the UI's control renders the
     server's answer rather than its own last click — the same reason
-    `DrillClaims.applied_filters` echoes the facets.
+    `DrillClaims.applied_filters` echoes the facets, and it is read: the
+    `<select>` in `web/src/features/dashboard/fraud/FraudRateTables.tsx` takes its
+    value from this field once an answer is on screen. The state that argument was
+    written for is the failing one — a request that 422s or times out leaves a
+    control claiming an order the rows beside it are not in, and a control that
+    renders its own last click has no way back from that.
 
     `limit`, `total_categories` and `truncated` are `Distribution`'s truncation
     contract, restated on a list that is not a distribution: no cut is silent, and
@@ -733,7 +748,11 @@ class FraudRates:
 
 
 def _ordered(tallies: Sequence[_Tally], sort: FraudRateSort) -> list[_Tally]:
-    """The rows in the caller's order — **a total order, whichever one it is**.
+    """The rows it is handed, in the caller's order — **a total order, whichever one**.
+
+    Called by `_breakdown` on the rows that survived the cut rather than on the
+    whole tally set, which is that function's recorded rule: this decides how a
+    table reads and never which rows are on it.
 
     Every branch ends in `(…, label, key)`, and that is the load-bearing part
     rather than the sort key in front of it. `_ranked`'s recorded argument applies
@@ -766,27 +785,68 @@ def _ordered(tallies: Sequence[_Tally], sort: FraudRateSort) -> list[_Tally]:
             return sorted(tallies, key=lambda row: (row.label, row.key))
 
 
+def _population_ranked(tallies: Sequence[_Tally]) -> list[_Tally]:
+    """Which rows a capped breakdown keeps — claim count descending, then label.
+
+    **`charts._ranked`'s ranking, restated over this module's row shape**, and
+    restated deliberately unchanged: the injury-type chart on the portfolio
+    dashboard and the injury-type rate table in this workspace cut the same
+    dimension at the same eight, so they have to cut at the same eight *rows* and
+    not merely at the same number. `tests/test_fraud_analytics.py::
+    test_the_injury_cut_is_the_injury_charts_cut` pins the limit and
+    `test_the_kept_injury_types_are_the_charts_eight_whatever_the_sort` pins the
+    set.
+
+    The tie-break is total for `_ranked`'s recorded reason — on the seeded
+    portfolio the injury types ranked seventh through eleventh all count five, so
+    the top-8 cut lands *inside* a tie — with the key behind the label because two
+    id-keyed dimensions may share a display name. The key is never reached for
+    injury type, where the key is the label, which is the only dimension this
+    function is called for today.
+    """
+    return sorted(tallies, key=lambda row: (-row.claims, row.label, row.key))
+
+
 def _breakdown[RowT](
     tallies: Sequence[_Tally],
     sort: FraudRateSort,
     limit: int | None,
     row_of: Callable[[_Tally], RowT],
 ) -> RateBreakdown[RowT]:
-    """Order, cut, and shape one breakdown. The three tables' one implementation.
+    """Cut, then order, then shape one breakdown. The three tables' one implementation.
+
+    **The two steps are in that order on purpose, and the reverse is a table that
+    hides data on a click.** The cut decides *which rows exist* and the sort
+    decides *how they read*; letting one control do both means a display
+    preference silently changes the population. Concretely: with the sort applied
+    first, `sort[injuryType]=rate_asc` returns the eight injury types with the
+    lowest flagged rate — typically eight buckets carrying no flagged claim at all
+    — under a card headed "Flagged-claim rates", captioned "Showing 8 of 20
+    injury types", with the twelve types carrying the actual concentration gone
+    and nothing on screen saying which eight are on it. `label_asc` returns the
+    alphabetically first eight, for the same reason and with the same silence.
+
+    So the kept set comes from `_population_ranked`, a fixed ranking that does not
+    read `sort` at all, and the caller's order is applied to what survives. The
+    published `truncated` / `total_categories` / `limit` semantics are unchanged:
+    they describe the whole tally set, which is what makes the caption true under
+    every order.
 
     `limit=None` is a breakdown that is never cut — the employer and handler
     tables — and publishes `truncated: False` and `limit: null`. `None` rather
     than a large sentinel, `Distribution.limit`'s ruling: "this list is never cut"
     is a different fact from "cut at a thousand", and a caption quoting a sentinel
-    would be quoting a number nobody chose.
+    would be quoting a number nobody chose. An uncapped breakdown skips the
+    population ranking entirely rather than ranking and slicing at `len`, because
+    there is no tail to decide and a ranking nobody cuts on is a sort nobody asked
+    for.
 
     `row_of` maps an ordered tally into the published row type. It is the one
     thing the three tables do differently, which is why it is the one thing passed
     in.
     """
-    ordered = _ordered(tallies, sort)
-    kept = ordered if limit is None else ordered[:limit]
-    rows: tuple[RowT, ...] = tuple(row_of(tally) for tally in kept)
+    kept = list(tallies) if limit is None else _population_ranked(tallies)[:limit]
+    rows: tuple[RowT, ...] = tuple(row_of(tally) for tally in _ordered(kept, sort))
     return RateBreakdown(
         items=rows,
         total_categories=len(tallies),
@@ -941,12 +1001,18 @@ class RedFlagClause:
     across the book. That is the difference between a frequency view and a word
     count, and it is the only counting rule on this payload.
 
-    `clause` is the **first-seen original spelling**, in the caller's claim-id
-    order. Two claims whose clauses differ only in case or in a trailing full stop
-    are one row, and the row reads the way the first of them wrote it — because
-    displaying the normalised form would put a casefolded sentence on screen and
-    make the view look like it had been generated by the fold rather than by the
-    model.
+    `clause` is the **first-seen spelling, whitespace-collapsed**, in the caller's
+    claim-id order. Two claims whose clauses differ only in case or in a trailing
+    full stop are one row, and the row reads the way the first of them wrote it —
+    because displaying the *normalised* form would put a casefolded sentence on
+    screen and make the view look like it had been generated by the fold rather
+    than by the model.
+
+    Collapsed rather than raw, which is the one difference between what is
+    displayed and what the model literally stored: a clause the model wrapped
+    across two lines would otherwise be published with the newline and the double
+    space in it, which renders identically in HTML and wrongly everywhere else.
+    `collapse_clause` carries the argument.
     """
 
     clause: str
@@ -999,18 +1065,48 @@ class FraudRedFlags:
     models: tuple[str, ...]
 
 
+def collapse_clause(clause: str) -> str:
+    """One clause as it is **displayed**: internal whitespace collapsed, nothing else.
+
+    Split out from `normalise_clause` so the published spelling and the grouping
+    key are folded by the *same* first step rather than by two spellings of it.
+    The asymmetry that made this its own function is worth naming: grouping on
+    the collapsed text while displaying the raw text means a model that wrapped a
+    line writes `"Late  reporting of the\\nnjury"` into the ranking whenever that
+    claim happens to sort first by `claim_id` — harmless in HTML, which collapses
+    it back, and wrong in a CSV, a log line, a test assertion or anything else
+    that reads the payload as text. So both halves collapse, and the *only*
+    difference between what is grouped and what is shown is the case and the
+    trailing full stop that `normalise_clause` also folds.
+
+    Whitespace collapsing rather than trimming: `str.split()` with no argument
+    splits on runs of any whitespace and drops the leading and trailing runs, so
+    one expression handles the wrapped line, the double space and the stray
+    indent a prompt template left in front of a clause.
+    """
+    return " ".join(clause.split())
+
+
 def normalise_clause(clause: str) -> str:
     """The grouping key for one clause: whitespace collapsed, no full stop, casefolded.
 
     Three normalisations and **no more**, each chosen because it is a difference in
     *transcription* rather than in meaning:
 
-    - internal whitespace collapsed, because a model that wrapped a line and one
-      that did not wrote the same clause;
+    - internal whitespace collapsed — `collapse_clause`, which is also what the
+      published spelling goes through — because a model that wrapped a line and
+      one that did not wrote the same clause;
     - a single trailing full stop removed, because a list item punctuated as a
       sentence and one punctuated as a fragment are the same item;
     - `casefold` rather than `lower`, because it is the Unicode-correct fold and
       the clauses are free prose that may not be ASCII.
+
+    The `strip` sits **after** `removesuffix` rather than before it, and it is
+    not the no-op it looks like: `collapse_clause` has already removed the outer
+    whitespace, so the only thing left for it to take is the space a model wrote
+    *in front of* its full stop — `"… on the incident report ."` — which is the
+    same transcription difference as the full stop itself and folds with it.
+    Before `removesuffix` it really would be dead.
 
     What is deliberately **not** here is anything that would make two differently
     *worded* clauses equal: no stemming, no stop-word removal, no synonym table,
@@ -1023,8 +1119,7 @@ def normalise_clause(clause: str) -> str:
     asserts against it, and because the one thing a reader of this view has to be
     able to check is exactly which differences were folded away.
     """
-    collapsed = " ".join(clause.split())
-    return collapsed.removesuffix(".").strip().casefold()
+    return collapse_clause(clause).removesuffix(".").strip().casefold()
 
 
 @dataclass(frozen=True)
@@ -1080,6 +1175,19 @@ def red_flags_of(
     Order is the caller's, which is `Claim.claim_id`, which is what makes
     "first-seen spelling" a property of the data rather than of the database's
     mood.
+
+    **The published coverage pair is reconciled here, and it has to be**, because
+    its two halves come from two statements. The wrapper counts the claims with a
+    fraud narrative from the insight join and the claims in scope from a separate
+    `count_claims_matching`, both under READ COMMITTED, so a claim inserted
+    between them lands in the numerator and not in the denominator — and the card
+    then reads "5 of 4 claims in this portfolio have a cached fraud narrative",
+    which is a coverage above 100% on the one surface whose whole subject is how
+    much of the book has been analysed. Taking the larger of the two as the
+    denominator is the smallest fix that keeps the pair readable as a sentence: it
+    admits the race in the direction that under-states coverage rather than
+    over-stating it, and it is decided in the fold so a test can construct the
+    skew by hand rather than having to win a race against the database.
     """
     #: normalised clause -> (display spelling, the claims that named it).
     #:
@@ -1110,10 +1218,17 @@ def red_flags_of(
             # `setdefault` rather than a `get`/assign pair, so the display
             # spelling is fixed by the first arrival and can never be replaced by
             # a later one — which is the whole of "first-seen spelling" as a
-            # property rather than as a convention.
-            _display, claim_ids = seen.setdefault(key := normalise_clause(clause), (clause, set()))
-            del key, _display
-            claim_ids.add(row.claim_id)
+            # property rather than as a convention. The whole entry is bound and
+            # the claim id added through it, rather than unpacking a display
+            # spelling nothing here reads and then deleting the name: a value the
+            # next line has to discard is a name a reader has to account for.
+            #
+            # `collapse_clause` on the display half, `normalise_clause` on the
+            # key: the two differ only by the case and the trailing full stop, so
+            # a wrapped line is never published with its newline in it. See
+            # `collapse_clause` for why the asymmetry mattered.
+            entry = seen.setdefault(normalise_clause(clause), (collapse_clause(clause), set()))
+            entry[1].add(row.claim_id)
 
     #: Count descending, then the **normalised** clause ascending — `_ranked`'s
     #: ordering and its recorded reason. The normalised form is the tie-break
@@ -1130,7 +1245,9 @@ def red_flags_of(
         truncated=len(ranked) > RED_FLAG_LIMIT,
         limit=RED_FLAG_LIMIT,
         claims_with_insight=claims_with_insight,
-        claims_in_scope=claims_in_scope,
+        # Never fewer than the numerator — the two counts are two statements and
+        # a claim can be inserted between them. See the docstring.
+        claims_in_scope=max(claims_in_scope, claims_with_insight),
         unreadable=unreadable,
         # `min`/`max` over the readable rows, and `None` for both on a cold
         # cache — see `FraudRedFlags`. Not `rows[0]`/`rows[-1]`: the read is
@@ -1247,7 +1364,10 @@ async def fraud_red_flags(
     `claim` would return one row per claim in the portfolio to answer a question
     about a handful of them, and a count is one aggregate statement.
     `test_the_red_flag_aggregate_takes_exactly_two_scoped_reads` pins the number
-    so it stays two rather than growing quietly.
+    so it stays two rather than growing quietly. Two statements under READ
+    COMMITTED can disagree about a claim inserted between them, which is why
+    `red_flags_of` reconciles the pair rather than publishing whatever the two
+    reads happened to see.
 
     **`read_clauses` is injected rather than imported**, which is the layering
     rule this package is arranged around: `services/` may never import `agents/`,
@@ -1302,6 +1422,7 @@ __all__ = [
     "InjuryTypeRate",
     "RateBreakdown",
     "RedFlagClause",
+    "collapse_clause",
     "flags_of",
     "fraud_panel",
     "fraud_rates",

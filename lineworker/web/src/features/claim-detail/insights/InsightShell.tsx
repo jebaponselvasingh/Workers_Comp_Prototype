@@ -24,11 +24,32 @@
  * true — nothing has been generated yet — beside the affordance that changes
  * that. A spinner would be a lie about work in progress and a missing card
  * would hide a whole section of the case file.
+ *
+ * **…and what that state *says* is the caller's, because the default sentence
+ * names a control.** "Use Refresh above to generate this claim's insights" is
+ * true on the four cards this shell was written for, all of which sit on a claim
+ * beside that button. Story 7.1's portfolio-wide fraud card has no Refresh — this
+ * surface reads the cache and `services/rag` owns the writes (AD-12) — and it is
+ * not about a claim, it is about a hundred of them; it rendered the default
+ * anyway, told an analyst to use an affordance that is not on the page, and then
+ * contradicted itself in a second paragraph underneath. So `emptyMessage` is an
+ * optional prop defaulting to the per-claim sentence: no existing caller changes,
+ * and a caller whose empty state is a different fact says so in one place instead
+ * of appending a correction to a wrong one.
  */
 import { formatNotedAt } from "@/lib/clock";
 
 import { CaseCard } from "../Cards";
 import { BULLET_CLASS } from "./insightTone";
+
+/**
+ * What a not-generated card says when its caller does not say otherwise.
+ *
+ * The four per-claim cards' sentence, and the default rather than a required
+ * prop so that adding the option changed none of them. It names the Refresh
+ * button because on a claim there *is* one, two components up.
+ */
+const CLAIM_EMPTY_MESSAGE = "Not generated yet. Use Refresh above to generate this claim's insights.";
 
 export function InsightShell({
   title,
@@ -37,6 +58,7 @@ export function InsightShell({
   kind,
   model,
   generatedAt,
+  emptyMessage = CLAIM_EMPTY_MESSAGE,
   children,
 }: {
   title: React.ReactNode;
@@ -46,6 +68,15 @@ export function InsightShell({
   kind: string;
   model: string | null;
   generatedAt: string | null;
+  /**
+   * The whole of the not-generated state, for a caller whose empty is a
+   * different fact from "this claim has not been analysed yet".
+   *
+   * One sentence rather than an addition to the default one: two paragraphs
+   * disagreeing about what the empty card means is the state this prop exists to
+   * remove, not a shape it should make easier.
+   */
+  emptyMessage?: string;
   /** The card's body — rendered only when the narrative exists. */
   children: React.ReactNode;
 }) {
@@ -54,7 +85,7 @@ export function InsightShell({
       <div data-testid={`${testId}-body`} data-kind={kind} data-status={status}>
         {status === "not_generated" ? (
           <p data-testid={`${testId}-empty`} className="text-[11.5px] text-faint">
-            Not generated yet. Use Refresh above to generate this claim&apos;s insights.
+            {emptyMessage}
           </p>
         ) : (
           children

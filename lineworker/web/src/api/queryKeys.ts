@@ -186,8 +186,20 @@ export const queryKeys = {
      * client picks which version of the panel it sees; the server answers for
      * whoever holds the session cookie (AD-7), as it does for every key in this
      * group. Switching personas clears the whole cache (`useLogout`).
+     *
+     * **The leaf segment is `panel`, and the panel does not sit on the prefix its
+     * two siblings hang off.** TanStack matches by prefix, so a key of
+     * `["dashboard","fraud"]` beside `["dashboard","fraud","rates",…]` and
+     * `["dashboard","fraud","red-flags"]` would make the obvious
+     * `invalidateQueries({ queryKey: queryKeys.dashboard.fraud })` — "refresh the
+     * fraud panel" — also drop every cached sort permutation *and* the
+     * `ai_insight` read, which the `fraudRedFlags` docstring below says outright
+     * changes on a different cadence. No caller does that today; the shape
+     * invited it, and a key whose blast radius is larger than its name is the
+     * kind of thing found after the invalidation, not before. `["dashboard",
+     * "fraud"]` is now a prefix nothing owns, which is what a *group* is.
      */
-    fraud: ["dashboard", "fraud"] as const,
+    fraud: ["dashboard", "fraud", "panel"] as const,
     /**
      * One reading of the three fraud-rate breakdowns, keyed by **the sort set
      * that produced it**.

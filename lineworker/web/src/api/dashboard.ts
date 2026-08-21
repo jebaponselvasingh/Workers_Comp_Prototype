@@ -12,7 +12,7 @@
  * known separately, which is what lets two card captions quote a rule number
  * without the SPA holding one.
  */
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useInfiniteQuery, useQuery } from "@tanstack/react-query";
 
 import {
   toFilterKey,
@@ -414,11 +414,29 @@ export function toFraudRateSortKey(sorts: FraudRateSorts): string {
  * **No `select`**, deliberately: a `select` over this payload is where a
  * re-order would live, and it would look like one line.
  *
+ * **`placeholderData: keepPreviousData`, and it is the one option in this module
+ * that is not `staleTime`.** The file's standing policy is minimal options and no
+ * transform, so an addition here needs a reason the policy does not already
+ * cover, and this one has it: all *three* tables ride this single query, keyed on
+ * the whole sort set. Without it, changing one table's order re-keys the query,
+ * drops `data` to `undefined`, and blanks the two tables nobody touched — three
+ * skeleton blocks and three `aria-busy` flips announcing a load for two tables
+ * whose rows have not changed and whose order has not been asked about. Keeping
+ * the previous data is what lets `FraudPage` mark exactly the table that is
+ * waiting, and it is *not* a transform: the rows on screen are still a server
+ * answer, just the previous one, and `isPlaceholderData` says so.
+ *
+ * That does not weaken "the browser sorts nothing": the placeholder is the old
+ * order because it is the old *response*, the awaited table says it is busy, and
+ * the `<select>` renders the server's echoed `sort` once the answer lands
+ * (`FraudRateTables.tsx`).
+ *
  * The same `staleTime` as its siblings. Nothing polls.
  */
 export function useFraudRates(sorts: FraudRateSorts) {
   return useQuery({
     queryKey: queryKeys.dashboard.fraudRates(toFraudRateSortKey(sorts)),
+    placeholderData: keepPreviousData,
     queryFn: async (): Promise<FraudRates> => {
       const { data } = await api.GET("/dashboard/fraud/rates", {
         params: {

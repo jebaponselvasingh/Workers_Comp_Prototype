@@ -166,9 +166,32 @@ export function FraudPage() {
    * the story that owns what belongs in this workspace's address bar.
    */
   const [sorts, setSorts] = useState<FraudRateSorts>(DEFAULT_FRAUD_RATE_SORTS);
+  /**
+   * Which table's order was asked about last — the one a re-fetch belongs to.
+   *
+   * All three tables ride one query keyed on the whole sort set, so a control
+   * change re-keys it and every table is technically "in flight". That is a fact
+   * about the request and not about the screen: two of the three were not touched
+   * and their rows have not moved. Remembering which control was used is what
+   * lets exactly one section flip `aria-busy` — the alternative announced a load
+   * for two tables nobody asked about, to the reader least able to see that
+   * nothing changed.
+   */
+  const [requestedSort, setRequestedSort] = useState<keyof FraudRateSorts | null>(null);
   const rates = useFraudRates(sorts);
+  /**
+   * …and it only counts while the *placeholder* is on screen.
+   *
+   * `isPlaceholderData` is true exactly while a new key's answer is outstanding
+   * and the previous one is being drawn, which is the state this flag describes.
+   * Gating on it rather than on `isFetching` alone keeps an ordinary background
+   * refetch — same key, same order — from re-marking whichever table was sorted
+   * last, minutes after the click.
+   */
+  const pendingSort = rates.isPlaceholderData && rates.isFetching ? requestedSort : null;
 
   function setSort(table: keyof FraudRateSorts, next: FraudRateSort) {
+    setRequestedSort(table);
     setSorts((current) => ({ ...current, [table]: next }));
   }
 
@@ -205,8 +228,16 @@ export function FraudPage() {
           them. Both are the server's counts of *different rules* over one column
           pair, which is why they are two cards rather than one with a caption:
           the review population is what the flagged list below holds, and the
-          referral population is what the pipeline shows. */}
-      <div className="mb-[10px] grid gap-[10px] sm:grid-cols-2 lg:grid-cols-4">
+          referral population is what the pipeline shows.
+
+          **Two columns, because two cards.** The portfolio dashboard's KPI row
+          declares four and renders ten, which is why the idiom was copied
+          wholesale; here it reserved four and rendered two, so on a wide viewport
+          the right half of the row sat empty — which reads as two cards that
+          failed to load, on a page whose failure state is *also* "the cards are
+          not there" (`panel.isError` below). The grid sizes to what it renders,
+          and grows when 7.2 gives it something to grow for. */}
+      <div className="mb-[10px] grid gap-[10px] sm:grid-cols-2">
         {panel.isError ? (
           // **Nothing at all**, not a skeleton and not a zeroed pair. A pulsing
           // placeholder under the distribution card's own `role="alert"` would be
@@ -270,6 +301,7 @@ export function FraudPage() {
         data={rates.data}
         sorts={sorts}
         onSort={setSort}
+        pendingSort={pendingSort}
         isPending={rates.isPending}
         isError={rates.isError}
       />

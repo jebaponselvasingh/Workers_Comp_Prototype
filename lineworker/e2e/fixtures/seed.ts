@@ -2965,8 +2965,23 @@ export function expectedFraudAnalyticsFor(persona: {
       handlerIdOf(a[0]) - handlerIdOf(b[0]),
   );
 
-  /** One rate table's top row under the default order — worst rate first. */
-  function topRate(keyOf: (claim: SeedClaim) => string, labelOf: (key: string) => string): string {
+  /**
+   * One rate table's top row under the default order — worst rate first.
+   *
+   * `limit` is the **population** cut, applied before the order and never after
+   * it: which rows a capped breakdown carries is decided by claim count
+   * descending then label ascending — the same ranking the portfolio's
+   * injury-type chart cuts on — so that a display preference cannot change which
+   * rows exist. Restating it here matters for exactly the seeded case this oracle
+   * is read for: the highest *rate* on the book is a one-claim bucket, which the
+   * population ranking puts nowhere near the top eight, so an oracle that cut
+   * after ordering would name a row the table does not have.
+   */
+  function topRate(
+    keyOf: (claim: SeedClaim) => string,
+    labelOf: (key: string) => string,
+    limit?: number,
+  ): string {
     const tallies = new Map<string, { flagged: number; claims: number }>();
     for (const claim of visible) {
       const key = keyOf(claim);
@@ -2975,7 +2990,18 @@ export function expectedFraudAnalyticsFor(persona: {
       tally.claims += 1;
       tallies.set(key, tally);
     }
-    const ordered = [...tallies.entries()].sort((a, b) => {
+    const kept =
+      limit === undefined
+        ? [...tallies.entries()]
+        : [...tallies.entries()]
+            .sort(
+              (a, b) =>
+                b[1].claims - a[1].claims ||
+                labelOf(a[0]).localeCompare(labelOf(b[0])) ||
+                a[0].localeCompare(b[0]),
+            )
+            .slice(0, limit);
+    const ordered = kept.sort((a, b) => {
       const rateA = rateBp(a[1].flagged, a[1].claims);
       const rateB = rateBp(b[1].flagged, b[1].claims);
       // Rate descending, then the *label* ascending, then the key — the server's
@@ -3009,9 +3035,12 @@ export function expectedFraudAnalyticsFor(persona: {
     siuHandlerRows: handlerRows.map(([name, count]) => `${name}: ${String(count)}`),
     flagged: String(visible.filter(fraudFlagged).length),
     siu: String(referred.length),
+    // The only capped breakdown, and therefore the only one whose top row is a
+    // row of the *cut* set rather than of the whole dimension.
     topInjuryRate: topRate(
       (claim) => claim.injury_type,
       (key) => key,
+      FRAUD_INJURY_TYPE_LIMIT,
     ),
     topEmployerRate: topRate(
       (claim) => claim.employer,

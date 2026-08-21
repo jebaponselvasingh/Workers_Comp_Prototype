@@ -5,7 +5,7 @@ created: '2026-08-21'
 baseline_revision: 'a921899504b118fcaff22c66db2c28d683d4d026'
 status: 'done'
 review_loop_iteration: 0
-followup_review_recommended: false
+followup_review_recommended: true # fifteen findings were patched into the diff, two of them high and both on the paths this story exists to make legible — a truncation whose contents moved with a display preference, so a fraud table dropped its twelve most concentrated injury types on a click and captioned the result truthfully, and a red "Review indicated" chip the browser drew from a payload carrying no verdict. The fixes reach past this story's own files into three shared surfaces an earlier story owns (`InsightShell`'s empty message, `DistributionDonut`'s emptiness rule, `WorkspaceNav`'s active partition), and one of them changed what Epic 5's charts consider empty. The strongest signal for a second pass is not the count but the oracle: `e2e/fixtures/seed.ts::topRate` carried the same sort-then-cut defect as the implementation and agreed with it by sharing it, so the independent check was not independent on the one property that was wrong. What a follow-up should read is the cut/sort split under a scoped book, `DistributionDonut`'s new zero-total branch against its pre-7.1 callers, and whether any other seed oracle mirrors an implementation it is supposed to check
 context:
   - '{project-root}/_bmad-output/implementation-artifacts/7-1-fraud-analytics-workspace.md'
   - '{project-root}/_bmad-output/implementation-artifacts/epic-7-context.md'
@@ -155,6 +155,30 @@ warnings: ['oversized']
 
 ## Review Triage Log
 
+### 2026-08-21 — Review pass
+- intent_gap: 0
+- bad_spec: 0
+- patch: 15: (high 2, medium 7, low 6)
+- defer: 1: (high 0, medium 1, low 0)
+- reject: 1
+- addressed_findings:
+  - `[high]` `[patch]` **The injury-type cut was applied after the caller's sort, so a display preference changed which rows existed.** `_breakdown` ordered the whole tally set and then sliced it, so `sort[injuryType]=rate_asc` published the eight injury types with the *lowest* flagged rate — on the seeded book, eight buckets whose combined `flagged` was **zero** — under a card headed "Flagged-claim rates" captioned "Showing 8 of 20 injury types", with the twelve types carrying the actual concentration gone and nothing on screen naming the eight that remained. `label_asc` published the alphabetically first eight for the same reason. Compounding it, `INJURY_TYPE_LIMIT`'s docstring argued the constant is 8 so that "two views of one dimension must not disagree about where the tail starts", while `charts._ranked` cuts by claim count and this cut by rate — different eights under identical captions even at both defaults. Fixed by splitting the two steps: `_population_ranked` (count desc, label, key — `charts._ranked`'s ranking over this module's row shape) decides which rows exist, and the caller's order is applied only to the survivors. The guard that let it ship — `test_the_injury_cut_is_the_injury_charts_cut` compared two integers — is kept as the weaker half beside set-equality tests across all five sort values and against the chart's own eight on one caseload, plus a DB-level test reconciling `/dashboard/charts` and `/dashboard/fraud/rates` on the seeded book under every sort. The e2e assertion, which checked only that rows were alphabetically ordered and so passed throughout, now pins the row-key set across the sort click.
+  - `[high]` `[patch]` **The red-flag card originated a verdict the payload never made.** `FRAUD_OUTCOME_LABEL.red_flags` ("Review indicated") rendered in error tokens unconditionally — on a cold cache, and on a book whose every narrative came back `low_risk` — while `FraudRedFlagsResponse` carries no `outcome` field at all and `insightTone.ts` states in terms that nothing there decides which variant a claim gets, because `outcome` is two registered derivations' answer. The chip now renders only when there is a clause to label, under its own `CLAUSE_CHIP_LABEL` naming the kind of content rather than asserting a portfolio verdict. This is a deliberate departure from the intent contract's "reuse `FRAUD_OUTCOME_LABEL`": the label map *is* the `outcome` vocabulary, so reusing it on a payload with no `outcome` was the AD-2 failure. The tone is still reused.
+  - `[medium]` `[patch]` **The cold-cache empty state named a control that does not exist, about "this claim".** `InsightShell`'s not-generated branch is hardcoded to "Use Refresh above to generate this claim's insights" — read on a portfolio card describing 100 claims, on a page with no Refresh affordance, in what the spec names as the ordinary state. `InsightShell` gained an optional `emptyMessage` defaulting to the per-claim sentence, so no existing caller moved.
+  - `[medium]` `[patch]` **A fully analysed book read "Not generated yet".** Coverage above zero with no clauses — every narrative came back low-risk — was conflated with nothing having been generated. The two empties are now distinct, and the second is a *result*: "N of M claims have a cached fraud narrative, and none of them raised a red flag."
+  - `[medium]` `[patch]` **The distribution's empty message was unreachable.** The server zero-fills the three bands, so `items.length` is never 0 and an analyst with an empty book got a blank donut over three "0" rows instead of the sentence written for them. `DistributionDonut` now also treats a zero series total as empty.
+  - `[medium]` `[patch]` **One sort click blanked all three rate tables**, announcing a load for two tables nobody touched, because all three ride one query keyed on the whole sorts object. Previous data is now kept across a sort change and only the pending table reports busy.
+  - `[medium]` `[patch]` **One failure raised two identical alerts on the pipeline and three on the rate tables**, so a screen-reader user heard the same sentence up to three times for one failed request. Each alert now names its own grouping or subject, following `PortfolioCharts`' precedent of six distinct subjects over one query.
+  - `[medium]` `[patch]` **The nav marked nothing current on the drill routes it sends the analyst to** — including `/dashboard/claims?filter[fraudBand]=high`, the destination of the Fraud section's own primary interaction — while the component's docstring promised "with the current one marked". `NavSpec.end` became `owns(pathname)`, a partition over the dashboard subtree, with `aria-current="page"` set explicitly.
+  - `[medium]` `[patch]` **`RateBreakdownResponse.sort` was dead on the wire** while two docstrings justified it as "a control renders the server's answer rather than its own last click" — the prop type did not carry the field and nothing read it. The control now renders the echoed value.
+  - `[low]` `[patch]` **"1 claims"** on the most common row of a card whose own caption two lines below says a count of one is ordinary.
+  - `[low]` `[patch]` **A comment reading "a deliberately visible statement" introduced an `sr-only` element.** Resolved by deleting the paragraph: `InsightShell` already omits the provenance line on a not-generated card, and a hidden row saying otherwise announced the opposite decision to the only reader who could not see it was hidden.
+  - `[low]` `[patch]` **The KPI grid reserved four columns and rendered two cards**, so a wide viewport read as two cards that had failed to load.
+  - `[low]` `[patch]` **The ranked view grouped on the collapsed clause but published the raw one**, so a model that wrapped a line would put a newline and a double space on the wire — harmless in HTML, wrong in an export. `collapse_clause` is now split from `normalise_clause` and the display spelling is collapsed. The `del key, _display` lint-appeasement in the same loop is gone. One half of this finding was **wrong and was not acted on**: `.strip()` is not dead, because it runs after `removesuffix(".")` and so is live for a clause ending " ." — the call is kept, documented, and pinned by a parametrised case.
+  - `[low]` `[patch]` **Coverage could be published above 100%**: numerator and denominator come from two statements under READ COMMITTED, so a claim inserted between them made `claimsWithInsight > claimsInScope`. The published pair is now self-consistent and the race is written down.
+  - `[low]` `[patch]` **The fraud query keys nested under each other's prefix**, so the obvious `invalidateQueries` on the panel key would also have dropped every cached sort permutation and the `ai_insight` read that the sibling's own docstring says changes on a different cadence. The panel has its own leaf.
+
+
 ## Design Notes
 
 **1. Why a band distribution rather than a decile histogram.** The seeded `fraud_score` runs 3–65, so a ten-bucket 0–100 histogram has four permanently empty top bins — and `charts.py:284-287` omits absent categories, which for a histogram loses the information the bin was there to carry. Bands dissolve the problem and buy three things a histogram does not: segments that name a population the drill list can filter on, a vocabulary the rules tier owns, and the severity-distribution idiom the console already reads. The cost is that `_banded` has to zero-fill where `_declared` omits, which is why it is a separate helper with the difference written down rather than a flag on the existing one.
@@ -299,3 +323,69 @@ which two are one parameter and two are different parameters carrying the same i
 red-flag view's second scoped read; the fifth endpoint to re-fold the whole book per request, which
 this surface multiplies by *sort clicks*; and the rate tables' sort state being component state
 rather than URL state, deliberately left for Story 7.3 to decide alongside its segmentation filters.
+
+---
+
+## Review pass (2026-08-21)
+
+Two adversarial reviewers — one general, one edge-case — read the diff without prior context. They
+raised 24 findings between them; deduplicated, that is 15 patched, 1 deferred, 1 rejected, and no
+`intent_gap` or `bad_spec`. What they cleared is worth recording beside what they found: the three
+fraud rules are genuinely three and are distinguished on synthetic projections the seed cannot tell
+apart, the role gate fires before both the claim read and the rule-document load on all three routes,
+every new read runs behind `employer_scope` with no caller-supplied scope anywhere in the three
+signatures, the v6 bump correctly invalidates outstanding v5 cursors, and no fraud cut-off appears as
+a literal in the service, the router or the SPA.
+
+### The two that mattered, and what they have in common
+
+Both high-severity findings were places where the code's own prose asserted a property the code did
+not deliver — which is the failure mode a codebase written in this style is most exposed to, because
+the docstring is what a reader checks instead of the behaviour.
+
+`_breakdown` ordered the whole tally set and then cut it, so `sort[injuryType]` decided which rows
+existed rather than how they read. On the seeded book, "Lowest rate" published eight injury types
+carrying **no flagged claim at all** under a heading reading "Flagged-claim rates" and a caption
+reading "Showing 8 of 20 injury types" — every word of which was true. Two paragraphs above it,
+`INJURY_TYPE_LIMIT`'s docstring argued the constant was 8 so that a supervisor's chart and an
+analyst's table would cut the same dimension at the same place; they never did, because the chart
+ranks by claim count and the table ranked by rate. The cut and the order are now two steps, and the
+set is pinned across every sort value and against the chart's own eight.
+
+The red-flag card drew "Review indicated" in error tokens unconditionally, from a payload with no
+`outcome` field, on a surface whose sibling module says in terms that only two registered derivations
+may decide that word. A book that had been fully analysed and came back clean showed a red badge over
+an empty card.
+
+### What the review changed about the *checks*, not just the code
+
+The sort-then-cut defect passed every gate: pytest, the convention battery, an e2e assertion written
+for exactly this control, and a test named `test_the_injury_cut_is_the_injury_charts_cut`. It passed
+because each check was weaker than its name. The e2e test asserted the rows were alphabetically
+ordered after a `label_asc` click — true of the wrong eight. The cut test compared two integers. And
+`e2e/fixtures/seed.ts::topRate`, the independent oracle, ordered the whole dimension and took the top
+row: it carried the same defect as the implementation and agreed with it by sharing it. All four are
+now stronger, and the last is the one worth remembering — an oracle that mirrors the code it checks
+is not a second opinion, and this file's whole convention of restating constants rather than importing
+them exists to prevent exactly that.
+
+### Verification after patching
+
+Re-run in full rather than incrementally, against a rebuilt `api` and `web` container:
+ruff (284 files) and `ruff format --check` clean; mypy strict clean over 270 files; **pytest 2871
+passed, 1 skipped** (up 9); `alembic check` reports no new operations; `generate:api` leaves
+`schema.d.ts` unchanged; web lint 0 errors, typecheck clean, **vitest 702 passed** (up 8); e2e
+typecheck clean; **Playwright 225 passed** on the full suite, with the four-story gate at 36 and
+exactly one `@smoke` in the new spec; both spec greps return no match.
+
+### Residual, stated rather than hidden
+
+`RateBreakdownResponse.sort` is echoed and now read, but TanStack does not serve placeholder data in
+the error state, so a failed request leaves no breakdown to echo and the control falls back to the
+requested value — acceptable because the table has no rows in that state either, and the alternative
+was rows under an error alert. Seven deferred entries stand: the absent HTTP-level scoped analyst,
+the fraud field-naming question (now four numbers under three spellings), `rulesVersion` naming two
+different documents on one dashboard, the red-flag view's second scoped read, the whole-book re-read
+per sort click, the sort state's absence from the URL, and the `60` the band grep deliberately does
+not guard.
+
