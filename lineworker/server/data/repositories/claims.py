@@ -355,14 +355,26 @@ async def select_drill_rows(
     db: AsyncSession,
     ctx: CallerContext,
 ) -> Sequence[sa.Row[Any]]:
-    """`select_queue_rows`, plus the four columns the drill filters read.
+    """`select_queue_rows`, plus the seven columns the drill filters read.
 
     Story 5.5's dashboard drill-through renders the *queue card* — the same
     thirteen columns, so a card opened from a KPI number looks like the card
     opened from a handler's queue — and narrows the caller's book by a whitelist
-    of facets, four of which name columns no queue card shows:
+    of facets, several of which name columns no queue card shows:
     `Claim.employer_id`, `Claim.handler_id`, `Claim.state` and
-    `Claim.osha_recordable`. Those four and nothing else.
+    `Claim.osha_recordable` from that story, and `Claim.doi`,
+    `Claim.disability` and `Employer.sector` from Story 7.2's trend drills.
+    Those seven and nothing else — `Claim.froi_date` is already in
+    `QUEUE_ROW_COLUMNS`, because a queue card shows the claim's age, and
+    `filter[fnolFrom]` reads the same column the age is derived from rather
+    than asking for a second copy of it.
+
+    **`Employer.sector` rides the join that is already here**, which is the
+    difference between a facet and a read: the employer is joined for its short
+    name on every queue card, so a sector filter costs a column in the SELECT
+    and not a query, a join or a widening of `employer_scope`. It is still a
+    *narrowing* applied after the scope predicate — naming a sector no employer
+    in the caller's book carries returns an empty page, never a row.
 
     **The two id columns rather than the two display names.** A drill-through
     filters on an employer and on a handler, and both arrive from a dashboard
@@ -380,10 +392,14 @@ async def select_drill_rows(
     would put back the seam `select_queue_rows` refuses.
 
     **No `predicate` parameter either, and here the argument is sharper than it
-    is there.** Half of this story's twelve facets read *derived* values —
-    `severityBand` is `derivations.risk`, `fraudFlagged` is the registered fraud
-    rule, `priority` is the worklist's whole population predicate — and the
-    ordering is Python arithmetic over a JDM parameter block. A SQL narrowing
+    is there.** Five of the twenty facets read *derived* values —
+    `severityBand` is `derivations.risk`, `fraudFlagged` and `fraudBand` are the
+    registered fraud rule and its bands, `siuReview` and `priority` are the
+    worklist's own predicates — and the ordering is Python arithmetic over a JDM
+    parameter block. (Twelve when Story 5.5 wrote this paragraph; 7.1 appended
+    two and 7.2 six, and the ratio moved because every one of those eight
+    narrows on a stored column. The argument did not: one derived facet is
+    enough to split the filter set across two tiers.) A SQL narrowing
     would therefore put some of the filter set here and the rest in
     `services/worklist`, which is the split AD-10 exists to prevent, and which
     would make "the list reconciles with the number that opened it" a property
@@ -422,6 +438,9 @@ async def select_drill_rows(
             Claim.handler_id,
             Claim.state,
             Claim.osha_recordable,
+            Claim.doi,
+            Claim.disability,
+            Employer.sector,
         )
         .select_from(Claim)
         .join(Employee, Claim.employee_id == Employee.id)

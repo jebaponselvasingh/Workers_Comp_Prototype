@@ -86,13 +86,16 @@ test("a role that does not belong on a shell is sent to its own", async () => {
   expect(await screen.findByRole("region", { name: /Claim workspace/ })).toBeInTheDocument();
 });
 
-test("an analyst sees exactly two workspace destinations", async () => {
+test("an analyst sees exactly three workspace destinations", async () => {
   // Epic 5's analyst read the supervisor's dashboard byte for byte. What this
   // asserts is the first thing that stopped being true: a navigation, with
-  // exactly two entries. **Exactly** two rather than "at least" — Trends,
-  // segmentation and financial decomposition are Stories 7.2-7.4, and the
+  // exactly the sections that are built. **Exactly** rather than "at least" —
+  // segmentation and financial decomposition are Stories 7.3-7.4, and the
   // instruction is to leave their slots unbuilt rather than stubbed-broken, so a
-  // third link appearing here is a promise the build cannot keep.
+  // fourth link appearing here is a promise the build cannot keep.
+  //
+  // Story 7.2 amended the expected list from two entries to three, which is the
+  // change this test was written to require rather than one it was surprised by.
   stubApi({ me: ANALYST });
   renderAt("/dashboard");
 
@@ -100,9 +103,11 @@ test("an analyst sees exactly two workspace destinations", async () => {
   expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual([
     "Portfolio",
     "Fraud",
+    "Trends",
   ]);
   expect(within(nav).getByTestId("nav-portfolio")).toHaveAttribute("aria-current", "page");
   expect(within(nav).getByTestId("nav-fraud")).not.toHaveAttribute("aria-current");
+  expect(within(nav).getByTestId("nav-trends")).not.toHaveAttribute("aria-current");
 });
 
 test("the fraud route marks the fraud destination and not the portfolio one", async () => {
@@ -114,6 +119,43 @@ test("the fraud route marks the fraud destination and not the portfolio one", as
   // `/dashboard` is a prefix of `/dashboard/fraud`, and marking both would be a
   // navigation that cannot say where you are.
   expect(within(nav).getByTestId("nav-portfolio")).not.toHaveAttribute("aria-current");
+});
+
+test("the trends route marks the trends destination and nothing else", async () => {
+  // The partition's other half, and the single most likely defect in Story 7.2's
+  // client slice: `owns` is a partition, and Portfolio's predicate is the
+  // *complement of every section*. Adding a Trends entry without subtracting its
+  // route from that complement leaves two entries marked current here — a
+  // navigation saying you are in two places at once, which is a quieter failure
+  // than the blank one 7.1 fixed.
+  stubApi({ me: ANALYST });
+  renderAt("/dashboard/trends");
+
+  const nav = await screen.findByRole("navigation", { name: /Analyst workspace/ });
+  expect(
+    within(nav)
+      .getAllByRole("link")
+      .filter((link) => link.getAttribute("aria-current") === "page")
+      .map((link) => link.textContent),
+  ).toEqual(["Trends"]);
+});
+
+test("an analyst reaches the trends workspace", async () => {
+  stubApi({ me: ANALYST });
+  renderAt("/dashboard/trends");
+
+  expect(await screen.findByRole("region", { name: /Trend analytics/ })).toBeInTheDocument();
+});
+
+test("a supervisor is bounced from the trends route to their own dashboard", async () => {
+  // The route table's guard, one route deeper — and the client half of the
+  // server's 403. A redirect rather than an error page: the server said this
+  // caller is a supervisor, so their own dashboard is the correct destination.
+  stubApi({ me: SUPERVISOR });
+  renderAt("/dashboard/trends");
+
+  expect(await screen.findByRole("region", { name: /Portfolio dashboard/ })).toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: /Trend analytics/ })).not.toBeInTheDocument();
 });
 
 test("a drill route still has exactly one destination marked current", async () => {

@@ -483,3 +483,129 @@ export function useFraudRedFlags() {
     staleTime: 30_000,
   });
 }
+
+export type PortfolioTrends = components["schemas"]["PortfolioTrendsResponse"];
+/** How wide one bucket is — a closed server enum; the UI owns the labels. */
+export type TrendGrain = components["schemas"]["TrendGrain"];
+/** Which date a claim is bucketed by: its FNOL date or its date of injury. */
+export type TrendAnchor = components["schemas"]["TrendAnchor"];
+/** The single dimension the five metrics may be split by, or `none`. */
+export type TrendCohort = components["schemas"]["TrendCohort"];
+/** The five series, in the order the server publishes and the section reads. */
+export type TrendMetric = components["schemas"]["TrendMetric"];
+/**
+ * One line on one chart.
+ *
+ * Read off `PortfolioTrends` rather than named directly, `CategoryDistribution`'s
+ * reason: naming `TrendSeriesResponse` here would put the code generator's
+ * convention in every consuming component's import list, and the two would then
+ * have to be renamed together.
+ */
+export type TrendSeries = PortfolioTrends["series"][number];
+/** One bucket of one series — `value` is `null`, never `0`, when absent. */
+export type TrendPoint = TrendSeries["points"][number];
+
+/**
+ * The three selectors the Trends header sets.
+ *
+ * **Three fields rather than one, and no date range.** The route also takes
+ * `from`/`to`, and this story deliberately does not send them: the window is
+ * `defaultBuckets` ending in the server's own `asOf` bucket, which is the answer
+ * `windowFrom`/`windowTo` publish and the caption quotes. A date picker is a
+ * control with its own refusals (`/problems/trend-range-too-wide`) and its own
+ * URL question, and Story 7.3 owns what belongs in this workspace's address bar
+ * — Story 7.1 deferred its own sort state there for the same reason. Adding the
+ * two fields here later is an addition to this interface and to
+ * `toTrendParamsKey`, and nothing else.
+ */
+export interface TrendParams {
+  grain: TrendGrain;
+  anchor: TrendAnchor;
+  cohort: TrendCohort;
+}
+
+/**
+ * The selectors the section starts on — the server's own defaults, restated.
+ *
+ * Restated rather than left unsent, `DEFAULT_FRAUD_RATE_SORTS`' ruling: an
+ * omitted parameter and an explicit `month` are the same request to the server
+ * and would be two different `paramsKey`s here. Sending all three always keeps
+ * one cache entry per *visible* selector set.
+ */
+export const DEFAULT_TREND_PARAMS: TrendParams = {
+  grain: "month",
+  anchor: "fnol",
+  cohort: "none",
+};
+
+/**
+ * A stable string identifying one selector set, for a TanStack Query key.
+ *
+ * Built from the same object the request is built from — `toFraudRateSortKey`'s
+ * arrangement — so the cache entry and the query string cannot describe
+ * different questions. Written out field by field rather than `JSON.stringify`,
+ * because that is key-insertion-ordered and two renders setting the same three
+ * values in a different order would produce two entries for one resource with
+ * nothing anywhere to say so.
+ */
+export function toTrendParamsKey(params: TrendParams): string {
+  return `${params.grain}|${params.anchor}|${params.cohort}`;
+}
+
+/**
+ * Server state for the analyst workspace's Trends section (FR-AN-2, Story 7.2).
+ *
+ * `useFraudPanel`'s shape and its emptiness, for the same reason: every bucket
+ * boundary, every point, every null, every zero-fill, the low-confidence
+ * verdict, the palette ordinal, both targets and both band edges are decided by
+ * `services/worklist/trends.py` over the caller's scope, and this hook exists to
+ * fetch them and nothing else.
+ *
+ * **No `select`**, deliberately, and this payload is a stronger invitation to
+ * one than the fraud panel was: the browser is handed five metrics × N cohorts ×
+ * M buckets, each point carrying a value *and* the claim count behind it, plus
+ * the ceiling that decided `lowConfidence` and the two targets a reference line
+ * is drawn at. A `select` is where "just fold the cohorts back together", "just
+ * count the nulls" or "just re-band the low-confidence points" would live, and
+ * each is one line. With no transform there is nothing for
+ * `noDerivation.test.ts` to have to read, and `api/dashboard.ts` stays out of
+ * its `ROOT_FILES`.
+ *
+ * **The selector set is in the key and in the request, from one source** —
+ * `useFraudRates`' rule applied to a grain rather than to an order. That is what
+ * makes "the browser buckets nothing" observable rather than merely claimed:
+ * changing a control changes the key, which issues a request, which returns
+ * points the server bucketed. A client-side re-grain would redraw the same claims
+ * and never touch the network.
+ *
+ * **`placeholderData: keepPreviousData`**, `useFraudRates`' second option and
+ * for its reason, one selector wider: all five charts ride this single query,
+ * keyed on the whole selector set. Without it, changing the grain re-keys the
+ * query, drops `data` to `undefined`, and blanks five charts at once — five
+ * skeletons and five `aria-busy` flips for a reader who asked one question. The
+ * previous charts stay on screen and only the section that was asked reports
+ * busy (AC 7), and that is *not* a transform: the lines on screen are still a
+ * server answer, just the previous one, and `isPlaceholderData` says so.
+ *
+ * The same `staleTime` as its six siblings, so the dashboard and the workspace
+ * go stale on one schedule. Nothing polls.
+ */
+export function useTrends(params: TrendParams) {
+  return useQuery({
+    queryKey: queryKeys.dashboard.trends(toTrendParamsKey(params)),
+    placeholderData: keepPreviousData,
+    queryFn: async (): Promise<PortfolioTrends> => {
+      const { data } = await api.GET("/dashboard/trends", {
+        params: {
+          query: {
+            grain: params.grain,
+            anchor: params.anchor,
+            cohort: params.cohort,
+          },
+        },
+      });
+      return data!;
+    },
+    staleTime: 30_000,
+  });
+}

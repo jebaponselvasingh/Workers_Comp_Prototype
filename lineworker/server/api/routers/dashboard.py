@@ -75,7 +75,7 @@ the argument.
 """
 
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Final
 
 from fastapi import APIRouter, Query, Response, status
@@ -86,10 +86,11 @@ from api.errors import PROBLEM_CONTENT_TYPE, ProblemDocument, ProblemException
 from api.routers.auth import UNAUTHENTICATED_RESPONSE
 from api.routers.stats import SlaMetricResponse, SlaStripResponse
 from api.schemas import ApiModel
-from data.models.enums import ReturnStatus, Stage
+from data.models.enums import Disability, ReturnStatus, Stage
 from rules.parameters import (
     handler_performance_for,
     thresholds_for,
+    trend_periods_for,
     weights_for,
     worklist_actions_for,
 )
@@ -104,7 +105,14 @@ from services.worklist import (
     HandlerRate,
     InjuryTypeRate,
     InvalidCursor,
+    PortfolioTrends,
     RateBreakdown,
+    TrendAnchor,
+    TrendCohort,
+    TrendGrain,
+    TrendMetric,
+    TrendRangeInvalid,
+    TrendRangeTooWide,
     drill_through_claims,
     fraud_panel,
     fraud_rates,
@@ -112,6 +120,7 @@ from services.worklist import (
     handler_benchmarks,
     portfolio_charts,
     portfolio_summary,
+    portfolio_trends,
     priority_claims,
     require_benchmarks_access,
     require_fraud_analytics_access,
@@ -1269,6 +1278,58 @@ async def drill_claims(  # noqa: PLR0913 - one parameter per published facet; se
             ),
         ),
     ] = None,
+    fnol_from: Annotated[
+        date | None,
+        Query(
+            alias="filter[fnolFrom]",
+            description=(
+                "Claims whose FNOL date is on or after this day. **Inclusive**, "
+                "which is the reading a trend bucket's own boundary publishes."
+            ),
+        ),
+    ] = None,
+    fnol_to: Annotated[
+        date | None,
+        Query(
+            alias="filter[fnolTo]",
+            description="Claims whose FNOL date is on or before this day. Inclusive.",
+        ),
+    ] = None,
+    doi_from: Annotated[
+        date | None,
+        Query(
+            alias="filter[doiFrom]",
+            description=(
+                "Claims whose date of injury is on or after this day. Inclusive, "
+                "and a different column from `filter[fnolFrom]` on purpose."
+            ),
+        ),
+    ] = None,
+    doi_to: Annotated[
+        date | None,
+        Query(
+            alias="filter[doiTo]",
+            description="Claims whose date of injury is on or before this day. Inclusive.",
+        ),
+    ] = None,
+    disability: Annotated[
+        Disability | None,
+        Query(
+            alias="filter[disability]",
+            description="The claim's disability type, as the trend cohort splits on it.",
+        ),
+    ] = None,
+    sector: Annotated[
+        str | None,
+        Query(
+            alias="filter[sector]",
+            description=(
+                "The employer's sector, matched as the exact stored string — no "
+                "trimming, case-folding or merging. An employer attribute, not "
+                "an industry rollup."
+            ),
+        ),
+    ] = None,
     cursor: Annotated[
         str | None,
         Query(description="An opaque `nextCursor` from a previous response."),
@@ -1276,9 +1337,9 @@ async def drill_claims(  # noqa: PLR0913 - one parameter per published facet; se
 ) -> DrillClaimsResponse:
     """The claims behind a KPI card, a chart segment, a handler row or a worklist.
 
-    ## Fifteen parameters, and not one of them is a scope
+    ## Twenty-one parameters, and not one of them is a scope
 
-    Fourteen facets and a cursor. Every facet is a *narrowing* applied after
+    Twenty facets and a cursor. Every facet is a *narrowing* applied after
     `employer_scope(ctx)` has already decided which rows exist, so
     `filter[employerId]` and `filter[handlerId]` intersect the caller's book and
     can never widen it: a scoped supervisor naming an employer outside hers gets
@@ -1307,8 +1368,28 @@ async def drill_claims(  # noqa: PLR0913 - one parameter per published facet; se
     This route intersects **independent facets**: a supervisor drills into High
     Risk, then narrows to one employer, then to litigated claims, and each is a
     separate dimension of the same set. That is what the architecture's list
-    convention spells with brackets, and it is why the fourteen arrive as
-    fourteen parameters rather than as one enum.
+    convention spells with brackets, and it is why the twenty arrive as twenty
+    parameters rather than as one enum.
+
+    ## Story 7.2 adds six facets and changes none
+
+    Four date bounds and two column equalities — `filter[fnolFrom]`,
+    `filter[fnolTo]`, `filter[doiFrom]`, `filter[doiTo]`, `filter[disability]`
+    and `filter[sector]` — which together are what makes a point on a trend chart
+    a click target. Both date bounds of a pair are **inclusive**, which is the
+    reading `/dashboard/trends` publishes its bucket boundaries under, so a
+    bucket's drill returns exactly the claims that point was folded from rather
+    than a list that is one day off at each end.
+
+    They are **appended**, never inserted, for the reason Story 7.1's two were:
+    `appliedFilters` is the chip row's order and it is read off `DrillFilters`'
+    field order, so inserting a date facet beside `stage` would silently
+    re-order the chips on every drill-through URL anybody has already shared.
+
+    The two anchors are two separate pairs over two separate columns because a
+    trend point knows which anchor produced it: a DOI point narrowed on the FNOL
+    column would open a plausible list of the wrong claims, which is this route's
+    founding failure mode with a date in it.
 
     ## Story 7.1 adds two facets and changes none
 
@@ -1366,7 +1447,7 @@ async def drill_claims(  # noqa: PLR0913 - one parameter per published facet; se
     Both blocks are loaded in the route and handed down, so the aggregate stays
     a composition of scope and parameters — `portfolio_summary`'s rule.
     `derivation_thresholds` decides the band on every row and the populations
-    behind five of the fourteen facets; `priority_weights` decides the ordering,
+    behind five of the twenty facets; `priority_weights` decides the ordering,
     the marker and the page size. Both are what the cursor is validated against,
     which is why they are resolved at today's date and never at the cursor's.
     """
@@ -1387,8 +1468,8 @@ async def drill_claims(  # noqa: PLR0913 - one parameter per published facet; se
     thresholds = await thresholds_for(db)
     weights = await weights_for(db)
     # Built field by field, like every response model in this file and for the
-    # same reason: the mapping from the route's twelve parameters to the
-    # service's twelve fields is the place a renamed facet should fail to
+    # same reason: the mapping from the route's twenty parameters to the
+    # service's twenty fields is the place a renamed facet should fail to
     # compile, and a `**locals()`-shaped shortcut is the place it silently
     # would not.
     filters = DrillFilters(
@@ -1406,6 +1487,12 @@ async def drill_claims(  # noqa: PLR0913 - one parameter per published facet; se
         priority=priority,
         fraud_band=fraud_band,
         siu_review=siu_review,
+        fnol_from=fnol_from,
+        fnol_to=fnol_to,
+        doi_from=doi_from,
+        doi_to=doi_to,
+        disability=disability,
+        sector=sector,
     )
     try:
         page = await drill_through_claims(db, ctx, thresholds, weights, filters, cursor=cursor)
@@ -2086,4 +2173,444 @@ async def fraud_red_flag_frequency(
         generated_from=ranked.generated_from,
         generated_to=ranked.generated_to,
         models=list(ranked.models),
+    )
+
+
+# --- Story 7.2: the analyst workspace's Trends section -------------------
+
+
+#: The two window refusals, as problem *types* rather than one shared 422.
+#:
+#: `FRAUD_ANALYTICS_FORBIDDEN_RESPONSE`'s argument applied to a validation
+#: failure: a client can act differently on each, so collapsing them into one
+#: description would describe neither. An inverted range is a bug in whatever
+#: built the URL and the fix is to swap two values; a too-wide one is a
+#: well-formed question this deployment declines to answer, and the fix is to
+#: narrow the window or widen the grain. The cap is named in the detail *and*
+#: published on every successful payload as `maxBuckets`, so a period control can
+#: refuse locally rather than learning the edge from a 422.
+TREND_RANGE_RESPONSE: dict[int | str, dict[str, object]] = {
+    422: {
+        "description": (
+            "The requested window cannot be served: `/problems/trend-range-invalid` "
+            "for a range that runs backwards, `/problems/trend-range-too-wide` for "
+            "one covering more buckets than `maxBuckets` allows (RFC 9457 problem "
+            "document). Decided from the parameters and the rules document alone, "
+            "so no claim is read to produce it."
+        ),
+        "content": {PROBLEM_CONTENT_TYPE: {"schema": ProblemDocument.model_json_schema()}},
+    }
+}
+
+
+def _trend_range_invalid(exc: TrendRangeInvalid) -> ProblemException:
+    """`TrendRangeInvalid` as this section's 422 problem document.
+
+    `Cache-Control: no-store` is restated in the exception for `_fraud_forbidden`'s
+    reason: raising abandons the injected `Response`, so the header set in the
+    route body is never sent. A 422 that quotes a caller's own dates is as
+    persona-agnostic as it gets, but the rule on this router is that *every*
+    answer from a scoped surface is uncacheable, and an exception is exactly where
+    that rule gets quietly dropped.
+    """
+    return ProblemException(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        title="Unprocessable Content",
+        detail=str(exc),
+        type_="/problems/trend-range-invalid",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def _trend_range_too_wide(exc: TrendRangeTooWide) -> ProblemException:
+    """`TrendRangeTooWide` as this section's 422 problem document.
+
+    A separate translator from the one above for the reason there are two problem
+    types at all — see `TREND_RANGE_RESPONSE`. One translator per refusal, each
+    raised from exactly one place, because two copies of a problem type string is
+    how the second one drifts.
+    """
+    return ProblemException(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        title="Unprocessable Content",
+        detail=str(exc),
+        type_="/problems/trend-range-too-wide",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+class TrendPointResponse(ApiModel):
+    """One bucket of one series: what it was, what it says, how much is behind it.
+
+    **`value` is `null`, never `0`, when there was nothing to average or rate**,
+    and that is the prohibition this whole section exists for (AC 3). Counts and
+    sums zero-fill because an empty period genuinely saw zero claims and paid zero
+    cents; a mean and a rate over an empty denominator are not zero, they are
+    absent, and a line drawn through zero would read as a real and excellent
+    result. `SlaMetricResponse` draws the same distinction with `null` + `no_data`
+    one route over, and this is that vocabulary inherited rather than a second
+    one.
+
+    `claimCount` travels beside every value including the null ones: a settlement
+    mean over two claims and one over forty are the same kind of number and not
+    the same kind of evidence. **It is the population of *this metric*, not of
+    the bucket** — `avgSettlementDays` is a mean over settled claims carrying a
+    duration and `rtwRateBp` a rate over settled claims, so a busy month in which
+    three claims settled publishes `claimCount: 3` on those two points and the
+    month's whole count on the other three. The bucket's own count is the
+    `volume` series' *value* on the same payload and is deliberately not repeated
+    here under a second name.
+
+    `lowConfidence` is the server's verdict, not a threshold for the browser to
+    apply — the ceiling is `trend_periods.lowConfidenceClaimMax` and a comparison
+    made in the SPA would be the one rule on this payload nobody could see change
+    (AD-8). It is `0 < claimCount <= ceiling` over that same per-metric count: a
+    bucket with **no** claims behind a figure is not low confidence, it is no
+    confidence, and its value is already `null`.
+
+    `partial` says the bucket had not finished when the window was cut — true of
+    the newest bucket of every ordinary window, since one ends in the period
+    `asOf` falls in. The point is a part period drawn at a whole period's width
+    and every metric on it is affected differently (a count and a sum are short,
+    an average age is dragged toward zero by claims days old), so the fact is
+    published and the card marks it rather than any figure being adjusted.
+
+    `bucketFrom` and `bucketTo` are inclusive and are what the drill-through's
+    date facets are filled from — a copy of the boundary the fold used, never a
+    boundary the browser re-derived from `bucketKey`.
+    """
+
+    bucket_key: str
+    bucket_label: str
+    bucket_from: date
+    bucket_to: date
+    value: int | None
+    claim_count: int
+    low_confidence: bool
+    partial: bool
+
+
+class TrendSeriesResponse(ApiModel):
+    """One line on one chart: which metric, which cohort, and what a caption needs.
+
+    **`points` is always the full window**, one entry per bucket in the window's
+    order, gaps included as `null` values. A series that skipped its empty buckets
+    would make two lines on one chart disagree about where March is.
+
+    **`seriesTotal` is what emptiness is decided on, never `points.length`.** A
+    zero-filled series has as many points as any other, so a length test can never
+    fire — the bug Story 7.1 shipped once and `DistributionDonut` now avoids by
+    testing its total. It is a *claim* count rather than a value total for all
+    five metrics, deliberately: "was there anything here to describe" is the same
+    question for a mean as for a sum, and a summed mean is not a number. It is the
+    sum of the points' `claimCount`s and is therefore **per metric** — a window
+    full of claims none of which settled empties the two SLA cards and no others,
+    which is the honest answer and not the same answer as an empty book.
+
+    `valueTotal` is the window total *of the metric* and is `null` for the three
+    that cannot be summed — `null` rather than zero for the same reason a point
+    is.
+
+    `noDataBuckets` is the card's footnote ("3 of 12 periods have no data"),
+    published rather than left to a client counting nulls, which is the arithmetic
+    AD-1 removes from the browser.
+
+    `metric` is a closed enum on the wire rather than a bare string, so the
+    generated client gets a union and an unknown metric fails to compile —
+    `RateBreakdownResponse.sort`'s arrangement, for its reason.
+
+    `cohortKey`, `cohortLabel` and `paletteSlot` are all `null` on an unsplit
+    series, so "is this a cohort?" is a field rather than an inference from the
+    request. **`paletteSlot` is an ordinal, not a colour**: the browser maps it
+    through the theme's categorical palette, and the slot is assigned by sorting
+    cohort values on their *wire key* so a cohort keeps its colour across all five
+    charts and across a refetch however its ranking moves. `cohortLabel` is `null`
+    for all three dimensions this story ships — the two enums' labels are the
+    SPA's (the Enums convention) and sector is free text where the stored value is
+    the label — and the client's rule is `label ?? key`, which is
+    `AppliedFilterResponse`'s split exactly.
+    """
+
+    metric: TrendMetric
+    cohort_key: str | None
+    cohort_label: str | None
+    palette_slot: int | None
+    points: list[TrendPointResponse]
+    series_total: int
+    value_total: int | None
+    no_data_buckets: int
+
+
+class PortfolioTrendsResponse(ApiModel):
+    """Five metrics over one window of one scoped book, and what the axis means.
+
+    **`asOf` is published**, which is new on this dashboard and is the point
+    rather than a detail: `avgDaysOpen` counts up to a day and never freezes, so a
+    chart of claim ages that did not say which day they were measured on would be
+    unreadable the moment it was stored or forwarded. It is also the clock every
+    bucket boundary was decided against, and `deferred-work.md` has wanted this
+    field on a payload since Story 2.1.
+
+    **`grain`, `anchor` and `cohort` are echoed as their enums**, so a stored
+    payload is self-describing and a control renders the server's answer rather
+    than its own last click — `RateBreakdownResponse.sort`'s reason on three
+    inputs instead of one: a request that 422s or times out must not leave a
+    selector claiming a grain the chart beside it is not drawn at.
+
+    **The window is described three ways and none is redundant.** `grain` and
+    `anchor` say what a bucket is and what puts a claim in one; `windowFrom` /
+    `windowTo` are the outer bounds a caption quotes; `bucketCount` is what a
+    client checks its point count against without counting an array.
+    `defaultBuckets` and `maxBuckets` ride along so a period control offers
+    exactly the range this deployment permits and refuses a wider one before a
+    request is made.
+
+    **`claimsInScope` and `claimsInWindow` are two different facts**, and the
+    difference belongs on screen: the first is the caller's whole book, the second
+    is how much of it the chosen window covers. A window describing eleven of a
+    hundred claims is not wrong, but a reader who thinks it describes a hundred
+    is.
+
+    **Two rule documents, named separately.** `rulesVersion` is
+    `derivation_thresholds` — where the severity cohort's band edges come from —
+    exactly as it means on the fraud payloads, and the window parameters travel as
+    `periodsVersion`. `deferred-work.md` records that `rulesVersion` already names
+    different documents on different routes; two explicitly named fields is the
+    one move that reduces that ambiguity rather than adding to it.
+
+    **The two targets and the two band edges quote rules, so they travel with the
+    figures** — `PortfolioChartsResponse`' reason. `settleTargetDays` and
+    `rtwTargetBp` come from the `SlaTarget`s the strip decided its verdicts
+    against, and the rate target is on the series' own basis-point scale because a
+    target on a different scale is a reference line nobody can draw. The two
+    severity edges come from the derivation that did the banding.
+    """
+
+    as_of: date
+    grain: TrendGrain
+    anchor: TrendAnchor
+    cohort: TrendCohort
+    window_from: date
+    window_to: date
+    bucket_count: int
+    claims_in_scope: int
+    claims_in_window: int
+    series: list[TrendSeriesResponse]
+    default_buckets: int
+    max_buckets: int
+    low_confidence_claim_max: int
+    settle_target_days: int
+    rtw_target_bp: int
+    high_risk_severity_min: int
+    med_risk_severity_min: int
+    rules_version: int
+    periods_version: int
+
+
+def _trend_series(trends: PortfolioTrends) -> list[TrendSeriesResponse]:
+    """The series, field by field — `_categories`' reasoning, two levels deep.
+
+    Field by field rather than `model_validate` over the dataclass, for the reason
+    every response model in this file is built explicitly: the mapping from a
+    service value to a wire model is the place a renamed field should fail to
+    compile, and a structural coercion is the place it silently would not. It
+    matters more here than on a flat payload — a point carries two adjacent dates
+    and two adjacent integers, and a `**asdict()` shortcut would carry a
+    transposition through both nestings without a complaint.
+    """
+    return [
+        TrendSeriesResponse(
+            metric=series.metric,
+            cohort_key=series.cohort_key,
+            cohort_label=series.cohort_label,
+            palette_slot=series.palette_slot,
+            points=[
+                TrendPointResponse(
+                    bucket_key=point.bucket_key,
+                    bucket_label=point.bucket_label,
+                    bucket_from=point.bucket_from,
+                    bucket_to=point.bucket_to,
+                    value=point.value,
+                    claim_count=point.claim_count,
+                    low_confidence=point.low_confidence,
+                    partial=point.partial,
+                )
+                for point in series.points
+            ],
+            series_total=series.series_total,
+            value_total=series.value_total,
+            no_data_buckets=series.no_data_buckets,
+        )
+        for series in trends.series
+    ]
+
+
+@router.get(
+    "/dashboard/trends",
+    response_model=PortfolioTrendsResponse,
+    summary="Five time series over a bucketed window for the session's analyst",
+    responses={
+        **UNAUTHENTICATED_RESPONSE,
+        **FRAUD_ANALYTICS_FORBIDDEN_RESPONSE,
+        **TREND_RANGE_RESPONSE,
+    },
+)
+async def trends(
+    ctx: CallerContextDep,
+    db: DbDep,
+    response: Response,
+    settings: SettingsDep,
+    grain: Annotated[
+        TrendGrain,
+        Query(description="How wide one bucket is."),
+    ] = TrendGrain.month,
+    anchor: Annotated[
+        TrendAnchor,
+        Query(
+            description=(
+                "Which date a claim is bucketed by — the claim's FNOL date or the "
+                "date of injury. Never both, and never a third column."
+            )
+        ),
+    ] = TrendAnchor.fnol,
+    cohort: Annotated[
+        TrendCohort,
+        Query(
+            description=(
+                "The single dimension each metric is split by, or `none`. Not a "
+                "filter: a cohort split partitions the population rather than "
+                "narrowing it."
+            )
+        ),
+    ] = TrendCohort.none,
+    from_date: Annotated[
+        date | None,
+        Query(
+            alias="from",
+            description=(
+                "The first day the window covers; its whole bucket is included. "
+                "Omitted, the window is `defaultBuckets` ending in `to`'s bucket."
+            ),
+        ),
+    ] = None,
+    to_date: Annotated[
+        date | None,
+        Query(
+            alias="to",
+            description=(
+                "The last day the window covers; its whole bucket is included. "
+                "Omitted, the window ends in the bucket `asOf` falls in."
+            ),
+        ),
+    ] = None,
+) -> PortfolioTrendsResponse:
+    """Five server-computed series over the caller's book, for whoever holds the cookie.
+
+    ## Five parameters, and not one of them is a scope
+
+    A grain, an anchor, a cohort dimension and two dates. Three of the five are
+    closed enums, so `grain=fortnight` is a 422 from FastAPI's own coercion before
+    this function runs — the **type is the check**, `FraudRateSort`'s arrangement,
+    and a vocabulary restated in the body would be the enum spelled twice. The two
+    dates are a *window*, not a filter and not a page: they narrow which periods
+    are drawn, never which employers' claims are in them.
+
+    There is nowhere in this signature to put an employer, a user or an "as"
+    (AD-7), and `?scopeAll=true` remains an unknown parameter FastAPI ignores,
+    exactly as it is on every route above.
+
+    `from` and `to` are aliased because `from` is a Python keyword — the wire name
+    and the parameter name are one string everywhere else in this file and this is
+    the one place the language will not allow it.
+
+    ## This endpoint is gated, and the gate is Story 7.1's
+
+    `/dashboard/fraud`'s argument, unchanged and deliberately not re-derived: this
+    is the analyst *workspace*, the surface Epic 5's analyst did not have, and
+    role is what separates a persona's workspace from a view anyone may read. The
+    allowlist is `fraud.FRAUD_ANALYTICS_ROLES` — reused rather than re-declared,
+    because a second section of one workspace carrying a second spelling of one
+    allowlist is how a future `UserRole` gets admitted by one of them.
+
+    So a supervisor gets 403 here while continuing to read every Epic 5 dashboard
+    route byte-identically to what she read before Epic 7 began.
+
+    ## Two documents, loaded here
+
+    `derivation_thresholds` decides the severity cohort's band edges, through the
+    same registered `risk` derivation the High Risk card and 5.3's donut read.
+    `trend_periods` decides the default window, its cap and the low-confidence
+    ceiling. Both are loaded here and handed down so the aggregate stays a
+    composition of scope and parameters — `portfolio_summary`'s rule — and both
+    versions are published, named separately, because they are two documents and
+    one field could only name one of them.
+
+    ## The window is refused before the read, not after it
+
+    Both 422s are decided from the caller's parameters and `trend_periods` alone,
+    inside the service and above its one `await`. A window nobody can be served
+    should not cost a query, and a refusal that arrived after a scoped read would
+    have answered differently for an analyst with employers and one between
+    assignments.
+    """
+    # `/stats/topbar`'s reasoning: this response is specific to one persona's
+    # scope, so it must never be served to another from a cache upstream. First
+    # statement in the body, so neither the refusal below nor any early return can
+    # skip it.
+    response.headers["Cache-Control"] = "no-store"
+    # **Before the document loads, not after them** — `fraud`'s note. Deliberately
+    # the *service's* function rather than a copy of the condition: two spellings
+    # of one allowlist is how a future `UserRole` gets admitted by one of them.
+    try:
+        require_fraud_analytics_access(ctx)
+    except FraudAnalyticsNotPermitted as exc:
+        raise _fraud_forbidden(exc) from exc
+    thresholds = await thresholds_for(db)
+    periods = await trend_periods_for(db)
+    try:
+        # Every argument keyword, and `from_date`/`to_date` are why: two adjacent
+        # optional dates would transpose silently and invert a window, which is
+        # the same class of defect a positional projection build carries.
+        computed = await portfolio_trends(
+            db,
+            ctx,
+            thresholds,
+            periods,
+            settings,
+            grain=grain,
+            anchor=anchor,
+            cohort=cohort,
+            from_date=from_date,
+            to_date=to_date,
+        )
+    except TrendRangeInvalid as exc:
+        raise _trend_range_invalid(exc) from exc
+    except TrendRangeTooWide as exc:
+        raise _trend_range_too_wide(exc) from exc
+    except FraudAnalyticsNotPermitted as exc:  # pragma: no cover - the gate answered first
+        # Belt and braces, and cheap: the service checks the same allowlist
+        # itself, so a refusal cannot escape as a 500 if this route is ever
+        # reordered or a second caller appears. Unreachable today.
+        raise _fraud_forbidden(exc) from exc
+
+    return PortfolioTrendsResponse(
+        as_of=computed.as_of,
+        grain=computed.grain,
+        anchor=computed.anchor,
+        cohort=computed.cohort,
+        window_from=computed.window_from,
+        window_to=computed.window_to,
+        bucket_count=computed.bucket_count,
+        claims_in_scope=computed.claims_in_scope,
+        claims_in_window=computed.claims_in_window,
+        series=_trend_series(computed),
+        default_buckets=computed.default_buckets,
+        max_buckets=computed.max_buckets,
+        low_confidence_claim_max=computed.low_confidence_claim_max,
+        settle_target_days=computed.settle_target_days,
+        rtw_target_bp=computed.rtw_target_bp,
+        high_risk_severity_min=computed.high_risk_severity_min,
+        med_risk_severity_min=computed.med_risk_severity_min,
+        rules_version=thresholds.version,
+        periods_version=periods.version,
     )

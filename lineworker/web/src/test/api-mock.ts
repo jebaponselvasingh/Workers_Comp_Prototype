@@ -73,6 +73,18 @@ export interface StubRoutes {
   fraudRates?: StubRouteFor;
   /** `GET /dashboard/fraud/red-flags` (Story 7.1) — the ranked cached clauses. */
   fraudRedFlags?: StubRoute;
+  /**
+   * `GET /dashboard/trends` (Story 7.2) — the five bucketed series.
+   *
+   * A `StubRouteFor` rather than a `StubRoute`, `fraudRates`' form and its
+   * reason one section over: this is the only *windowed* surface in the console,
+   * and "changing a grain, an anchor or a cohort refetches rather than
+   * re-bucketing a cached answer" (AD-1) is only observable if the stub can tell
+   * `grain=month` from `grain=quarter` and `cohort=none` from
+   * `cohort=severity_band`. All three live in the query string, which is what
+   * the function form can see.
+   */
+  trends?: StubRouteFor;
   claimsQueue?: StubRouteFor;
   /**
    * `GET /claims/{id}` (Story 2.2). A function so a test can answer
@@ -4862,6 +4874,1333 @@ export const FRAUD_RED_FLAGS_ALL_CLEAR = {
 };
 
 /** Install a fetch stub for `/api/*`; unmatched paths answer 404. */
+/**
+ * `GET /dashboard/trends` at its defaults — month, FNOL, no cohort split.
+ *
+ * Four buckets rather than the deployment's twelve, and each of them is a
+ * *case* rather than filler:
+ *
+ * - **Jan** is an ordinary dense bucket: twelve claims, every metric answerable.
+ * - **Feb** is genuinely empty. `volume` and `paidCents` are `0` because a sum
+ *   over an empty set is `0`; the three means and rates are `null`, because a
+ *   mean over an empty denominator is absent rather than zero. That split is the
+ *   whole of AC 3 and it is why this fixture cannot be simplified.
+ * - **Mar** is *thin*: two claims against a `lowConfidenceClaimMax` of three, so
+ *   the server's verdict is `lowConfidence: true` on every one of its points.
+ *   Its settlement and RTW figures are `null` as well — claims arrived, none of
+ *   them settled — which is a different kind of gap from February's and the one
+ *   a component is most likely to conflate with it.
+ * - **Apr** is dense again, so the two gaps are interior and a line that
+ *   silently bridged them would be visible as a straight run.
+ *
+ * `seriesTotal` is a *claim* count rather than the metric's total — which is
+ * what the emptiness test reads — and it is **per metric**: 23 on the three
+ * series folded from the whole bucket, 13 on the RTW rate and 10 on the
+ * settlement mean, because those two are folded from the settled claims and from
+ * the settled claims carrying a duration. `valueTotal` is a number for the two
+ * summable metrics and `null` for the three that cannot be summed.
+ *
+ * **`claimCount` therefore differs per series on the same bucket, and January is
+ * the case that matters.** Twelve claims arrived; four of them settled (75% back
+ * at work: three of four) and three of those carry a duration. So the volume
+ * point is not thin and the settlement point *is* — one bucket, two verdicts,
+ * which a card marking low confidence by the bucket would render alike. April
+ * repeats it the other way: nine claims, all settled (eight of nine recovered),
+ * seven with a duration, nothing thin.
+ *
+ * **April is `partial`**: the window was cut on the 21st, so the bucket running
+ * to the 30th had not finished. Every series carries the same flag on it, and
+ * nothing about the flag changes a value.
+ */
+export const TRENDS = {
+  status: 200,
+  body: {
+    asOf: "2026-04-21",
+    grain: "month",
+    anchor: "fnol",
+    cohort: "none",
+    windowFrom: "2026-01-01",
+    windowTo: "2026-04-30",
+    bucketCount: 4,
+    claimsInScope: 100,
+    claimsInWindow: 23,
+    series: [
+      {
+        metric: "volume",
+        cohortKey: null,
+        cohortLabel: null,
+        paletteSlot: null,
+        points: [
+          { bucketKey: "2026-01", bucketLabel: "Jan 2026", bucketFrom: "2026-01-01", bucketTo: "2026-01-31", value: 12, claimCount: 12, lowConfidence: false, partial: false },
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: 0, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: 2, claimCount: 2, lowConfidence: true, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 9, claimCount: 9, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 23,
+        valueTotal: 23,
+        noDataBuckets: 0,
+      },
+      {
+        metric: "avg_days_open",
+        cohortKey: null,
+        cohortLabel: null,
+        paletteSlot: null,
+        points: [
+          { bucketKey: "2026-01", bucketLabel: "Jan 2026", bucketFrom: "2026-01-01", bucketTo: "2026-01-31", value: 148, claimCount: 12, lowConfidence: false, partial: false },
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: 96, claimCount: 2, lowConfidence: true, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 41, claimCount: 9, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 23,
+        valueTotal: null,
+        noDataBuckets: 1,
+      },
+      {
+        metric: "avg_settlement_days",
+        cohortKey: null,
+        cohortLabel: null,
+        paletteSlot: null,
+        points: [
+          { bucketKey: "2026-01", bucketLabel: "Jan 2026", bucketFrom: "2026-01-01", bucketTo: "2026-01-31", value: 34, claimCount: 3, lowConfidence: true, partial: false },
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 27, claimCount: 7, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 10,
+        valueTotal: null,
+        noDataBuckets: 2,
+      },
+      {
+        metric: "rtw_rate_bp",
+        cohortKey: null,
+        cohortLabel: null,
+        paletteSlot: null,
+        points: [
+          { bucketKey: "2026-01", bucketLabel: "Jan 2026", bucketFrom: "2026-01-01", bucketTo: "2026-01-31", value: 7500, claimCount: 4, lowConfidence: false, partial: false },
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 8889, claimCount: 9, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 13,
+        valueTotal: null,
+        noDataBuckets: 2,
+      },
+      {
+        metric: "paid_cents",
+        cohortKey: null,
+        cohortLabel: null,
+        paletteSlot: null,
+        points: [
+          { bucketKey: "2026-01", bucketLabel: "Jan 2026", bucketFrom: "2026-01-01", bucketTo: "2026-01-31", value: 4210000, claimCount: 12, lowConfidence: false, partial: false },
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: 0, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: 615000, claimCount: 2, lowConfidence: true, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 2980500, claimCount: 9, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 23,
+        valueTotal: 7805500,
+        noDataBuckets: 0,
+      },
+    ],
+    defaultBuckets: 12,
+    maxBuckets: 36,
+    lowConfidenceClaimMax: 3,
+    settleTargetDays: 30,
+    rtwTargetBp: 8000,
+    highRiskSeverityMin: 65,
+    medRiskSeverityMin: 35,
+    rulesVersion: 6,
+    periodsVersion: 1,
+  },
+};
+
+/**
+ * The same window split on severity band (`cohort=severity_band`).
+ *
+ * **The cohort order is the server's — ascending *wire key*, which is `high`,
+ * `low`, `med`** — and `paletteSlot` follows it. That is deliberately not the
+ * severity donut's high-first legend order and deliberately not any ranking of
+ * the values, because `paletteSlot` exists to be independent of both: the slot
+ * is a fact about the vocabulary, so a cohort keeps its colour across all five
+ * charts however its numbers move.
+ *
+ * `med` is the biggest cohort and holds slot 2; `high` is the smallest and holds
+ * slot 0. A component that coloured by rank would paint them the other way
+ * round, and one that coloured by array position happens to agree here — which
+ * is why `TRENDS_BY_SECTOR_RERANKED` exists to pull the two apart.
+ *
+ * Every cohort's February is empty and every cohort's March is thin, so the
+ * null/zero rule and the low-confidence verdict are both exercised per line
+ * rather than only on an unsplit series.
+ *
+ * The two SLA series carry their **own** populations per line, as they do
+ * everywhere: the `med` cohort's January rate is over five settled claims where
+ * its mean is over the two of them that recorded a duration, and both numbers
+ * sit under a volume point counting five. April is the partial bucket here too.
+ */
+export const TRENDS_BY_SEVERITY = {
+  status: 200,
+  body: {
+    asOf: "2026-04-21",
+    grain: "month",
+    anchor: "fnol",
+    cohort: "severity_band",
+    windowFrom: "2026-01-01",
+    windowTo: "2026-04-30",
+    bucketCount: 4,
+    claimsInScope: 100,
+    claimsInWindow: 23,
+    series: [
+      {
+        metric: "volume",
+        cohortKey: "high",
+        cohortLabel: null,
+        paletteSlot: 0,
+        points: [
+          { bucketKey: "2026-01", bucketLabel: "Jan 2026", bucketFrom: "2026-01-01", bucketTo: "2026-01-31", value: 3, claimCount: 3, lowConfidence: true, partial: false },
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: 0, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: 1, claimCount: 1, lowConfidence: true, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 2, claimCount: 2, lowConfidence: true, partial: true },
+        ],
+        seriesTotal: 6,
+        valueTotal: 6,
+        noDataBuckets: 0,
+      },
+      {
+        metric: "volume",
+        cohortKey: "low",
+        cohortLabel: null,
+        paletteSlot: 1,
+        points: [
+          { bucketKey: "2026-01", bucketLabel: "Jan 2026", bucketFrom: "2026-01-01", bucketTo: "2026-01-31", value: 4, claimCount: 4, lowConfidence: false, partial: false },
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: 0, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: 0, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 3, claimCount: 3, lowConfidence: true, partial: true },
+        ],
+        seriesTotal: 7,
+        valueTotal: 7,
+        noDataBuckets: 0,
+      },
+      {
+        metric: "volume",
+        cohortKey: "med",
+        cohortLabel: null,
+        paletteSlot: 2,
+        points: [
+          { bucketKey: "2026-01", bucketLabel: "Jan 2026", bucketFrom: "2026-01-01", bucketTo: "2026-01-31", value: 5, claimCount: 5, lowConfidence: false, partial: false },
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: 0, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: 1, claimCount: 1, lowConfidence: true, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 4, claimCount: 4, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 10,
+        valueTotal: 10,
+        noDataBuckets: 0,
+      },
+      {
+        metric: "avg_days_open",
+        cohortKey: "high",
+        cohortLabel: null,
+        paletteSlot: 0,
+        points: [
+          { bucketKey: "2026-01", bucketLabel: "Jan 2026", bucketFrom: "2026-01-01", bucketTo: "2026-01-31", value: 201, claimCount: 3, lowConfidence: true, partial: false },
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: 118, claimCount: 1, lowConfidence: true, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 52, claimCount: 2, lowConfidence: true, partial: true },
+        ],
+        seriesTotal: 6,
+        valueTotal: null,
+        noDataBuckets: 1,
+      },
+      {
+        metric: "avg_days_open",
+        cohortKey: "low",
+        cohortLabel: null,
+        paletteSlot: 1,
+        points: [
+          { bucketKey: "2026-01", bucketLabel: "Jan 2026", bucketFrom: "2026-01-01", bucketTo: "2026-01-31", value: 96, claimCount: 4, lowConfidence: false, partial: false },
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 30, claimCount: 3, lowConfidence: true, partial: true },
+        ],
+        seriesTotal: 7,
+        valueTotal: null,
+        noDataBuckets: 2,
+      },
+      {
+        metric: "avg_days_open",
+        cohortKey: "med",
+        cohortLabel: null,
+        paletteSlot: 2,
+        points: [
+          { bucketKey: "2026-01", bucketLabel: "Jan 2026", bucketFrom: "2026-01-01", bucketTo: "2026-01-31", value: 149, claimCount: 5, lowConfidence: false, partial: false },
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: 91, claimCount: 1, lowConfidence: true, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 44, claimCount: 4, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 10,
+        valueTotal: null,
+        noDataBuckets: 1,
+      },
+      {
+        metric: "avg_settlement_days",
+        cohortKey: "high",
+        cohortLabel: null,
+        paletteSlot: 0,
+        points: [
+          { bucketKey: "2026-01", bucketLabel: "Jan 2026", bucketFrom: "2026-01-01", bucketTo: "2026-01-31", value: 61, claimCount: 1, lowConfidence: true, partial: false },
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 44, claimCount: 1, lowConfidence: true, partial: true },
+        ],
+        seriesTotal: 2,
+        valueTotal: null,
+        noDataBuckets: 2,
+      },
+      {
+        metric: "avg_settlement_days",
+        cohortKey: "low",
+        cohortLabel: null,
+        paletteSlot: 1,
+        points: [
+          { bucketKey: "2026-01", bucketLabel: "Jan 2026", bucketFrom: "2026-01-01", bucketTo: "2026-01-31", value: 18, claimCount: 2, lowConfidence: true, partial: false },
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 15, claimCount: 1, lowConfidence: true, partial: true },
+        ],
+        seriesTotal: 3,
+        valueTotal: null,
+        noDataBuckets: 2,
+      },
+      {
+        metric: "avg_settlement_days",
+        cohortKey: "med",
+        cohortLabel: null,
+        paletteSlot: 2,
+        points: [
+          { bucketKey: "2026-01", bucketLabel: "Jan 2026", bucketFrom: "2026-01-01", bucketTo: "2026-01-31", value: 33, claimCount: 2, lowConfidence: true, partial: false },
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 26, claimCount: 2, lowConfidence: true, partial: true },
+        ],
+        seriesTotal: 4,
+        valueTotal: null,
+        noDataBuckets: 2,
+      },
+      {
+        metric: "rtw_rate_bp",
+        cohortKey: "high",
+        cohortLabel: null,
+        paletteSlot: 0,
+        points: [
+          { bucketKey: "2026-01", bucketLabel: "Jan 2026", bucketFrom: "2026-01-01", bucketTo: "2026-01-31", value: 3333, claimCount: 3, lowConfidence: true, partial: false },
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 5000, claimCount: 2, lowConfidence: true, partial: true },
+        ],
+        seriesTotal: 5,
+        valueTotal: null,
+        noDataBuckets: 2,
+      },
+      {
+        metric: "rtw_rate_bp",
+        cohortKey: "low",
+        cohortLabel: null,
+        paletteSlot: 1,
+        points: [
+          { bucketKey: "2026-01", bucketLabel: "Jan 2026", bucketFrom: "2026-01-01", bucketTo: "2026-01-31", value: 10000, claimCount: 2, lowConfidence: true, partial: false },
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 10000, claimCount: 2, lowConfidence: true, partial: true },
+        ],
+        seriesTotal: 4,
+        valueTotal: null,
+        noDataBuckets: 2,
+      },
+      {
+        metric: "rtw_rate_bp",
+        cohortKey: "med",
+        cohortLabel: null,
+        paletteSlot: 2,
+        points: [
+          { bucketKey: "2026-01", bucketLabel: "Jan 2026", bucketFrom: "2026-01-01", bucketTo: "2026-01-31", value: 8000, claimCount: 5, lowConfidence: false, partial: false },
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 7500, claimCount: 4, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 9,
+        valueTotal: null,
+        noDataBuckets: 2,
+      },
+      {
+        metric: "paid_cents",
+        cohortKey: "high",
+        cohortLabel: null,
+        paletteSlot: 0,
+        points: [
+          { bucketKey: "2026-01", bucketLabel: "Jan 2026", bucketFrom: "2026-01-01", bucketTo: "2026-01-31", value: 2600000, claimCount: 3, lowConfidence: true, partial: false },
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: 0, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: 410000, claimCount: 1, lowConfidence: true, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 1500000, claimCount: 2, lowConfidence: true, partial: true },
+        ],
+        seriesTotal: 6,
+        valueTotal: 4510000,
+        noDataBuckets: 0,
+      },
+      {
+        metric: "paid_cents",
+        cohortKey: "low",
+        cohortLabel: null,
+        paletteSlot: 1,
+        points: [
+          { bucketKey: "2026-01", bucketLabel: "Jan 2026", bucketFrom: "2026-01-01", bucketTo: "2026-01-31", value: 410000, claimCount: 4, lowConfidence: false, partial: false },
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: 0, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: 0, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 380500, claimCount: 3, lowConfidence: true, partial: true },
+        ],
+        seriesTotal: 7,
+        valueTotal: 790500,
+        noDataBuckets: 0,
+      },
+      {
+        metric: "paid_cents",
+        cohortKey: "med",
+        cohortLabel: null,
+        paletteSlot: 2,
+        points: [
+          { bucketKey: "2026-01", bucketLabel: "Jan 2026", bucketFrom: "2026-01-01", bucketTo: "2026-01-31", value: 1200000, claimCount: 5, lowConfidence: false, partial: false },
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: 0, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: 205000, claimCount: 1, lowConfidence: true, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 1100000, claimCount: 4, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 10,
+        valueTotal: 2505000,
+        noDataBuckets: 0,
+      },
+    ],
+    defaultBuckets: 12,
+    maxBuckets: 36,
+    lowConfidenceClaimMax: 3,
+    settleTargetDays: 30,
+    rtwTargetBp: 8000,
+    highRiskSeverityMin: 65,
+    medRiskSeverityMin: 35,
+    rulesVersion: 6,
+    periodsVersion: 1,
+  },
+};
+
+/**
+ * A different scope, a different grain, a moved band edge and a missing cohort.
+ *
+ * **The discriminator, and the substance of this test file.** Read through the
+ * same components as `TRENDS_BY_SEVERITY`, it differs in four ways at once and a
+ * page that bucketed, banded, sorted or truncated *anything* of its own would
+ * render one of them wrong:
+ *
+ * - **Quarter grain**, so the bucket keys are `2026-Q1` and the labels are
+ *   `Q1 2026`. A component that formatted a period from a date would print
+ *   months.
+ * - **A moved band edge**: `highRiskSeverityMin` is 70 here against 65 there.
+ *   Nothing on this page may re-band anything, and the caption that quotes an
+ *   edge has to move with the document that decided it.
+ * - **A missing cohort**: this scope has no `med` claims at all, so the
+ *   vocabulary is two values and the slots are 0 and 1 — `low` takes slot 1,
+ *   which `med` held in the other fixture. A legend laid out from a fixed list
+ *   of three bands would draw an empty third line.
+ * - **A narrower book**: 27 claims in scope against 100, so every figure differs.
+ *
+ * Q3 is empty for both cohorts and Q2 is thin for `high`, so the null/zero split
+ * survives the change of grain.
+ *
+ * Q3 is also the **partial** bucket — it runs to the 30th of September and the
+ * window was cut on the 21st of August — which makes this the fixture where a
+ * card that assumed "the partial one is the newest one that has claims in it"
+ * fails: Q3 is unfinished *and* empty, and both are true at once.
+ */
+export const TRENDS_CONTRAST = {
+  status: 200,
+  body: {
+    asOf: "2026-08-21",
+    grain: "quarter",
+    anchor: "doi",
+    cohort: "severity_band",
+    windowFrom: "2026-01-01",
+    windowTo: "2026-09-30",
+    bucketCount: 3,
+    claimsInScope: 27,
+    claimsInWindow: 24,
+    series: [
+      {
+        metric: "volume",
+        cohortKey: "high",
+        cohortLabel: null,
+        paletteSlot: 0,
+        points: [
+          { bucketKey: "2026-Q1", bucketLabel: "Q1 2026", bucketFrom: "2026-01-01", bucketTo: "2026-03-31", value: 6, claimCount: 6, lowConfidence: false, partial: false },
+          { bucketKey: "2026-Q2", bucketLabel: "Q2 2026", bucketFrom: "2026-04-01", bucketTo: "2026-06-30", value: 2, claimCount: 2, lowConfidence: true, partial: false },
+          { bucketKey: "2026-Q3", bucketLabel: "Q3 2026", bucketFrom: "2026-07-01", bucketTo: "2026-09-30", value: 0, claimCount: 0, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 8,
+        valueTotal: 8,
+        noDataBuckets: 0,
+      },
+      {
+        metric: "volume",
+        cohortKey: "low",
+        cohortLabel: null,
+        paletteSlot: 1,
+        points: [
+          { bucketKey: "2026-Q1", bucketLabel: "Q1 2026", bucketFrom: "2026-01-01", bucketTo: "2026-03-31", value: 11, claimCount: 11, lowConfidence: false, partial: false },
+          { bucketKey: "2026-Q2", bucketLabel: "Q2 2026", bucketFrom: "2026-04-01", bucketTo: "2026-06-30", value: 5, claimCount: 5, lowConfidence: false, partial: false },
+          { bucketKey: "2026-Q3", bucketLabel: "Q3 2026", bucketFrom: "2026-07-01", bucketTo: "2026-09-30", value: 0, claimCount: 0, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 16,
+        valueTotal: 16,
+        noDataBuckets: 0,
+      },
+      {
+        metric: "avg_days_open",
+        cohortKey: "high",
+        cohortLabel: null,
+        paletteSlot: 0,
+        points: [
+          { bucketKey: "2026-Q1", bucketLabel: "Q1 2026", bucketFrom: "2026-01-01", bucketTo: "2026-03-31", value: 233, claimCount: 6, lowConfidence: false, partial: false },
+          { bucketKey: "2026-Q2", bucketLabel: "Q2 2026", bucketFrom: "2026-04-01", bucketTo: "2026-06-30", value: 140, claimCount: 2, lowConfidence: true, partial: false },
+          { bucketKey: "2026-Q3", bucketLabel: "Q3 2026", bucketFrom: "2026-07-01", bucketTo: "2026-09-30", value: null, claimCount: 0, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 8,
+        valueTotal: null,
+        noDataBuckets: 1,
+      },
+      {
+        metric: "avg_days_open",
+        cohortKey: "low",
+        cohortLabel: null,
+        paletteSlot: 1,
+        points: [
+          { bucketKey: "2026-Q1", bucketLabel: "Q1 2026", bucketFrom: "2026-01-01", bucketTo: "2026-03-31", value: 187, claimCount: 11, lowConfidence: false, partial: false },
+          { bucketKey: "2026-Q2", bucketLabel: "Q2 2026", bucketFrom: "2026-04-01", bucketTo: "2026-06-30", value: 96, claimCount: 5, lowConfidence: false, partial: false },
+          { bucketKey: "2026-Q3", bucketLabel: "Q3 2026", bucketFrom: "2026-07-01", bucketTo: "2026-09-30", value: null, claimCount: 0, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 16,
+        valueTotal: null,
+        noDataBuckets: 1,
+      },
+      {
+        metric: "avg_settlement_days",
+        cohortKey: "high",
+        cohortLabel: null,
+        paletteSlot: 0,
+        points: [
+          { bucketKey: "2026-Q1", bucketLabel: "Q1 2026", bucketFrom: "2026-01-01", bucketTo: "2026-03-31", value: 72, claimCount: 2, lowConfidence: true, partial: false },
+          { bucketKey: "2026-Q2", bucketLabel: "Q2 2026", bucketFrom: "2026-04-01", bucketTo: "2026-06-30", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-Q3", bucketLabel: "Q3 2026", bucketFrom: "2026-07-01", bucketTo: "2026-09-30", value: null, claimCount: 0, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 2,
+        valueTotal: null,
+        noDataBuckets: 2,
+      },
+      {
+        metric: "avg_settlement_days",
+        cohortKey: "low",
+        cohortLabel: null,
+        paletteSlot: 1,
+        points: [
+          { bucketKey: "2026-Q1", bucketLabel: "Q1 2026", bucketFrom: "2026-01-01", bucketTo: "2026-03-31", value: 21, claimCount: 4, lowConfidence: false, partial: false },
+          { bucketKey: "2026-Q2", bucketLabel: "Q2 2026", bucketFrom: "2026-04-01", bucketTo: "2026-06-30", value: 19, claimCount: 2, lowConfidence: true, partial: false },
+          { bucketKey: "2026-Q3", bucketLabel: "Q3 2026", bucketFrom: "2026-07-01", bucketTo: "2026-09-30", value: null, claimCount: 0, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 6,
+        valueTotal: null,
+        noDataBuckets: 1,
+      },
+      {
+        metric: "rtw_rate_bp",
+        cohortKey: "high",
+        cohortLabel: null,
+        paletteSlot: 0,
+        points: [
+          { bucketKey: "2026-Q1", bucketLabel: "Q1 2026", bucketFrom: "2026-01-01", bucketTo: "2026-03-31", value: 2500, claimCount: 4, lowConfidence: false, partial: false },
+          { bucketKey: "2026-Q2", bucketLabel: "Q2 2026", bucketFrom: "2026-04-01", bucketTo: "2026-06-30", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-Q3", bucketLabel: "Q3 2026", bucketFrom: "2026-07-01", bucketTo: "2026-09-30", value: null, claimCount: 0, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 4,
+        valueTotal: null,
+        noDataBuckets: 2,
+      },
+      {
+        metric: "rtw_rate_bp",
+        cohortKey: "low",
+        cohortLabel: null,
+        paletteSlot: 1,
+        points: [
+          { bucketKey: "2026-Q1", bucketLabel: "Q1 2026", bucketFrom: "2026-01-01", bucketTo: "2026-03-31", value: 9091, claimCount: 11, lowConfidence: false, partial: false },
+          { bucketKey: "2026-Q2", bucketLabel: "Q2 2026", bucketFrom: "2026-04-01", bucketTo: "2026-06-30", value: 8000, claimCount: 5, lowConfidence: false, partial: false },
+          { bucketKey: "2026-Q3", bucketLabel: "Q3 2026", bucketFrom: "2026-07-01", bucketTo: "2026-09-30", value: null, claimCount: 0, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 16,
+        valueTotal: null,
+        noDataBuckets: 1,
+      },
+      {
+        metric: "paid_cents",
+        cohortKey: "high",
+        cohortLabel: null,
+        paletteSlot: 0,
+        points: [
+          { bucketKey: "2026-Q1", bucketLabel: "Q1 2026", bucketFrom: "2026-01-01", bucketTo: "2026-03-31", value: 5100000, claimCount: 6, lowConfidence: false, partial: false },
+          { bucketKey: "2026-Q2", bucketLabel: "Q2 2026", bucketFrom: "2026-04-01", bucketTo: "2026-06-30", value: 880000, claimCount: 2, lowConfidence: true, partial: false },
+          { bucketKey: "2026-Q3", bucketLabel: "Q3 2026", bucketFrom: "2026-07-01", bucketTo: "2026-09-30", value: 0, claimCount: 0, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 8,
+        valueTotal: 5980000,
+        noDataBuckets: 0,
+      },
+      {
+        metric: "paid_cents",
+        cohortKey: "low",
+        cohortLabel: null,
+        paletteSlot: 1,
+        points: [
+          { bucketKey: "2026-Q1", bucketLabel: "Q1 2026", bucketFrom: "2026-01-01", bucketTo: "2026-03-31", value: 1250000, claimCount: 11, lowConfidence: false, partial: false },
+          { bucketKey: "2026-Q2", bucketLabel: "Q2 2026", bucketFrom: "2026-04-01", bucketTo: "2026-06-30", value: 640000, claimCount: 5, lowConfidence: false, partial: false },
+          { bucketKey: "2026-Q3", bucketLabel: "Q3 2026", bucketFrom: "2026-07-01", bucketTo: "2026-09-30", value: 0, claimCount: 0, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 16,
+        valueTotal: 1890000,
+        noDataBuckets: 0,
+      },
+    ],
+    defaultBuckets: 8,
+    maxBuckets: 24,
+    lowConfidenceClaimMax: 3,
+    settleTargetDays: 45,
+    rtwTargetBp: 7500,
+    highRiskSeverityMin: 70,
+    medRiskSeverityMin: 40,
+    rulesVersion: 9,
+    periodsVersion: 1,
+  },
+};
+
+/**
+ * The same window split on employer sector — a *categorical* palette.
+ *
+ * Severity band has a semantic palette of its own (`RISK_FILL`), so its colours
+ * cannot drift whatever the slots do. Sector has no such palette: its hue is
+ * `CATEGORICAL_FILLS[paletteSlot]` and nothing else, which makes it the only
+ * dimension on which "a cohort keeps its colour" is falsifiable. Three free-text
+ * values, ascending by wire key, slots 0/1/2.
+ */
+export const TRENDS_BY_SECTOR = {
+  status: 200,
+  body: {
+    asOf: "2026-04-21",
+    grain: "month",
+    anchor: "fnol",
+    cohort: "sector",
+    windowFrom: "2026-02-01",
+    windowTo: "2026-04-30",
+    bucketCount: 3,
+    claimsInScope: 100,
+    claimsInWindow: 23,
+    series: [
+      {
+        metric: "volume",
+        cohortKey: "Aerospace",
+        cohortLabel: null,
+        paletteSlot: 0,
+        points: [
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: 0, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: 2, claimCount: 2, lowConfidence: true, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 7, claimCount: 7, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 9,
+        valueTotal: 9,
+        noDataBuckets: 0,
+      },
+      {
+        metric: "volume",
+        cohortKey: "Automotive",
+        cohortLabel: null,
+        paletteSlot: 1,
+        points: [
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: 0, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: 0, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 9, claimCount: 9, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 9,
+        valueTotal: 9,
+        noDataBuckets: 0,
+      },
+      {
+        metric: "volume",
+        cohortKey: "Heavy Equipment",
+        cohortLabel: null,
+        paletteSlot: 2,
+        points: [
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: 0, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: 0, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 5, claimCount: 5, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 5,
+        valueTotal: 5,
+        noDataBuckets: 0,
+      },
+      {
+        metric: "avg_days_open",
+        cohortKey: "Aerospace",
+        cohortLabel: null,
+        paletteSlot: 0,
+        points: [
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: 96, claimCount: 2, lowConfidence: true, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 44, claimCount: 7, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 9,
+        valueTotal: null,
+        noDataBuckets: 1,
+      },
+      {
+        metric: "avg_days_open",
+        cohortKey: "Automotive",
+        cohortLabel: null,
+        paletteSlot: 1,
+        points: [
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 38, claimCount: 9, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 9,
+        valueTotal: null,
+        noDataBuckets: 2,
+      },
+      {
+        metric: "avg_days_open",
+        cohortKey: "Heavy Equipment",
+        cohortLabel: null,
+        paletteSlot: 2,
+        points: [
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 51, claimCount: 5, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 5,
+        valueTotal: null,
+        noDataBuckets: 2,
+      },
+      {
+        metric: "avg_settlement_days",
+        cohortKey: "Aerospace",
+        cohortLabel: null,
+        paletteSlot: 0,
+        points: [
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 29, claimCount: 3, lowConfidence: true, partial: true },
+        ],
+        seriesTotal: 3,
+        valueTotal: null,
+        noDataBuckets: 2,
+      },
+      {
+        metric: "avg_settlement_days",
+        cohortKey: "Automotive",
+        cohortLabel: null,
+        paletteSlot: 1,
+        points: [
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 22, claimCount: 3, lowConfidence: true, partial: true },
+        ],
+        seriesTotal: 3,
+        valueTotal: null,
+        noDataBuckets: 2,
+      },
+      {
+        metric: "avg_settlement_days",
+        cohortKey: "Heavy Equipment",
+        cohortLabel: null,
+        paletteSlot: 2,
+        points: [
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 35, claimCount: 2, lowConfidence: true, partial: true },
+        ],
+        seriesTotal: 2,
+        valueTotal: null,
+        noDataBuckets: 2,
+      },
+      {
+        metric: "rtw_rate_bp",
+        cohortKey: "Aerospace",
+        cohortLabel: null,
+        paletteSlot: 0,
+        points: [
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 8571, claimCount: 7, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 7,
+        valueTotal: null,
+        noDataBuckets: 2,
+      },
+      {
+        metric: "rtw_rate_bp",
+        cohortKey: "Automotive",
+        cohortLabel: null,
+        paletteSlot: 1,
+        points: [
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 10000, claimCount: 5, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 5,
+        valueTotal: null,
+        noDataBuckets: 2,
+      },
+      {
+        metric: "rtw_rate_bp",
+        cohortKey: "Heavy Equipment",
+        cohortLabel: null,
+        paletteSlot: 2,
+        points: [
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 6000, claimCount: 3, lowConfidence: true, partial: true },
+        ],
+        seriesTotal: 3,
+        valueTotal: null,
+        noDataBuckets: 2,
+      },
+      {
+        metric: "paid_cents",
+        cohortKey: "Aerospace",
+        cohortLabel: null,
+        paletteSlot: 0,
+        points: [
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: 0, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: 615000, claimCount: 2, lowConfidence: true, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 1900000, claimCount: 7, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 9,
+        valueTotal: 2515000,
+        noDataBuckets: 0,
+      },
+      {
+        metric: "paid_cents",
+        cohortKey: "Automotive",
+        cohortLabel: null,
+        paletteSlot: 1,
+        points: [
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: 0, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: 0, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 2400000, claimCount: 9, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 9,
+        valueTotal: 2400000,
+        noDataBuckets: 0,
+      },
+      {
+        metric: "paid_cents",
+        cohortKey: "Heavy Equipment",
+        cohortLabel: null,
+        paletteSlot: 2,
+        points: [
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: 0, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: 0, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 980000, claimCount: 5, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 5,
+        valueTotal: 980000,
+        noDataBuckets: 0,
+      },
+    ],
+    defaultBuckets: 12,
+    maxBuckets: 36,
+    lowConfidenceClaimMax: 3,
+    settleTargetDays: 30,
+    rtwTargetBp: 8000,
+    highRiskSeverityMin: 65,
+    medRiskSeverityMin: 35,
+    rulesVersion: 6,
+    periodsVersion: 1,
+  },
+};
+
+/**
+ * The sector split refetched — same vocabulary, same slots, different ranking.
+ *
+ * `Heavy Equipment` is now the largest cohort and `Aerospace` the smallest,
+ * which is the reverse of `TRENDS_BY_SECTOR`. The **slots are unchanged**,
+ * because a slot is assigned by sorting the cohort values on their wire key and
+ * a key does not move when a number does. So every line must keep the hue it had
+ * — and a component that picked a colour by rank, by array position within a
+ * chart, or by anything else the data can move, repaints all three.
+ *
+ * This is the fixture that makes AC 2's "across a refetch" falsifiable;
+ * `TRENDS_BY_SEVERITY` cannot, because `RISK_FILL` is keyed and would agree
+ * either way.
+ */
+export const TRENDS_BY_SECTOR_RERANKED = {
+  status: 200,
+  body: {
+    asOf: "2026-04-21",
+    grain: "month",
+    anchor: "fnol",
+    cohort: "sector",
+    windowFrom: "2026-02-01",
+    windowTo: "2026-04-30",
+    bucketCount: 3,
+    claimsInScope: 100,
+    claimsInWindow: 31,
+    series: [
+      {
+        metric: "volume",
+        cohortKey: "Aerospace",
+        cohortLabel: null,
+        paletteSlot: 0,
+        points: [
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: 0, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: 0, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 4, claimCount: 4, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 4,
+        valueTotal: 4,
+        noDataBuckets: 0,
+      },
+      {
+        metric: "volume",
+        cohortKey: "Automotive",
+        cohortLabel: null,
+        paletteSlot: 1,
+        points: [
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: 0, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: 2, claimCount: 2, lowConfidence: true, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 8, claimCount: 8, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 10,
+        valueTotal: 10,
+        noDataBuckets: 0,
+      },
+      {
+        metric: "volume",
+        cohortKey: "Heavy Equipment",
+        cohortLabel: null,
+        paletteSlot: 2,
+        points: [
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: 0, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: 3, claimCount: 3, lowConfidence: true, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 14, claimCount: 14, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 17,
+        valueTotal: 17,
+        noDataBuckets: 0,
+      },
+      {
+        metric: "avg_days_open",
+        cohortKey: "Aerospace",
+        cohortLabel: null,
+        paletteSlot: 0,
+        points: [
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 60, claimCount: 4, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 4,
+        valueTotal: null,
+        noDataBuckets: 2,
+      },
+      {
+        metric: "avg_days_open",
+        cohortKey: "Automotive",
+        cohortLabel: null,
+        paletteSlot: 1,
+        points: [
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: 88, claimCount: 2, lowConfidence: true, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 42, claimCount: 8, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 10,
+        valueTotal: null,
+        noDataBuckets: 1,
+      },
+      {
+        metric: "avg_days_open",
+        cohortKey: "Heavy Equipment",
+        cohortLabel: null,
+        paletteSlot: 2,
+        points: [
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: 74, claimCount: 3, lowConfidence: true, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 33, claimCount: 14, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 17,
+        valueTotal: null,
+        noDataBuckets: 1,
+      },
+      {
+        metric: "avg_settlement_days",
+        cohortKey: "Aerospace",
+        cohortLabel: null,
+        paletteSlot: 0,
+        points: [
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 31, claimCount: 2, lowConfidence: true, partial: true },
+        ],
+        seriesTotal: 2,
+        valueTotal: null,
+        noDataBuckets: 2,
+      },
+      {
+        metric: "avg_settlement_days",
+        cohortKey: "Automotive",
+        cohortLabel: null,
+        paletteSlot: 1,
+        points: [
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 26, claimCount: 3, lowConfidence: true, partial: true },
+        ],
+        seriesTotal: 3,
+        valueTotal: null,
+        noDataBuckets: 2,
+      },
+      {
+        metric: "avg_settlement_days",
+        cohortKey: "Heavy Equipment",
+        cohortLabel: null,
+        paletteSlot: 2,
+        points: [
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 19, claimCount: 5, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 5,
+        valueTotal: null,
+        noDataBuckets: 2,
+      },
+      {
+        metric: "rtw_rate_bp",
+        cohortKey: "Aerospace",
+        cohortLabel: null,
+        paletteSlot: 0,
+        points: [
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 7500, claimCount: 4, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 4,
+        valueTotal: null,
+        noDataBuckets: 2,
+      },
+      {
+        metric: "rtw_rate_bp",
+        cohortKey: "Automotive",
+        cohortLabel: null,
+        paletteSlot: 1,
+        points: [
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 8750, claimCount: 8, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 8,
+        valueTotal: null,
+        noDataBuckets: 2,
+      },
+      {
+        metric: "rtw_rate_bp",
+        cohortKey: "Heavy Equipment",
+        cohortLabel: null,
+        paletteSlot: 2,
+        points: [
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 9286, claimCount: 14, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 14,
+        valueTotal: null,
+        noDataBuckets: 2,
+      },
+      {
+        metric: "paid_cents",
+        cohortKey: "Aerospace",
+        cohortLabel: null,
+        paletteSlot: 0,
+        points: [
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: 0, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: 0, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 720000, claimCount: 4, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 4,
+        valueTotal: 720000,
+        noDataBuckets: 0,
+      },
+      {
+        metric: "paid_cents",
+        cohortKey: "Automotive",
+        cohortLabel: null,
+        paletteSlot: 1,
+        points: [
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: 0, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: 340000, claimCount: 2, lowConfidence: true, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 2100000, claimCount: 8, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 10,
+        valueTotal: 2440000,
+        noDataBuckets: 0,
+      },
+      {
+        metric: "paid_cents",
+        cohortKey: "Heavy Equipment",
+        cohortLabel: null,
+        paletteSlot: 2,
+        points: [
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: 0, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: 510000, claimCount: 3, lowConfidence: true, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 3300000, claimCount: 14, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 17,
+        valueTotal: 3810000,
+        noDataBuckets: 0,
+      },
+    ],
+    defaultBuckets: 12,
+    maxBuckets: 36,
+    lowConfidenceClaimMax: 3,
+    settleTargetDays: 30,
+    rtwTargetBp: 8000,
+    highRiskSeverityMin: 65,
+    medRiskSeverityMin: 35,
+    rulesVersion: 6,
+    periodsVersion: 1,
+  },
+};
+
+/**
+ * A scoped persona whose book holds no claims at all.
+ *
+ * **The window still exists**: four buckets, every series the full four points,
+ * counts `0` and means `null`. `points.length` is four, so a length test can
+ * never fire — which is the bug Story 7.1 shipped once and the reason every
+ * surface here decides emptiness on `seriesTotal`. Without this fixture an empty
+ * portfolio renders as five flat lines along the axis, which reads as a real and
+ * excellent result.
+ *
+ * `claimsInWindow` and `claimsInScope` are both `0`, and `bucketCount` is not —
+ * the window is a question the server answered, not an absence.
+ */
+export const TRENDS_EMPTY = {
+  status: 200,
+  body: {
+    asOf: "2026-04-21",
+    grain: "month",
+    anchor: "fnol",
+    cohort: "none",
+    windowFrom: "2026-01-01",
+    windowTo: "2026-04-30",
+    bucketCount: 4,
+    claimsInScope: 0,
+    claimsInWindow: 0,
+    series: [
+      {
+        metric: "volume",
+        cohortKey: null,
+        cohortLabel: null,
+        paletteSlot: null,
+        points: [
+          { bucketKey: "2026-01", bucketLabel: "Jan 2026", bucketFrom: "2026-01-01", bucketTo: "2026-01-31", value: 0, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: 0, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: 0, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 0, claimCount: 0, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 0,
+        valueTotal: 0,
+        noDataBuckets: 0,
+      },
+      {
+        metric: "avg_days_open",
+        cohortKey: null,
+        cohortLabel: null,
+        paletteSlot: null,
+        points: [
+          { bucketKey: "2026-01", bucketLabel: "Jan 2026", bucketFrom: "2026-01-01", bucketTo: "2026-01-31", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: null, claimCount: 0, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 0,
+        valueTotal: null,
+        noDataBuckets: 4,
+      },
+      {
+        metric: "avg_settlement_days",
+        cohortKey: null,
+        cohortLabel: null,
+        paletteSlot: null,
+        points: [
+          { bucketKey: "2026-01", bucketLabel: "Jan 2026", bucketFrom: "2026-01-01", bucketTo: "2026-01-31", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: null, claimCount: 0, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 0,
+        valueTotal: null,
+        noDataBuckets: 4,
+      },
+      {
+        metric: "rtw_rate_bp",
+        cohortKey: null,
+        cohortLabel: null,
+        paletteSlot: null,
+        points: [
+          { bucketKey: "2026-01", bucketLabel: "Jan 2026", bucketFrom: "2026-01-01", bucketTo: "2026-01-31", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: null, claimCount: 0, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 0,
+        valueTotal: null,
+        noDataBuckets: 4,
+      },
+      {
+        metric: "paid_cents",
+        cohortKey: null,
+        cohortLabel: null,
+        paletteSlot: null,
+        points: [
+          { bucketKey: "2026-01", bucketLabel: "Jan 2026", bucketFrom: "2026-01-01", bucketTo: "2026-01-31", value: 0, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: 0, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31", value: 0, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30", value: 0, claimCount: 0, lowConfidence: false, partial: true },
+        ],
+        seriesTotal: 0,
+        valueTotal: 0,
+        noDataBuckets: 0,
+      },
+    ],
+    defaultBuckets: 12,
+    maxBuckets: 36,
+    lowConfidenceClaimMax: 3,
+    settleTargetDays: 30,
+    rtwTargetBp: 8000,
+    highRiskSeverityMin: 65,
+    medRiskSeverityMin: 35,
+    rulesVersion: 6,
+    periodsVersion: 1,
+  },
+};
+
+/**
+ * The **other** empty, and the one an analyst actually meets: a full window
+ * whose claims have not settled.
+ *
+ * `TRENDS_EMPTY` is a scope with nothing in it, which is rare and obvious.
+ * This is a young book — twenty-three claims across two months, every one of
+ * them still open — and it is the state the per-metric `seriesTotal` exists
+ * for. Volume, ages and money all have plenty to say; the settlement mean and
+ * the RTW rate have **no population at all**, so every one of their points is
+ * `null` with a `claimCount` of `0` and their series totals are `0` while the
+ * other three read 23.
+ *
+ * A payload that counted the bucket instead would publish 23 behind all five,
+ * and the two SLA cards would draw their *data* state over nothing: axes, a
+ * dashed target and no line, which reads as a real result at zero. Two buckets
+ * rather than four because nothing here needs a gap or a thin cell — the whole
+ * fixture is one distinction.
+ */
+export const TRENDS_NONE_SETTLED = {
+  status: 200,
+  body: {
+    asOf: "2026-03-15",
+    grain: "month",
+    anchor: "fnol",
+    cohort: "none",
+    windowFrom: "2026-01-01",
+    windowTo: "2026-02-28",
+    bucketCount: 2,
+    claimsInScope: 100,
+    claimsInWindow: 23,
+    series: [
+      {
+        metric: "volume",
+        cohortKey: null,
+        cohortLabel: null,
+        paletteSlot: null,
+        points: [
+          { bucketKey: "2026-01", bucketLabel: "Jan 2026", bucketFrom: "2026-01-01", bucketTo: "2026-01-31", value: 12, claimCount: 12, lowConfidence: false, partial: false },
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: 11, claimCount: 11, lowConfidence: false, partial: false },
+        ],
+        seriesTotal: 23,
+        valueTotal: 23,
+        noDataBuckets: 0,
+      },
+      {
+        metric: "avg_days_open",
+        cohortKey: null,
+        cohortLabel: null,
+        paletteSlot: null,
+        points: [
+          { bucketKey: "2026-01", bucketLabel: "Jan 2026", bucketFrom: "2026-01-01", bucketTo: "2026-01-31", value: 148, claimCount: 12, lowConfidence: false, partial: false },
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: 120, claimCount: 11, lowConfidence: false, partial: false },
+        ],
+        seriesTotal: 23,
+        valueTotal: null,
+        noDataBuckets: 0,
+      },
+      {
+        metric: "avg_settlement_days",
+        cohortKey: null,
+        cohortLabel: null,
+        paletteSlot: null,
+        points: [
+          { bucketKey: "2026-01", bucketLabel: "Jan 2026", bucketFrom: "2026-01-01", bucketTo: "2026-01-31", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: null, claimCount: 0, lowConfidence: false, partial: false },
+        ],
+        seriesTotal: 0,
+        valueTotal: null,
+        noDataBuckets: 2,
+      },
+      {
+        metric: "rtw_rate_bp",
+        cohortKey: null,
+        cohortLabel: null,
+        paletteSlot: null,
+        points: [
+          { bucketKey: "2026-01", bucketLabel: "Jan 2026", bucketFrom: "2026-01-01", bucketTo: "2026-01-31", value: null, claimCount: 0, lowConfidence: false, partial: false },
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: null, claimCount: 0, lowConfidence: false, partial: false },
+        ],
+        seriesTotal: 0,
+        valueTotal: null,
+        noDataBuckets: 2,
+      },
+      {
+        metric: "paid_cents",
+        cohortKey: null,
+        cohortLabel: null,
+        paletteSlot: null,
+        points: [
+          { bucketKey: "2026-01", bucketLabel: "Jan 2026", bucketFrom: "2026-01-01", bucketTo: "2026-01-31", value: 4210000, claimCount: 12, lowConfidence: false, partial: false },
+          { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28", value: 3000000, claimCount: 11, lowConfidence: false, partial: false },
+        ],
+        seriesTotal: 23,
+        valueTotal: 7210000,
+        noDataBuckets: 0,
+      },
+    ],
+    defaultBuckets: 12,
+    maxBuckets: 36,
+    lowConfidenceClaimMax: 3,
+    settleTargetDays: 30,
+    rtwTargetBp: 8000,
+    highRiskSeverityMin: 65,
+    medRiskSeverityMin: 35,
+    rulesVersion: 6,
+    periodsVersion: 1,
+  },
+};
+
+
 export function stubApi(routes: StubRoutes): void {
   // Story 6.4: each install starts a fresh recording, so a test never reads the
   // previous one's runs. `length = 0` rather than a reassignment, because the
@@ -4946,6 +6285,15 @@ export function stubApi(routes: StubRoutes): void {
         }
         if (url.includes("/api/dashboard/fraud")) {
           return answer(routes.fraudPanel ?? FRAUD_PANEL);
+        }
+        // Story 7.2's. Disjoint from every path above and from
+        // `/api/dashboard/claims` below, so the position is readability rather
+        // than routing — but `answerFor` rather than `answer`, because the three
+        // selectors are in the query string and a stub has to be able to see
+        // them. The default answers the unsplit month reading whatever was
+        // asked, which is what every test that does not change a control wants.
+        if (url.includes("/api/dashboard/trends")) {
+          return answerFor(routes.trends ?? TRENDS, url);
         }
         if (url.includes("/api/dashboard/claims")) {
           return answerFor(routes.drillClaims ?? DRILL_CLAIMS, url);

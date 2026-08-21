@@ -108,6 +108,13 @@ interface SeedUser {
 interface SeedEmployer {
   name: string;
   short_name: string;
+  /**
+   * Story 7.2's: the sector cohort splits on an **employer** attribute reached
+   * through the join the one scoped read already carries — nine free-text values
+   * across ten employers (Automotive twice, the rest 1:1). It is not an industry
+   * rollup and the card says so; this oracle reads the column and nothing more.
+   */
+  sector: string;
 }
 
 /** Story 5.4's: the injured worker's display name, keyed by business id. */
@@ -2585,7 +2592,18 @@ export type DrillFacet =
   // oracle that shared a restatement between any two would agree with an
   // implementation that had collapsed the same pair.
   | "fraudBand"
-  | "siuReview";
+  | "siuReview"
+  // Story 7.2's six. Four are a new *kind* of facet — an inclusive bound on one
+  // of the two dates the Trends section buckets by — and they are two pairs over
+  // two columns rather than one pair over "the anchor", because a point on the
+  // injury-date series opened with `filter[fnolFrom]` returns a plausible list
+  // of the wrong claims. The last two are the cohort split's own columns.
+  | "fnolFrom"
+  | "fnolTo"
+  | "doiFrom"
+  | "doiTo"
+  | "disability"
+  | "sector";
 
 export type DrillFilters = Partial<Record<DrillFacet, string>>;
 
@@ -2655,7 +2673,37 @@ function matchesFacet(claim: SeedClaim, facet: DrillFacet, value: string): boole
       return (
         String(claim.fraud_flag && claim.fraud_score >= SIU_FRAUD_SCORE_MIN) === value
       );
+    // Story 7.2's four date bounds, **inclusive at both ends**, compared as the
+    // stored strings rather than as parsed dates: every date in this dataset is
+    // a zero-padded ISO day, and on that domain a lexicographic comparison and a
+    // calendar one agree exactly — so the oracle spends no `Date` on a question
+    // that is not about time zones. Inclusive because a bucket's last day is a
+    // day claims fall on: an exclusive upper bound would silently drop the 31st
+    // of every month the analyst clicked.
+    case "fnolFrom":
+      return claim.froi_date >= value;
+    case "fnolTo":
+      return claim.froi_date <= value;
+    case "doiFrom":
+      return claim.doi >= value;
+    case "doiTo":
+      return claim.doi <= value;
+    // The claim's own enum column.
+    case "disability":
+      return claim.disability === value;
+    // The **employer's** attribute, reached through the join — not a column on
+    // the claim, which is the whole reason the facet needed a lookup rather than
+    // a comparison.
+    case "sector":
+      return sectorOf(claim) === value;
   }
+}
+
+/** The sector of the employer a seeded claim belongs to. */
+function sectorOf(claim: SeedClaim): string {
+  const employer = seed.employers.find((row) => row.name === claim.employer);
+  if (!employer) throw new Error(`no seeded employer ${claim.employer}`);
+  return employer.sector;
 }
 
 export interface ExpectedDrillClaims {
@@ -2688,6 +2736,17 @@ const DRILL_FACET_LABEL: Record<DrillFacet, string> = {
   priority: "Priority worklist",
   fraudBand: "Fraud band",
   siuReview: "SIU review",
+  // Story 7.2's six. The four bounds name the **anchor** rather than the column,
+  // because an analyst who clicked a point on the injury-date series has to see
+  // that the list is narrowed on the injury date and not on the filing date —
+  // the two are weeks apart on a third of the seeded book, and a chip reading
+  // only "From" would make the two drills indistinguishable.
+  fnolFrom: "FNOL from",
+  fnolTo: "FNOL to",
+  doiFrom: "Injury from",
+  doiTo: "Injury to",
+  disability: "Disability",
+  sector: "Sector",
 };
 
 /** What a chip says the *value* is, for the ten facets the UI labels. */
@@ -2714,6 +2773,10 @@ const DRILL_VALUE_LABEL: Partial<Record<DrillFacet, Record<string, string>>> = {
   // worth its ambiguity where something already spells it that way.
   fraudBand: { low: "Low", medium: "Medium", high: "High" },
   siuReview: { true: "Yes", false: "No" },
+  // Story 7.2's one labelled facet. The four date bounds are absent because a
+  // chip prints an ISO day as sent, and `sector` is absent because it is free
+  // text where the stored value *is* the label.
+  disability: { temporary: "Temporary", permanent: "Permanent" },
 };
 
 /**
@@ -2743,6 +2806,16 @@ const DRILL_FACET_ORDER: DrillFacet[] = [
   // URL carrying both.
   "fraudBand",
   "siuReview",
+  // Story 7.2's six, appended for the reason 7.1's two were and in the server's
+  // `DrillFilters` field order. The consequence is visible on every trend drill:
+  // a cohort chip ("Severity: High") is drawn **before** the two date chips,
+  // although the analyst chose the period first.
+  "fnolFrom",
+  "fnolTo",
+  "doiFrom",
+  "doiTo",
+  "disability",
+  "sector",
 ];
 
 /**
@@ -3068,4 +3141,764 @@ export function expectedFraudInjuryCut(persona: { name: string; role: string }):
     claimsFor(persona.name, persona.role).map((claim) => claim.injury_type),
   );
   return { shown: Math.min(FRAUD_INJURY_TYPE_LIMIT, types.size), total: types.size };
+}
+
+// --- Story 7.2: the trend window and its cohorts, restated independently ---
+//
+// **This block shares no helper with anything above it that decides a
+// population, and it shares nothing at all with the server.** Story 7.1's
+// review found `topRate` carrying the same sort-then-cut defect as the
+// implementation and therefore agreeing with it: an oracle that mirrors the
+// code it checks is not a second opinion. A trend story has that shape of
+// hazard twice over — **a window is a cut and a cohort split is a partition** —
+// so the date arithmetic below is written out from the story's definitions
+// (which bucket, which claim, which value) rather than derived from the shape
+// of `services/worklist/trends.py`'s pipeline, and the specs assert *which
+// buckets and which cohort values exist* as a set alongside their order and
+// their values, because an ordering assertion is satisfiable by the wrong
+// population.
+//
+// Three definitions, restated from the story rather than read off a response:
+//
+//   window   = the last `TREND_DEFAULT_BUCKETS` buckets of the grain, ending in
+//              the bucket that contains `asOf`. It is a cut on the *timeline*,
+//              so it is computed from the calendar and never from the claims —
+//              a window derived from the data would move when the data did and
+//              could never disagree with an implementation that had lost a
+//              bucket.
+//   bucket   = the claims whose **anchor date** falls inside the bucket's
+//              inclusive day bounds. `fnol` is `froi_date` and `doi` is `doi`;
+//              nothing else anchors, and `days_open` still counts from
+//              `froi_date` on both anchors because that is what the age of a
+//              claim is.
+//   cohort   = a partition of that same population on one dimension, so the
+//              cohort series over one metric sum back to the unsplit one. The
+//              slot a cohort takes in the palette is its rank among the
+//              **wire keys sorted by code unit** — a fact about the vocabulary,
+//              not about the data, which is what makes a colour identity rather
+//              than rank. The vocabulary is the cohort values present **in the
+//              window**, not in the persona's whole book: a value nobody filed
+//              a claim under during those twelve periods is a line nobody drew,
+//              so it takes no slot and no legend entry. Deriving it from the
+//              book instead is green only while today's date happens to leave
+//              every value inside the window — a spec that is right in August
+//              and wrong in September is not an oracle.
+//   evidence = how many claims fed a *metric* on a bucket, which is the
+//              bucket's population for three of the five and is not for the
+//              other two: a settlement mean is over settled claims carrying a
+//              duration and an RTW rate is over settled claims. The
+//              low-confidence mark is decided on that count, so one bucket can
+//              carry a thin settlement mean under a volume point that is not
+//              thin at all.
+//
+// What is deliberately reused from further up this file is arithmetic and the
+// SLA rule, never a cut: `mean` is division, `riskBand` is the one registered
+// `risk` derivation this console bands severity with everywhere (a second
+// restatement of it here would be pretending it is a fourth rule), and the two
+// settled-claim definitions are the ones `expectedSlaFor` already spells,
+// because AD-2 says the settlement mean and the RTW rate on a trend bucket are
+// that same single aggregation folded per bucket. Spelling them again would
+// assert a difference the story says must not exist.
+
+/**
+ * How many buckets a default window holds — `trend_periods.defaultBuckets`.
+ *
+ * Restated rather than read off the payload for this file's standing reason: a
+ * spec that took the window length from the response it is checking would
+ * accept any window the server chose to send.
+ */
+const TREND_DEFAULT_BUCKETS = 12;
+
+/**
+ * The claim count at or below which a bucket is marked thin —
+ * `trend_periods.lowConfidenceClaimMax`. The test is `0 < n <= max`: a bucket
+ * with **no** claims is not low confidence, it is no confidence, and its means
+ * are already absent.
+ */
+const TREND_LOW_CONFIDENCE_CLAIM_MAX = 3;
+
+/**
+ * The two targets the two graded cards quote, on the scales *those cards* use.
+ *
+ * Spelled separately from `SLA_TARGETS` at the top of this file although the
+ * settle figure coincides and the RTW figure is the same policy: the strip
+ * renders a whole-percent tile and the trend card renders a **basis-point**
+ * reference line, and the whole reason two numbers exist in one deployment's
+ * config is that a unit conversion is where a target silently becomes 80
+ * hundredths of a percent. An oracle that shared one constant between the two
+ * scales could not see that happen.
+ */
+const TREND_SETTLE_TARGET_DAYS = 30;
+const TREND_RTW_TARGET_BP = 8000;
+
+/** The three grains, the two anchors and the four cohort dimensions. */
+export type TrendGrain = "week" | "month" | "quarter";
+export type TrendAnchor = "fnol" | "doi";
+export type TrendCohortDimension = "none" | "severity_band" | "disability" | "sector";
+
+/** What a caller asks this oracle for; the defaults are the route's defaults. */
+export interface TrendQuery {
+  grain?: TrendGrain;
+  anchor?: TrendAnchor;
+  cohort?: TrendCohortDimension;
+}
+
+/** The month abbreviations a bucket label uses, in calendar order. */
+const TREND_MONTH_ABBR = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+const MS_PER_DAY = 86_400_000;
+
+/** `2026-08-21` → the UTC midnight of that day. */
+function utcDay(iso: string): number {
+  const [year, month, day] = iso.split("-").map(Number);
+  return Date.UTC(year, month - 1, day);
+}
+
+/** A UTC millisecond stamp → the `YYYY-MM-DD` the wire and the chips use. */
+function isoDay(stamp: number): string {
+  return new Date(stamp).toISOString().slice(0, 10);
+}
+
+function pad2(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
+/**
+ * The day every age and every window edge in one request is measured against —
+ * `rules.engine.utc_today()`, restated.
+ *
+ * **UTC, not the runner's local midnight**, and that is the one thing worth
+ * saying about it: the stack and this file must agree about which day it is or
+ * every bucket in the window is off by one, and the only clock both can name is
+ * the UTC one. A run started in the last seconds before UTC midnight would
+ * legitimately disagree with a response computed in the first seconds after it;
+ * that is a property of a time-anchored surface rather than of this oracle, and
+ * pinning a date here instead would make the whole suite stale tomorrow.
+ */
+function trendAsOf(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+interface TrendBucket {
+  key: string;
+  label: string;
+  from: string;
+  to: string;
+}
+
+/**
+ * The window: `TREND_DEFAULT_BUCKETS` buckets of `grain`, ending in `asOf`'s.
+ *
+ * Written three times over rather than as one parameterised walk, because the
+ * three grains are three different calendars and the shared-shape version is
+ * exactly the helper the review said an oracle must not have: a month is a
+ * variable number of days, a quarter is three months aligned to January, and a
+ * week is an **ISO** week that can belong to a different year than the days in
+ * it. Each is derived from the calendar and none of them from the claims.
+ */
+function trendWindow(grain: TrendGrain, asOf: string): TrendBucket[] {
+  const [year, month, day] = asOf.split("-").map(Number);
+
+  if (grain === "month") {
+    const buckets: TrendBucket[] = [];
+    for (let back = TREND_DEFAULT_BUCKETS - 1; back >= 0; back -= 1) {
+      // `Date.UTC` normalises an out-of-range month, so counting backwards
+      // across a year boundary needs no year arithmetic of its own.
+      const first = Date.UTC(year, month - 1 - back, 1);
+      const firstDate = new Date(first);
+      const y = firstDate.getUTCFullYear();
+      const m = firstDate.getUTCMonth();
+      // Day zero of the next month is the last day of this one — the only
+      // month-length rule that is right in February of a leap year.
+      const last = Date.UTC(y, m + 1, 0);
+      buckets.push({
+        key: `${String(y)}-${pad2(m + 1)}`,
+        label: `${TREND_MONTH_ABBR[m]} ${String(y)}`,
+        from: isoDay(first),
+        to: isoDay(last),
+      });
+    }
+    return buckets;
+  }
+
+  if (grain === "quarter") {
+    const buckets: TrendBucket[] = [];
+    const quarterOfAsOf = Math.floor((month - 1) / 3);
+    for (let back = TREND_DEFAULT_BUCKETS - 1; back >= 0; back -= 1) {
+      const first = Date.UTC(year, (quarterOfAsOf - back) * 3, 1);
+      const firstDate = new Date(first);
+      const y = firstDate.getUTCFullYear();
+      const q = Math.floor(firstDate.getUTCMonth() / 3);
+      const last = Date.UTC(y, (q + 1) * 3, 0);
+      buckets.push({
+        key: `${String(y)}-Q${String(q + 1)}`,
+        label: `Q${String(q + 1)} ${String(y)}`,
+        from: isoDay(first),
+        to: isoDay(last),
+      });
+    }
+    return buckets;
+  }
+
+  // ISO weeks: Monday-start, and the key's year is the week's year rather than
+  // the start day's — `2026-W01` begins on 2025-12-29.
+  const asOfStamp = Date.UTC(year, month - 1, day);
+  // `getUTCDay()` is 0 on Sunday; `(d + 6) % 7` makes Monday 0.
+  const mondayOffset = (new Date(asOfStamp).getUTCDay() + 6) % 7;
+  const currentMonday = asOfStamp - mondayOffset * MS_PER_DAY;
+
+  const buckets: TrendBucket[] = [];
+  for (let back = TREND_DEFAULT_BUCKETS - 1; back >= 0; back -= 1) {
+    const first = currentMonday - back * 7 * MS_PER_DAY;
+    const last = first + 6 * MS_PER_DAY;
+    // The ISO year is the year of the week's Thursday, which is what makes a
+    // week that straddles New Year belong to exactly one of the two years.
+    const thursday = new Date(first + 3 * MS_PER_DAY);
+    const isoYear = thursday.getUTCFullYear();
+    const jan1 = Date.UTC(isoYear, 0, 1);
+    const week = Math.floor((thursday.getTime() - jan1) / (7 * MS_PER_DAY)) + 1;
+    buckets.push({
+      key: `${String(isoYear)}-W${pad2(week)}`,
+      label: `Wk ${pad2(week)} ${String(isoYear)}`,
+      from: isoDay(first),
+      to: isoDay(last),
+    });
+  }
+  return buckets;
+}
+
+/** Which stored date puts a claim in a bucket — the anchor, and only these two. */
+function anchorDateOf(claim: SeedClaim, anchor: TrendAnchor): string {
+  return anchor === "fnol" ? claim.froi_date : claim.doi;
+}
+
+/** Which cohort a claim belongs to, or `null` on an unsplit series. */
+function trendCohortOf(claim: SeedClaim, dimension: TrendCohortDimension): string | null {
+  switch (dimension) {
+    case "none":
+      return null;
+    // The one registered `risk` derivation, which is what AC 2's "match the KPI
+    // cards' risk colouring exactly" means: the same band, so the same red.
+    case "severity_band":
+      return riskBand(claim.severity_score);
+    case "disability":
+      return claim.disability;
+    case "sector":
+      return sectorOf(claim);
+  }
+}
+
+/**
+ * The cohort vocabulary in **palette-slot order**: the wire keys, sorted by
+ * code unit.
+ *
+ * `localeCompare` deliberately not used. The slot is assigned server-side by
+ * ordering the raw keys, and a locale collation can disagree with a code-unit
+ * one about punctuation — `Automation/Sensing` against `Automotive` is a slash
+ * away from being the case that proves it. Sorting the *keys* rather than the
+ * labels is the 5.3 review's finding restated: two labels can collapse where
+ * two keys cannot.
+ */
+function trendCohortKeys(
+  claims: SeedClaim[],
+  dimension: TrendCohortDimension,
+): (string | null)[] {
+  if (dimension === "none") return [null];
+  const keys = new Set<string>();
+  for (const claim of claims) {
+    const key = trendCohortOf(claim, dimension);
+    if (key !== null) keys.add(key);
+  }
+  return [...keys].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
+/**
+ * `chartTheme.ts`'s ten categorical hexes and its two neutrals, restated.
+ *
+ * Hexes rather than tokens because that array is literal hexes; the two
+ * fallbacks are the tokens they are declared as. Restated for the standing
+ * reason — a spec that imported the palette would agree with a build that had
+ * repainted every line.
+ */
+const TREND_CATEGORICAL_FILLS = [
+  "#1D6A96",
+  "#E8560A",
+  "#1D7A45",
+  "#9A6E06",
+  "#C73E2D",
+  "#7B5EA7",
+  "#2E8B94",
+  "#8B6914",
+  "#1D4F8A",
+  "#6B2D8B",
+];
+const TREND_PALETTE_OVERFLOW_FILL = "var(--color-muted-text)";
+/** The severity band's semantic palette — `RISK_FILL`, which is the gauge's. */
+const TREND_RISK_FILL: Record<string, string> = {
+  high: "var(--color-error)",
+  med: "var(--color-warn)",
+  low: "var(--color-ok)",
+};
+/** What a single unsplit line is drawn in — one line carries no comparison. */
+const TREND_SERIES_FILL = "var(--color-brand)";
+
+/**
+ * A cohort's colour: identity, never rank — `trendColors.cohortFill` restated.
+ *
+ * The slot is the position in the sorted **vocabulary**, so it does not move
+ * when the numbers do. That is the property the spec asserts across two charts
+ * and across a cohort change, and it is why this function takes a slot rather
+ * than a row index.
+ */
+function trendFill(
+  dimension: TrendCohortDimension,
+  key: string | null,
+  slot: number,
+): string {
+  if (key === null) return TREND_SERIES_FILL;
+  if (dimension === "severity_band") return TREND_RISK_FILL[key] ?? TREND_PALETTE_OVERFLOW_FILL;
+  return TREND_CATEGORICAL_FILLS[slot] ?? TREND_PALETTE_OVERFLOW_FILL;
+}
+
+/** What a cohort value is called on screen — the client's copy, restated. */
+const TREND_COHORT_VALUE_LABEL: Partial<Record<TrendCohortDimension, Record<string, string>>> =
+  {
+    // "Medium" and not the gauge's "Med": a chip and a legend are sentences.
+    severity_band: { high: "High", med: "Medium", low: "Low" },
+    disability: { temporary: "Temporary", permanent: "Permanent" },
+    // `sector` is absent: free text where the stored value *is* the label.
+  };
+
+/** What the whole book is called when nothing is split. */
+const TREND_WHOLE_BOOK_LABEL = "All claims";
+
+/** What the cohort selector calls each dimension — the legend's `aria-label`. */
+const TREND_COHORT_LABEL: Record<TrendCohortDimension, string> = {
+  none: "No split",
+  severity_band: "Severity band",
+  disability: "Disability type",
+  sector: "Employer sector",
+};
+
+/** The word a card's title ends with, per anchor. */
+const TREND_ANCHOR_WORD: Record<TrendAnchor, string> = {
+  fnol: "FNOL",
+  doi: "injury date",
+};
+
+/**
+ * Whole dollars, `lib/money.ts`'s rule restated: the formatter drops cents
+ * because a claim reserve in cents is noise. The options are spelled out rather
+ * than the function imported, so a build that started printing cents fails here.
+ */
+const TREND_DOLLARS = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  maximumFractionDigits: 0,
+});
+
+/** `8000` → `"80.00"` — `formatBasisPoints`' integer arithmetic, restated. */
+function trendBasisPoints(basisPoints: number): string {
+  const whole = Math.trunc(basisPoints / 100);
+  const hundredths = Math.abs(basisPoints % 100);
+  return `${String(whole)}.${String(hundredths).padStart(2, "0")}`;
+}
+
+/** What a point with no value reads as — the em dash, never a zero. */
+const TREND_NO_VALUE = "—";
+
+/** The five metrics, in the order the section publishes and draws them. */
+type TrendMetricKey =
+  | "volume"
+  | "avg_days_open"
+  | "avg_settlement_days"
+  | "rtw_rate_bp"
+  | "paid_cents";
+
+interface TrendMetricSpec {
+  metric: TrendMetricKey;
+  /** The card's `data-testid` stem. */
+  testId: string;
+  title: (anchor: TrendAnchor) => string;
+  /**
+   * One bucket's value, or `null` where there was nothing to average or rate.
+   *
+   * **The null-versus-zero split is by metric kind and not by bucket**, which
+   * is AC 3: a count and a sum over an empty period are genuinely `0`, while a
+   * mean and a rate over an empty denominator are absent. Each metric answers
+   * for itself here rather than a shared "is this bucket empty" branch, because
+   * a shared branch is what would make all five agree about a period one of
+   * them can describe and another cannot.
+   */
+  valueOf: (claims: SeedClaim[], asOf: string) => number | null;
+  /**
+   * How many of the bucket's claims fed that value — the metric's own evidence.
+   *
+   * Beside `valueOf` rather than inside it, and answered by every metric for
+   * itself: the two figures diverge on exactly the two metrics whose
+   * denominator is not the bucket, and a spec that reused `claims.length` here
+   * would restate the conflation the implementation had and agree with it —
+   * `topRate` again, one story on. It decides the low-confidence mark, so a
+   * settlement mean over two of a busy month's claims is marked thin here and
+   * would not be by an oracle counting the month.
+   */
+  populationOf: (claims: SeedClaim[]) => number;
+  format: (value: number) => string;
+  /** The dashed reference line's caption, for the two graded metrics. */
+  targetCaption?: string;
+  /** A sentence this metric owes its reader, appended to the footnote. */
+  note?: (asOf: string) => string;
+}
+
+/** The settled population two of the five metrics are folded over (AD-2). */
+function trendSettled(claims: SeedClaim[]): SeedClaim[] {
+  return claims.filter((claim) => claim.stage === SETTLED_STAGE);
+}
+
+const TREND_METRICS: TrendMetricSpec[] = [
+  {
+    metric: "volume",
+    testId: "trend-volume",
+    title: (anchor) => `Claim volume by ${TREND_ANCHOR_WORD[anchor]}`,
+    // A count. Zero is an answer.
+    valueOf: (claims) => claims.length,
+    // A count *is* its own population.
+    populationOf: (claims) => claims.length,
+    format: (value) => String(value),
+  },
+  {
+    metric: "avg_days_open",
+    testId: "trend-days-open",
+    // The anchor, in a title whose *measure* is not the anchor's: `days_open`
+    // counts from the FNOL date whichever date the buckets were cut on, so the
+    // card names both — the axis here and the measure in the note below.
+    title: (anchor) => `Average days open by ${TREND_ANCHOR_WORD[anchor]}`,
+    // `days_open` counts **`froi_date` → `as_of`** on both anchors and floors at
+    // zero, so the ten seeded claims filed in the future read as 0 rather than
+    // as a negative age. A mean, so `null` on an empty bucket.
+    valueOf: (claims, asOf) => {
+      if (claims.length === 0) return null;
+      const today = utcDay(asOf);
+      return mean(
+        claims.map((claim) =>
+          Math.max(0, Math.round((today - utcDay(claim.froi_date)) / MS_PER_DAY)),
+        ),
+        0,
+      );
+    },
+    // Over every claim in the bucket — an age needs a claim and nothing else.
+    populationOf: (claims) => claims.length,
+    format: (value) => `${String(value)}d`,
+    note: (asOf) => `Ages counted from FNOL to ${asOf}`,
+  },
+  {
+    metric: "avg_settlement_days",
+    testId: "trend-settlement",
+    // Design note 1 in the title: there is no closure date in the schema, so a
+    // settlement cycle time is a property of the **filing** cohort — "claims
+    // filed in March took N days" — and the card has to say so.
+    title: (anchor) => `Settlement cycle time — by ${TREND_ANCHOR_WORD[anchor]} cohort`,
+    // The SLA strip's settle mean: over settled claims **that carry a duration**,
+    // which is a narrower denominator than the rate below it and deliberately so.
+    valueOf: (claims) => {
+      const durations = trendSettled(claims)
+        .map((claim) => claim.settlement_days)
+        .filter((days): days is number => days !== null);
+      return durations.length === 0 ? null : mean(durations, 0);
+    },
+    // …and the count is that same narrower denominator, spelled out again
+    // rather than reached through `valueOf`: a settled claim with no recorded
+    // duration is in the rate's population below and not in this one.
+    populationOf: (claims) =>
+      trendSettled(claims).filter((claim) => claim.settlement_days !== null).length,
+    format: (value) => `${String(value)}d`,
+    targetCaption: `Target ${String(TREND_SETTLE_TARGET_DAYS)}d`,
+  },
+  {
+    metric: "rtw_rate_bp",
+    testId: "trend-rtw-rate",
+    title: () => "Return-to-work rate",
+    // The SLA strip's RTW rate: 100 or 0 per settled claim, averaged over **all**
+    // of them including those with no recorded duration — the other denominator.
+    // Rounded to a whole percent and then scaled to basis points, which is the
+    // scale the wire and the reference line share.
+    valueOf: (claims) => {
+      const settled = trendSettled(claims);
+      if (settled.length === 0) return null;
+      return (
+        mean(
+          settled.map((claim) => (claim.return_status === FULLY_RECOVERED ? 100 : 0)),
+          0,
+        ) * 100
+      );
+    },
+    // Every settled claim, recorded duration or not — the other denominator.
+    populationOf: (claims) => trendSettled(claims).length,
+    format: (value) => `${trendBasisPoints(value)}%`,
+    targetCaption: `Target ${trendBasisPoints(TREND_RTW_TARGET_BP)}%`,
+  },
+  {
+    metric: "paid_cents",
+    testId: "trend-paid",
+    title: () => "Total paid",
+    // A sum of the three paid columns, in cents. Zero is an answer.
+    valueOf: (claims) =>
+      claims.reduce(
+        (total, claim) =>
+          total + claim.paid_indemnity + claim.paid_medical + claim.paid_expense,
+        0,
+      ),
+    // A sum over the whole bucket, so the whole bucket is behind it.
+    populationOf: (claims) => claims.length,
+    format: (value) => TREND_DOLLARS.format(value / 100),
+  },
+];
+
+export interface ExpectedTrendLine {
+  /** `data-cohort-key` — the empty string on an unsplit line. */
+  cohortKey: string;
+  /** The name the legend and the accessible list print. */
+  label: string;
+  /** `data-fill` — the hue this cohort holds on **every** chart. */
+  fill: string;
+  /** One rendered `sr-only` list item per bucket, in the window's order. */
+  points: string[];
+  /** The bucket keys this line marks thin — on *this metric's* evidence. */
+  lowConfidenceBuckets: string[];
+  /** The bucket keys whose period had not finished when the window was cut. */
+  partialBuckets: string[];
+  /** The bucket keys this line has no value for — a gap, never a zero point. */
+  gapBuckets: string[];
+}
+
+export interface ExpectedTrendCard {
+  testId: string;
+  /** The card's heading, as rendered. */
+  title: string;
+  /** Its lines, in the server's order: metric-major, cohort by wire key. */
+  lines: ExpectedTrendLine[];
+  /** The footnote, as rendered — gaps, then any target, then any note. */
+  footnote: string;
+}
+
+export interface ExpectedTrends {
+  /** The day the window was cut against and the ages counted to. */
+  asOf: string;
+  /** Every bucket in the window, in the window's order. */
+  bucketKeys: string[];
+  bucketLabels: string[];
+  /** One bucket's inclusive day bounds — what a drill's date facets carry. */
+  bucketBounds: Record<string, { from: string; to: string }>;
+  /** The cohort vocabulary, in palette-slot order. `[]` when unsplit. */
+  cohortKeys: string[];
+  /** The legend's rows, as rendered text, and the hue each carries. */
+  legendRows: string[];
+  legendFills: string[];
+  /** The legend's accessible name. */
+  legendLabel: string;
+  /** The window caption above the cards, as rendered. */
+  windowCaption: string;
+  /** The five cards, in the section's layout order. */
+  cards: ExpectedTrendCard[];
+  /** The same five, by `data-testid` stem. */
+  card: Record<string, ExpectedTrendCard>;
+  /** The filter set one bucket of one cohort drills with. */
+  drillFilters: (bucketKey: string, cohortKey?: string) => DrillFilters;
+}
+
+/**
+ * What a persona's Trends section must render, for one grain/anchor/cohort.
+ *
+ * **Rendered strings rather than raw numbers**, this file's standing
+ * discipline and the sharper half of it here: three of the five metrics carry a
+ * unit the wire does not (days, basis points, cents), so a page that printed
+ * `8000` where `80.00%` belongs — or dollars where cents were sent — would
+ * satisfy any comparison made against a number and fail this one.
+ *
+ * The three set-valued fields (`bucketKeys`, `cohortKeys`, and each line's
+ * `gapBuckets`) exist because the ordering assertions cannot see a wrong
+ * *population*: a window that lost its first bucket and gained one at the end
+ * is still in ascending order, and a cohort split that dropped a value still
+ * draws its remaining lines in slot order.
+ */
+export function expectedTrendsFor(
+  persona: { name: string; role: string },
+  query: TrendQuery = {},
+): ExpectedTrends {
+  const grain = query.grain ?? "month";
+  const anchor = query.anchor ?? "fnol";
+  const dimension = query.cohort ?? "none";
+
+  const asOf = trendAsOf();
+  const window = trendWindow(grain, asOf);
+  const visible = claimsFor(persona.name, persona.role);
+
+  // The window's own population, counted once: a claim is in the window when its
+  // anchor date falls between the outer edges, and the caption says so beside
+  // the whole book's size. Both dates are zero-padded ISO days, so the string
+  // comparison is the calendar comparison.
+  const windowFrom = window[0].from;
+  const windowTo = window[window.length - 1].to;
+  const inWindow = visible.filter((claim) => {
+    const date = anchorDateOf(claim, anchor);
+    return date >= windowFrom && date <= windowTo;
+  });
+
+  // **The vocabulary is the window's, not the book's**, and the order of these
+  // two statements is the whole of it: a cohort value nobody filed a claim
+  // under inside the window is a line nobody drew, so it takes no slot and no
+  // legend row. Derived from the persona's whole book this agreed with the
+  // server only while every value happened to fall inside twelve periods —
+  // green on today's date, red on a twelve-*week* window that starts after the
+  // last Aerospace claim, and wrong in a way that moves every `paletteSlot`
+  // after the missing value rather than only dropping a row.
+  const cohortKeys = trendCohortKeys(inWindow, dimension);
+
+  const bucketBounds: Record<string, { from: string; to: string }> = {};
+  for (const bucket of window) {
+    bucketBounds[bucket.key] = { from: bucket.from, to: bucket.to };
+  }
+
+  /** The claims of one bucket of one cohort — the only population there is. */
+  function claimsIn(bucket: TrendBucket, cohortKey: string | null): SeedClaim[] {
+    return visible.filter((claim) => {
+      if (cohortKey !== null && trendCohortOf(claim, dimension) !== cohortKey) return false;
+      const date = anchorDateOf(claim, anchor);
+      return date >= bucket.from && date <= bucket.to;
+    });
+  }
+
+  function labelOf(cohortKey: string | null): string {
+    if (cohortKey === null) return TREND_WHOLE_BOOK_LABEL;
+    return TREND_COHORT_VALUE_LABEL[dimension]?.[cohortKey] ?? cohortKey;
+  }
+
+  const cards = TREND_METRICS.map((spec): ExpectedTrendCard => {
+    const clauses: string[] = [];
+    const lines = cohortKeys.map((cohortKey, slot): ExpectedTrendLine => {
+      const points: string[] = [];
+      const lowConfidenceBuckets: string[] = [];
+      const partialBuckets: string[] = [];
+      const gapBuckets: string[] = [];
+
+      for (const bucket of window) {
+        const claims = claimsIn(bucket, cohortKey);
+        const value = spec.valueOf(claims, asOf);
+        // The server's verdict, restated: strictly above zero and at or below
+        // the ceiling, over **this metric's** evidence rather than the bucket's
+        // claims. A bucket with no claims *behind this figure* is not marked —
+        // its value is already absent and a "low confidence" beside an em dash
+        // would be a second way of saying nothing.
+        const behind = spec.populationOf(claims);
+        const low = behind > 0 && behind <= TREND_LOW_CONFIDENCE_CLAIM_MAX;
+        // A period the clock has not reached the end of, decided from the
+        // bucket's own last day rather than from its position: the newest
+        // bucket of a window that ends today, and none of the others.
+        const partial = bucket.to > asOf;
+        if (low) lowConfidenceBuckets.push(bucket.key);
+        if (partial) partialBuckets.push(bucket.key);
+        if (value === null) gapBuckets.push(bucket.key);
+        points.push(
+          `${bucket.label}: ${value === null ? TREND_NO_VALUE : spec.format(value)}${
+            low ? " (low confidence)" : ""
+          }${partial ? " (partial period)" : ""}`,
+        );
+      }
+
+      clauses.push(
+        cohortKey === null
+          ? `${String(gapBuckets.length)} of ${String(window.length)} periods have no data`
+          : `${labelOf(cohortKey)} ${String(gapBuckets.length)}/${String(
+              window.length,
+            )} without data`,
+      );
+
+      return {
+        cohortKey: cohortKey ?? "",
+        label: labelOf(cohortKey),
+        fill: trendFill(dimension, cohortKey, slot),
+        points,
+        lowConfidenceBuckets,
+        partialBuckets,
+        gapBuckets,
+      };
+    });
+
+    // One clause for the card rather than one per line, because every line in a
+    // card spans the same window — and it names the bucket the *clock* left
+    // unfinished, which is the last one here only because a default window ends
+    // today.
+    const unfinished = window.find((bucket) => bucket.to > asOf);
+    if (unfinished !== undefined) clauses.push(`${unfinished.label} is a part period`);
+    if (spec.targetCaption !== undefined) clauses.push(spec.targetCaption);
+    if (spec.note !== undefined) clauses.push(spec.note(asOf));
+
+    return {
+      testId: spec.testId,
+      title: spec.title(anchor),
+      lines,
+      footnote: clauses.join(" · "),
+    };
+  });
+
+  const card: Record<string, ExpectedTrendCard> = {};
+  for (const entry of cards) card[entry.testId] = entry;
+
+  // Which facet a cohort value narrows on — the same column the split was made
+  // on, which is what makes the drilled list reconcile with the line clicked.
+  const COHORT_FACET: Record<TrendCohortDimension, DrillFacet | null> = {
+    none: null,
+    severity_band: "severityBand",
+    disability: "disability",
+    sector: "sector",
+  };
+
+  return {
+    asOf,
+    bucketKeys: window.map((bucket) => bucket.key),
+    bucketLabels: window.map((bucket) => bucket.label),
+    bucketBounds,
+    cohortKeys: cohortKeys.filter((key): key is string => key !== null),
+    legendRows:
+      dimension === "none" ? [] : cohortKeys.map((key) => labelOf(key)),
+    legendFills:
+      dimension === "none"
+        ? []
+        : cohortKeys.map((key, slot) => trendFill(dimension, key, slot)),
+    legendLabel: `${TREND_COHORT_LABEL[dimension]} — show claims`,
+    windowCaption: `${windowFrom} to ${windowTo} · ${String(
+      window.length,
+    )} periods · ${String(inWindow.length)} of ${String(
+      visible.length,
+    )} claims · as of ${asOf}`,
+    cards,
+    card,
+    drillFilters: (bucketKey, cohortKey) => {
+      const bounds = bucketBounds[bucketKey];
+      if (bounds === undefined) throw new Error(`no bucket ${bucketKey} in this window`);
+      // The bounds go on the pair belonging to the **anchor the response was
+      // bucketed by**: a point on the injury-date series opened with
+      // `filter[fnolFrom]` returns a plausible list of the wrong claims.
+      const filters: DrillFilters =
+        anchor === "fnol"
+          ? { fnolFrom: bounds.from, fnolTo: bounds.to }
+          : { doiFrom: bounds.from, doiTo: bounds.to };
+      const facet = COHORT_FACET[dimension];
+      if (cohortKey === undefined || facet === null) return filters;
+      return { ...filters, [facet]: cohortKey };
+    },
+  };
 }

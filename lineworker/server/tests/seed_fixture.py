@@ -14,7 +14,7 @@ code did.
 
 import importlib.util
 import json
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from functools import lru_cache
 from pathlib import Path
@@ -1464,4 +1464,380 @@ def expected_fraud_rates(
         },
         "claimsInScope": len(visible),
         "flaggedClaims": sum(1 for claim in visible if fraud_flagged(claim)),
+    }
+
+
+# --- Story 7.2: the trend & cohort series, restated independently ---------
+#
+# A trend is two cuts and a partition stacked on one another — a *window* cuts
+# the population, a *bucket* partitions what survives, and a *cohort* partitions
+# that again — and Story 7.1's review found the exact hazard that arrangement
+# invites: `e2e/fixtures/seed.ts::topRate` carried the same sort-then-cut defect
+# as the implementation, so it agreed with it. So this block shares **no** shape
+# with `services/worklist/trends.py`.
+#
+# What that means concretely, because "independent" is otherwise a word:
+#
+# - The window is walked **backwards from `as_of` one bucket at a time**, by
+#   re-bucketing the day before the current bucket started. The service computes
+#   it forwards from an integer bucket index. Two different algorithms that have
+#   to agree about February, about the turn of a year and about the 53-week ISO
+#   year.
+# - The bucket boundaries are computed here from the calendar, not read off the
+#   payload. A test that keyed on the response's own `bucketKey` would agree with
+#   any bucketing at all.
+# - Every constant is restated, including the ones that coincide with constants
+#   already in this file: `TREND_HIGH_RISK_MIN` beside `HIGH_RISK_MIN` and
+#   `TREND_SETTLE_TARGET_DAYS` beside `SLA_TARGETS["settle"]` are 65 and 30
+#   twice on purpose. Sharing either name would make this oracle unable to
+#   notice the day a document or a setting moved one of them, which is the
+#   single most plausible way to break this story quietly. **Every one of them
+#   is read into the answer below** — the five that describe the payload's
+#   rule-derived scalars go into the returned object rather than sitting in this
+#   file as decoration. A constant nothing reads protects nothing, and the
+#   sentence above would have been a claim about a guard that did not exist.
+#   The tests keep asserting those same fields against the *loaded documents*
+#   as well, which is a different failure and not a redundant one: the document
+#   assertion says the payload quotes the rules it used, and this file says the
+#   rules are still the ones the seeded expectations were written against.
+# - The two SLA figures are folded from the seed's own columns here, at this
+#   file's own precision. That is exactly what `expected_sla_strip` does for the
+#   top bar, and doing it a second time per bucket is the point: the service is
+#   forbidden from re-averaging (AD-2) and calls `sla.strip_of` per bucket
+#   instead, so an oracle that also called it would be testing that the call
+#   happened rather than that the answer is right.
+#
+# What is deliberately *not* restated is `claims_for` and `days_open`. Those are
+# oracles for scope and for one registered derivation — one restatement each,
+# already in this file, reused the way every block here reuses `claims_for`.
+# What is written fresh is everything the *pipeline* does: the window, the
+# buckets, the banding into cohorts, the ordering, the palette slots and the
+# null-versus-zero split.
+
+TREND_DEFAULT_BUCKETS = 12
+TREND_MAX_BUCKETS = 24
+TREND_LOW_CONFIDENCE_CLAIM_MAX = 3
+
+#: The severity edges the trend payload publishes, restated separately from
+#: `HIGH_RISK_MIN` and `MED_RISK_MIN` above even though all four are the same two
+#: numbers — this file's standing rule, and 7.1's `FRAUD_BAND_HIGH_MIN` is the
+#: precedent. The severity *cohort* itself goes through `risk_band` below rather
+#: than through these, and that is not an inconsistency: the whole claim being
+#: asserted is that a cohort here and a slice on the severity donut are one band,
+#: so an oracle that banded them differently would be testing the wrong thing.
+TREND_HIGH_RISK_MIN = 65
+TREND_MED_RISK_MIN = 35
+
+#: The two SLA targets the trend payload republishes as reference lines, on the
+#: series' own scales — whole days, and basis points for the rate. Restated
+#: separately from `SLA_TARGETS` for the reason directly above.
+TREND_SETTLE_TARGET_DAYS = 30
+TREND_RTW_TARGET_BP = 8_000
+
+#: The five series, in the order the payload publishes them.
+TREND_METRIC_ORDER = (
+    "volume",
+    "avg_days_open",
+    "avg_settlement_days",
+    "rtw_rate_bp",
+    "paid_cents",
+)
+
+#: The two metrics that zero-fill an empty bucket and carry a window total. The
+#: other three are a mean and two rates over a possibly-empty denominator, and
+#: `null` is the only honest answer for those — the prohibition AC 3 names.
+TREND_SUMMABLE_METRICS = ("volume", "paid_cents")
+
+#: The month names a bucket label is written with. Server-side copy, unusually,
+#: because a bucket's label is a rendering of a *computed* period rather than an
+#: enum member whose copy the SPA owns.
+TREND_MONTHS = (
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+)
+
+
+def employer_sectors() -> dict[str, str]:
+    """`{employer name: sector}` from the seed file — the sector cohort's key.
+
+    An employer *attribute*, not an industry rollup, and the stored string is the
+    key and the label both: nine distinct values across ten employers, because
+    two of them are Automotive.
+    """
+    return {row["name"]: row["sector"] for row in seed()["employers"]}
+
+
+def _trend_bucket(day: date, grain: str) -> tuple[str, str, date, date]:
+    """`(key, label, first day, last day)` of the bucket `day` falls in.
+
+    Written from the calendar rather than from an index, and the ends are
+    computed from the *next* period's first day so February, leap years and the
+    53-week ISO year need no table.
+    """
+    if grain == "week":
+        start = day - timedelta(days=day.weekday())
+        end = start + timedelta(days=6)
+        iso = start.isocalendar()
+        return f"{iso.year:04d}-W{iso.week:02d}", f"Wk {iso.week:02d} {iso.year}", start, end
+    if grain == "quarter":
+        quarter = (day.month - 1) // 3 + 1
+        start = date(day.year, quarter * 3 - 2, 1)
+        after = date(day.year + 1, 1, 1) if quarter == 4 else date(day.year, quarter * 3 + 1, 1)
+        return f"{day.year:04d}-Q{quarter}", f"Q{quarter} {day.year}", start, after - timedelta(1)
+    if grain != "month":
+        raise AssertionError(f"no seeded oracle for grain {grain!r}")
+    start = date(day.year, day.month, 1)
+    after = date(day.year + 1, 1, 1) if day.month == 12 else date(day.year, day.month + 1, 1)
+    label = f"{TREND_MONTHS[day.month - 1]} {day.year}"
+    return f"{day.year:04d}-{day.month:02d}", label, start, after - timedelta(1)
+
+
+def trend_window(
+    grain: str, as_of: date, buckets: int = TREND_DEFAULT_BUCKETS
+) -> list[tuple[str, str, date, date]]:
+    """The `buckets` periods ending in the one `as_of` falls in, oldest first.
+
+    **Walked backwards, one bucket at a time**, by re-bucketing the day before
+    the current bucket began — deliberately not the service's forward walk from
+    an integer bucket index. Two algorithms that have to agree, rather than one
+    written twice.
+    """
+    walked: list[tuple[str, str, date, date]] = []
+    cursor = as_of
+    for _ in range(buckets):
+        bucket = _trend_bucket(cursor, grain)
+        walked.append(bucket)
+        cursor = bucket[2] - timedelta(days=1)
+    return list(reversed(walked))
+
+
+def _trend_cohort_key(claim: dict[str, Any], cohort: str, sectors: dict[str, str]) -> str | None:
+    """Which cohort a claim belongs to, or `None` when the split is off.
+
+    `risk_band` for the severity dimension — the *same* restatement the High Risk
+    card's and the severity donut's oracles use, because "the cohort and the
+    donut slice are one band" is the assertion rather than a coincidence.
+    """
+    if cohort == "none":
+        return None
+    if cohort == "severity_band":
+        return risk_band(claim["severity_score"])
+    if cohort == "disability":
+        disability: str = claim["disability"]
+        return disability
+    if cohort == "sector":
+        return sectors[claim["employer"]]
+    raise AssertionError(f"no seeded oracle for cohort {cohort!r}")
+
+
+def _trend_half_up(numerator: int, denominator: int) -> int:
+    """A whole-number mean, half-up — never Python's banker's rounding."""
+    return int(
+        (Decimal(numerator) / Decimal(denominator)).quantize(Decimal(1), rounding=ROUND_HALF_UP)
+    )
+
+
+def _trend_cell_claims(metric: str, cell: list[dict[str, Any]]) -> int:
+    """How many claims fed this cell's figure — the *metric's* population.
+
+    Not `len(cell)`, and that is the whole point of writing it out: a bucket is
+    the population of three of the five series and of neither of the other two.
+    A settlement mean is over the settled claims of the bucket that carry a
+    recorded duration and an RTW rate is over its settled claims whether they
+    carry one or not, so a month in which seven claims were filed and three
+    settled has three kinds of denominator in it and publishing seven beside all
+    five figures describes one of them.
+
+    Derived here from the seed's own columns rather than from anything the
+    service reaches for: the server asks the SLA aggregation which claims fed
+    which figure (AD-2 forbids it knowing), and an oracle that asked the same
+    question of the same module would agree with a wrong answer — Story 7.1's
+    `topRate`, which is the failure this whole banner exists to avoid. These are
+    the two denominators `expected_sla_strip` restates portfolio-wide, restated
+    again per cell, on purpose.
+
+    The three that *are* the bucket's population are spelled as `len(cell)` three
+    times over rather than as one `else`, so a reader can see that the count and
+    the mean of days open share a denominator by coincidence of definition rather
+    than by falling through the same branch.
+    """
+    if metric == "volume":
+        return len(cell)
+    if metric == "paid_cents":
+        return len(cell)
+    if metric == "avg_days_open":
+        return len(cell)
+    settled = [c for c in cell if c["stage"] == "settled"]
+    if metric == "avg_settlement_days":
+        return len([c for c in settled if c["settlement_days"] is not None])
+    if metric == "rtw_rate_bp":
+        return len(settled)
+    raise AssertionError(f"no seeded oracle for metric {metric!r}")
+
+
+def _trend_cell_value(metric: str, cell: list[dict[str, Any]], as_of: date) -> int | None:
+    """One (cohort, bucket) cell's published figure — the null-vs-zero rule, restated.
+
+    Four denominators and they are not the same four: `volume` and `paid_cents`
+    are folds over a set that may be empty, `avg_days_open` needs a claim,
+    `avg_settlement_days` needs a *settled* claim carrying a recorded duration,
+    and `rtw_rate_bp` needs a settled claim whether or not it carries one. The
+    last two are `expected_sla_strip`'s two denominators, restated here rather
+    than shared, because the service reaches them through `sla.strip_of` per
+    bucket and an oracle that did the same would be testing that the call
+    happened rather than that the answer is right.
+    """
+    if metric == "volume":
+        return len(cell)
+    if metric == "paid_cents":
+        return sum(
+            int(c["paid_indemnity"]) + int(c["paid_medical"]) + int(c["paid_expense"]) for c in cell
+        )
+    if metric == "avg_days_open":
+        if not cell:
+            return None
+        return _trend_half_up(sum(days_open(c, as_of) for c in cell), len(cell))
+    settled = [c for c in cell if c["stage"] == "settled"]
+    if metric == "avg_settlement_days":
+        durations = [int(c["settlement_days"]) for c in settled if c["settlement_days"] is not None]
+        if not durations:
+            return None
+        return _trend_half_up(sum(durations), len(durations))
+    if metric != "rtw_rate_bp":
+        raise AssertionError(f"no seeded oracle for metric {metric!r}")
+    if not settled:
+        return None
+    # Whole percent first, then onto the basis-point scale — the order matters
+    # and is the service's own consequence of not re-averaging: the RTW tile is
+    # decided at whole-percent precision, so every published rate here is a
+    # multiple of a hundred. Scaling before rounding would disagree by up to 99.
+    recovered = sum(100 for c in settled if c["return_status"] == FULLY_RECOVERED)
+    return _trend_half_up(recovered, len(settled)) * 100
+
+
+def expected_trends(
+    persona_name: str,
+    role: str,
+    as_of: date,
+    grain: str = "month",
+    anchor: str = "fnol",
+    cohort: str = "none",
+) -> dict[str, Any]:
+    """The whole Trends payload for one persona, one window and one split.
+
+    Payload-shaped and camelCase so a test compares whole objects rather than
+    picking figures out one at a time — `expected_fraud_panel`'s discipline, over
+    a payload with two levels of nesting where picking figures out would be the
+    slowest possible way to miss a transposition.
+
+    `as_of` is **required**, unlike every other oracle in this file: the window
+    ends in the bucket today falls in, so an oracle that defaulted the clock
+    would silently disagree with a test that passed one, and the disagreement
+    would appear only in the last week of a month.
+
+    **The rule-derived scalars are here, and the tests assert them twice.** The
+    two severity edges, the two SLA targets and the window cap are compared
+    against the numbers restated at the top of this block, *and* against the
+    loaded `derivation_thresholds` / `trend_periods` documents. Neither
+    assertion subsumes the other: the document comparison says the payload
+    quotes the rules the fold actually used and survives a retune, while this
+    one fails the day a document or a deployment setting moves one of them —
+    which is exactly the notice the banner promises and is worth a deliberate
+    edit here. `defaultBuckets` and `lowConfidenceClaimMax` are not repeated as
+    fields because the window this oracle walks and the verdict it marks are
+    already computed from their restatements. The two document *versions* stay
+    out: a version is not a rule, and pinning one here would fail on every
+    unrelated republication.
+    """
+    window = trend_window(grain, as_of, TREND_DEFAULT_BUCKETS)
+    window_from, window_to = window[0][2], window[-1][3]
+    sectors = employer_sectors()
+    date_key = "froi_date" if anchor == "fnol" else "doi"
+    if anchor not in ("fnol", "doi"):
+        raise AssertionError(f"no seeded oracle for anchor {anchor!r}")
+
+    in_window = [
+        claim
+        for claim in claims_for(persona_name, role)
+        if window_from <= date.fromisoformat(claim[date_key]) <= window_to
+    ]
+    cohort_keys = sorted({_trend_cohort_key(c, cohort, sectors) or "" for c in in_window})
+    ordered: list[str | None] = [None] if cohort == "none" else list(cohort_keys)
+
+    def cell_of(cohort_key: str | None, bucket_key: str) -> list[dict[str, Any]]:
+        return [
+            claim
+            for claim in in_window
+            if _trend_cohort_key(claim, cohort, sectors) == cohort_key
+            and _trend_bucket(date.fromisoformat(claim[date_key]), grain)[0] == bucket_key
+        ]
+
+    series: list[dict[str, Any]] = []
+    for metric in TREND_METRIC_ORDER:
+        for slot, cohort_key in enumerate(ordered):
+            points = []
+            for key, label, start, end in window:
+                cell = cell_of(cohort_key, key)
+                behind = _trend_cell_claims(metric, cell)
+                points.append(
+                    {
+                        "bucketKey": key,
+                        "bucketLabel": label,
+                        "bucketFrom": start.isoformat(),
+                        "bucketTo": end.isoformat(),
+                        "value": _trend_cell_value(metric, cell, as_of),
+                        "claimCount": behind,
+                        "lowConfidence": 0 < behind <= TREND_LOW_CONFIDENCE_CLAIM_MAX,
+                        # A period the clock has not reached the end of. Decided
+                        # from the bucket's own last day rather than from its
+                        # position in the window: "the newest one" is true today
+                        # and false for a window asked for with a `to` in the
+                        # future, and an oracle that keyed on the index would
+                        # agree with an implementation that marked the wrong one.
+                        "partial": end > as_of,
+                    }
+                )
+            series.append(
+                {
+                    "metric": metric,
+                    "cohortKey": cohort_key,
+                    "cohortLabel": None,
+                    "paletteSlot": None if cohort_key is None else slot,
+                    "points": points,
+                    "seriesTotal": sum(point["claimCount"] for point in points),
+                    "valueTotal": (
+                        sum(point["value"] or 0 for point in points)
+                        if metric in TREND_SUMMABLE_METRICS
+                        else None
+                    ),
+                    "noDataBuckets": sum(1 for point in points if point["value"] is None),
+                }
+            )
+
+    return {
+        "asOf": as_of.isoformat(),
+        "grain": grain,
+        "anchor": anchor,
+        "cohort": cohort,
+        "windowFrom": window_from.isoformat(),
+        "windowTo": window_to.isoformat(),
+        "bucketCount": len(window),
+        "claimsInScope": len(claims_for(persona_name, role)),
+        "claimsInWindow": len(in_window),
+        "series": series,
+        "maxBuckets": TREND_MAX_BUCKETS,
+        "settleTargetDays": TREND_SETTLE_TARGET_DAYS,
+        "rtwTargetBp": TREND_RTW_TARGET_BP,
+        "highRiskSeverityMin": TREND_HIGH_RISK_MIN,
+        "medRiskSeverityMin": TREND_MED_RISK_MIN,
     }

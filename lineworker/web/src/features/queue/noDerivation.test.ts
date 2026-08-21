@@ -485,7 +485,75 @@ const DERIVED_FIELDS =
   //   `claimsWithInsight / claimsInScope` is the percentage a caption would
   //   "just" show. The card states both figures instead, which is what makes the
   //   coverage checkable rather than presented.
-  "fraudBand|fraudBandHighMin|fraudBandMedMin|rateBp|flagged|claimsWithInsight";
+  "fraudBand|fraudBandHighMin|fraudBandMedMin|rateBp|flagged|claimsWithInsight|" +
+  // Story 7.2's five, and the alternation above was read before adding them —
+  // 5.4's review caught exactly the mistake of appending tokens that were
+  // already alternatives. `total`, `count`, `truncated`, `limit`, `paidCents`,
+  // `severityBand`, `highRiskSeverityMin`, `medRiskSeverityMin` and
+  // `rulesVersion` are all already here; a trend payload adds these five names
+  // and nothing else.
+  //
+  // **All five are guarded as *properties* rather than as bare words**, which
+  // is `\\.limit`'s ruling and matters more here than it did there. `value` and
+  // `count` are far too common to guard at all; `bucketLabel`, `paletteSlot` and
+  // `lowConfidence` are specific enough to be safe as bare tokens *today* and
+  // would still be the wrong shape — a bare `paletteSlot` would fail the build
+  // on `paletteSlot - 1` written about a local array index, which is ordinary
+  // arithmetic somewhere this guard has no business in. Guarding the access
+  // catches the thing worth catching: arithmetic on, or a comparison against,
+  // the server's published answer.
+  //
+  // - `paletteSlot` is a cohort's **ordinal into a closed palette**, and it is
+  //   the single most tempting entry on this list to reconstruct: five charts
+  //   draw the same cohorts, each series carries its index in the array it
+  //   arrived in, and `CATEGORICAL_FILLS[index]` is one character from
+  //   `CATEGORICAL_FILLS[paletteSlot]` and looks identical on a fixture where
+  //   the two coincide. It stops coinciding the moment a cohort is absent from
+  //   one metric or a window narrows, and the symptom is a legend that changes
+  //   colour between two charts on one screen. Arithmetic on it — a modulo to
+  //   wrap the palette, a `- 1` to index something else — is the other half:
+  //   `chartTheme`'s docstring rules the palette closed and `PALETTE_OVERFLOW_FILL`
+  //   is what a slot past the end gets, so a browser doing sums on the ordinal
+  //   is a browser inventing a hue.
+  // - `lowConfidence` is a **verdict**, not a fact: it is
+  //   `0 < claimCount <= trend_periods.lowConfidenceClaimMax`, and both
+  //   `claimCount` and `lowConfidenceClaimMax` ride the same payload — so
+  //   `point.claimCount <= data.lowConfidenceClaimMax` is one line, reads like
+  //   formatting, and is the browser re-deciding the one rule on this response
+  //   nobody could see change (AD-8). (The literal-comparison rule already
+  //   catches `claimCount <= 3`; this catches the version written against the
+  //   published ceiling.)
+  // - `bucketLabel` is the server's rendering of a bucket, and it is on this
+  //   list for the reason `nextCursor` is: any arithmetic on one, or any
+  //   comparison between two, means somebody has started deriving an ordering or
+  //   a boundary from a *label*. The window's order is the array's, the
+  //   boundaries are `bucketFrom`/`bucketTo`, and re-deriving either from
+  //   `"Q1 2026"` is exactly the string-parsing this field exists to make
+  //   unnecessary.
+  // - `partial` is the second **verdict** on a trend point: the server decided
+  //   it by comparing the bucket's own last day against the clock it cut the
+  //   window on, and both `bucketTo` and `asOf` ride the same payload — so
+  //   `point.bucketTo > data.asOf` is one line, reads like formatting, and is a
+  //   browser deciding which period is still in progress from two dates it was
+  //   handed for other reasons. It would also be *wrong* on the case the field
+  //   exists for: a window asked for past today has several unfinished buckets
+  //   and "it is the last point" is the shortcut a client would reach for
+  //   instead. Guarded as a property because `partial` is far too ordinary a
+  //   word to fail a build on — `partialResults`, a partially applied function —
+  //   and arithmetic on, or a comparison against, the published answer is the
+  //   thing worth catching.
+  // - `bucketTo` is on the list *because* `partial` is, and it is the only entry
+  //   here that guards a plain stored fact rather than a computed one. It is the
+  //   right-hand side of the comparison the previous bullet describes, and
+  //   without it that comparison matches nothing: `asOf` is not a numeric
+  //   literal, so the threshold rule never fires, which is precisely the hole
+  //   Story 4.1 found with `meetingDate >= today`. Copying it into a filter set
+  //   (`{ fnolTo: point.bucketTo }`) is the intended use and stays legal;
+  //   comparing or arithmetic on it is a browser re-deriving a period boundary
+  //   the server published. `bucketFrom` is deliberately absent — one end of the
+  //   pair is enough to catch the shape, and a guard grows an entry per token it
+  //   cannot justify at exactly the rate people stop reading it.
+  "\\.paletteSlot|\\.lowConfidence|\\.bucketLabel|\\.partial|\\.bucketTo";
 
 const FLAGS = "siuReview|rtwBlocked|paymentDue|fraudFlag|litigationFlag|surgeryRequired";
 
@@ -771,6 +839,25 @@ test("the scan reaches the files it claims to", () => {
   ]) {
     expect(scanned).toContain(path.join("features", "dashboard", "fraud", file));
   }
+  // Story 7.2's three, in a second Epic 7 folder `DashboardPage.tsx` being
+  // scanned says nothing about — and the folder with the strongest pull on the
+  // page since 7.1's, because it is the first surface where the browser holds a
+  // *window*: five metrics × N cohorts × M buckets, every point carrying its
+  // value beside the claim count that value was folded from.
+  //
+  // `TrendsPage.tsx` holds the whole response at once — the series list, the
+  // bucket vocabulary, the cohort vocabulary, both targets and both band edges —
+  // so re-bucketing, re-splitting, summing the cohorts back together and
+  // counting the nulls are each one line, in one file. `TrendChartCard.tsx` is
+  // the file that decides what a `null` becomes on the way into Recharts, which
+  // is where the `?? 0` that AC 3 forbids would go, and where a low-confidence
+  // comparison would be written as a dot's radius. `trendColors.ts` is where a
+  // cohort's hue is chosen, and the single most likely place for
+  // `CATEGORICAL_FILLS[index % length]` — a palette this codebase has ruled
+  // closed, wrapped in the browser.
+  for (const file of ["TrendsPage.tsx", "TrendChartCard.tsx", "trendColors.ts"]) {
+    expect(scanned).toContain(path.join("features", "dashboard", "trends", file));
+  }
   // Story 7.1's navigation, in `features/shell` — which is scanned, but by a
   // root added for the *queue* payload five stories ago. Named because it is the
   // first component in that folder that branches on a value from `/api/me`, and
@@ -909,6 +996,23 @@ test("the guard would notice a derivation if one were added", () => {
     "const rate = (row.flagged / row.claims) * 100;",
     "const covered = data.claimsWithInsight - data.unreadable;",
     "rows.sort((a, b) => b.rateBp - a.rateBp);",
+    // Story 7.2's six, and they are the six the Trends section is most tempted
+    // by. Wrapping a palette this codebase has ruled *closed* by doing
+    // arithmetic on the server's ordinal; counting the sparse buckets out of a
+    // list when `noDataBuckets` is published beside it; deriving an ordering
+    // from a bucket's rendered *label* rather than reading the array the server
+    // returned in order; re-sorting a window that arrived in window order; and
+    // the two the partial-period mark added — deciding in the browser which
+    // bucket is still running, and counting the marked ones out of a list.
+    "const hue = CATEGORICAL_FILLS[line.paletteSlot % CATEGORICAL_FILLS.length];",
+    "const shaky = series.points.filter((p) => p.lowConfidence).length;",
+    "const older = a.bucketLabel < b.bucketLabel;",
+    "points.sort((a, b) => a.bucketLabel.localeCompare(b.bucketLabel));",
+    // …and the fifth, which arrived with the partial-period mark: deciding in
+    // the browser which bucket is still in progress, from the two dates the
+    // payload carries for other reasons.
+    "const running = point.bucketTo > data.asOf;",
+    "const shown = points.filter((p) => p.partial).length;",
   ];
 
   for (const smell of smells) {
@@ -987,6 +1091,17 @@ test("the guard does not fire on rendering the server's answers", () => {
     "<span>{row.flagged} of {row.claims}</span>",
     "<p>{data.claimsWithInsight} of {data.claimsInScope} claims</p>",
     "onSelect={(band) => void navigate(drillHref({ fraudBand: band }))}",
+    // Story 7.2's four: printing a bucket's own label beside its own value,
+    // reading the server's low-confidence verdict into an attribute, indexing
+    // the closed palette by the server's ordinal without arithmetic, and handing
+    // that ordinal to the one function allowed to turn it into a colour. None
+    // computes anything, and all four are the shape `TrendChartCard.tsx` and
+    // `trendColors.ts` are full of — a guard that fired on them would be the
+    // guard training the code.
+    "<li>{point.bucketLabel}: {formatValue(point.value)}</li>",
+    'data-low-confidence={point.lowConfidence ? "true" : "false"}',
+    "const colour = CATEGORICAL_FILLS.at(line.paletteSlot) ?? PALETTE_OVERFLOW_FILL;",
+    "return cohortFill(cohort, line.cohortKey, line.paletteSlot);",
   ];
 
   for (const line of innocent) {

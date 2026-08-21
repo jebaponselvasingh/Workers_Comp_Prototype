@@ -188,7 +188,7 @@ export const UNKNOWN_KEY_FILL = "var(--color-muted-text)";
  * means the skeleton, the chart, the empty line and the alert all occupy the
  * same box.
  *
- * Two numbers rather than one because the two forms need different room: a
+ * Three numbers rather than one because the three forms need different room: a
  * donut is square-ish beside its legend, and a bar chart's height is a function
  * of how many bars it holds — ten states need more vertical space than three
  * recovery statuses, and sizing the tallest chart's box for all of them would
@@ -209,4 +209,23 @@ export const CHART_HEIGHT = {
   donut: 172,
   /** The four horizontal bar charts. */
   bars: 232,
+  /**
+   * The five trend line charts (Story 7.2).
+   *
+   * **A line chart's body, and deliberately not a row equaliser.** The two
+   * numbers above are the heights of a donut's square-ish figure and of a stack
+   * of horizontal bars; a line chart is neither, and reusing `bars` would have
+   * been the shortest change and the wrong one — the height a series of points
+   * needs is a function of the *vertical* range it plots, not of how many rows
+   * it holds, and the trend cards sit two-across on a wide viewport where the
+   * bar cards sit three- and four-across.
+   *
+   * Taller than `bars` because a line has to be readable as a *slope*: a
+   * twelve-bucket series squeezed into the bar height turns a fifteen-percent
+   * movement into three pixels, and the section exists to answer "is the
+   * portfolio improving or deteriorating". It is still one fixed number in all
+   * four states, which is the whole of what these constants buy (NFR-3) — the
+   * skeleton, the chart, the empty sentence and the alert occupy the same box.
+   */
+  trend: 244,
 } as const;

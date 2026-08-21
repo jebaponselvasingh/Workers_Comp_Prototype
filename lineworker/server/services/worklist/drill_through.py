@@ -7,13 +7,13 @@ it takes one of eight operational modes, covers four of the ten cards and none
 of the chart facets, and is the handler's list rather than the portfolio's.
 
 So: one more scoped aggregate. It reads the caller's book once, narrows it by a
-whitelist of twelve facets, ranks what survives with the queue's own scorer, and
+whitelist of twenty facets, ranks what survives with the queue's own scorer, and
 pages it with a cursor. Every row it emits is the **queue card's field set,
 field for field**, so the list a supervisor opens from a donut slice looks like
 the list a handler works from — and `test_the_drill_row_is_the_queue_card_field_
 for_field` is what keeps the two from drifting.
 
-## Fourteen facets, a whitelist, and each one is the clicked surface's own rule
+## Twenty facets, a whitelist, and each one is the clicked surface's own rule
 
 The filter set is closed and typed rather than free-form (`?where=severity>60`),
 and that is the whole architectural move. A free-form filter language would put
@@ -21,7 +21,7 @@ a second query planner in this codebase and would let a caller ask a question no
 dashboard surface asks — while the *only* requirement this endpoint actually has
 is that the list it opens **reconciles with the number that opened it**.
 
-That requirement is not satisfied by writing fourteen plausible predicates. It is
+That requirement is not satisfied by writing twenty plausible predicates. It is
 satisfied by each predicate being the same symbol the counting surface used, and
 this project has already recorded three near-misses where a plausible predicate
 would have opened a plausible list containing the wrong claims:
@@ -53,7 +53,7 @@ union. A restated `stage == treatment or fraud or litigation` would agree on the
 seeded book and would disagree the first time either arm moved — which is the
 two bullets above, again, in one expression.
 
-The predicates are one table (`_PREDICATES`) rather than fourteen branches, in
+The predicates are one table (`_PREDICATES`) rather than twenty branches, in
 `priority._PREDICATES`' shape, so "each facet reads its own owner" is a list a
 reviewer checks in one screen instead of a property spread over a function.
 
@@ -78,7 +78,7 @@ everywhere else (AD-7). `filter[employerId]` and `filter[handlerId]` are
 narrowings applied *after* it, over rows the caller was already entitled to
 read — so a scoped supervisor naming an employer outside her book gets an empty
 page, never a row and never a 403. There is no signature here, at any layer,
-with room for a scope: not the route's thirteen parameters, not `DrillFilters`,
+with room for a scope: not the route's twenty-one parameters, not `DrillFilters`,
 not this module's entry point. That is what makes
 `test_query_parameters_cannot_widen_or_change_the_scope` a property of the shape
 rather than of a validator.
@@ -115,7 +115,7 @@ from typing import Any, Final
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from data.context import CallerContext
-from data.models.enums import ClaimStatus, ReturnStatus, Stage
+from data.models.enums import ClaimStatus, Disability, ReturnStatus, Stage
 from data.repositories import claims as claim_repo
 from rules.parameters import DerivationThresholds, PriorityWeights
 from services import derivations
@@ -152,7 +152,7 @@ class DrillClaim:
 
     A projection rather than the ORM entity, for `QueueClaim`'s and
     `PriorityClaim`'s reasons — it keeps `select` pure and generatable, and it
-    puts every input to the twelve predicates and the score next to each other
+    puts every input to the twenty predicates and the score next to each other
     instead of spread across a row object with forty other columns.
 
     Three groups of fields, and the grouping is the contract:
@@ -160,11 +160,12 @@ class DrillClaim:
     - The **queue card's** thirteen, so `DrillRow` can be built without a second
       read and `ClaimCard` can render a drill list and a queue group with one
       component.
-    - The **four filter columns** — `employer_id`, `handler_id`, `state`,
-      `osha_recordable` — which no queue card shows and four of the twelve
-      facets narrow on. The two ids rather than the two names: a name is a
-      label, and `benchmarks.py` has grouped on `handler_id` since Story 5.2
-      because two handlers may share a display name.
+    - The **filter columns** — `employer_id`, `handler_id`, `state`,
+      `osha_recordable`, and Story 7.2's `froi_date`, `doi`, `disability` and
+      `sector` — which no queue card shows and which eight of the twenty facets
+      narrow on. The two ids rather than the two names: a name is a label, and
+      `benchmarks.py` has grouped on `handler_id` since Story 5.2 because two
+      handlers may share a display name.
     - `handler_name`, which is neither. It exists so the applied-filter chip for
       `filter[handlerId]` can say who, resolved off a row this aggregate already
       read rather than from a second query for a caption. See `AppliedFilter`.
@@ -172,6 +173,15 @@ class DrillClaim:
     `days_open` is here rather than `froi_date` for `QueueClaim`'s reason: it is
     *derived* (`services/derivations/open_duration`), and both the scorer and the
     card's age must consume the registry's answer rather than age a date.
+
+    **Story 7.2 puts `froi_date` here beside it, and the pair is not a
+    contradiction.** `days_open` is a claim's *age*, which is a derived value with
+    one computer; `froi_date` is the raw column, and `filter[fnolFrom]` compares
+    a stored date against a stored date. Filtering on the age instead would mean
+    a date range whose meaning changed at midnight and whose bounds a caller
+    would have to convert into day counts — the derivation answers "how old is
+    this claim", and no arrangement of it answers "was it filed in March". Both
+    are on the projection, each read by exactly the thing it is for.
     """
 
     claim_id: str
@@ -192,6 +202,14 @@ class DrillClaim:
     handler_name: str
     state: str
     osha_recordable: bool
+    # Story 7.2's four, appended for the reason every group above is appended:
+    # a projection read positionally nowhere and by name everywhere, but field
+    # order is still what a reader scans, and these four belong together as the
+    # trend section's click targets rather than scattered among the card's.
+    froi_date: date
+    doi: date
+    disability: Disability
+    sector: str
 
 
 @dataclass(frozen=True)
@@ -234,7 +252,7 @@ class DrillFlags:
 
 @dataclass(frozen=True)
 class DrillFilters:
-    """The fourteen facets, each optional, each `None` when the caller omitted it.
+    """The twenty facets, each optional, each `None` when the caller omitted it.
 
     One field per facet rather than a `Mapping[str, str]`, and the **type of
     each field is the refusal**: `filter[stage]=banana` cannot reach this class,
@@ -278,6 +296,31 @@ class DrillFilters:
     `FILTER_KEYS` is read off this dataclass's field order and is the order the
     chip row draws in, so inserting `fraud_band` beside `fraud_flagged` would
     silently re-order the chips on every existing drill-through URL.
+
+    **Story 7.2 adds six and changes none**, on the identical contract. Four are
+    a new *kind* of facet — an inclusive date bound on one of the two anchors the
+    Trends section buckets by — and two are ordinary column equalities the cohort
+    split needs (`disability`, `sector`). Every existing facet still answers
+    exactly what it answered before, and a URL written before this story still
+    produces the same list and the same chips in the same order.
+
+    The four date bounds are **two pairs over two different columns**, and the
+    pairing is why they are four fields rather than one range object. A trend
+    point knows which anchor produced it, and drilling a bucket has to narrow on
+    *that* column: a point on the DOI series opened with `filter[fnolFrom]` would
+    return a plausible list of the wrong claims, which is this module's founding
+    failure mode in date form. Each bound is independently settable, because a
+    chip has to be independently clearable — "claims filed since March", with the
+    upper bound cleared, is a list a reader can still reason about.
+
+    Both bounds are **inclusive**, which is the reading `TrendBucket.start`/`end`
+    publish and therefore the only reading under which a bucket's drill returns
+    exactly the claims the point was folded from. `__post_init__` still refuses
+    nothing, so `fnolFrom` after `fnolTo` is an empty page rather than an error —
+    the class's existing ruling, and the right one: an unsatisfiable combination
+    is a well-formed question whose answer is "none". The *window* refusal on
+    `/dashboard/trends` is a different thing, and lives there, because a window
+    decides which buckets exist rather than which claims survive.
     """
 
     stage: Stage | None = None
@@ -294,11 +337,17 @@ class DrillFilters:
     priority: bool | None = None
     fraud_band: FraudBand | None = None
     siu_review: bool | None = None
+    fnol_from: date | None = None
+    fnol_to: date | None = None
+    doi_from: date | None = None
+    doi_to: date | None = None
+    disability: Disability | None = None
+    sector: str | None = None
 
 
 #: The facet names, in the order a chip row draws them, declared once.
 #:
-#: Read off `DrillFilters`' own fields rather than written out, so a thirteenth
+#: Read off `DrillFilters`' own fields rather than written out, so a twenty-first
 #: facet cannot be added to that dataclass and forgotten here — which would
 #: publish a filter that narrowed the list and never appeared in
 #: `appliedFilters`, i.e. a chip the caller cannot see and therefore cannot
@@ -335,6 +384,12 @@ WIRE_KEYS: Final[Mapping[str, str]] = {
     "priority": "priority",
     "fraud_band": "fraudBand",
     "siu_review": "siuReview",
+    "fnol_from": "fnolFrom",
+    "fnol_to": "fnolTo",
+    "doi_from": "doiFrom",
+    "doi_to": "doiTo",
+    "disability": "disability",
+    "sector": "sector",
 }
 
 assert set(WIRE_KEYS) == set(FILTER_KEYS), (
@@ -350,14 +405,15 @@ class AppliedFilter:
     (`settled`, `high`, `true`, `Boeing Everett`, `3`), and `display` is a
     human label **or `None`**.
 
-    **`display` is server-resolved for exactly two of the twelve, and the split
-    is the point.** Ten of the facets carry a value the UI already has copy for:
-    `stage`, `severityBand` and `recoveryStatus` are enums whose labels the SPA
-    owns (the Enums convention — a server that shipped "Settled & Closed" would
-    be deciding copy over a contract), the four booleans are the cards' own
-    names, and `injuryType` and `state` are free text where the stored value
-    *is* the label. Resolving those here would be this module writing the UI's
-    words.
+    **`display` is server-resolved for exactly two of the twenty, and the split
+    is the point.** Eighteen of the facets carry a value the UI already has copy
+    for: `stage`, `severityBand`, `recoveryStatus`, `fraudBand` and
+    `disability` are enums whose labels the SPA owns (the Enums convention — a
+    server that shipped "Settled & Closed" would be deciding copy over a
+    contract), the booleans are the cards' own names, `injuryType`, `state` and
+    `sector` are free text where the stored value *is* the label, and the four
+    date bounds are ISO dates a browser formats to its own locale. Resolving any
+    of those here would be this module writing the UI's words.
 
     The other two are ids, and an id is not a label. Nothing in the browser can
     turn `handlerId=4` into "Marcus Chen" on a cold URL load — the dashboard
@@ -365,7 +421,7 @@ class AppliedFilter:
     "Handler: 4" or would need a second request. Both are worse than a string
     resolved off a row this aggregate already read.
 
-    So: two resolved, ten `None`, and the client's rule is
+    So: two resolved, eighteen `None`, and the client's rule is
     `display ?? UI_LABEL[key][value] ?? value`.
     """
 
@@ -474,7 +530,7 @@ def _matches_priority(claim: DrillClaim, flags: DrillFlags, value: object) -> bo
 #: `FILTER_KEYS`, and checkable as such (the assertion below runs at import).
 #:
 #: `priority._PREDICATES`' shape and its reason: a `match` statement would read
-#: the same and pass mypy, and nothing would notice a thirteenth facet added to
+#: the same and pass mypy, and nothing would notice a twenty-first facet added to
 #: `DrillFilters` without a branch. Here it fails at import.
 #:
 #: Each entry names the owner of the rule the clicked surface counted with —
@@ -502,6 +558,27 @@ _PREDICATES: Final[Mapping[str, Callable[[DrillClaim, DrillFlags, Any], bool]]] 
     # Story 5.5 and now also filters on.
     "fraud_band": lambda _claim, flags, value: flags.fraud_band == value,
     "siu_review": lambda _claim, flags, value: flags.siu_review == value,
+    # Story 7.2's six. The four date bounds are **inclusive** on both ends,
+    # which is the reading `TrendBucket` publishes its boundaries under and
+    # therefore the only one where a bucket's drill returns exactly the claims
+    # its point was folded from. Each pair names its own column: a DOI point
+    # narrowed on the FNOL column would open a plausible list of the wrong
+    # claims, which is this module's founding failure mode with a date in it.
+    #
+    # `froi_date` rather than the `days_open` derivation on the row, and that is
+    # the same distinction one field up in `DrillClaim`: the derivation answers
+    # "how old is this claim" and no arrangement of it answers "was it filed in
+    # March". Age is derived; a filing date is a column.
+    "fnol_from": lambda claim, _flags, value: claim.froi_date >= value,
+    "fnol_to": lambda claim, _flags, value: claim.froi_date <= value,
+    "doi_from": lambda claim, _flags, value: claim.doi >= value,
+    "doi_to": lambda claim, _flags, value: claim.doi <= value,
+    # The claim's own enum column and the employer's own text column, each
+    # compared as stored — `injury_type`'s and `state`'s ruling, which is that
+    # canonicalizing free text is a data-quality decision with an owner and a
+    # filter that did it would return a set no cohort ever counted.
+    "disability": lambda claim, _flags, value: claim.disability == value,
+    "sector": lambda claim, _flags, value: claim.sector == value,
 }
 
 # Every facet has a predicate, and every predicate names a facet. A filter
@@ -545,8 +622,15 @@ def _wire_value(value: object) -> str | int | bool:
     nor round-trippable through `bool(...)`, and an id is an integer on the
     wire everywhere else in this console.
     """
-    if isinstance(value, Stage | RiskBand | ReturnStatus | FraudBand):
+    if isinstance(value, Stage | RiskBand | ReturnStatus | FraudBand | Disability):
         return value.value
+    # Before the `int`/`str` branch, because a `date` is neither and would
+    # otherwise fall through to the `TypeError`. ISO 8601, which is what the
+    # query string carries and what `_COERCE` reads back — a cursor that spelled
+    # a date any other way would round-trip into a different filter set and
+    # refuse its own next page.
+    if isinstance(value, date):
+        return value.isoformat()
     if isinstance(value, bool | int | str):
         return value
     raise TypeError(f"unencodable filter value {value!r}")  # pragma: no cover
@@ -759,7 +843,7 @@ def _as_str(raw: object) -> str:
 #: How each facet's cursor-borne value becomes the field's own type.
 #:
 #: A table beside `_PREDICATES` rather than a chain of `isinstance` checks
-#: inside `_filters_of`, for that table's reason: a thirteenth facet needs an
+#: inside `_filters_of`, for that table's reason: a twenty-first facet needs an
 #: entry here, and the assertion below is where a reader finds that out.
 _COERCE: Final[Mapping[str, Callable[[Any], object]]] = {
     "stage": lambda raw: Stage(_as_str(raw)),
@@ -776,6 +860,17 @@ _COERCE: Final[Mapping[str, Callable[[Any], object]]] = {
     "priority": _as_bool,
     "fraud_band": lambda raw: FraudBand(_as_str(raw)),
     "siu_review": _as_bool,
+    # `date.fromisoformat` rather than `date(*...)` or a `datetime` parse: the
+    # cursor carries what `_wire_value` wrote, which is `isoformat()`, and the
+    # round trip has to be exact or a "Show more" would page a differently
+    # filtered list. It raises `ValueError` on anything else, which the caller
+    # above turns into the same 400 every other unreadable cursor gets.
+    "fnol_from": lambda raw: date.fromisoformat(_as_str(raw)),
+    "fnol_to": lambda raw: date.fromisoformat(_as_str(raw)),
+    "doi_from": lambda raw: date.fromisoformat(_as_str(raw)),
+    "doi_to": lambda raw: date.fromisoformat(_as_str(raw)),
+    "disability": lambda raw: Disability(_as_str(raw)),
+    "sector": _as_str,
 }
 
 assert set(_COERCE) == set(FILTER_KEYS), (
@@ -904,7 +999,7 @@ def select(
     Three steps, in this order, and the order is the rule:
 
     1. Derive every claim's flags through the registry (AD-10). **Before** the
-       filter, because three of the twelve facets — `severityBand`,
+       filter, because three of the twenty facets — `severityBand`,
        `fraudFlagged`, `priority` — *are* derived values.
     2. Apply every set facet (`matches`). An unset facet narrows nothing.
     3. Sort with `priority.order_key` over `priority.priority_score` — the
@@ -1125,6 +1220,10 @@ async def drill_through_claims(
             handler_name=row.handler_name,
             state=row.state,
             osha_recordable=row.osha_recordable,
+            froi_date=row.froi_date,
+            doi=row.doi,
+            disability=row.disability,
+            sector=row.sector,
         )
         for row in rows
     ]

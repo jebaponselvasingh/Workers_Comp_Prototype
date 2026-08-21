@@ -1,8 +1,8 @@
 /**
  * The drill-through's filter vocabulary — the browser's one copy of it
- * (Story 5.5, widened by 7.1).
+ * (Story 5.5, widened by 7.1 and 7.2).
  *
- * Fourteen facets, and three different places have to agree about them: the URL
+ * Twenty facets, and three different places have to agree about them: the URL
  * a supervisor can bookmark and share, the request the client sends, and the
  * TanStack Query key the answer is cached under. Written out three times they
  * would agree until the first facet was added, so they are written out once —
@@ -21,11 +21,12 @@
  * file, which is the guard's answer to "the filter layer looks like plumbing so
  * nobody will look at it".
  *
- * **The labels are the UI's, and the server sends only two of them.** Ten
- * facets carry a value this console already has copy for — the three enums have
- * label maps the case file and the queue already share, the four booleans are
- * the KPI cards' own names, and `injuryType`/`state` are free text where the
- * stored value *is* the label. The two id-valued facets cannot be labelled from
+ * **The labels are the UI's, and the server sends only two of them.** Eighteen
+ * facets carry a value this console already has copy for — the four enums have
+ * label maps the case file and the queue already share, the five booleans are
+ * the KPI cards' own names, `injuryType`/`state`/`sector` are free text where the
+ * stored value *is* the label, and the four date bounds are ISO dates a browser
+ * formats to its own locale. The two id-valued facets cannot be labelled from
  * an id at all, so `AppliedFilterResponse.display` carries their names and the
  * rule is `display ?? UI_LABEL[key][value] ?? value`. That split is the
  * server's, argued at `AppliedFilterResponse`; this file is the client half of
@@ -34,9 +35,10 @@
 import type { ReturnStatus, RiskBand, Stage } from "@/api/claims";
 import type { AppliedFilter } from "@/api/dashboard";
 import type { paths } from "@/api/schema";
+import { DISABILITY_LABEL } from "@/features/claim-detail/labels";
 
 /**
- * The fourteen facet names, in the order a chip row draws them.
+ * The twenty facet names, in the order a chip row draws them.
  *
  * The same order the server publishes `appliedFilters` in, and the same order
  * the route declares its parameters in — so a URL built here, a chip row drawn
@@ -64,6 +66,19 @@ export const FILTER_KEYS = [
   "priority",
   "fraudBand",
   "siuReview",
+  // Story 7.2's six, appended for exactly the reason 7.1's two were, and the
+  // order within them is the server's `DrillFilters` field order rather than
+  // anything read off this screen. Four are a new *kind* of facet — an
+  // inclusive date bound on one of the two anchors the Trends section buckets
+  // by — and the two anchors are two pairs over two columns on purpose: a point
+  // on the DOI series opened with `filter[fnolFrom]` returns a plausible list
+  // of the wrong claims. The last two are the cohort split's own columns.
+  "fnolFrom",
+  "fnolTo",
+  "doiFrom",
+  "doiTo",
+  "disability",
+  "sector",
 ] as const;
 
 export type FilterKey = (typeof FILTER_KEYS)[number];
@@ -132,13 +147,13 @@ export function toSearchParams(filters: DrillFilters): URLSearchParams {
  * The generated client's query object for a filter set.
  *
  * Spelled out key by key rather than spread from `filters`, because the
- * generated `query` type names all twelve parameters and building it from a
+ * generated `query` type names all twenty parameters and building it from a
  * loop would need a cast — and a cast here is exactly where a facet renamed on
- * the server would stop failing to compile. Twelve lines, and each of them is a
+ * the server would stop failing to compile. Twenty lines, and each of them is a
  * line a rename breaks.
  *
  * **The return type is the generated one, and that is the half that was
- * missing.** Annotated `Record<string, string | undefined>`, the twelve lines
+ * missing.** Annotated `Record<string, string | undefined>`, the twenty lines
  * above bought nothing: the annotation erases the literal keys, so renaming
  * `filter[oshaRecordable]` on the server, regenerating and running `typecheck`
  * stayed green — and the SPA then sent a parameter name FastAPI ignores,
@@ -171,6 +186,18 @@ export function toQueryParams(filters: DrillFilters): DrillQuery {
     "filter[priority]": boolValue(filters.priority),
     "filter[fraudBand]": enumValue(filters.fraudBand) as DrillQuery["filter[fraudBand]"],
     "filter[siuReview]": boolValue(filters.siuReview),
+    // Story 7.2's six. `dateValue` rather than a pass-through for the same
+    // reason `enumValue` exists one line above: a hand-edited URL can hold any
+    // string, only the server can say whether it is a date, and it does — with a
+    // 422 the list renders as a clearable chip. The four are spelled out
+    // individually rather than looped for this function's founding reason: each
+    // line is a line a rename breaks.
+    "filter[fnolFrom]": dateValue(filters.fnolFrom),
+    "filter[fnolTo]": dateValue(filters.fnolTo),
+    "filter[doiFrom]": dateValue(filters.doiFrom),
+    "filter[doiTo]": dateValue(filters.doiTo),
+    "filter[disability]": enumValue(filters.disability) as DrillQuery["filter[disability]"],
+    "filter[sector]": filters.sector,
   };
 }
 
@@ -210,6 +237,23 @@ function idValue(raw: string | undefined): number | undefined {
  * that changes on the server, and the first copy to go stale.
  */
 function enumValue(raw: string | undefined): string | undefined {
+  return raw;
+}
+
+/**
+ * A URL string as the wire's ISO date, or absent (Story 7.2).
+ *
+ * A pass-through, and it is a *named* pass-through rather than the bare field
+ * for the reason `enumValue` is: the four date facets are filled from a bucket's
+ * published `bucketFrom`/`bucketTo` — a copy of the boundary the server's fold
+ * used — and never from a date this file constructed. Naming the conversion is
+ * where that rule is written down, and it is where a `new Date(...)` would have
+ * to be argued for if anybody ever reached for one. Validation stays the
+ * server's 422, exactly as it is for the enums: a second date parser here would
+ * be the first copy to go stale, and it would have to agree with FastAPI's about
+ * what `2026-02-30` means.
+ */
+function dateValue(raw: string | undefined): string | undefined {
   return raw;
 }
 
@@ -317,6 +361,20 @@ export const FILTER_LABEL: Record<FilterKey, string> = {
   // distinguishable at a glance rather than three spellings of "fraud".
   fraudBand: "Fraud band",
   siuReview: "SIU review",
+  // Story 7.2's six, named for the *surface* per this map's convention. The
+  // four date bounds say which anchor they narrow rather than which column they
+  // read, because a supervisor who clicked a point on the DOI series has to be
+  // able to see that the list is narrowed on the injury date and not on the
+  // filing date — the two are weeks apart on a third of the seeded book, and a
+  // chip reading only "From" would make the two drills indistinguishable. "FNOL"
+  // is the top bar's and the SLA strip's word for the same date, so it is the
+  // recognisable one.
+  fnolFrom: "FNOL from",
+  fnolTo: "FNOL to",
+  doiFrom: "Injury from",
+  doiTo: "Injury to",
+  disability: "Disability",
+  sector: "Sector",
 };
 
 /** The fraud-score bands' copy, without the edges the legend quotes. */
@@ -334,8 +392,17 @@ const STAGE_VALUE_LABEL: Record<Stage, string> = {
   investigation: "Investigation",
 };
 
-/** The severity donut's three bands, without the boundary the legend quotes. */
-const RISK_VALUE_LABEL: Record<RiskBand, string> = {
+/**
+ * The severity donut's three bands, without the boundary the legend quotes.
+ *
+ * Exported since Story 7.2, `RECOVERY_LABEL_BY_STATUS`' reason one map down: the
+ * Trends section's cohort legend splits on this same band, and an analyst who
+ * clicks the "Medium" line must not land on a chip reading `med`. One map, two
+ * renderings — and it lives here rather than in `claim-detail/labels.ts` because
+ * that module spells the gauge's abbreviation ("Med") for a 68px arc, which is
+ * the wrong word in a sentence.
+ */
+export const RISK_LABEL_BY_BAND: Record<RiskBand, string> = {
   high: "High",
   med: "Medium",
   low: "Low",
@@ -386,7 +453,7 @@ const BOOLEAN_VALUE_LABEL: Record<string, string> = {
  */
 const VALUE_LABEL: Partial<Record<FilterKey, Record<string, string>>> = {
   stage: STAGE_VALUE_LABEL,
-  severityBand: RISK_VALUE_LABEL,
+  severityBand: RISK_LABEL_BY_BAND,
   recoveryStatus: RECOVERY_LABEL_BY_STATUS,
   fraudFlagged: BOOLEAN_VALUE_LABEL,
   litigation: BOOLEAN_VALUE_LABEL,
@@ -395,6 +462,16 @@ const VALUE_LABEL: Partial<Record<FilterKey, Record<string, string>>> = {
   priority: BOOLEAN_VALUE_LABEL,
   fraudBand: FRAUD_BAND_VALUE_LABEL,
   siuReview: BOOLEAN_VALUE_LABEL,
+  // Story 7.2's one labelled facet. **Imported rather than restated**, which is
+  // the opposite of what `stage` two entries up does and for a reason worth
+  // stating: `stage` genuinely reads differently on a case file ("Settled") and
+  // on this dashboard ("Settled & Closed"), so two maps are two audiences. A
+  // disability is "Temporary" or "Permanent" wherever it appears, and a second
+  // copy of two words would be two words free to drift. The other five of the
+  // six are absent on purpose — the four date bounds are ISO dates a chip prints
+  // as sent (the server's own ruling on `AppliedFilterResponse.display`), and
+  // `sector` is free text where the stored value *is* the label.
+  disability: DISABILITY_LABEL,
 };
 
 /**

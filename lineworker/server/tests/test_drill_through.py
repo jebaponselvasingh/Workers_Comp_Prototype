@@ -43,6 +43,7 @@ from data.context import ALL_EMPLOYERS, CallerContext
 from data.models import AppUser, AuditEvent
 from data.models.enums import (
     ClaimStatus,
+    Disability,
     RecoveryWindow,
     ReturnStatus,
     Stage,
@@ -108,6 +109,13 @@ ROW_KEYS = {
 PARAMETER_NAMES = {f"filter[{wire}]" for wire in WIRE_KEYS.values()} | {"cursor"}
 
 TODAY = date(2026, 8, 18)
+
+#: The date a synthetic drill claim is filed and injured on unless a test says
+#: otherwise. Its own constant rather than `TODAY`, so a range test that brackets
+#: it reads as a statement about the *claim* rather than about the clock — the
+#: two facets are a comparison between two stored dates and never involve today
+#: at all.
+QUIET_DAY = date(2026, 5, 15)
 
 #: The two rule blocks the pure half needs, restated rather than loaded —
 #: `test_priority_claims.py`'s discipline and its reason: an expectation
@@ -178,6 +186,10 @@ def drill_claim(
     handler_id: int = 1,
     state: str = "WA",
     osha_recordable: bool = False,
+    froi_date: date = QUIET_DAY,
+    doi: date = QUIET_DAY,
+    disability: Disability = Disability.temporary,
+    sector: str = "Aerospace",
 ) -> DrillClaim:
     """One synthetic projection row, with every field defaulted to *quiet*.
 
@@ -187,6 +199,13 @@ def drill_claim(
     **none** of the twelve facets' interesting values: intake stage, a low
     severity, no fraud, no litigation, no surgery, no OSHA record. Every facet
     test therefore turns exactly one thing on.
+
+    Story 7.2's four are defaulted the same way, with one difference worth
+    naming: a date facet has no "off" value the way a boolean does, so the two
+    dates default to `QUIET_DAY` and a range test names bounds either side of it
+    rather than turning a flag on. The two categorical ones default to the
+    commonest seeded value, so a test that narrows to the *other* one is
+    narrowing rather than confirming.
     """
     return DrillClaim(
         claim_id=claim_id,
@@ -207,6 +226,10 @@ def drill_claim(
         handler_name="Sarah Williams",
         state=state,
         osha_recordable=osha_recordable,
+        froi_date=froi_date,
+        doi=doi,
+        disability=disability,
+        sector=sector,
     )
 
 

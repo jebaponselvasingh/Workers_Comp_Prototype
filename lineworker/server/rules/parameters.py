@@ -57,6 +57,7 @@ BENEFIT_PARAMS_KEY = "benefit_params"
 RESERVE_BANDS_KEY = "reserve_bands"
 WORKLIST_ACTIONS_KEY = "worklist_actions"
 HANDLER_PERFORMANCE_KEY = "handler_performance"
+TREND_PERIODS_KEY = "trend_periods"
 
 
 class RuleParameterError(ValueError):
@@ -1202,3 +1203,109 @@ async def handler_performance_for(
     """Load and validate the handler-benchmark parameters effective on `as_of`."""
     document = await load(db, HANDLER_PERFORMANCE_KEY, as_of)
     return HandlerPerformance.of(document, evaluate(document))
+
+
+@dataclass(frozen=True)
+class TrendPeriods:
+    """The window the analyst workspace's Trends section opens on, and its edges.
+
+    A document of its own rather than three fields on `DerivationThresholds`,
+    `HandlerPerformance`'s argument at the point where it stops being about
+    *which* service owns the parameters and starts being about what they *are*.
+    That block is the single argument every registered derivation is **built**
+    from; none of these three reaches a derivation at all. They govern the shape
+    of a **window** — how much history a chart opens on, how much a caller may
+    ask for, and how thin a bucket has to be before the reader is warned about
+    it — and a window is not a derivation cut-off.
+
+    **All three are counts of buckets or of claims, never of days**, which is
+    what makes one number govern three grains: `max_buckets` is twenty-four
+    weeks, twenty-four months or twenty-four quarters depending on what was
+    asked for. Three per-grain caps would be three parameters that agree today
+    and drift the first time one of them is retuned, for a limit whose subject —
+    how many points a request has to fold and a chart has to draw — is the same
+    quantity in all three.
+
+    **`low_confidence_claim_max` is the one that decides something a reader
+    sees**, and it is the reason this document exists rather than a module
+    constant beside `charts.INJURY_TYPE_LIMIT`. That constant is UX-DR7's
+    *shape*: "top 8" is what the chart is, and moving it changes the picture
+    rather than the business. This one decides when a mean or a rate on screen
+    is marked as too thin to lean on, which is a statistical-honesty judgement
+    (NFR-3) with an owner outside this codebase — exactly what AD-8 keeps out of
+    Python and out of the browser.
+
+    `version` is carried for `HandlerPerformance`' reason: the Trends payload
+    publishes it as `periodsVersion`, separately from the `rulesVersion` that
+    keeps naming `derivation_thresholds`, so a stored response says which
+    document decided its window and which decided its severity cohort's edges.
+    """
+
+    version: int
+    default_buckets: int
+    max_buckets: int
+    low_confidence_claim_max: int
+
+    def __post_init__(self) -> None:
+        # A window of zero buckets is a chart with no x-axis, and a negative one
+        # is a range that runs backwards: both produce an empty series with no
+        # error anywhere, which is the same silence `pageLimit: 0` produces on
+        # the queue and is refused there for the same reason. Stated per
+        # parameter rather than as a loop over a positivity rule, because the
+        # third one is not the same argument as the first two — see below.
+        for name, count in (
+            ("defaultBuckets", self.default_buckets),
+            ("maxBuckets", self.max_buckets),
+        ):
+            if count < 1:
+                raise RuleParameterError(f"{name} must be at least 1, got {count}")
+        # **Zero is refused here too, and it is the interesting refusal.** The
+        # low-confidence test is `0 < claimCount <= lowConfidenceClaimMax`, so a
+        # zero would not tune the marking — it would switch it off, and a
+        # section that never marks a thin bucket looks exactly like a section
+        # whose marking is broken. `_status_set` accepts an empty list because
+        # "no status counts as pending approval" is a policy a reader can see on
+        # screen; "no bucket is ever thin" is a policy that renders as the
+        # absence of a treatment nobody can tell from a defect.
+        # `HandlerPerformance` refuses all-three-zero blend weights on the
+        # identical argument: switching a term off is a request to retire it,
+        # not a value to set.
+        if self.low_confidence_claim_max < 1:
+            raise RuleParameterError(
+                f"lowConfidenceClaimMax must be at least 1, got {self.low_confidence_claim_max} "
+                "— zero switches the low-confidence marking off rather than tuning it, and a "
+                "section that never marks a thin bucket is indistinguishable from a broken one"
+            )
+        # **`>` and deliberately not `>=`**, which is the opposite call from
+        # `HandlerPerformance`'s complexity pair and from the fraud band edges,
+        # and the difference is what the pair *is*. Those are the two edges of
+        # one three-band scale, so equal cut-points delete the middle band —
+        # they change the rule into a different rule, silently, and the segment
+        # that vanishes is the one most of a portfolio sits in. These two are a
+        # default and a ceiling over one quantity, and `defaultBuckets ==
+        # maxBuckets` deletes nothing: it says "the widest window is also the
+        # one you open on", which is a coherent policy an operator might well
+        # mean. What cannot be honoured is a default *above* the ceiling — the
+        # section would refuse its own opening request on every load, with the
+        # 422 naming a cap the caller never asked to exceed.
+        if self.default_buckets > self.max_buckets:
+            raise RuleParameterError(
+                f"defaultBuckets ({self.default_buckets}) must not exceed maxBuckets "
+                f"({self.max_buckets}) — a default the caller is refused for accepting "
+                "is not a default"
+            )
+
+    @classmethod
+    def of(cls, document: LoadedDocument, result: dict[str, Any]) -> "TrendPeriods":
+        return cls(
+            version=document.version,
+            default_buckets=_integer(document, result, "defaultBuckets"),
+            max_buckets=_integer(document, result, "maxBuckets"),
+            low_confidence_claim_max=_integer(document, result, "lowConfidenceClaimMax"),
+        )
+
+
+async def trend_periods_for(db: AsyncSession, as_of: date | None = None) -> TrendPeriods:
+    """Load and validate the trend window parameters effective on `as_of`."""
+    document = await load(db, TREND_PERIODS_KEY, as_of)
+    return TrendPeriods.of(document, evaluate(document))

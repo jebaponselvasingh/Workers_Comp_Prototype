@@ -2070,6 +2070,17 @@ async def test_the_two_new_facets_join_the_vocabulary_and_change_no_other(
         "filter[priority]",
         "filter[fraudBand]",
         "filter[siuReview]",
+        # Story 7.2's six, appended after 7.1's two. Listed here rather than
+        # excluded from the comparison, because the point of an exact set is
+        # that a facet cannot join the vocabulary without a test naming it —
+        # the assertion stays exact and grows, which is what makes it worth
+        # having.
+        "filter[fnolFrom]",
+        "filter[fnolTo]",
+        "filter[doiFrom]",
+        "filter[doiTo]",
+        "filter[disability]",
+        "filter[sector]",
         "cursor",
     }
 
@@ -2155,10 +2166,35 @@ def test_the_drill_filters_order_puts_the_new_facets_last() -> None:
     on every existing drill-through URL — a change to a shipped surface for a
     cosmetic reason. Asserted rather than commented, because the field list is
     exactly the kind of thing a later reader tidies.
+
+    **Story 7.2 appended six more, so this assertion moved off the tail and onto
+    the position.** That is the stricter reading and the one the test was always
+    about: what matters is that this story's two facets sit exactly where they
+    were put, immediately after Story 5.5's twelve, and that a later story adding
+    facets appends them *behind* rather than among. A tail assertion would have
+    had to be rewritten by whoever appended next, which is precisely the reader
+    this test exists to stop.
     """
     from services.worklist.drill_through import FILTER_KEYS
 
-    assert FILTER_KEYS[-2:] == ("fraud_band", "siu_review")
+    assert FILTER_KEYS[12:14] == ("fraud_band", "siu_review")
+    assert FILTER_KEYS[:12] == (
+        "stage",
+        "severity_band",
+        "fraud_flagged",
+        "litigation",
+        "surgery",
+        "osha_recordable",
+        "recovery_status",
+        "injury_type",
+        "state",
+        "employer_id",
+        "handler_id",
+        "priority",
+    )
+    # Everything after this story's two was appended by a later one, never
+    # inserted among them.
+    assert len(FILTER_KEYS) >= 14
 
 
 def test_the_new_facet_values_survive_a_cursor_round_trip() -> None:

@@ -36,6 +36,7 @@ from rules.parameters import (
     INTAKE_REQUIRED_DOCUMENTS_KEY,
     PRIORITY_WEIGHTS_KEY,
     RESERVE_BANDS_KEY,
+    TREND_PERIODS_KEY,
     WORKLIST_ACTIONS_KEY,
     BenefitParams,
     DerivationThresholds,
@@ -43,12 +44,14 @@ from rules.parameters import (
     IntakeRequirements,
     PriorityWeights,
     ReserveBands,
+    TrendPeriods,
     WorklistActions,
     benefit_params_for,
     handler_performance_for,
     intake_requirements_for,
     reserve_bands_for,
     thresholds_for,
+    trend_periods_for,
     urgency_parameter_name,
     weights_for,
     worklist_actions_for,
@@ -90,6 +93,12 @@ EFFECTIVE_DOCUMENTS: tuple[tuple[str, int, str], ...] = (
     # parameters reach a *registered derivation* from outside
     # `derivation_thresholds`, through `.of()` rather than through `build`.
     (HANDLER_PERFORMANCE_KEY, 1, "handler_performance.jdm.json"),
+    # Story 7.2's, the third owned by `services/worklist` — the window the
+    # Trends section opens on, its cap, and the low-confidence ceiling. Its file
+    # carries `.v1` where every other first version above does not: the
+    # unversioned name is a constraint on the two keys 0009 seeds by reading
+    # `<key>.jdm.json` at migration time, and 0046 names its file explicitly.
+    (TREND_PERIODS_KEY, 1, "trend_periods.v1.jdm.json"),
 )
 
 # **Every** seeded (key, version, file), not only the effective ones.
@@ -187,6 +196,15 @@ EXPECTED_HANDLER_PERFORMANCE: dict[str, Any] = {
     "complexityScoreMax": 100,
     "complexityHighMin": 65,
     "complexityMedMin": 40,
+}
+
+# Story 7.2's document, restated. Counts of BUCKETS and of CLAIMS, never of
+# days — which is what lets one cap govern all three grains: 24 is 24 weeks, 24
+# months or 24 quarters depending on what was asked for.
+EXPECTED_TREND_PERIODS: dict[str, Any] = {
+    "defaultBuckets": 12,
+    "maxBuckets": 24,
+    "lowConfidenceClaimMax": 3,
 }
 
 # Story 3.2's document, restated. Ratios are BASIS POINTS: 11500 is 115%.
@@ -450,6 +468,12 @@ async def test_the_handler_performance_document_evaluates_to_the_story_values(
     assert evaluate(await load(db, HANDLER_PERFORMANCE_KEY)) == EXPECTED_HANDLER_PERFORMANCE
 
 
+async def test_the_trend_periods_document_evaluates_to_the_story_values(
+    db: AsyncSession,
+) -> None:
+    assert evaluate(await load(db, TREND_PERIODS_KEY)) == EXPECTED_TREND_PERIODS
+
+
 async def test_every_trigger_rule_has_an_urgency_in_the_document(db: AsyncSession) -> None:
     """The eleven rules and the eleven parameters are the same eleven.
 
@@ -520,6 +544,12 @@ async def test_the_typed_blocks_carry_the_evaluated_values(db: AsyncSession) -> 
         complexity_score_max=EXPECTED_HANDLER_PERFORMANCE["complexityScoreMax"],
         complexity_high_min=EXPECTED_HANDLER_PERFORMANCE["complexityHighMin"],
         complexity_med_min=EXPECTED_HANDLER_PERFORMANCE["complexityMedMin"],
+    )
+    assert await trend_periods_for(db) == TrendPeriods(
+        version=1,
+        default_buckets=EXPECTED_TREND_PERIODS["defaultBuckets"],
+        max_buckets=EXPECTED_TREND_PERIODS["maxBuckets"],
+        low_confidence_claim_max=EXPECTED_TREND_PERIODS["lowConfidenceClaimMax"],
     )
     assert await worklist_actions_for(db) == WorklistActions(
         version=2,

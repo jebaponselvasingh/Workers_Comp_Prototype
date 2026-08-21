@@ -229,6 +229,47 @@ export const queryKeys = {
      * No persona and no scope segment, for the group's recorded reason.
      */
     fraudRedFlags: ["dashboard", "fraud", "red-flags"] as const,
+    /**
+     * One reading of the Trends section's five series, keyed by **the
+     * selector set that produced it** (Story 7.2).
+     *
+     * A sixth sibling in this group rather than a group of its own, for
+     * `fraud`'s recorded reason: the analyst workspace extends the supervisor
+     * dashboard, so its sections are `/dashboard/*` answers and belong on the
+     * `dashboard` prefix.
+     *
+     * **The selectors are in the key**, `fraudRates`' ruling one entry up: a
+     * different grain, anchor or cohort is a *different server answer*, folded
+     * over a scope the client does not hold in full and bucketed against a
+     * window the client cannot re-cut (AD-1). Two selector sets are therefore
+     * two resources and two cache entries — which is what makes "the browser
+     * buckets nothing" observable rather than merely claimed: changing a
+     * control changes the key, which issues a request, which returns points the
+     * server bucketed. A client-side re-grain would draw new points and never
+     * touch the network. Going back to a grain already fetched is then instant,
+     * which is what an analyst toggling month/quarter expects.
+     *
+     * It takes the *serialised* selector set rather than the object, for
+     * `drillClaims`' reason: a TanStack key is compared structurally and a fresh
+     * object literal per render would be a fresh key per render.
+     * `toTrendParamsKey` in `api/dashboard.ts` is the one place that
+     * serialisation happens, so the key and the query string cannot describe
+     * different questions.
+     *
+     * **The leaf segment is `series`, and `["dashboard","trends"]` is left an
+     * unowned prefix** — the blast-radius lesson this group learned from
+     * `fraud`, applied *before* the mistake rather than after it. Story 7.3 and
+     * 7.4 will hang their own reads off this section; a key of
+     * `["dashboard","trends"]` sitting on the prefix its siblings will use would
+     * make the obvious `invalidateQueries({ queryKey: queryKeys.dashboard.trends })`
+     * drop them too, and a key whose blast radius is larger than its name is the
+     * kind of thing found after the invalidation.
+     *
+     * No persona and no role segment, although this endpoint gates on role —
+     * the group's recorded reason: a 403 is the absence of an answer rather than
+     * a different answer, and switching personas clears the whole cache.
+     */
+    trends: (paramsKey: string) => ["dashboard", "trends", "series", paramsKey] as const,
   },
   claims: {
     /**

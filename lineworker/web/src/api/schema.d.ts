@@ -1104,9 +1104,9 @@ export interface paths {
          * The claims behind a dashboard figure, filtered, ranked and paged
          * @description The claims behind a KPI card, a chart segment, a handler row or a worklist.
          *
-         *     ## Fifteen parameters, and not one of them is a scope
+         *     ## Twenty-one parameters, and not one of them is a scope
          *
-         *     Fourteen facets and a cursor. Every facet is a *narrowing* applied after
+         *     Twenty facets and a cursor. Every facet is a *narrowing* applied after
          *     `employer_scope(ctx)` has already decided which rows exist, so
          *     `filter[employerId]` and `filter[handlerId]` intersect the caller's book and
          *     can never widen it: a scoped supervisor naming an employer outside hers gets
@@ -1135,8 +1135,28 @@ export interface paths {
          *     This route intersects **independent facets**: a supervisor drills into High
          *     Risk, then narrows to one employer, then to litigated claims, and each is a
          *     separate dimension of the same set. That is what the architecture's list
-         *     convention spells with brackets, and it is why the fourteen arrive as
-         *     fourteen parameters rather than as one enum.
+         *     convention spells with brackets, and it is why the twenty arrive as twenty
+         *     parameters rather than as one enum.
+         *
+         *     ## Story 7.2 adds six facets and changes none
+         *
+         *     Four date bounds and two column equalities — `filter[fnolFrom]`,
+         *     `filter[fnolTo]`, `filter[doiFrom]`, `filter[doiTo]`, `filter[disability]`
+         *     and `filter[sector]` — which together are what makes a point on a trend chart
+         *     a click target. Both date bounds of a pair are **inclusive**, which is the
+         *     reading `/dashboard/trends` publishes its bucket boundaries under, so a
+         *     bucket's drill returns exactly the claims that point was folded from rather
+         *     than a list that is one day off at each end.
+         *
+         *     They are **appended**, never inserted, for the reason Story 7.1's two were:
+         *     `appliedFilters` is the chip row's order and it is read off `DrillFilters`'
+         *     field order, so inserting a date facet beside `stage` would silently
+         *     re-order the chips on every drill-through URL anybody has already shared.
+         *
+         *     The two anchors are two separate pairs over two separate columns because a
+         *     trend point knows which anchor produced it: a DOI point narrowed on the FNOL
+         *     column would open a plausible list of the wrong claims, which is this route's
+         *     founding failure mode with a date in it.
          *
          *     ## Story 7.1 adds two facets and changes none
          *
@@ -1194,7 +1214,7 @@ export interface paths {
          *     Both blocks are loaded in the route and handed down, so the aggregate stays
          *     a composition of scope and parameters — `portfolio_summary`'s rule.
          *     `derivation_thresholds` decides the band on every row and the populations
-         *     behind five of the fourteen facets; `priority_weights` decides the ordering,
+         *     behind five of the twenty facets; `priority_weights` decides the ordering,
          *     the marker and the page size. Both are what the cursor is validated against,
          *     which is why they are resolved at today's date and never at the cursor's.
          */
@@ -1471,6 +1491,73 @@ export interface paths {
          *     is a property this endpoint has by having nothing else in it.
          */
         get: operations["summary_dashboard_summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dashboard/trends": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Five time series over a bucketed window for the session's analyst
+         * @description Five server-computed series over the caller's book, for whoever holds the cookie.
+         *
+         *     ## Five parameters, and not one of them is a scope
+         *
+         *     A grain, an anchor, a cohort dimension and two dates. Three of the five are
+         *     closed enums, so `grain=fortnight` is a 422 from FastAPI's own coercion before
+         *     this function runs — the **type is the check**, `FraudRateSort`'s arrangement,
+         *     and a vocabulary restated in the body would be the enum spelled twice. The two
+         *     dates are a *window*, not a filter and not a page: they narrow which periods
+         *     are drawn, never which employers' claims are in them.
+         *
+         *     There is nowhere in this signature to put an employer, a user or an "as"
+         *     (AD-7), and `?scopeAll=true` remains an unknown parameter FastAPI ignores,
+         *     exactly as it is on every route above.
+         *
+         *     `from` and `to` are aliased because `from` is a Python keyword — the wire name
+         *     and the parameter name are one string everywhere else in this file and this is
+         *     the one place the language will not allow it.
+         *
+         *     ## This endpoint is gated, and the gate is Story 7.1's
+         *
+         *     `/dashboard/fraud`'s argument, unchanged and deliberately not re-derived: this
+         *     is the analyst *workspace*, the surface Epic 5's analyst did not have, and
+         *     role is what separates a persona's workspace from a view anyone may read. The
+         *     allowlist is `fraud.FRAUD_ANALYTICS_ROLES` — reused rather than re-declared,
+         *     because a second section of one workspace carrying a second spelling of one
+         *     allowlist is how a future `UserRole` gets admitted by one of them.
+         *
+         *     So a supervisor gets 403 here while continuing to read every Epic 5 dashboard
+         *     route byte-identically to what she read before Epic 7 began.
+         *
+         *     ## Two documents, loaded here
+         *
+         *     `derivation_thresholds` decides the severity cohort's band edges, through the
+         *     same registered `risk` derivation the High Risk card and 5.3's donut read.
+         *     `trend_periods` decides the default window, its cap and the low-confidence
+         *     ceiling. Both are loaded here and handed down so the aggregate stays a
+         *     composition of scope and parameters — `portfolio_summary`'s rule — and both
+         *     versions are published, named separately, because they are two documents and
+         *     one field could only name one of them.
+         *
+         *     ## The window is refused before the read, not after it
+         *
+         *     Both 422s are decided from the caller's parameters and `trend_periods` alone,
+         *     inside the service and above its one `await`. A window nobody can be served
+         *     should not cost a query, and a refusal that arrived after a scoped read would
+         *     have answered differently for an analyst with employers and one between
+         *     assignments.
+         */
+        get: operations["trends_dashboard_trends_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4725,6 +4812,97 @@ export interface components {
             underTreatment: number;
         };
         /**
+         * PortfolioTrendsResponse
+         * @description Five metrics over one window of one scoped book, and what the axis means.
+         *
+         *     **`asOf` is published**, which is new on this dashboard and is the point
+         *     rather than a detail: `avgDaysOpen` counts up to a day and never freezes, so a
+         *     chart of claim ages that did not say which day they were measured on would be
+         *     unreadable the moment it was stored or forwarded. It is also the clock every
+         *     bucket boundary was decided against, and `deferred-work.md` has wanted this
+         *     field on a payload since Story 2.1.
+         *
+         *     **`grain`, `anchor` and `cohort` are echoed as their enums**, so a stored
+         *     payload is self-describing and a control renders the server's answer rather
+         *     than its own last click — `RateBreakdownResponse.sort`'s reason on three
+         *     inputs instead of one: a request that 422s or times out must not leave a
+         *     selector claiming a grain the chart beside it is not drawn at.
+         *
+         *     **The window is described three ways and none is redundant.** `grain` and
+         *     `anchor` say what a bucket is and what puts a claim in one; `windowFrom` /
+         *     `windowTo` are the outer bounds a caption quotes; `bucketCount` is what a
+         *     client checks its point count against without counting an array.
+         *     `defaultBuckets` and `maxBuckets` ride along so a period control offers
+         *     exactly the range this deployment permits and refuses a wider one before a
+         *     request is made.
+         *
+         *     **`claimsInScope` and `claimsInWindow` are two different facts**, and the
+         *     difference belongs on screen: the first is the caller's whole book, the second
+         *     is how much of it the chosen window covers. A window describing eleven of a
+         *     hundred claims is not wrong, but a reader who thinks it describes a hundred
+         *     is.
+         *
+         *     **Two rule documents, named separately.** `rulesVersion` is
+         *     `derivation_thresholds` — where the severity cohort's band edges come from —
+         *     exactly as it means on the fraud payloads, and the window parameters travel as
+         *     `periodsVersion`. `deferred-work.md` records that `rulesVersion` already names
+         *     different documents on different routes; two explicitly named fields is the
+         *     one move that reduces that ambiguity rather than adding to it.
+         *
+         *     **The two targets and the two band edges quote rules, so they travel with the
+         *     figures** — `PortfolioChartsResponse`' reason. `settleTargetDays` and
+         *     `rtwTargetBp` come from the `SlaTarget`s the strip decided its verdicts
+         *     against, and the rate target is on the series' own basis-point scale because a
+         *     target on a different scale is a reference line nobody can draw. The two
+         *     severity edges come from the derivation that did the banding.
+         */
+        PortfolioTrendsResponse: {
+            anchor: components["schemas"]["TrendAnchor"];
+            /**
+             * Asof
+             * Format: date
+             */
+            asOf: string;
+            /** Bucketcount */
+            bucketCount: number;
+            /** Claimsinscope */
+            claimsInScope: number;
+            /** Claimsinwindow */
+            claimsInWindow: number;
+            cohort: components["schemas"]["TrendCohort"];
+            /** Defaultbuckets */
+            defaultBuckets: number;
+            grain: components["schemas"]["TrendGrain"];
+            /** Highriskseveritymin */
+            highRiskSeverityMin: number;
+            /** Lowconfidenceclaimmax */
+            lowConfidenceClaimMax: number;
+            /** Maxbuckets */
+            maxBuckets: number;
+            /** Medriskseveritymin */
+            medRiskSeverityMin: number;
+            /** Periodsversion */
+            periodsVersion: number;
+            /** Rtwtargetbp */
+            rtwTargetBp: number;
+            /** Rulesversion */
+            rulesVersion: number;
+            /** Series */
+            series: components["schemas"]["TrendSeriesResponse"][];
+            /** Settletargetdays */
+            settleTargetDays: number;
+            /**
+             * Windowfrom
+             * Format: date
+             */
+            windowFrom: string;
+            /**
+             * Windowto
+             * Format: date
+             */
+            windowTo: string;
+        };
+        /**
          * PriorityClaimRowResponse
          * @description One row of the priority worklist, in the columns' own order (UX-DR7).
          *
@@ -5991,6 +6169,203 @@ export interface components {
             description: string;
             /** Stepno */
             stepNo: number;
+        };
+        /**
+         * TrendAnchor
+         * @description Which date a claim is bucketed by — and there are exactly two candidates.
+         *
+         *     `fnol` is `claim.froi_date`, when the claim came into existence for the
+         *     carrier; `doi` is when the injury happened. They are different questions and
+         *     a portfolio can improve on one while deteriorating on the other: a falling
+         *     FNOL volume with a flat DOI volume is a reporting lag, not fewer injuries.
+         *
+         *     **No third member, and that is a constraint rather than an omission.** The
+         *     other four date columns are either an operational timestamp (`assign_date`,
+         *     `approval_date`) or a return-to-work date that most claims do not carry —
+         *     none of them is when the claim *happened*, and bucketing a cohort by a date
+         *     two thirds of it is missing would silently describe a third of the book.
+         * @enum {string}
+         */
+        TrendAnchor: "fnol" | "doi";
+        /**
+         * TrendCohort
+         * @description The dimension a series may be split by — one at a time, per the AC.
+         *
+         *     `none` is a member rather than an absent parameter, so "no split" is a value
+         *     the caller states and the response echoes, and a stored payload says which
+         *     question it answered. The three real dimensions are the ones Story 7.2's AC 2
+         *     names, and each is reached by the symbol that owns it: `severity_band`
+         *     through the registered `risk` derivation (the same band the High Risk card
+         *     and 5.3's donut count), `disability` through the claim's own enum column, and
+         *     `sector` through the employer join the one read already carries.
+         *
+         *     **Not nine dimensions, and not a filter.** Story 7.3 owns segmentation — a
+         *     workspace-wide, AND-ed, URL-borne filter over nine columns. This is a
+         *     chart-level *split* of one dimension, which is a different thing: it
+         *     partitions the same population rather than narrowing it, so every cohort
+         *     series over a metric sums back to the un-split one.
+         * @enum {string}
+         */
+        TrendCohort: "none" | "severity_band" | "disability" | "sector";
+        /**
+         * TrendGrain
+         * @description How wide one bucket is. Closed, and the **type is the validation**.
+         *
+         *     `grain=fortnight` cannot reach this module: FastAPI coerces the query
+         *     parameter into this enum and answers 422 before the service runs, which is
+         *     `FraudRateSort`'s arrangement and its consequence — there is no vocabulary
+         *     check in this file and there must not be one, or the enum would be spelled
+         *     twice.
+         *
+         *     Three values, and each is a period a claims organisation actually reviews on.
+         *     A day grain is deliberately absent: a hundred-claim portfolio spread over
+         *     nine months has at most a handful of claims on any one day, so every point
+         *     would be low-confidence and the chart would be a scatter of ones. Adding one
+         *     is a product decision about what the section is *for*, not a fourth member.
+         *
+         *     Snake_case values per the enum convention; the UI owns the labels.
+         * @enum {string}
+         */
+        TrendGrain: "week" | "month" | "quarter";
+        /**
+         * TrendMetric
+         * @description The five series, in the order they are published and drawn.
+         *
+         *     The order is the section's reading order — how much work arrived, how old it
+         *     is, how long it takes to close, how much of it came back to work, what it
+         *     cost — and it is decided here so no client sorts (AD-1).
+         *
+         *     **Each name carries its unit**, which is what makes every value on this
+         *     payload an integer. `paid_cents` is cents and `rtw_rate_bp` is basis points,
+         *     the two scales this console already uses for money and for rates; the two day
+         *     metrics are whole days, the precision `sla.targets_for` decides the
+         *     settlement tile at, so the two day-valued series on one screen are read at
+         *     one precision rather than two.
+         * @enum {string}
+         */
+        TrendMetric: "volume" | "avg_days_open" | "avg_settlement_days" | "rtw_rate_bp" | "paid_cents";
+        /**
+         * TrendPointResponse
+         * @description One bucket of one series: what it was, what it says, how much is behind it.
+         *
+         *     **`value` is `null`, never `0`, when there was nothing to average or rate**,
+         *     and that is the prohibition this whole section exists for (AC 3). Counts and
+         *     sums zero-fill because an empty period genuinely saw zero claims and paid zero
+         *     cents; a mean and a rate over an empty denominator are not zero, they are
+         *     absent, and a line drawn through zero would read as a real and excellent
+         *     result. `SlaMetricResponse` draws the same distinction with `null` + `no_data`
+         *     one route over, and this is that vocabulary inherited rather than a second
+         *     one.
+         *
+         *     `claimCount` travels beside every value including the null ones: a settlement
+         *     mean over two claims and one over forty are the same kind of number and not
+         *     the same kind of evidence. **It is the population of *this metric*, not of
+         *     the bucket** — `avgSettlementDays` is a mean over settled claims carrying a
+         *     duration and `rtwRateBp` a rate over settled claims, so a busy month in which
+         *     three claims settled publishes `claimCount: 3` on those two points and the
+         *     month's whole count on the other three. The bucket's own count is the
+         *     `volume` series' *value* on the same payload and is deliberately not repeated
+         *     here under a second name.
+         *
+         *     `lowConfidence` is the server's verdict, not a threshold for the browser to
+         *     apply — the ceiling is `trend_periods.lowConfidenceClaimMax` and a comparison
+         *     made in the SPA would be the one rule on this payload nobody could see change
+         *     (AD-8). It is `0 < claimCount <= ceiling` over that same per-metric count: a
+         *     bucket with **no** claims behind a figure is not low confidence, it is no
+         *     confidence, and its value is already `null`.
+         *
+         *     `partial` says the bucket had not finished when the window was cut — true of
+         *     the newest bucket of every ordinary window, since one ends in the period
+         *     `asOf` falls in. The point is a part period drawn at a whole period's width
+         *     and every metric on it is affected differently (a count and a sum are short,
+         *     an average age is dragged toward zero by claims days old), so the fact is
+         *     published and the card marks it rather than any figure being adjusted.
+         *
+         *     `bucketFrom` and `bucketTo` are inclusive and are what the drill-through's
+         *     date facets are filled from — a copy of the boundary the fold used, never a
+         *     boundary the browser re-derived from `bucketKey`.
+         */
+        TrendPointResponse: {
+            /**
+             * Bucketfrom
+             * Format: date
+             */
+            bucketFrom: string;
+            /** Bucketkey */
+            bucketKey: string;
+            /** Bucketlabel */
+            bucketLabel: string;
+            /**
+             * Bucketto
+             * Format: date
+             */
+            bucketTo: string;
+            /** Claimcount */
+            claimCount: number;
+            /** Lowconfidence */
+            lowConfidence: boolean;
+            /** Partial */
+            partial: boolean;
+            /** Value */
+            value: number | null;
+        };
+        /**
+         * TrendSeriesResponse
+         * @description One line on one chart: which metric, which cohort, and what a caption needs.
+         *
+         *     **`points` is always the full window**, one entry per bucket in the window's
+         *     order, gaps included as `null` values. A series that skipped its empty buckets
+         *     would make two lines on one chart disagree about where March is.
+         *
+         *     **`seriesTotal` is what emptiness is decided on, never `points.length`.** A
+         *     zero-filled series has as many points as any other, so a length test can never
+         *     fire — the bug Story 7.1 shipped once and `DistributionDonut` now avoids by
+         *     testing its total. It is a *claim* count rather than a value total for all
+         *     five metrics, deliberately: "was there anything here to describe" is the same
+         *     question for a mean as for a sum, and a summed mean is not a number. It is the
+         *     sum of the points' `claimCount`s and is therefore **per metric** — a window
+         *     full of claims none of which settled empties the two SLA cards and no others,
+         *     which is the honest answer and not the same answer as an empty book.
+         *
+         *     `valueTotal` is the window total *of the metric* and is `null` for the three
+         *     that cannot be summed — `null` rather than zero for the same reason a point
+         *     is.
+         *
+         *     `noDataBuckets` is the card's footnote ("3 of 12 periods have no data"),
+         *     published rather than left to a client counting nulls, which is the arithmetic
+         *     AD-1 removes from the browser.
+         *
+         *     `metric` is a closed enum on the wire rather than a bare string, so the
+         *     generated client gets a union and an unknown metric fails to compile —
+         *     `RateBreakdownResponse.sort`'s arrangement, for its reason.
+         *
+         *     `cohortKey`, `cohortLabel` and `paletteSlot` are all `null` on an unsplit
+         *     series, so "is this a cohort?" is a field rather than an inference from the
+         *     request. **`paletteSlot` is an ordinal, not a colour**: the browser maps it
+         *     through the theme's categorical palette, and the slot is assigned by sorting
+         *     cohort values on their *wire key* so a cohort keeps its colour across all five
+         *     charts and across a refetch however its ranking moves. `cohortLabel` is `null`
+         *     for all three dimensions this story ships — the two enums' labels are the
+         *     SPA's (the Enums convention) and sector is free text where the stored value is
+         *     the label — and the client's rule is `label ?? key`, which is
+         *     `AppliedFilterResponse`'s split exactly.
+         */
+        TrendSeriesResponse: {
+            /** Cohortkey */
+            cohortKey: string | null;
+            /** Cohortlabel */
+            cohortLabel: string | null;
+            metric: components["schemas"]["TrendMetric"];
+            /** Nodatabuckets */
+            noDataBuckets: number;
+            /** Paletteslot */
+            paletteSlot: number | null;
+            /** Points */
+            points: components["schemas"]["TrendPointResponse"][];
+            /** Seriestotal */
+            seriesTotal: number;
+            /** Valuetotal */
+            valueTotal: number | null;
         };
         /**
          * UserRole
@@ -9352,6 +9727,18 @@ export interface operations {
                 "filter[fraudBand]"?: components["schemas"]["FraudBand"] | null;
                 /** @description The queue's SIU *referral* rule — deliberately narrower than `filter[fraudFlagged]`'s review cut. */
                 "filter[siuReview]"?: boolean | null;
+                /** @description Claims whose FNOL date is on or after this day. **Inclusive**, which is the reading a trend bucket's own boundary publishes. */
+                "filter[fnolFrom]"?: string | null;
+                /** @description Claims whose FNOL date is on or before this day. Inclusive. */
+                "filter[fnolTo]"?: string | null;
+                /** @description Claims whose date of injury is on or after this day. Inclusive, and a different column from `filter[fnolFrom]` on purpose. */
+                "filter[doiFrom]"?: string | null;
+                /** @description Claims whose date of injury is on or before this day. Inclusive. */
+                "filter[doiTo]"?: string | null;
+                /** @description The claim's disability type, as the trend cohort splits on it. */
+                "filter[disability]"?: components["schemas"]["Disability"] | null;
+                /** @description The employer's sector, matched as the exact stored string — no trimming, case-folding or merging. An employer attribute, not an industry rollup. */
+                "filter[sector]"?: string | null;
                 /** @description An opaque `nextCursor` from a previous response. */
                 cursor?: string | null;
             };
@@ -9763,6 +10150,91 @@ export interface operations {
             };
             /** @description No valid session (RFC 9457 problem document). */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+        };
+    };
+    trends_dashboard_trends_get: {
+        parameters: {
+            query?: {
+                /** @description How wide one bucket is. */
+                grain?: components["schemas"]["TrendGrain"];
+                /** @description Which date a claim is bucketed by — the claim's FNOL date or the date of injury. Never both, and never a third column. */
+                anchor?: components["schemas"]["TrendAnchor"];
+                /** @description The single dimension each metric is split by, or `none`. Not a filter: a cohort split partitions the population rather than narrowing it. */
+                cohort?: components["schemas"]["TrendCohort"];
+                /** @description The first day the window covers; its whole bucket is included. Omitted, the window is `defaultBuckets` ending in `to`'s bucket. */
+                from?: string | null;
+                /** @description The last day the window covers; its whole bucket is included. Omitted, the window ends in the bucket `asOf` falls in. */
+                to?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PortfolioTrendsResponse"];
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The caller's role does not carry the analyst-workspace capability. Answered before any claim is read and before any rule document is loaded, so it says nothing about what is in the caller's scope (RFC 9457 problem document). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The requested window cannot be served: `/problems/trend-range-invalid` for a range that runs backwards, `/problems/trend-range-too-wide` for one covering more buckets than `maxBuckets` allows (RFC 9457 problem document). Decided from the parameters and the rules document alone, so no claim is read to produce it. */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -19,9 +19,9 @@
  * The width cap is gone with the placeholder: six KPI cards in a row need the
  * viewport, and Epic 5's charts and tables need more of it.
  *
- * **Story 7.1 adds a navigation between the two, and only for one role.**
- * `WorkspaceNav` renders the analyst's two destinations — Portfolio and Fraud —
- * and returns `null` for everybody else, so a supervisor's shell is the element
+ * **Story 7.1 adds a navigation between the views, and only for one role.**
+ * `WorkspaceNav` renders the analyst's destinations — Portfolio, Fraud and, since
+ * Story 7.2, Trends — and returns `null` for everybody else, so a supervisor's shell is the element
  * tree Epic 5 shipped with nothing inserted into it. The decision lives in that
  * component rather than in a `me.role` branch here, because this file's job is
  * the frame: a shell that knew which personas get a nav would be the place the

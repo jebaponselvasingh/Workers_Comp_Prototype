@@ -18,16 +18,28 @@ export const WORKSPACE_ROUTE = "/workspace";
 export const FRAUD_ROUTE = "/dashboard/fraud";
 
 /**
+ * The analyst workspace's Trends section (Story 7.2).
+ *
+ * `FRAUD_ROUTE`'s sibling and its shape exactly — a **child of the dashboard
+ * route**, so the analyst keeps the portfolio overview and gains a second
+ * section beside it rather than a second shell. The `homeRouteFor` below is
+ * again untouched, and for the reason stated there: a section is a destination,
+ * not a home, and landing a role *inside* one would leave it with no obvious way
+ * back out of a console whose navigation is three entries long.
+ */
+export const TRENDS_ROUTE = "/dashboard/trends";
+
+/**
  * Where a persona lands after "Enter Console →" (FR-LOGIN-2), or `null`
  * when this build has no shell for the role.
  *
- * **Story 7.1 gives the analyst a section the supervisor does not have and
- * deliberately does not change this function.** Landing an analyst on
- * `/dashboard/fraud` would have been the tempting one-word change and is wrong
- * twice over: the portfolio overview is still that persona's own dashboard (it
+ * **Stories 7.1 and 7.2 give the analyst two sections the supervisor does not
+ * have and deliberately do not change this function.** Landing an analyst on
+ * `/dashboard/fraud` — or on `/dashboard/trends` — would have been the tempting
+ * one-word change and is wrong twice over: the portfolio overview is still that persona's own dashboard (it
  * is scoped for them, not borrowed from the supervisor), and a role that landed
  * *inside* a section would have no obvious way back out of it in a console whose
- * navigation is two entries long. The Fraud section is a destination, not a home.
+ * navigation is three entries long. A section is a destination, not a home.
  *
  * The *routing* is client-side, but the input is not: `role` comes from
  * `/api/me`, resolved server-side from `app_user`. The SPA never decides

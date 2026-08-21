@@ -20,6 +20,7 @@ import { ToastHost, ToastProvider } from "@/components/ui/toast";
 import { LoginScreen } from "@/features/login/LoginScreen";
 import { DashboardPage } from "@/features/dashboard/DashboardPage";
 import { FraudPage } from "@/features/dashboard/fraud/FraudPage";
+import { TrendsPage } from "@/features/dashboard/trends/TrendsPage";
 import { DrillClaimsPage } from "@/features/dashboard/drill/DrillClaimsPage";
 import { ReadOnlyClaimPage } from "@/features/dashboard/drill/ReadOnlyClaimPage";
 import { DashboardShell } from "@/features/shell/DashboardShell";
@@ -52,7 +53,8 @@ export default function App() {
                 claim's own identifier in the path rather than a surrogate. */}
             <Route path="claims/:claimId" element={<ReadOnlyClaimPage />} />
 
-            {/* Story 7.1's analyst workspace, behind an **inner** guard.
+            {/* Stories 7.1 and 7.2's analyst workspace, behind an **inner**
+                guard.
 
                 Nested rather than declared beside the dashboard block, so it
                 inherits `DashboardShell` — the analyst gains a section within
@@ -69,6 +71,13 @@ export default function App() {
                 client-side check is a courtesy, never a control. */}
             <Route element={<RequireSession allow={["analyst"]} />}>
               <Route path="fraud" element={<FraudPage />} />
+              {/* Story 7.2's second section, inside the **same** guard rather
+                  than beside it. One `RequireSession allow={["analyst"]}` for
+                  the workspace is what makes "the analyst workspace is
+                  analyst-only" a property of the route table; a second guard
+                  wrapping one route would be the same rule written twice, free
+                  to disagree the first time somebody widened one of them. */}
+              <Route path="trends" element={<TrendsPage />} />
             </Route>
           </Route>
         </Route>

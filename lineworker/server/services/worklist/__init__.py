@@ -140,6 +140,29 @@ it states rather than hides: the band distribution zero-fills where `charts`
 omits (a rule's vocabulary is always complete), and the red-flag view takes *two*
 scoped reads, because a coverage figure needs a denominator the insight join
 cannot produce.
+
+Story 7.2 adds `trends`, the workspace's second section and the first aggregate
+in this package with a **time axis**. Every other module here answers a question
+about today; this one folds the same scoped book into periods, so the console can
+finally say whether any of it is moving. It reuses rather than re-declares:
+`fraud.FRAUD_ANALYTICS_ROLES` gates it, because a second section of one workspace
+must not carry a second spelling of one allowlist; `derivations.risk` bands its
+severity cohort, so a cohort here and a slice on 5.3's donut are one band with
+two callers; `derivations.days_open` and `derivations.total_paid` compute two of
+its five metrics; and `sla.strip_of` computes the other two, once per bucket,
+which is `benchmarks.py`'s second-consumer arrangement applied N times over one
+read instead of once.
+
+What it adds to the package's argument is that AD-2 survives being called in a
+loop. The settlement mean and the RTW rate are published per bucket and per
+cohort, which is the most tempting place in this codebase to write a second
+average — and there is none: this module never names an SLA duration column, the
+columns reach it as `sla.SAMPLE_COLUMNS` and the answers as `sla.strip_of`'s. Its
+one genuinely new rule is a fourth zero-fill policy, and it is a fourth because
+it bands a *timeline* rather than a vocabulary: counts and sums zero-fill because
+an empty period really did see nothing, while means and rates go `null` because a
+mean over an empty set is not zero — `sla`'s own `no_data` vocabulary, inherited
+rather than invented.
 """
 
 # **`priority_claims` is deliberately missing from this list**, and it is the
@@ -162,6 +185,7 @@ from services.worklist import (
     queue,
     sla,
     summary,
+    trends,
 )
 from services.worklist.actions import (
     Action,
@@ -272,14 +296,32 @@ from services.worklist.summary import (
     portfolio_summary,
     summary_of,
 )
+from services.worklist.trends import (
+    PortfolioTrends,
+    TrendAnchor,
+    TrendBucket,
+    TrendClaim,
+    TrendCohort,
+    TrendGrain,
+    TrendMetric,
+    TrendPoint,
+    TrendRangeInvalid,
+    TrendRangeTooWide,
+    TrendSeries,
+    TrendWindow,
+    cohort_key_of,
+    portfolio_trends,
+    trends_of,
+    window_for,
+)
 
 __all__ = [
     "APPROVAL_KINDS",
     "Action",
+    "AppliedFilter",
     "ApprovalKind",
     "ApprovalNotPermitted",
     "ApprovalResult",
-    "AppliedFilter",
     "BenchmarkClaim",
     "BenchmarksNotPermitted",
     "CategoryCount",
@@ -299,8 +341,8 @@ __all__ = [
     "FILTER_KEYS",
     "FRAUD_ANALYTICS_ROLES",
     "FraudAnalyticsNotPermitted",
-    "FraudClauseReader",
     "FraudClaim",
+    "FraudClauseReader",
     "FraudPanel",
     "FraudRateSort",
     "FraudRateSorts",
@@ -319,6 +361,7 @@ __all__ = [
     "PortfolioCharts",
     "PortfolioClaim",
     "PortfolioSummary",
+    "PortfolioTrends",
     "PriorityClaim",
     "PriorityClaims",
     "PriorityFlags",
@@ -338,6 +381,17 @@ __all__ = [
     "SlaStatus",
     "StageGroup",
     "TopBarStats",
+    "TrendAnchor",
+    "TrendBucket",
+    "TrendClaim",
+    "TrendCohort",
+    "TrendGrain",
+    "TrendMetric",
+    "TrendPoint",
+    "TrendRangeInvalid",
+    "TrendRangeTooWide",
+    "TrendSeries",
+    "TrendWindow",
     "actions",
     "approvals",
     "approve_payment",
@@ -347,6 +401,7 @@ __all__ = [
     "charts_of",
     "claim_actions",
     "claim_queue",
+    "cohort_key_of",
     "decode_cursor",
     "drill_through",
     "drill_through_claims",
@@ -362,6 +417,7 @@ __all__ = [
     "panel_of",
     "portfolio_charts",
     "portfolio_summary",
+    "portfolio_trends",
     "priority",
     "priority_claims",
     "priority_markers",
@@ -379,4 +435,7 @@ __all__ = [
     "summary",
     "summary_of",
     "topbar_stats",
+    "trends",
+    "trends_of",
+    "window_for",
 ]

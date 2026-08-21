@@ -243,6 +243,17 @@ DURATION_SEGMENTS: Final[tuple[SlaMetricKey, ...]] = (
 )
 
 
+def _settled(caseload: Sequence[SlaSample]) -> list[SlaSample]:
+    """The settled claims — the RTW rate's denominator, spelled once.
+
+    Extracted because three functions below need it and two of them publish a
+    *count* of it: "which claims are settled" is half of two metric definitions
+    this module owns, and three copies of the comprehension is how the day comes
+    that one of them starts reading `status` instead.
+    """
+    return [sample for sample in caseload if sample.is_settled]
+
+
 def _segment_values(caseload: Sequence[SlaSample]) -> Mapping[SlaMetricKey, Sequence[int]]:
     """The numbers behind each duration tile — the definitions, in one place.
 
@@ -252,7 +263,7 @@ def _segment_values(caseload: Sequence[SlaSample]) -> Mapping[SlaMetricKey, Sequ
     rounded figure on a tile and the unrounded figure a ranking is decided on
     can only ever be two precisions of the same average.
     """
-    settled = [sample for sample in caseload if sample.is_settled]
+    settled = _settled(caseload)
     return {
         SlaMetricKey.pick: [s.pick_days for s in caseload if s.pick_days is not None],
         SlaMetricKey.approve: [s.approve_days for s in caseload if s.approve_days is not None],
@@ -289,6 +300,39 @@ def segment_means_of(caseload: Sequence[SlaSample]) -> Mapping[SlaMetricKey, Dec
         key: (Decimal(sum(values)) / Decimal(len(values))) if values else None
         for key, values in _segment_values(caseload).items()
     }
+
+
+def denominators_of(caseload: Sequence[SlaSample]) -> Mapping[SlaMetricKey, int]:
+    """How many claims each of the four figures was computed over.
+
+    The counts, and **not** the caseload's size: the four metrics have three
+    different denominators over one list (pick and approve over the claims
+    carrying that duration, settle over *settled* claims carrying one, the rate
+    over every settled claim), and only this module knows which is which. A
+    caller that wanted to publish "how much evidence is behind this number"
+    beside a value therefore has exactly two options — count the population
+    itself, which means restating a definition this module owns and which
+    `test_nothing_outside_the_worklist_aggregation_reads_the_sla_source_columns`
+    would refuse it the columns for anyway, or ask here.
+
+    Read straight off `_segment_values` and `_settled`, so a denominator and the
+    figure it divided cannot disagree without disagreeing there first. That is
+    the same arrangement `segment_means_of` has and it is not a second
+    aggregation (AD-2): nothing is averaged here, and every number returned is
+    the length of a list `strip_of` folded.
+
+    **A separate function rather than a `sample_count` field on `SlaMetric`**,
+    which reads better and was refused: `SlaMetric` is a *wire* model on
+    `/dashboard/summary`'s strip, and Story 7.2's need for a per-bucket
+    denominator is not a reason to add a field to four tiles that already state
+    their population in the caption beside them. The block this story was written
+    under says outright that a change to `sla.py`'s public surface beyond adding
+    a caller is a decision above it; an additive read-only accessor over
+    definitions already stated here is the smallest thing that is not one.
+    """
+    counts = {key: len(values) for key, values in _segment_values(caseload).items()}
+    counts[SlaMetricKey.rtw_rate] = len(_settled(caseload))
+    return {key: counts[key] for key in SlaMetricKey}
 
 
 def _metric(values: Sequence[int], target: SlaTarget) -> SlaMetric:
@@ -342,8 +386,12 @@ def strip_of(
       *all* settled claims. A different denominator from Settle on purpose:
       a settlement with no recorded duration still has a return-to-work
       outcome, and sharing one denominator would drop it from the rate.
+
+    `denominators_of` publishes those denominators as counts for a caller that
+    needs to say how much evidence is behind a figure; it reads the same two
+    definitions this function does.
     """
-    settled = [sample for sample in caseload if sample.is_settled]
+    settled = _settled(caseload)
     values = _segment_values(caseload)
     metrics = {key: _metric(values[key], targets[key]) for key in values}
 

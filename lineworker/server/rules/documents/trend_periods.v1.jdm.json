@@ -1,0 +1,58 @@
+{
+  "contentType": "application/vnd.gorules.decision",
+  "name": "trend_periods",
+  "description": "Every tunable behind the analyst workspace's Trends section (Story 7.2, AD-8). A document of its own for handler_performance's reason rather than three more expressions in derivation_thresholds: that block is the single argument every REGISTERED DERIVATION is BUILT from, and none of these three parameters reaches a derivation at all. They govern the shape of a WINDOW — how much history a chart opens on, how much a caller may ask for, and how thin a bucket has to be before the reader is warned about it — and a window is not a derivation cut-off. THESE ARE POLICY, NOT ARITHMETIC, which is the reason they are here rather than as constants in services/worklist/trends.py beside charts.INJURY_TYPE_LIMIT. A chart's category count is UX-DR7's shape: 'top 8' is what the chart IS, and moving it changes the picture rather than the business. These three are the opposite. defaultBuckets 12 is a statement about how far back an analyst is expected to reason by default — a year of months, three years of quarters, a quarter of weeks — and an insurer that reviews on a rolling six months would move it without a deploy. maxBuckets 24 is the widest window a caller may ask for, and WHAT IT BOUNDS IS THE ANSWER RATHER THAN THE WORK: services/worklist/trends.py reads the caller's whole scoped book with no date predicate and folds every claim in it once whatever the window is, so a narrower window costs exactly what a wider one does per claim. What scales with this number is the shaping — buckets x metrics x cohorts points built, serialised, drawn and read — so it is a cap on how large and how legible a response is, and on how far back a period control may offer before the request is made. The O(scope) fold is a real question and it is NOT this parameter's: it is deferred-work.md's, on the sixth endpoint to fold a whole scope in Python, and lowering this cap at two in the morning would not touch it. lowConfidenceClaimMax 3 is the sharpest of the three: it decides when a mean or a rate on screen is marked as too thin to lean on, which is a statistical-honesty policy (NFR-3) and exactly the kind of judgement AD-8 keeps out of Python and out of the browser. THE THREE ARE COUNTS OF BUCKETS AND OF CLAIMS, NOT OF DAYS, and that is what makes them grain-independent: 24 is 24 weeks, 24 months or 24 quarters depending on what was asked for, so a single cap governs three grains without three parameters that could drift apart. defaultBuckets must not exceed maxBuckets — a default the caller is refused for accepting is not a default — and rules/parameters.py refuses that pair at load rather than clamping it silently. lowConfidenceClaimMax 3 rather than 0: the low-confidence test is 0 < claimCount <= lowConfidenceClaimMax, so a zero would switch the marking off entirely, and a section that never marks a thin bucket is indistinguishable on screen from a build whose marking is broken. Switching the treatment off is a request to retire it, not to set this to zero — handler_performance makes the identical argument for its three blend weights.",
+  "nodes": [
+    {
+      "id": "request",
+      "type": "inputNode",
+      "name": "request",
+      "position": { "x": 0, "y": 0 }
+    },
+    {
+      "id": "periods",
+      "type": "expressionNode",
+      "name": "periods",
+      "position": { "x": 240, "y": 0 },
+      "content": {
+        "expressions": [
+          {
+            "id": "defaultBuckets",
+            "key": "defaultBuckets",
+            "value": "12"
+          },
+          {
+            "id": "maxBuckets",
+            "key": "maxBuckets",
+            "value": "24"
+          },
+          {
+            "id": "lowConfidenceClaimMax",
+            "key": "lowConfidenceClaimMax",
+            "value": "3"
+          }
+        ]
+      }
+    },
+    {
+      "id": "response",
+      "type": "outputNode",
+      "name": "response",
+      "position": { "x": 480, "y": 0 }
+    }
+  ],
+  "edges": [
+    {
+      "id": "request-periods",
+      "type": "edge",
+      "sourceId": "request",
+      "targetId": "periods"
+    },
+    {
+      "id": "periods-response",
+      "type": "edge",
+      "sourceId": "periods",
+      "targetId": "response"
+    }
+  ]
+}
