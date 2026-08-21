@@ -22,7 +22,7 @@ import {
 
 import { api } from "./client";
 import { queryKeys } from "./queryKeys";
-import type { components } from "./schema";
+import type { components, paths } from "./schema";
 
 export type PortfolioSummary =
   components["schemas"]["PortfolioSummaryResponse"];
@@ -286,5 +286,182 @@ export function useDrillClaimPages(
     getNextPageParam: (last: DrillClaims) => last.nextCursor ?? undefined,
     enabled: enabled && firstCursor !== null,
     staleTime: 15_000,
+  });
+}
+
+/**
+ * The fraud panel's payload — the band distribution and the SIU pipeline.
+ */
+export type FraudPanel = components["schemas"]["FraudPanelResponse"];
+/**
+ * A per-handler slice of the SIU pipeline.
+ *
+ * Read off `FraudPanel` rather than named directly, `CategoryDistribution`'s
+ * reason: the generated schema name for a Pydantic generic is
+ * `DistributionResponse_HandlerCountResponse_`, a mangling that is stable and
+ * unreadable and would put the code generator's naming convention in every
+ * consuming component's import list.
+ */
+export type HandlerCountDistribution = FraudPanel["siuByHandler"];
+/** The three fraud-score bands — snake_case tokens; the UI owns labels. */
+export type FraudBand = NonNullable<
+  paths["/dashboard/claims"]["get"]["parameters"]["query"]
+>["filter[fraudBand]"];
+
+/**
+ * Server state for the analyst workspace's fraud panel (FR-AN-1, Story 7.1).
+ *
+ * `useDashboardCharts`' shape and its emptiness, for the same reason: every
+ * figure — each band count, the zero-fill, the pipeline's ordering, both
+ * populations and all four published thresholds — is decided by
+ * `services/worklist` over the caller's scope, and this hook exists to fetch
+ * them and nothing else.
+ *
+ * **No `select`**, deliberately, and this payload is the strongest invitation to
+ * one on the whole dashboard: the browser is handed a band distribution *and*
+ * the two edges it was banded at *and* a separate flagged population that
+ * happens to equal the high band on today's data. A `select` is where somebody
+ * would "just" derive one from the others — and the two numbers are only equal
+ * by coincidence of a rule document, which is exactly what
+ * `services/derivations/fraud_score_band.py` exists to keep apart. With no
+ * transform there is nothing for `noDerivation.test.ts` to have to read, and
+ * `api/dashboard.ts` stays out of its `ROOT_FILES`.
+ *
+ * The same `staleTime` as its five siblings, so the dashboard and the workspace
+ * go stale on one schedule. Nothing polls.
+ */
+export function useFraudPanel() {
+  return useQuery({
+    queryKey: queryKeys.dashboard.fraud,
+    queryFn: async (): Promise<FraudPanel> => {
+      const { data } = await api.GET("/dashboard/fraud");
+      return data!;
+    },
+    staleTime: 30_000,
+  });
+}
+
+export type FraudRates = components["schemas"]["FraudRatesResponse"];
+/** The five orders a rate breakdown may be asked for — a closed server enum. */
+export type FraudRateSort = components["schemas"]["FraudRateSort"];
+/**
+ * One row of each breakdown.
+ *
+ * Read off `FraudRates` rather than named directly, `CategoryDistribution`'s
+ * reason: the generated schema name for a Pydantic generic is
+ * `RateBreakdownResponse_InjuryTypeRateResponse_`, a mangling that is stable and
+ * unreadable and would put the code generator's naming convention in every
+ * consuming component's import list.
+ */
+export type InjuryTypeRate = FraudRates["byInjuryType"]["items"][number];
+export type EmployerRate = FraudRates["byEmployer"]["items"][number];
+export type HandlerRate = FraudRates["byHandler"]["items"][number];
+
+/**
+ * Which order each of the three rate breakdowns is being read in.
+ *
+ * One field per table rather than a single shared order, because the server
+ * takes three independent parameters and the acceptance criterion is that
+ * sorting one table leaves the other two alone. A shared value could not express
+ * it and a shared *default* would make it untestable.
+ */
+export interface FraudRateSorts {
+  injuryType: FraudRateSort;
+  employer: FraudRateSort;
+  handler: FraudRateSort;
+}
+
+/**
+ * The order every breakdown starts in — the server's own default, restated.
+ *
+ * Restated rather than left unsent, and the difference matters for the cache
+ * key: an omitted parameter and an explicit `rate_desc` are the same request to
+ * the server and would be two different `sortKey`s here. Sending all three
+ * always keeps one entry per *visible* order.
+ */
+export const DEFAULT_FRAUD_RATE_SORT: FraudRateSort = "rate_desc";
+
+export const DEFAULT_FRAUD_RATE_SORTS: FraudRateSorts = {
+  injuryType: DEFAULT_FRAUD_RATE_SORT,
+  employer: DEFAULT_FRAUD_RATE_SORT,
+  handler: DEFAULT_FRAUD_RATE_SORT,
+};
+
+/**
+ * A stable string identifying one sort set, for a TanStack Query key.
+ *
+ * Built from the same object the request is built from — `toFilterKey`'s
+ * arrangement one folder over — so the cache entry and the query string cannot
+ * describe different questions. Written out field by field rather than
+ * `JSON.stringify`, because that is key-insertion-ordered and two renders
+ * setting the same three values in a different order would produce two entries
+ * for one resource with nothing anywhere to say so.
+ */
+export function toFraudRateSortKey(sorts: FraudRateSorts): string {
+  return `${sorts.injuryType}|${sorts.employer}|${sorts.handler}`;
+}
+
+/**
+ * Server state for the three fraud-rate breakdowns (FR-AN-1, AC 3).
+ *
+ * **The sort set is in the key and in the request, from one source** —
+ * `useDrillClaims`' rule applied to an order rather than to a filter. That is
+ * what makes "the browser sorts nothing" observable rather than merely claimed:
+ * changing a control changes the key, which issues a request, which returns rows
+ * the server ordered. A client-side sort would show the same rows in the same
+ * order and would never touch the network.
+ *
+ * **No `select`**, deliberately: a `select` over this payload is where a
+ * re-order would live, and it would look like one line.
+ *
+ * The same `staleTime` as its siblings. Nothing polls.
+ */
+export function useFraudRates(sorts: FraudRateSorts) {
+  return useQuery({
+    queryKey: queryKeys.dashboard.fraudRates(toFraudRateSortKey(sorts)),
+    queryFn: async (): Promise<FraudRates> => {
+      const { data } = await api.GET("/dashboard/fraud/rates", {
+        params: {
+          query: {
+            "sort[injuryType]": sorts.injuryType,
+            "sort[employer]": sorts.employer,
+            "sort[handler]": sorts.handler,
+          },
+        },
+      });
+      return data!;
+    },
+    staleTime: 30_000,
+  });
+}
+
+export type FraudRedFlags = components["schemas"]["FraudRedFlagsResponse"];
+
+/**
+ * Server state for the ranked red-flag clauses (AC 2, AD-10).
+ *
+ * `useFraudPanel`'s shape and its emptiness. What it fetches is **cached model
+ * output**, not claim data: the ranking, the coverage figures, the generation
+ * range and the model names all describe `ai_insight` rows, and the card that
+ * renders them says so. Nothing here refreshes anything — `services/rag` owns
+ * the writes (AD-12), and a cold cache is a 200 with an empty ranking rather
+ * than work this hook could start.
+ *
+ * **No `select`**, deliberately: grouping, counting and ranking clauses in the
+ * browser is precisely the classification the server refuses to make, and a
+ * `select` is where a well-meaning "just merge the near-duplicates" would go.
+ *
+ * The same `staleTime` as its siblings, and no polling — a narrative that is
+ * thirty seconds old is a dated answer rendered with its own timestamp, which is
+ * the whole of AD-10's contract.
+ */
+export function useFraudRedFlags() {
+  return useQuery({
+    queryKey: queryKeys.dashboard.fraudRedFlags,
+    queryFn: async (): Promise<FraudRedFlags> => {
+      const { data } = await api.GET("/dashboard/fraud/red-flags");
+      return data!;
+    },
+    staleTime: 30_000,
   });
 }

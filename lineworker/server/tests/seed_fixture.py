@@ -1157,6 +1157,14 @@ def _drill_matches(claim: dict[str, Any], key: str, value: Any) -> bool:
         "handler_id": handler_id_of(claim["handler"]) == value,
         # The worklist's population, before its cap.
         "priority": qualifies_for_worklist(claim) == value,
+        # Story 7.1's two. `fraud_band` bands the score **alone** — no
+        # `fraud_flag` conjunct — so it is neither of the two fraud rules above
+        # it, and `siu_review` is the queue's referral rule, which is neither of
+        # the other two either. Three facets, three restatements, one column
+        # pair: an oracle that shared a number between any two of them would
+        # agree with an implementation that had collapsed the same pair.
+        "fraud_band": fraud_band(claim["fraud_score"]) == value,
+        "siu_review": siu_review(claim) == value,
     }
     if key not in answers:
         raise AssertionError(f"no seeded oracle for filter {key!r}")
@@ -1198,4 +1206,253 @@ def expected_drill_claims(
             claim_ids[start : start + DRILL_PAGE_LIMIT]
             for start in range(0, max(len(claim_ids), 1), DRILL_PAGE_LIMIT)
         ],
+    }
+
+
+# --- Story 7.1: the fraud workspace, restated independently ---------------
+#
+# Three fraud rules over one column pair, and this block is where the seed
+# stops being able to tell them apart — which is the point of restating them
+# rather than reaching for one:
+#
+#   siu_review    = fraud_flag and fraud_score >= SIU_FRAUD_SCORE_MIN   (60)
+#   fraud_flagged = fraud_flag and fraud_score >= FRAUD_FLAG_SCORE_MIN  (55)
+#   fraud_band    = band(fraud_score) against MED (35) and HIGH (55)
+#
+# On the seeded portfolio `fraud_flag` and `fraud_score >= 55` coincide exactly,
+# so `fraud_flagged` and the `high` band happen to name the same thirteen claims
+# and an oracle that shared one number between them would still agree with an
+# implementation that had collapsed the two. It is a fact about the dataset, and
+# the reason `tests/test_fraud_analytics.py` also folds synthetic projections
+# where the three disagree.
+#
+# `FRAUD_BAND_HIGH_MIN` is written out separately from `FRAUD_FLAG_SCORE_MIN`
+# above even though both are 55, and `FRAUD_BAND_MED_MIN` separately from
+# `MED_RISK_MIN` even though both are 35. Both duplications are deliberate:
+# sharing either name would make the oracle unable to notice the day the
+# document moved one of them, which is the single most plausible way to break
+# this story.
+
+FRAUD_BAND_HIGH_MIN = 55
+FRAUD_BAND_MED_MIN = 35
+
+#: The `FraudBand` declaration order — low to high, which is a *distribution's*
+#: reading order and deliberately the opposite of `RISK_BAND_ORDER`'s high-first
+#: legend order. Every member is always present: the vocabulary is a rule's, so
+#: an empty band is a fact about the portfolio rather than a category it lacks.
+FRAUD_BAND_ORDER = ("low", "medium", "high")
+
+#: The injury-type cut the rate breakdown applies, restated. The same number
+#: `INJURY_TYPE_LIMIT` above carries for the injury-type *chart*, and written out
+#: twice on purpose: two views of one dimension must not disagree about where the
+#: tail starts, and an oracle sharing one constant could not notice if they did.
+FRAUD_INJURY_TYPE_LIMIT = 8
+
+
+def fraud_band(fraud_score: int) -> str:
+    """`fraud_score` banded — the score alone, with no `fraud_flag` conjunct.
+
+    That absence is the whole rule. `queue_flags` above conjoins the flag for
+    `siu_review`, and `_drill_matches` does the same for `fraud_flagged`; this
+    one does not, so a claim nobody triaged still has a band. It is what lets
+    the analyst's distribution answer "how much of this book scores high and was
+    never flagged", and it is the difference an oracle that reused either of the
+    other two would have hidden.
+    """
+    if fraud_score >= FRAUD_BAND_HIGH_MIN:
+        return "high"
+    if fraud_score >= FRAUD_BAND_MED_MIN:
+        return "medium"
+    return "low"
+
+
+def fraud_flagged(claim: dict[str, Any]) -> bool:
+    """The dashboard's fraud *review* rule, restated — never the referral one."""
+    return bool(claim["fraud_flag"]) and claim["fraud_score"] >= FRAUD_FLAG_SCORE_MIN
+
+
+def siu_review(claim: dict[str, Any]) -> bool:
+    """The queue's SIU *referral* rule, restated — never the review one.
+
+    Written out here rather than read off `queue_flags(claim)["siu_review"]`
+    because this story's whole subject is that the three rules are three, and an
+    oracle reaching into a bundle built for the queue would make the pipeline's
+    population a property of that bundle rather than of the rule.
+    """
+    return bool(claim["fraud_flag"]) and claim["fraud_score"] >= SIU_FRAUD_SCORE_MIN
+
+
+def expected_fraud_panel(persona_name: str, role: str) -> dict[str, Any]:
+    """The band distribution and the SIU pipeline for one persona's book.
+
+    Rendered as the payload shapes them, so a test compares whole objects rather
+    than picking figures out one at a time — `expected_portfolio_charts`'
+    discipline.
+
+    **`byBand` is zero-filled and the two pipelines are not**, which is the one
+    asymmetry this oracle has to reproduce rather than smooth over: the band
+    vocabulary is a rule's and is always complete, while a stage with no referred
+    claim is a stage the pipeline does not reach. An oracle that treated both the
+    same way would agree with an implementation that had got either wrong.
+    """
+    visible = claims_for(persona_name, role)
+
+    bands: dict[str, int] = {}
+    stages: dict[str, int] = {}
+    handlers: dict[int, int] = {}
+    handler_names: dict[int, str] = {}
+    for claim in visible:
+        band = fraud_band(claim["fraud_score"])
+        bands[band] = bands.get(band, 0) + 1
+        if siu_review(claim):
+            stages[claim["stage"]] = stages.get(claim["stage"], 0) + 1
+            handler_id = handler_id_of(claim["handler"])
+            handlers[handler_id] = handlers.get(handler_id, 0) + 1
+            handler_names[handler_id] = claim["handler"]
+
+    ordered_handlers = sorted(
+        handlers.items(), key=lambda entry: (-entry[1], handler_names[entry[0]], entry[0])
+    )
+    return {
+        "byBand": {
+            "items": [{"key": band, "count": bands.get(band, 0)} for band in FRAUD_BAND_ORDER],
+            "total": sum(bands.values()),
+            "totalCategories": len(FRAUD_BAND_ORDER),
+            "truncated": False,
+            "limit": None,
+        },
+        "siuByStage": _declared_series(stages, STAGE_ORDER),
+        "siuByHandler": {
+            "items": [
+                {
+                    "handlerId": handler_id,
+                    "handlerName": handler_names[handler_id],
+                    "count": count,
+                }
+                for handler_id, count in ordered_handlers
+            ],
+            "total": sum(handlers.values()),
+            "totalCategories": len(handlers),
+            "truncated": False,
+            "limit": None,
+        },
+        "claimsInScope": len(visible),
+        "flaggedClaims": sum(1 for claim in visible if fraud_flagged(claim)),
+        "siuClaims": sum(1 for claim in visible if siu_review(claim)),
+    }
+
+
+def _rate_bp(flagged: int, claims: int) -> int:
+    """`flagged / claims` in basis points, half-up — the service's arithmetic.
+
+    `Decimal` and `ROUND_HALF_UP` rather than `round()`, which is banker's
+    rounding in Python and would disagree with the service on exactly the ties a
+    small denominator produces (one flagged of eight is 1 250 either way; one of
+    sixteen is 625 either way; but 3/8 of a percent lands on a .5 basis point).
+    Restated rather than imported for `HIGH_RISK_MIN`'s reason.
+    """
+    return int(
+        (Decimal(flagged) / Decimal(claims) * 10_000).quantize(Decimal(1), rounding=ROUND_HALF_UP)
+    )
+
+
+def _rate_rows(
+    tallies: dict[Any, tuple[str, int, int]], sort: str, limit: int | None
+) -> list[dict[str, Any]]:
+    """One breakdown's rows, ordered and cut — the five orders restated.
+
+    `tallies` maps the drill key to `(label, flagged, claims)`. Every order ends
+    in `(label, key)`, which is the half that matters: ties are reachable on real
+    data — every dimension member with no flagged claim shares a rate of zero —
+    so an order decided by the figure alone would leave the tail to whatever the
+    dict happened to hold, and the oracle would disagree with a correct
+    implementation for a reason neither of them could explain.
+    """
+    rows = [
+        (key, label, flagged, claims, _rate_bp(flagged, claims))
+        for key, (label, flagged, claims) in tallies.items()
+    ]
+    keys: dict[str, Any] = {
+        "rate_desc": lambda row: (-row[4], row[1], str(row[0])),
+        "rate_asc": lambda row: (row[4], row[1], str(row[0])),
+        "flagged_desc": lambda row: (-row[2], row[1], str(row[0])),
+        "claims_desc": lambda row: (-row[3], row[1], str(row[0])),
+        "label_asc": lambda row: (row[1], str(row[0])),
+    }
+    if sort not in keys:
+        raise AssertionError(f"no seeded oracle for sort {sort!r}")
+    ordered = sorted(rows, key=keys[sort])
+    return [
+        {"key": key, "label": label, "flagged": flagged, "claims": claims, "rateBp": rate}
+        for key, label, flagged, claims, rate in (ordered if limit is None else ordered[:limit])
+    ]
+
+
+def expected_fraud_rates(
+    persona_name: str,
+    role: str,
+    injury_sort: str = "rate_desc",
+    employer_sort: str = "rate_desc",
+    handler_sort: str = "rate_desc",
+) -> dict[str, Any]:
+    """The three flagged-rate breakdowns for one persona's book.
+
+    `flagged` is the **review** rule everywhere — `fraud_flagged`, the same one
+    the Fraud Flags card counts and `filter[fraudFlagged]=true` opens — and
+    deliberately not `siu_review`. The near-miss is the one this whole file keeps
+    restating, and it is sharper on a rate than on a count: a referral numerator
+    over a review denominator would produce a plausible smaller percentage on
+    every row.
+
+    Rows are returned in a neutral `{key, label, flagged, claims, rateBp}` shape
+    rather than in the payload's three different spellings, because the *rows*
+    are what a test compares and the three published shapes differ only in how
+    they name their subject. A test that wants the wire shape maps it.
+    """
+    visible = claims_for(persona_name, role)
+
+    injury: dict[Any, tuple[str, int, int]] = {}
+    employer: dict[Any, tuple[str, int, int]] = {}
+    handler: dict[Any, tuple[str, int, int]] = {}
+    short_names = employer_short_names()
+
+    def add(bucket: dict[Any, tuple[str, int, int]], key: Any, label: str, flagged: bool) -> None:
+        _label, hits, total = bucket.get(key, (label, 0, 0))
+        bucket[key] = (label, hits + int(flagged), total + 1)
+
+    for claim in visible:
+        hit = fraud_flagged(claim)
+        add(injury, claim["injury_type"], claim["injury_type"], hit)
+        add(
+            employer,
+            _employer_id(claim["employer"]),
+            short_names[claim["employer"]],
+            hit,
+        )
+        add(handler, handler_id_of(claim["handler"]), claim["handler"], hit)
+
+    return {
+        "byInjuryType": {
+            "items": _rate_rows(injury, injury_sort, FRAUD_INJURY_TYPE_LIMIT),
+            "totalCategories": len(injury),
+            "truncated": len(injury) > FRAUD_INJURY_TYPE_LIMIT,
+            "limit": FRAUD_INJURY_TYPE_LIMIT,
+            "sort": injury_sort,
+        },
+        "byEmployer": {
+            "items": _rate_rows(employer, employer_sort, None),
+            "totalCategories": len(employer),
+            "truncated": False,
+            "limit": None,
+            "sort": employer_sort,
+        },
+        "byHandler": {
+            "items": _rate_rows(handler, handler_sort, None),
+            "totalCategories": len(handler),
+            "truncated": False,
+            "limit": None,
+            "sort": handler_sort,
+        },
+        "claimsInScope": len(visible),
+        "flaggedClaims": sum(1 for claim in visible if fraud_flagged(claim)),
     }

@@ -36,7 +36,7 @@ from rules.parameters import (
 )
 from services.financials import COMP_RATE_MAX_BP, COMP_RATE_MIN_BP
 
-THRESHOLDS_DOC = LoadedDocument(key="derivation_thresholds", version=5, content={})
+THRESHOLDS_DOC = LoadedDocument(key="derivation_thresholds", version=6, content={})
 WEIGHTS_DOC = LoadedDocument(key="priority_weights", version=7, content={})
 REQUIREMENTS_DOC = LoadedDocument(key="intake_required_documents", version=3, content={})
 BENEFIT_DOC = LoadedDocument(key="benefit_params", version=2, content={})
@@ -63,6 +63,12 @@ VALID_THRESHOLDS = {
     # Story 5.1's one, which arrived with version 5 — the dashboard's fraud
     # REVIEW cut-off, deliberately not `siuFraudScoreMin`'s referral one.
     "fraudFlagScoreMin": 55,
+    # Story 7.1's two, which arrived with version 6 — the edges of the fraud
+    # score BAND, a third rule over this column pair with no `fraud_flag`
+    # conjunct at all. `fraudBandHighMin` carries the same integer as
+    # `fraudFlagScoreMin` and is a separate key for that exact reason.
+    "fraudBandHighMin": 55,
+    "fraudBandMedMin": 35,
 }
 
 VALID_BENEFIT_PARAMS = {
@@ -149,7 +155,7 @@ def requirements(**changes: object) -> IntakeRequirements:
 def test_the_valid_blocks_are_valid() -> None:
     """Every negative case below changes exactly one key of these, so the
     delta *is* the thing under test."""
-    assert thresholds().version == 5
+    assert thresholds().version == 6
     assert weights().version == 7
     assert requirements().version == 3
     assert benefit().version == 2
@@ -243,6 +249,67 @@ def test_the_two_fraud_cut_offs_are_independent_parameters() -> None:
 
     assert block.siu_fraud_score_min == 40
     assert block.fraud_flag_score_min == 90
+
+
+@pytest.mark.parametrize("key", ["fraudBandHighMin", "fraudBandMedMin"])
+@pytest.mark.parametrize("bound", [-1, 101, 60_000])
+def test_the_fraud_band_edges_are_held_to_fraud_scores_range(key: str, bound: int) -> None:
+    """The same column, the third rule (Story 7.1).
+
+    An edge outside `fraud_score`'s 0–100 range does not raise anything and does
+    not empty the screen: it files the whole portfolio into one segment and draws
+    three confident bars describing nothing. `fraudBandHighMin: 200` says no claim
+    in this book has ever scored high, which is the single most reassuring thing
+    this chart can say wrongly.
+    """
+    with pytest.raises(RuleParameterError, match=key):
+        thresholds(**{key: bound})
+
+
+def test_inverted_fraud_band_edges_are_refused() -> None:
+    """A band pair, so the ordering *is* checked — unlike the two cut-offs above.
+
+    The difference is the whole reason this test sits beside
+    `test_the_two_fraud_cut_offs_are_independent_parameters`. Review against
+    referral is two policies over one column, and an operator who referred
+    everything they reviewed would be *stating* one; refusing that would be the
+    rules tier legislating. These two are the edges of a single three-band scale,
+    and `fraud_band` reads them in order, high first — so an inverted pair does
+    not re-tune anything, it makes `medium` unreachable and bands a middling score
+    `high`.
+    """
+    with pytest.raises(RuleParameterError, match="fraudBandMedMin"):
+        thresholds(fraudBandMedMin=80, fraudBandHighMin=55)
+
+
+def test_equal_fraud_band_edges_are_refused() -> None:
+    """Equal cut-points delete the middle band rather than re-tuning it.
+
+    `ReserveBands` allows its pair to coincide and `HandlerPerformance` refuses
+    it; this block follows the second, and the reason is the segment that
+    disappears. Most of a portfolio sits in the medium band, so a document with
+    `fraudBandMedMin == fraudBandHighMin` renders a two-segment distribution that
+    still totals correctly and that nobody queries until somebody asks why nothing
+    is medium any more. A document that wants two bands is asking for a different
+    rule.
+    """
+    with pytest.raises(RuleParameterError, match="unreachable"):
+        thresholds(fraudBandMedMin=55, fraudBandHighMin=55)
+
+
+def test_the_band_edge_and_the_review_threshold_are_separate_parameters() -> None:
+    """They carry the same number in the seeded document and are two fields.
+
+    The coincidence is the trap Story 7.1 exists to keep out of: collapsing them
+    would make the analyst's high band *definitionally* the supervisor's Fraud
+    Flags population, so widening the review threshold would silently re-band the
+    whole portfolio's distribution with it. Moving one here and asserting the
+    other stayed is the mechanical form of that argument.
+    """
+    block = thresholds(fraudFlagScoreMin=90)
+
+    assert block.fraud_flag_score_min == 90
+    assert block.fraud_band_high_min == VALID_THRESHOLDS["fraudBandHighMin"]
 
 
 @pytest.mark.parametrize("modulus", [0, -3])

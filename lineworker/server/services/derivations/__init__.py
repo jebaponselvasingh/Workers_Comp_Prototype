@@ -52,6 +52,18 @@ either of them is registered at all is the reason every entry above is: the
 prototype computes both inside the function that draws the dashboard table row,
 where Epic 7's fraud workspace would have written each of them a second time.
 
+Story 7.1 adds `fraud_band`, and it is the entry that makes this package's
+Story 5.1 paragraph a convention rather than an anecdote. That paragraph explains
+why `fraud_flagged` is registered by *name* beside `siu_review`: the two are one
+threshold apart over one column pair, and only the name keeps the dashboard's
+count of 13 from becoming the queue's 9. `fraud_band` is the third rule over the
+same pair and the first that is **not** a population — it bands `fraud_score`
+with no `fraud_flag` conjunct, so a claim nobody triaged still lands in a band —
+and its high cut-off happens to read the same 55 as the review threshold today.
+Three rules, three names, three parameters, one column pair; see
+`fraud_score_band.py` on why the coincidence is exactly the reason they must not
+be collapsed.
+
 **Naming rule for the modules below** (code review, 2026-08-10): a module
 is named after the *rule* (`risk_band`, `open_duration`, `queue_flags`),
 never after the derived value it exports (`risk`, `days_open`).
@@ -111,6 +123,11 @@ from services.derivations.cycle_deviation import (
     CycleTimeStatusDerivation,
     cycle_time_status,
 )
+from services.derivations.fraud_score_band import (
+    FraudBand,
+    FraudBandDerivation,
+    fraud_band,
+)
 from services.derivations.indemnity_classification import (
     IndemnityType,
     IndemnityTypeDerivation,
@@ -163,6 +180,8 @@ __all__ = [
     "CycleStatus",
     "CycleTimeStatusDerivation",
     "Derivation",
+    "FraudBand",
+    "FraudBandDerivation",
     "FraudFlaggedDerivation",
     "HandlerComplexity",
     "HandlerComplexityDerivation",
@@ -199,6 +218,7 @@ __all__ = [
     "cycle_time_status",
     "days_open",
     "days_to_settlement",
+    "fraud_band",
     "fraud_flagged",
     "get",
     "handler_complexity",

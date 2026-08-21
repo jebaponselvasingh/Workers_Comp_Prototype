@@ -20,6 +20,7 @@
  * **No palette invention.** The five semantic tokens plus the prototype's five
  * extension hues, and nothing else — see `CATEGORICAL_FILLS`.
  */
+import type { FraudBand } from "@/api/dashboard";
 import type { RiskBand, Stage } from "@/api/claims";
 import type { ReturnStatus } from "@/api/claims";
 
@@ -66,6 +67,28 @@ export const RECOVERY_FILL: Record<ReturnStatus, string> = {
   returned_and_fully_recovered: "var(--color-ok)",
   under_treatment: "var(--color-warn)",
   returned_and_under_therapy: "var(--color-brand)",
+};
+
+/**
+ * Fraud band → the same three tones the severity donut uses (Story 7.1).
+ *
+ * `RISK_FILL`'s three values, over a different rule and a different column, and
+ * **no new colour enters this file** — which is the constraint UX-DR12 and this
+ * module's own docstring impose. A fraud analyst reading a high band beside a
+ * high severity band is reading the same red for the same reason: "look here
+ * first". That the two enums have different member *names* (`medium` against
+ * `med`) is why this is a second map rather than a reuse of the first: a
+ * `Record<FraudBand, string>` keyed on `med` would fail to compile, which is the
+ * type system saying that these are two vocabularies over two columns.
+ *
+ * Keyed by the wire value and exhaustive over the generated enum, so a fourth
+ * band fails the build here rather than rendering a colourless bar nobody
+ * notices.
+ */
+export const FRAUD_BAND_FILL: Record<NonNullable<FraudBand>, string> = {
+  high: "var(--color-error)",
+  medium: "var(--color-warn)",
+  low: "var(--color-ok)",
 };
 
 /**

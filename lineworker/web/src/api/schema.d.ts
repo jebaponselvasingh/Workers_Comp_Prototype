@@ -1104,9 +1104,9 @@ export interface paths {
          * The claims behind a dashboard figure, filtered, ranked and paged
          * @description The claims behind a KPI card, a chart segment, a handler row or a worklist.
          *
-         *     ## Thirteen parameters, and not one of them is a scope
+         *     ## Fifteen parameters, and not one of them is a scope
          *
-         *     Twelve facets and a cursor. Every facet is a *narrowing* applied after
+         *     Fourteen facets and a cursor. Every facet is a *narrowing* applied after
          *     `employer_scope(ctx)` has already decided which rows exist, so
          *     `filter[employerId]` and `filter[handlerId]` intersect the caller's book and
          *     can never widen it: a scoped supervisor naming an employer outside hers gets
@@ -1135,8 +1135,24 @@ export interface paths {
          *     This route intersects **independent facets**: a supervisor drills into High
          *     Risk, then narrows to one employer, then to litigated claims, and each is a
          *     separate dimension of the same set. That is what the architecture's list
-         *     convention spells with brackets, and it is why the twelve arrive as twelve
-         *     parameters rather than as one enum.
+         *     convention spells with brackets, and it is why the fourteen arrive as
+         *     fourteen parameters rather than as one enum.
+         *
+         *     ## Story 7.1 adds two facets and changes none
+         *
+         *     `filter[fraudBand]` and `filter[siuReview]` are the analyst workspace's own
+         *     click targets — a band segment and a pipeline segment — and each is matched
+         *     through the registered derivation the segment was *counted* with. Every
+         *     existing facet answers exactly what it answered before, which is the contract
+         *     Story 5.5 owns and this story does not: `fraudFlagged` is still the review
+         *     rule and is deliberately not either of the new two, and a URL written before
+         *     this story still produces the same list and the same chips in the same order.
+         *
+         *     The route stays **ungated** with the two additions, and that is worth
+         *     checking rather than assuming: neither publishes a figure about a named
+         *     person, and the `handlerId` gate below is unchanged. The three
+         *     `/dashboard/fraud*` routes that *do* gate are gated because they are the
+         *     analyst's workspace, not because a fraud facet is sensitive.
          *
          *     ## This endpoint is ungated, and the argument is re-applied rather than
          *     inherited
@@ -1178,11 +1194,151 @@ export interface paths {
          *     Both blocks are loaded in the route and handed down, so the aggregate stays
          *     a composition of scope and parameters — `portfolio_summary`'s rule.
          *     `derivation_thresholds` decides the band on every row and the populations
-         *     behind three of the twelve facets; `priority_weights` decides the ordering,
+         *     behind five of the fourteen facets; `priority_weights` decides the ordering,
          *     the marker and the page size. Both are what the cursor is validated against,
          *     which is why they are resolved at today's date and never at the cursor's.
          */
         get: operations["drill_claims_dashboard_claims_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dashboard/fraud": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Fraud-score distribution and SIU pipeline for the session's analyst
+         * @description The Fraud section's headline surfaces, for whoever holds the session cookie.
+         *
+         *     `summary`'s signature exactly: no parameters at all, so there is nowhere to
+         *     put an employer, a user or an "as" (AD-7). The role gate below decides whether
+         *     this endpoint answers; the scope predicate inside the repository decides what
+         *     it answers, and no code on this path branches on role to widen it.
+         *
+         *     ## This endpoint is gated, and the argument is not the file's usual one
+         *
+         *     The discriminator Stories 5.3, 5.4 and 5.5 settled asks whether a payload puts
+         *     a **named other person's performance** on the wire. It would answer "yes" here
+         *     — `siuByHandler` names handlers and counts their referred claims — and that is
+         *     enough on its own. But it is not the reason: this route would be gated if it
+         *     named nobody, because what it gates is the analyst *workspace*. Epic 5 shipped
+         *     an analyst who was a supervisor clone; this section is the first thing that
+         *     persona has and the other two do not, and role is what separates a persona's
+         *     surface from a view anyone may read.
+         *
+         *     So a supervisor gets 403 here while continuing to read every Epic 5 dashboard
+         *     route byte-identically to what she read before this story, which is what
+         *     `tests/test_fraud_analytics.py` asserts from both directions.
+         *
+         *     ## One document, loaded here
+         *
+         *     `derivation_thresholds`, handed down, so the aggregate stays a composition of
+         *     scope and parameters — `portfolio_summary`'s rule. One rather than three
+         *     because every rule this surface reaches is a registered derivation, and
+         *     `DerivationThresholds` is the single block all three are built from.
+         */
+        get: operations["fraud_dashboard_fraud_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dashboard/fraud/rates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Flagged-claim rates by injury type, employer and handler
+         * @description Flagged-over-total by three dimensions, each independently ordered.
+         *
+         *     ## Three parameters, and not one of them is a scope
+         *
+         *     One `sort` per table, aliased in `filter[…]`'s style so the wire name and the
+         *     parameter name are one string — the property `drill/filters.ts` rests on. Each
+         *     is a closed `FraudRateSort`, so `sort[handler]=severity` is a 422 from
+         *     FastAPI's own coercion before this function runs: the **type is the check**,
+         *     and a vocabulary restated in the body would be the enum spelled twice.
+         *
+         *     They are three rather than one because the three tables are three
+         *     independent controls: sorting the injury-type breakdown must leave the other
+         *     two at their declared defaults, which a single shared parameter could not
+         *     express.
+         *
+         *     There is still nowhere in this signature to put an employer, a user or an
+         *     "as" (AD-7), and `?scopeAll=true` remains an unknown parameter FastAPI
+         *     ignores.
+         *
+         *     ## Why a `sort` here when `/dashboard/claims` refuses one
+         *
+         *     That list is cursored, and an offset into one ranking means nothing against a
+         *     different one, so a `sort` there would make every outstanding cursor
+         *     ambiguous. These breakdowns carry no cursor and no `total` —
+         *     `HandlerBenchmarksResponse`' shape — so a sort is a total order applied after
+         *     a read that did not change, with nothing paged for it to invalidate.
+         *
+         *     ## One document, loaded here
+         *
+         *     `derivation_thresholds`, for `fraud`'s reason: the `flagged` column is a
+         *     registered derivation's answer and that block is what it is built from.
+         */
+        get: operations["fraud_rate_breakdowns_dashboard_fraud_rates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dashboard/fraud/red-flags": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Ranked red-flag clauses from the cached fraud narratives
+         * @description The red-flag frequency view, for whoever holds the session cookie.
+         *
+         *     `fraud`'s signature: no parameters at all, so there is nowhere to put a scope
+         *     (AD-7). Gated for that route's reason — this is the analyst workspace, and the
+         *     gate runs before any read.
+         *
+         *     **The one thing this route hands the aggregate is a reader**, not a parameter
+         *     block: `agents.schemas.read_fraud_clauses`, which knows what a stored fraud
+         *     card looks like. `services/` may never import `agents/` (AD-5), so the shape's
+         *     owner supplies the reader and the fold receives it — `services/rag/insights.py`
+         *     takes an injected `InsightGenerator` for exactly this reason. `api/` sits
+         *     above both, which is why the injection happens here.
+         *
+         *     **No rule document is loaded here, and that is the only route in this file
+         *     where that sentence is true.** This view groups prose and counts claims; it
+         *     reaches no threshold, so there is nothing to load and nothing to publish. The
+         *     absence is stated because every neighbour loads one and a reader will wonder.
+         *
+         *     **Read-only over `services/rag`'s table (AD-12).** Nothing on this path writes,
+         *     and nothing on it triggers a refresh: a cold cache answers 200 with an empty
+         *     ranking and a null range, which the card renders as a first-class empty state
+         *     rather than as a spinner over work that is not happening. Regenerating an
+         *     insight is the claim surface's Refresh, owned by the service that owns the
+         *     rows.
+         */
+        get: operations["fraud_red_flag_frequency_dashboard_fraud_red_flags_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2374,6 +2530,19 @@ export interface components {
             /** Truncated */
             truncated: boolean;
         };
+        /** DistributionResponse[HandlerCountResponse] */
+        DistributionResponse_HandlerCountResponse_: {
+            /** Items */
+            items: components["schemas"]["HandlerCountResponse"][];
+            /** Limit */
+            limit: number | null;
+            /** Total */
+            total: number;
+            /** Totalcategories */
+            totalCategories: number;
+            /** Truncated */
+            truncated: boolean;
+        };
         /** DistributionResponse[LabelCountResponse] */
         DistributionResponse_LabelCountResponse_: {
             /** Items */
@@ -2842,6 +3011,26 @@ export interface components {
             paidCents: number;
         };
         /**
+         * EmployerRateResponse
+         * @description One employer's flagged share. `InjuryTypeRateResponse`'s figures, keyed by id.
+         *
+         *     `employerId` rather than the label, `EmployerPaidResponse`'s rule: a
+         *     `short_name` is a label and not an identity, and the drill-through has to
+         *     filter on something that cannot collide.
+         */
+        EmployerRateResponse: {
+            /** Claims */
+            claims: number;
+            /** Employerid */
+            employerId: number;
+            /** Flagged */
+            flagged: number;
+            /** Label */
+            label: string;
+            /** Ratebp */
+            rateBp: number;
+        };
+        /**
          * ExpenseCategory
          * @description What kind of claim expense an `expense` row is (Story 3.3, AC 3).
          *
@@ -2962,6 +3151,25 @@ export interface components {
             weeklyIndemnityCents: number;
         };
         /**
+         * FraudBand
+         * @description Snake/lowercase values per the enum convention — the UI owns labels.
+         *
+         *     **Declared low → high**, which is the opposite of `RiskBand`'s high → med →
+         *     low, and the difference is deliberate rather than an oversight. `RiskBand`'s
+         *     order is a legend's reading order for a donut whose loudest slice is read
+         *     first; this vocabulary is drawn as a *distribution over a score*, where the
+         *     axis runs from the least suspicious claim to the most and a reader scans it
+         *     the way they would a histogram. `services/worklist/fraud.py` emits the bands
+         *     in this declaration order, so the order on screen is the enum's.
+         *
+         *     `medium` spelled out rather than `RiskBand`'s `med`: nothing here has to
+         *     match that enum's wire values (they band different columns and no payload
+         *     carries both), and an abbreviation is only worth its ambiguity when
+         *     something already spells it that way.
+         * @enum {string}
+         */
+        FraudBand: "low" | "medium" | "high";
+        /**
          * FraudLowRiskInsight
          * @description The stored fraud card, low-risk-confirmation variant.
          */
@@ -2996,6 +3204,119 @@ export interface components {
             monitoring: string[];
         };
         /**
+         * FraudPanelResponse
+         * @description The fraud-score distribution, the SIU pipeline, and the rules behind them.
+         *
+         *     **`byBand` is zero-filled and its two siblings are not**, which is the one
+         *     thing about this payload a consumer has to know. Every other distribution on
+         *     this dashboard omits a category the scope does not contain
+         *     (`PortfolioChartsResponse` says so at length), because those vocabularies are
+         *     columns'. `FraudBand` is a *rule's* answer over a score every claim carries,
+         *     so all three members are always present — and "no claim in this book scored
+         *     into the high band" is the single most valuable thing this chart can say. A
+         *     two-segment distribution a reader could not distinguish from a build that
+         *     forgot to draw the third would read as reassurance.
+         *
+         *     `siuByStage` and `siuByHandler` follow the omission rule: a stage with no
+         *     referred claim is a stage the pipeline does not reach.
+         *
+         *     **The four thresholds ride along** for the reason the KPI cards' two do: the
+         *     band legend quotes its edges and the pipeline caption names the referral
+         *     cut-off, so a client holding either would be a second copy of a rule it cannot
+         *     see change. All four arrive from the derivations that did the deciding, so the
+         *     published numbers are provably the ones the segments were produced at — and
+         *     all four are separate parameters even where two of them read the same integer
+         *     today, which is `derivation_thresholds.v6`'s whole argument.
+         *
+         *     **`flaggedClaims` is on this payload and is not a segment of `byBand`.** It is
+         *     the *review* population — `fraud_flagged`, the rule `/dashboard/summary`
+         *     counts as `fraudFlagged` and `/dashboard/claims?filter[fraudFlagged]=true`
+         *     reports as `total` — and the section's flagged-claims panel is that existing
+         *     list rather than a second one. Publishing the count here is what lets the
+         *     entry point state the size of the list before it is opened.
+         *
+         *     `rulesVersion` names the document all four thresholds came from. As on every
+         *     sibling payload it rides along unrendered: it is what makes a stored or
+         *     forwarded response self-describing, and the only thing a client wanting to
+         *     invalidate on a rules change could key on.
+         */
+        FraudPanelResponse: {
+            byBand: components["schemas"]["DistributionResponse_CategoryCountResponse_"];
+            /** Claimsinscope */
+            claimsInScope: number;
+            /** Flaggedclaims */
+            flaggedClaims: number;
+            /** Fraudbandhighmin */
+            fraudBandHighMin: number;
+            /** Fraudbandmedmin */
+            fraudBandMedMin: number;
+            /** Fraudflagscoremin */
+            fraudFlagScoreMin: number;
+            /** Rulesversion */
+            rulesVersion: number;
+            siuByHandler: components["schemas"]["DistributionResponse_HandlerCountResponse_"];
+            siuByStage: components["schemas"]["DistributionResponse_CategoryCountResponse_"];
+            /** Siuclaims */
+            siuClaims: number;
+            /** Siufraudscoremin */
+            siuFraudScoreMin: number;
+        };
+        /**
+         * FraudRateSort
+         * @description The five orders a rate breakdown may be asked for. Closed, and typed.
+         *
+         *     A `StrEnum` rather than a free string, and the **type is the validation**:
+         *     `sort[injuryType]=severity` cannot reach this module, because FastAPI coerces
+         *     the query parameter into this enum and answers 422 before the service is
+         *     called. `DrillFilters` makes the identical argument for its facets, and the
+         *     consequence is the same — there is no vocabulary check in this file and there
+         *     must not be one, or the enum would be spelled twice.
+         *
+         *     Five values and not more. Each is an order a reader of *this* table could
+         *     plausibly want: the worst rate first, the best rate first, the largest
+         *     absolute exposure first, the biggest denominator first, and alphabetical for
+         *     looking one row up. `flagged_asc` and `claims_asc` are deliberately absent —
+         *     "the desks with fewest flagged claims, ascending" is not a question this
+         *     surface asks, and an enum that offered every direction of every column would
+         *     be a sort language rather than a contract.
+         *
+         *     Snake_case values per the enum convention; the UI owns the labels.
+         * @enum {string}
+         */
+        FraudRateSort: "rate_desc" | "rate_asc" | "flagged_desc" | "claims_desc" | "label_asc";
+        /**
+         * FraudRatesResponse
+         * @description The three flagged-rate breakdowns over one scoped book.
+         *
+         *     **`flagged` is the *review* rule everywhere on this payload** — the same
+         *     `fraud_flagged` derivation the Fraud Flags card was counted with and
+         *     `filter[fraudFlagged]=true` opens — and deliberately not the SIU referral one,
+         *     which is the narrower population and would put a rate under a heading
+         *     promising the wider set. `fraudFlagScoreMin` rides along because the tables'
+         *     footnote quotes it.
+         *
+         *     `claimsInScope` and `flaggedClaims` are the portfolio-level pair every row is
+         *     a partition of, so the table is checkable from the screen: the `claims` column
+         *     sums to the first and the `flagged` column to the second, on the two uncapped
+         *     breakdowns.
+         *
+         *     `rulesVersion` names the document `fraudFlagScoreMin` came from, unrendered,
+         *     for its siblings' reason.
+         */
+        FraudRatesResponse: {
+            byEmployer: components["schemas"]["RateBreakdownResponse_EmployerRateResponse_"];
+            byHandler: components["schemas"]["RateBreakdownResponse_HandlerRateResponse_"];
+            byInjuryType: components["schemas"]["RateBreakdownResponse_InjuryTypeRateResponse_"];
+            /** Claimsinscope */
+            claimsInScope: number;
+            /** Flaggedclaims */
+            flaggedClaims: number;
+            /** Fraudflagscoremin */
+            fraudFlagScoreMin: number;
+            /** Rulesversion */
+            rulesVersion: number;
+        };
+        /**
          * FraudRedFlagsInsight
          * @description The stored fraud card, red-flag variant.
          */
@@ -3028,6 +3349,70 @@ export interface components {
             redFlags: string[];
             /** Summary */
             summary: string;
+        };
+        /**
+         * FraudRedFlagsResponse
+         * @description The ranked clauses across one scoped book, and the cache behind them (AD-10).
+         *
+         *     **Every figure here describes the cache, not the claims.** How many claims in
+         *     scope carry a fraud narrative at all, when the oldest and newest were
+         *     generated, how many rows this build could not read. AD-10's rule is that model
+         *     output is rendered with its generation time and never presented as claim data,
+         *     and on a portfolio-wide view the practical form of that rule is that the
+         *     coverage is published beside the ranking: five clauses over a hundred claims
+         *     and four narratives says something very different from five over a hundred and
+         *     a hundred.
+         *
+         *     **This is exact-text grouping over model-authored prose**, so a count of one is
+         *     the ordinary case and the ranking is a reading aid rather than a taxonomy. The
+         *     alternative — clustering or keyword-bucketing — would be the server
+         *     originating a classification nobody can version or review;
+         *     `services/worklist/fraud.py` carries the argument in full and the card's
+         *     caption says so on screen.
+         *
+         *     `generatedFrom` and `generatedTo` are both `null` on a cold cache, which is
+         *     the seeded state and the ordinary one. Two nulls rather than an epoch or a
+         *     "now", because a card cannot draw a range that does not exist and must not
+         *     invent one.
+         *
+         *     `unreadable` counts rows whose stored `content` failed re-validation — an
+         *     older prompt version whose schema has since moved. They are excluded from the
+         *     ranking, the coverage and the range, and counted here:
+         *     `ClaimInsightsResponse`'s tolerance applied to a fold, so one bad row cannot
+         *     take a portfolio view down and cannot be invisible either.
+         *
+         *     `models` is every distinct model that wrote a readable row, sorted. A portfolio
+         *     view spans generations, so there is no single model to label it with, and the
+         *     honest answer over a set is the set. Empty when nothing was readable — which
+         *     is when the card has no provenance line to draw and renders its empty state.
+         *
+         *     **No `rulesVersion`**, unlike every sibling payload on this dashboard, and the
+         *     absence is deliberate: this view reaches no rule. There is no threshold, no
+         *     band and no cut-off in it, so the route loads no document and there is no
+         *     version to name. Publishing one anyway would be claiming a provenance the
+         *     figures do not have.
+         */
+        FraudRedFlagsResponse: {
+            /** Claimsinscope */
+            claimsInScope: number;
+            /** Claimswithinsight */
+            claimsWithInsight: number;
+            /** Generatedfrom */
+            generatedFrom: string | null;
+            /** Generatedto */
+            generatedTo: string | null;
+            /** Items */
+            items: components["schemas"]["RedFlagClauseResponse"][];
+            /** Limit */
+            limit: number;
+            /** Models */
+            models: string[];
+            /** Totalclauses */
+            totalClauses: number;
+            /** Truncated */
+            truncated: boolean;
+            /** Unreadable */
+            unreadable: number;
         };
         /**
          * FraudRiskCard
@@ -3237,6 +3622,50 @@ export interface components {
             rulesVersion: number;
         };
         /**
+         * HandlerCountResponse
+         * @description One handler's share of the SIU pipeline — the id, the name, the count.
+         *
+         *     `handlerId` is the identity and `handlerName` the label,
+         *     `HandlerBenchmarkResponse`'s split and its reason: the segment opens
+         *     `filter[handlerId]`, and a drill keyed on a display name would merge two desks
+         *     that share one.
+         *
+         *     A handler with no referred claim is **absent** rather than a zero row: this is
+         *     a list of the desks carrying SIU work, and the denominator a reader wants —
+         *     how many claims that handler holds — is the rate breakdown's `claims` column
+         *     one route over, published there precisely so it is on screen rather than
+         *     inferred from an empty segment.
+         */
+        HandlerCountResponse: {
+            /** Count */
+            count: number;
+            /** Handlerid */
+            handlerId: number;
+            /** Handlername */
+            handlerName: string;
+        };
+        /**
+         * HandlerRateResponse
+         * @description One handler's flagged share. `EmployerRateResponse`'s shape over the other id.
+         *
+         *     This is the row that puts a figure beside a named colleague — the very shape
+         *     this file's discriminator gates `/dashboard/handler-benchmarks` for — and it
+         *     is one of the reasons the whole section carries a role gate rather than
+         *     relying on scope.
+         */
+        HandlerRateResponse: {
+            /** Claims */
+            claims: number;
+            /** Flagged */
+            flagged: number;
+            /** Handlerid */
+            handlerId: number;
+            /** Handlername */
+            handlerName: string;
+            /** Ratebp */
+            rateBp: number;
+        };
+        /**
          * IndemnityType
          * @description Snake/lowercase values per the enum convention — the UI owns labels.
          *
@@ -3319,6 +3748,34 @@ export interface components {
             severityScore: number;
             /** Version */
             version: number | null;
+        };
+        /**
+         * InjuryTypeRateResponse
+         * @description One injury type's flagged share, with its denominator on the wire.
+         *
+         *     `flagged`, `claims` **and** `rateBp`, all three. A rate alone is
+         *     uninterpretable over a thin bucket — one flagged claim of one is 100%, and so
+         *     is fifty of fifty — and the honest answer is not a suppression rule the server
+         *     would have to invent but the denominator beside the figure, so a reader can
+         *     see what the percentage is a percentage *of*.
+         *
+         *     `rateBp` is **basis points**, the unit the comp rate and the reserve ratio
+         *     already use: an integer over a fixed scale, decided server-side with its
+         *     rounding stated once, so the browser formats and divides nothing (AD-1).
+         *
+         *     `injuryType` is the exact stored string and is what `filter[injuryType]`
+         *     matches — no trimming, case-folding or merging, `LabelCountResponse`'s ruling
+         *     over the same column.
+         */
+        InjuryTypeRateResponse: {
+            /** Claims */
+            claims: number;
+            /** Flagged */
+            flagged: number;
+            /** Injurytype */
+            injuryType: string;
+            /** Ratebp */
+            rateBp: number;
         };
         /**
          * InsightKind
@@ -4450,6 +4907,42 @@ export interface components {
             /** Requiresllm */
             requiresLlm: boolean;
         };
+        /** RateBreakdownResponse[EmployerRateResponse] */
+        RateBreakdownResponse_EmployerRateResponse_: {
+            /** Items */
+            items: components["schemas"]["EmployerRateResponse"][];
+            /** Limit */
+            limit: number | null;
+            sort: components["schemas"]["FraudRateSort"];
+            /** Totalcategories */
+            totalCategories: number;
+            /** Truncated */
+            truncated: boolean;
+        };
+        /** RateBreakdownResponse[HandlerRateResponse] */
+        RateBreakdownResponse_HandlerRateResponse_: {
+            /** Items */
+            items: components["schemas"]["HandlerRateResponse"][];
+            /** Limit */
+            limit: number | null;
+            sort: components["schemas"]["FraudRateSort"];
+            /** Totalcategories */
+            totalCategories: number;
+            /** Truncated */
+            truncated: boolean;
+        };
+        /** RateBreakdownResponse[InjuryTypeRateResponse] */
+        RateBreakdownResponse_InjuryTypeRateResponse_: {
+            /** Items */
+            items: components["schemas"]["InjuryTypeRateResponse"][];
+            /** Limit */
+            limit: number | null;
+            sort: components["schemas"]["FraudRateSort"];
+            /** Totalcategories */
+            totalCategories: number;
+            /** Truncated */
+            truncated: boolean;
+        };
         /**
          * RecoveryWindow
          * @description How long the claim is expected to take — the prototype's five options.
@@ -4475,6 +4968,32 @@ export interface components {
          * @enum {string}
          */
         RecoveryWindow: "weeks_0_2" | "weeks_2_4" | "weeks_4_6" | "weeks_6_8" | "over_1_year";
+        /**
+         * RedFlagClauseResponse
+         * @description One cached red-flag clause and how many claims named it.
+         *
+         *     `claims` counts **distinct claims**, never mentions: a narrative listing one
+         *     indicator twice is one claim worrying about one thing, and counting it twice
+         *     would make one model's repetition look like a pattern across a book.
+         *
+         *     `clause` is the first-seen original spelling. Two claims whose clauses differ
+         *     only in case or in a trailing full stop are one row, and the row reads the way
+         *     the first of them wrote it — a casefolded sentence on screen would make the
+         *     view look generated by the fold rather than by the model.
+         *
+         *     **Not a click target, and that is a decision.** Every other segment on this
+         *     dashboard opens the claims behind it; a clause cannot, because "which claims
+         *     does this phrase name" is a question only the fold's own normalisation can
+         *     answer and turning that into a claim population would be the browser — or this
+         *     endpoint — asserting a classification nobody versioned (AD-2). The coverage
+         *     figures beside the ranking are what a reader navigates by instead.
+         */
+        RedFlagClauseResponse: {
+            /** Claims */
+            claims: number;
+            /** Clause */
+            clause: string;
+        };
         /**
          * RefreshInsightsResponse
          * @description The four cards a refresh produced, plus which kinds it could not produce.
@@ -8829,6 +9348,10 @@ export interface operations {
                 "filter[handlerId]"?: number | null;
                 /** @description The priority worklist's population, before its cap. */
                 "filter[priority]"?: boolean | null;
+                /** @description The registered `fraud_band` banding of `fraud_score` **alone** — no `fraud_flag` conjunct, so this is neither the review rule above nor the referral rule below. */
+                "filter[fraudBand]"?: components["schemas"]["FraudBand"] | null;
+                /** @description The queue's SIU *referral* rule — deliberately narrower than `filter[fraudFlagged]`'s review cut. */
+                "filter[siuReview]"?: boolean | null;
                 /** @description An opaque `nextCursor` from a previous response. */
                 cursor?: string | null;
             };
@@ -8908,6 +9431,190 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    fraud_dashboard_fraud_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FraudPanelResponse"];
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The caller's role does not carry the analyst-workspace capability. Answered before any claim is read and before any rule document is loaded, so it says nothing about what is in the caller's scope (RFC 9457 problem document). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+        };
+    };
+    fraud_rate_breakdowns_dashboard_fraud_rates_get: {
+        parameters: {
+            query?: {
+                /** @description The order the injury-type breakdown is served in. */
+                "sort[injuryType]"?: components["schemas"]["FraudRateSort"];
+                /** @description The order the employer breakdown is served in. */
+                "sort[employer]"?: components["schemas"]["FraudRateSort"];
+                /** @description The order the handler breakdown is served in. */
+                "sort[handler]"?: components["schemas"]["FraudRateSort"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FraudRatesResponse"];
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The caller's role does not carry the analyst-workspace capability. Answered before any claim is read and before any rule document is loaded, so it says nothing about what is in the caller's scope (RFC 9457 problem document). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    fraud_red_flag_frequency_dashboard_fraud_red_flags_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FraudRedFlagsResponse"];
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The caller's role does not carry the analyst-workspace capability. Answered before any claim is read and before any rule document is loaded, so it says nothing about what is in the caller's scope (RFC 9457 problem document). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
                 };
             };
         };

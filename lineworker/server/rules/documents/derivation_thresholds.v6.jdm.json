@@ -1,0 +1,132 @@
+{
+  "contentType": "application/vnd.gorules.decision",
+  "name": "derivation_thresholds",
+  "description": "Version 6 (Story 7.1): version 5's fourteen parameters unchanged, plus the two edges of the fraud-score band the analyst workspace's distribution is drawn from. Superseding is a new document, never an edit \u2014 v1 through v5 stay exactly what Stories 2.1, 2.2, 2.5, 3.1 and 5.1 shipped, so an ordering, a banner, a forms card, a benefit figure or a dashboard count produced under any of them is still explainable. fraudBandMedMin and fraudBandHighMin band claim.fraud_score ON ITS OWN: low below 35, medium from 35, high from 55. That is a THIRD rule over the fraud columns and must not be collapsed into either of the two already here. siuFraudScoreMin (60) is the SIU *referral* population and fraudFlagScoreMin (55) the wider *review* population, and both are conjoined with claim.fraud_flag \u2014 a claim nobody triaged is in neither, however high it scored. The band has no such conjunct, which is the whole reason the analyst's distribution can answer 'how much of this portfolio scores high and was never flagged'. fraudBandHighMin reads the same 55 as fraudFlagScoreMin today, and that coincidence is exactly why they are two parameters rather than one: collapsing them would make the analyst's high band definitionally the supervisor's Fraud Flags card, so widening the review threshold to 50 tomorrow would silently re-band the whole portfolio's distribution with it. Two rules that agree on today's numbers are still two rules, and this document is where that is said \u2014 the same argument v5 makes for the pair it added. They live in THIS document rather than in one of their own because fraud_band is a registered derivation (AD-10) and DerivationThresholds is the single argument every registered derivation is built from \u2014 the same argument v3 made for the path parameters, v4 for the PTD cut-off and v5 for the review threshold.",
+  "nodes": [
+    {
+      "id": "request",
+      "type": "inputNode",
+      "name": "request",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "thresholds",
+      "type": "expressionNode",
+      "name": "thresholds",
+      "position": {
+        "x": 240,
+        "y": 0
+      },
+      "content": {
+        "expressions": [
+          {
+            "id": "riskHighMin",
+            "key": "riskHighMin",
+            "value": "65"
+          },
+          {
+            "id": "riskMedMin",
+            "key": "riskMedMin",
+            "value": "35"
+          },
+          {
+            "id": "siuFraudScoreMin",
+            "key": "siuFraudScoreMin",
+            "value": "60"
+          },
+          {
+            "id": "rtwBlockedHashModulus",
+            "key": "rtwBlockedHashModulus",
+            "value": "5"
+          },
+          {
+            "id": "paymentDueHashModulus",
+            "key": "paymentDueHashModulus",
+            "value": "3"
+          },
+          {
+            "id": "treatmentEarlyMaxRatio",
+            "key": "treatmentEarlyMaxRatio",
+            "value": "0.3"
+          },
+          {
+            "id": "treatmentActiveMaxRatio",
+            "key": "treatmentActiveMaxRatio",
+            "value": "0.7"
+          },
+          {
+            "id": "recoveryYearExpectedDays",
+            "key": "recoveryYearExpectedDays",
+            "value": "180"
+          },
+          {
+            "id": "recoveryDefaultExpectedDays",
+            "key": "recoveryDefaultExpectedDays",
+            "value": "42"
+          },
+          {
+            "id": "pathMinorSeverityMax",
+            "key": "pathMinorSeverityMax",
+            "value": "35"
+          },
+          {
+            "id": "pathMinorRecoveryWindows",
+            "key": "pathMinorRecoveryWindows",
+            "value": "['weeks_0_2']"
+          },
+          {
+            "id": "pathFatalitySeverityMin",
+            "key": "pathFatalitySeverityMin",
+            "value": "100"
+          },
+          {
+            "id": "ptdSeverityThreshold",
+            "key": "ptdSeverityThreshold",
+            "value": "85"
+          },
+          {
+            "id": "fraudFlagScoreMin",
+            "key": "fraudFlagScoreMin",
+            "value": "55"
+          },
+          {
+            "id": "fraudBandHighMin",
+            "key": "fraudBandHighMin",
+            "value": "55"
+          },
+          {
+            "id": "fraudBandMedMin",
+            "key": "fraudBandMedMin",
+            "value": "35"
+          }
+        ]
+      }
+    },
+    {
+      "id": "response",
+      "type": "outputNode",
+      "name": "response",
+      "position": {
+        "x": 480,
+        "y": 0
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "request-thresholds",
+      "type": "edge",
+      "sourceId": "request",
+      "targetId": "thresholds"
+    },
+    {
+      "id": "thresholds-response",
+      "type": "edge",
+      "sourceId": "thresholds",
+      "targetId": "response"
+    }
+  ]
+}

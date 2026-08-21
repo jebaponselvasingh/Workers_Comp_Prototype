@@ -51,10 +51,11 @@ model's answer is a schema rejection rather than a value silently dropped on
 the way to the database.
 """
 
+from collections.abc import Mapping
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_validator
 from pydantic.alias_generators import to_camel
 
 from data.models.enums import ActionKey, ActionUrgency
@@ -402,6 +403,53 @@ def _check_bullets[T: BaseModel](model: T, bullets: list[str], field_name: str) 
     return model
 
 
+#: The stored fraud card's two shapes, re-validated coming *out* of JSONB.
+#:
+#: `TypeAdapter` rather than `Model.model_validate` because the fraud slot is a
+#: **discriminated union** and not a class — `outcome` is what decides between the
+#: red-flag and low-risk shapes on the way back out exactly as it decided between
+#: them on the way in. Built once at import; the portfolio reader below runs it
+#: over every insight row in a book.
+_FRAUD_RISK = TypeAdapter[FraudRedFlagsInsight | FraudLowRiskInsight](FraudRiskInsight)
+
+
+def read_fraud_clauses(content: Mapping[str, Any]) -> list[str] | None:
+    """One stored fraud card's red-flag clauses, `[]`, or `None` for unreadable.
+
+    **Three answers, and the difference between the last two is the whole point.**
+    A `low_risk` card has no `red_flags` key at all — it is a different member of
+    the stored union, written when two registered derivations said there was
+    nothing to refer — so it answers `[]`: it *is* a fraud narrative and should
+    raise a portfolio view's coverage figure, and it contributes no clause. A row
+    this build cannot parse answers `None`: an older prompt version whose schema
+    has since moved, which must be excluded and counted rather than counted as
+    coverage.
+
+    **Here rather than in `services/worklist/fraud.py`, and that is a layering
+    rule rather than a preference.** `services/` may never import `agents/`
+    (AD-5) — the direction is composition root → `agents/` → `services/` →
+    `data/`, and `services/rag/insights.py` is built around it by taking an
+    injected `InsightGenerator` rather than calling a model. The stored shape is
+    this module's, so the *reader* of that shape is this module's too, and the
+    analyst workspace's fold receives it as an argument the router supplies. That
+    keeps exactly one `TypeAdapter` for this union in the build: a second one
+    written inside `services/` would be a copy of a schema that changes here.
+
+    Refusal is silent by construction: `ValidationError`'s message quotes the
+    value that failed, and that value is model prose about a claim (AD-11), so it
+    is neither logged nor chained onward. `api/routers/claims.py::_slot` makes the
+    identical choice for the per-claim read and logs the claim id alone; the
+    caller here does the same.
+    """
+    try:
+        card = _FRAUD_RISK.validate_python(content)
+    except ValidationError:
+        return None
+    if isinstance(card, FraudLowRiskInsight):
+        return []
+    return list(card.narrative.red_flags)
+
+
 #: Every schema the model is ever asked to fill, for the structural guard in
 #: `tests/test_ai_insights.py`. Listed rather than discovered by walking the
 #: module, so a narrative added without being registered here fails the guard
@@ -437,4 +485,5 @@ __all__ = [
     "SimilarCaseInsight",
     "SimilarCaseNarrative",
     "SimilarNeighbour",
+    "read_fraud_clauses",
 ]

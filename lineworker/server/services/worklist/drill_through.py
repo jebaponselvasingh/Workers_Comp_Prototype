@@ -13,7 +13,7 @@ field for field**, so the list a supervisor opens from a donut slice looks like
 the list a handler works from — and `test_the_drill_row_is_the_queue_card_field_
 for_field` is what keeps the two from drifting.
 
-## Twelve facets, a whitelist, and each one is the clicked surface's own rule
+## Fourteen facets, a whitelist, and each one is the clicked surface's own rule
 
 The filter set is closed and typed rather than free-form (`?where=severity>60`),
 and that is the whole architectural move. A free-form filter language would put
@@ -21,17 +21,21 @@ a second query planner in this codebase and would let a caller ask a question no
 dashboard surface asks — while the *only* requirement this endpoint actually has
 is that the list it opens **reconciles with the number that opened it**.
 
-That requirement is not satisfied by writing twelve plausible predicates. It is
+That requirement is not satisfied by writing fourteen plausible predicates. It is
 satisfied by each predicate being the same symbol the counting surface used, and
 this project has already recorded three near-misses where a plausible predicate
 would have opened a plausible list containing the wrong claims:
 
-- **Fraud is `fraud_flagged`, never `siu_review`.** Two rules over one column
-  pair: the dashboard's *review* threshold and the queue's *referral* one. The
-  Fraud Flags card counts the wider set; a drill-through pointed at the narrower
-  one would open a shorter list under a card that had promised a longer one, and
-  every step of it would look defensible. `FraudFlaggedDerivation`'s docstring
-  exists for this.
+- **Fraud is `fraud_flagged`, never `siu_review` — and since Story 7.1 there is
+  a third rule beside them.** `filter[fraudFlagged]` is the dashboard's *review*
+  population, `filter[siuReview]` is the queue's narrower *referral* one, and
+  `filter[fraudBand]` is a banding of `fraud_score` with no `fraud_flag` conjunct
+  at all — so a high-scoring claim nobody triaged is in the third and in neither
+  of the first two. Three facets, three registered derivations, one column pair —
+  and a drill-through pointed at the wrong one of them would open a shorter list
+  under a card that had promised a longer one, with every step of it looking
+  defensible. `FraudFlaggedDerivation`'s docstring exists for the first pair and
+  `FraudBandDerivation`'s for the third.
 - **Settled is a *stage*, never `status == settled_closed`.** Story 5.1's
   ruling, restated by 5.3's donut and by the worklist's treatment arm. The two
   readings differ by eight claims on the seeded book, and the donut counts the
@@ -42,13 +46,14 @@ would have opened a plausible list containing the wrong claims:
   owner. A filter that *did* canonicalize would return a set the bar never
   counted — a longer list than the number that opened it.
 
-`filter[priority]` is the sharpest case and gets the sharpest answer: it is
+`filter[priority]` is the sharpest case of the *imported* kind and gets the
+sharpest answer: it is
 `priority_claims.qualifies_for_worklist`, **imported**, not a restatement of the
 union. A restated `stage == treatment or fraud or litigation` would agree on the
 seeded book and would disagree the first time either arm moved — which is the
 two bullets above, again, in one expression.
 
-The predicates are one table (`_PREDICATES`) rather than twelve branches, in
+The predicates are one table (`_PREDICATES`) rather than fourteen branches, in
 `priority._PREDICATES`' shape, so "each facet reads its own owner" is a list a
 reviewer checks in one screen instead of a property spread over a function.
 
@@ -115,6 +120,8 @@ from data.repositories import claims as claim_repo
 from rules.parameters import DerivationThresholds, PriorityWeights
 from services import derivations
 from services.derivations import (
+    FraudBand,
+    FraudBandDerivation,
     FraudFlaggedDerivation,
     PaymentDueDerivation,
     RiskBand,
@@ -196,6 +203,17 @@ class DrillFlags:
     it is the `filter[fraudFlagged]` facet *and* the fraud arm of
     `filter[priority]`.
 
+    Story 7.1 widens it again, by one: `fraud_band`, the fourteenth facet's rule.
+    It is the **third** derivation over the fraud column pair and is neither of
+    the two already here — `siu_review` and `fraud_flagged` are populations
+    conjoined with `claim.fraud_flag`, and this one bands `fraud_score` alone, so
+    a claim nobody triaged still has a band. That is why a `severity_band`-shaped
+    facet is not enough and why the analyst's distribution can drill at all;
+    `services/derivations/fraud_score_band.py` carries the argument. Note what is
+    *not* added: `siu_review` was already computed here for the scorer, so the
+    fifteenth facet is a new predicate over an existing field rather than a new
+    derivation.
+
     **Declared here rather than imported from `priority_claims.PriorityFlags`,
     whose field set this is exactly.** What the two modules share is the
     *registry*, not the bundle. Importing that class would make this module's
@@ -211,11 +229,12 @@ class DrillFlags:
     rtw_blocked: bool
     payment_due: bool
     fraud_flagged: bool
+    fraud_band: FraudBand
 
 
 @dataclass(frozen=True)
 class DrillFilters:
-    """The twelve facets, each optional, each `None` when the caller omitted it.
+    """The fourteen facets, each optional, each `None` when the caller omitted it.
 
     One field per facet rather than a `Mapping[str, str]`, and the **type of
     each field is the refusal**: `filter[stage]=banana` cannot reach this class,
@@ -237,6 +256,28 @@ class DrillFilters:
     Litigation card, `surgery` is Surgery Required, `osha_recordable` is OSHA
     Recordable, and `priority` is the worklist's population — a caller reading
     the URL should recognise the thing they clicked.
+
+    **Story 7.1 adds two and changes none**, which is the whole of its contract
+    with this module: `fraud_band` and `siu_review` join the vocabulary and every
+    existing facet answers exactly what it answered before. The two are the
+    analyst workspace's own click targets — a band segment and a pipeline segment
+    — and each is matched through the registered derivation the segment was
+    *counted* with, which is this module's founding rule applied twice more.
+
+    The pair is worth reading beside `fraud_flagged` one field up, because three
+    fraud facets over one column pair is exactly the arrangement a later reader
+    will want to simplify. They are three populations: `fraud_flagged` is the
+    review set the dashboard card counts, `siu_review` is the narrower referral
+    set the queue chips, and `fraud_band` is a banding of the score with **no**
+    flag conjunct at all — so `filter[fraudBand]=high` and
+    `filter[fraudFlagged]=true` return different lists on any book where a
+    high-scoring claim went untriaged. Collapsing any two would be defensible at
+    every step and wrong on the screen.
+
+    They are appended rather than inserted, and the position is load-bearing:
+    `FILTER_KEYS` is read off this dataclass's field order and is the order the
+    chip row draws in, so inserting `fraud_band` beside `fraud_flagged` would
+    silently re-order the chips on every existing drill-through URL.
     """
 
     stage: Stage | None = None
@@ -251,6 +292,8 @@ class DrillFilters:
     employer_id: int | None = None
     handler_id: int | None = None
     priority: bool | None = None
+    fraud_band: FraudBand | None = None
+    siu_review: bool | None = None
 
 
 #: The facet names, in the order a chip row draws them, declared once.
@@ -290,6 +333,8 @@ WIRE_KEYS: Final[Mapping[str, str]] = {
     "employer_id": "employerId",
     "handler_id": "handlerId",
     "priority": "priority",
+    "fraud_band": "fraudBand",
+    "siu_review": "siuReview",
 }
 
 assert set(WIRE_KEYS) == set(FILTER_KEYS), (
@@ -450,6 +495,13 @@ _PREDICATES: Final[Mapping[str, Callable[[DrillClaim, DrillFlags, Any], bool]]] 
     "employer_id": lambda claim, _flags, value: claim.employer_id == value,
     "handler_id": lambda claim, _flags, value: claim.handler_id == value,
     "priority": _matches_priority,
+    # Story 7.1's two, each through the derivation its segment was counted
+    # with. `fraud_band` is the registered banding of `fraud_score` alone and is
+    # therefore neither of the two fraud rules above it; `siu_review` is the
+    # queue's referral rule, which this module has computed for the scorer since
+    # Story 5.5 and now also filters on.
+    "fraud_band": lambda _claim, flags, value: flags.fraud_band == value,
+    "siu_review": lambda _claim, flags, value: flags.siu_review == value,
 }
 
 # Every facet has a predicate, and every predicate names a facet. A filter
@@ -493,7 +545,7 @@ def _wire_value(value: object) -> str | int | bool:
     nor round-trippable through `bool(...)`, and an id is an integer on the
     wire everywhere else in this console.
     """
-    if isinstance(value, Stage | RiskBand | ReturnStatus):
+    if isinstance(value, Stage | RiskBand | ReturnStatus | FraudBand):
         return value.value
     if isinstance(value, bool | int | str):
         return value
@@ -722,6 +774,8 @@ _COERCE: Final[Mapping[str, Callable[[Any], object]]] = {
     "employer_id": _as_int,
     "handler_id": _as_int,
     "priority": _as_bool,
+    "fraud_band": lambda raw: FraudBand(_as_str(raw)),
+    "siu_review": _as_bool,
 }
 
 assert set(_COERCE) == set(FILTER_KEYS), (
@@ -734,7 +788,7 @@ assert set(_COERCE) == set(FILTER_KEYS), (
 
 @dataclass(frozen=True)
 class _Computers:
-    """The five registered computers this module folds with, built once.
+    """The six registered computers this module folds with, built once.
 
     A bundle rather than five parameters, for `priority_claims._Computers`'
     reason: `_flags_of` is called once per claim in `select`'s loop, and a
@@ -747,21 +801,23 @@ class _Computers:
     rtw_blocked: RtwBlockedDerivation
     payment_due: PaymentDueDerivation
     fraud_flagged: FraudFlaggedDerivation
+    fraud_band: FraudBandDerivation
 
     @classmethod
     def of(cls, thresholds: DerivationThresholds) -> "_Computers":
-        """Build all five from one parameter block — the registry's whole point."""
+        """Build all six from one parameter block — the registry's whole point."""
         return cls(
             risk=derivations.risk.for_thresholds(thresholds),
             siu_review=derivations.siu_review.for_thresholds(thresholds),
             rtw_blocked=derivations.rtw_blocked.for_thresholds(thresholds),
             payment_due=derivations.payment_due.for_thresholds(thresholds),
             fraud_flagged=derivations.fraud_flagged.for_thresholds(thresholds),
+            fraud_band=derivations.fraud_band.for_thresholds(thresholds),
         )
 
 
 def _flags_of(claim: DrillClaim, computers: _Computers) -> DrillFlags:
-    """One claim's five derived values, every one of them asked of the registry.
+    """One claim's six derived values, every one of them asked of the registry.
 
     Takes the built computers rather than the threshold block, which is the
     difference between one build and one per claim — `queue._rows_to_cards`'
@@ -783,6 +839,7 @@ def _flags_of(claim: DrillClaim, computers: _Computers) -> DrillFlags:
         fraud_flagged=computers.fraud_flagged.of(
             fraud_flag=claim.fraud_flag, fraud_score=claim.fraud_score
         ),
+        fraud_band=computers.fraud_band.of(fraud_score=claim.fraud_score),
     )
 
 

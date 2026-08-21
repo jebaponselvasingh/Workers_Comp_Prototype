@@ -58,6 +58,21 @@ export interface StubRoutes {
    * in the query string, which is what the function form can see.
    */
   drillClaims?: StubRouteFor;
+  /** `GET /dashboard/fraud` (Story 7.1) — the band distribution and SIU pipeline. */
+  fraudPanel?: StubRoute;
+  /**
+   * `GET /dashboard/fraud/rates` (Story 7.1) — the three rate breakdowns.
+   *
+   * A `StubRouteFor` rather than a `StubRoute`, unlike its two fraud siblings:
+   * this is the only sorted surface in the console, and "changing a sort control
+   * refetches rather than re-ordering a cached list" (AD-1) is only observable if
+   * the stub can tell `sort[injuryType]=rate_desc` from `label_asc`. That is a
+   * decision about the URL, which is what the function form can see —
+   * `drillClaims`' form for the same reason one facet over.
+   */
+  fraudRates?: StubRouteFor;
+  /** `GET /dashboard/fraud/red-flags` (Story 7.1) — the ranked cached clauses. */
+  fraudRedFlags?: StubRoute;
   claimsQueue?: StubRouteFor;
   /**
    * `GET /claims/{id}` (Story 2.2). A function so a test can answer
@@ -4466,6 +4481,358 @@ function answerFor(route: StubRouteFor, url: string): Promise<Response> {
   return answer(typeof route === "function" ? route(url) : route);
 }
 
+
+/**
+ * The analyst's fraud panel over the full seeded portfolio (Story 7.1).
+ *
+ * **The band distribution is the seed's own**: 13 claims score at or above 55,
+ * 37 at or above 35 — so 24 in the medium band and 63 in the low one. Those are
+ * counted from `seed_data.json` rather than invented, for the reason every
+ * dashboard fixture in this file gives: a fixture whose numbers no seed produces
+ * cannot be compared against the e2e suite's oracle, and the two are the only
+ * check each other has.
+ *
+ * **`flaggedClaims` is 13 and the `high` band is 13, and that is not a
+ * duplication to be tidied.** They are two different rules that coincide on this
+ * dataset: `fraud_flagged` needs the triage flag *and* a score at or above the
+ * review threshold, while the band reads the score alone. The fixture reproduces
+ * the coincidence deliberately — a component that derived one from the other
+ * would look correct here and would be wrong the day an operator retuned either
+ * — and `FRAUD_PANEL_SCOPED` is where they are pulled apart.
+ *
+ * **`siuClaims` is 9**, the narrower referral population, which is the gap the
+ * pipeline exists to show.
+ *
+ * The pipeline's stage series carries **three** of the four stages, because no
+ * seeded intake claim clears the referral threshold — the omission contract, on
+ * a fixture, so a component laying out four fixed rows draws an empty one here.
+ */
+export const FRAUD_PANEL = {
+  status: 200,
+  body: {
+    byBand: {
+      items: [
+        { key: "low", count: 63 },
+        { key: "medium", count: 24 },
+        { key: "high", count: 13 },
+      ],
+      total: 100,
+      totalCategories: 3,
+      truncated: false,
+      limit: null,
+    },
+    siuByStage: {
+      items: [
+        { key: "investigation", count: 2 },
+        { key: "treatment", count: 4 },
+        { key: "settled", count: 3 },
+      ],
+      total: 9,
+      totalCategories: 3,
+      truncated: false,
+      limit: null,
+    },
+    siuByHandler: {
+      items: [
+        { handlerId: 1, handlerName: "Kaya Johnson", count: 4 },
+        { handlerId: 4, handlerName: "Marcus Chen", count: 3 },
+        { handlerId: 2, handlerName: "Sarah Williams", count: 2 },
+      ],
+      total: 9,
+      totalCategories: 3,
+      truncated: false,
+      limit: null,
+    },
+    claimsInScope: 100,
+    flaggedClaims: 13,
+    siuClaims: 9,
+    fraudBandHighMin: 55,
+    fraudBandMedMin: 35,
+    fraudFlagScoreMin: 55,
+    siuFraudScoreMin: 60,
+    rulesVersion: 6,
+  },
+};
+
+/**
+ * A genuinely different scope, under a **superseded** rule document.
+ *
+ * Its whole purpose is to be asserted *against* `FRAUD_PANEL`. A component that
+ * renders what it was sent reads differently under the two; one that banded,
+ * captioned or counted from constants of its own reads the same. Three
+ * properties only this fixture can exercise:
+ *
+ * - **A moved band edge.** `fraudBandHighMin` is 70 against the base fixture's
+ *   55, and the segments are what a book splits into at that cut-off — so the
+ *   legend's "High (≥ 70)" and the arc move together, which is what a caption
+ *   holding its own constant would fail to do.
+ * - **The two populations pulled apart.** `flaggedClaims` is 6 and the `high`
+ *   band is 4: at a high edge of 70 the band is *narrower* than the review
+ *   population, which is the opposite of the base fixture's coincidence and the
+ *   single most valuable thing this fixture does. A component that derived
+ *   either figure from the other renders 4 where 6 belongs.
+ * - **An empty band.** No claim in this book scores below 35, so `low` arrives
+ *   with `count: 0` — the server's zero-fill, which every other distribution on
+ *   this dashboard would have omitted. A donut that dropped zero-count segments
+ *   would draw two arcs here and a reader could not tell that from a build that
+ *   forgot the third.
+ */
+export const FRAUD_PANEL_SCOPED = {
+  status: 200,
+  body: {
+    byBand: {
+      items: [
+        { key: "low", count: 0 },
+        { key: "medium", count: 23 },
+        { key: "high", count: 4 },
+      ],
+      total: 27,
+      totalCategories: 3,
+      truncated: false,
+      limit: null,
+    },
+    siuByStage: {
+      items: [{ key: "treatment", count: 2 }],
+      total: 2,
+      totalCategories: 1,
+      truncated: false,
+      limit: null,
+    },
+    siuByHandler: {
+      items: [{ handlerId: 3, handlerName: "Liam O'Sullivan", count: 2 }],
+      total: 2,
+      totalCategories: 1,
+      truncated: false,
+      limit: null,
+    },
+    claimsInScope: 27,
+    flaggedClaims: 6,
+    siuClaims: 2,
+    fraudBandHighMin: 70,
+    fraudBandMedMin: 35,
+    fraudFlagScoreMin: 55,
+    siuFraudScoreMin: 60,
+    rulesVersion: 7,
+  },
+};
+
+/**
+ * An analyst assigned to no employers — the empty-book state (NFR-3).
+ *
+ * Reachable, and the one state that separates two renderings a reader must never
+ * confuse: **every band is present at zero** while both pipelines are *absent*.
+ * That is the server's rule rather than a fixture quirk — a band's vocabulary is
+ * a rule's and is always complete, a stage the pipeline does not reach is not an
+ * empty segment of it — and it is the only fixture that exercises both halves at
+ * once.
+ *
+ * The thresholds still arrive: "nothing in this book" says nothing about which
+ * rules were in force, which is what keeps the legend readable on the one screen
+ * where a reader has nothing else to go on.
+ */
+export const FRAUD_PANEL_EMPTY = {
+  status: 200,
+  body: {
+    byBand: {
+      items: [
+        { key: "low", count: 0 },
+        { key: "medium", count: 0 },
+        { key: "high", count: 0 },
+      ],
+      total: 0,
+      totalCategories: 3,
+      truncated: false,
+      limit: null,
+    },
+    siuByStage: { items: [], total: 0, totalCategories: 0, truncated: false, limit: null },
+    siuByHandler: { items: [], total: 0, totalCategories: 0, truncated: false, limit: null },
+    claimsInScope: 0,
+    flaggedClaims: 0,
+    siuClaims: 0,
+    fraudBandHighMin: 55,
+    fraudBandMedMin: 35,
+    fraudFlagScoreMin: 55,
+    siuFraudScoreMin: 60,
+    rulesVersion: 6,
+  },
+};
+
+/**
+ * The three rate breakdowns in the server's default order — worst rate first.
+ *
+ * **Every `rateBp` is the exact quotient of the two counts beside it**, in basis
+ * points, half-up. That is not decoration: the card renders the rate through
+ * `lib/rate.ts` and states the two counts separately, so a fixture whose rate did
+ * not follow from its counts would let a component computing one from the other
+ * pass.
+ *
+ * The injury table is **truncated** — 8 of 20, the seed's real category count —
+ * so the truncation caption has something to say; the other two are uncapped and
+ * carry `limit: null`, which is the other side of the same conditional. One
+ * fixture, both branches.
+ *
+ * The thin-bucket case is here on purpose: `Vibration White Finger (HAVS)` is one
+ * flagged claim of one, at 100%. It is what the `claims` column exists for, and a
+ * table that hid the denominator would render it as the worst risk in the
+ * portfolio.
+ */
+export const FRAUD_RATES = {
+  status: 200,
+  body: {
+    byInjuryType: {
+      items: [
+        { injuryType: "Vibration White Finger (HAVS)", flagged: 1, claims: 1, rateBp: 10000 },
+        { injuryType: "Amputation", flagged: 4, claims: 13, rateBp: 3077 },
+        { injuryType: "Crushing", flagged: 2, claims: 7, rateBp: 2857 },
+        { injuryType: "Fall from Height", flagged: 2, claims: 9, rateBp: 2222 },
+        { injuryType: "Myocardial Infarction", flagged: 1, claims: 5, rateBp: 2000 },
+        { injuryType: "Fracture", flagged: 2, claims: 11, rateBp: 1818 },
+        { injuryType: "Carpal Tunnel Syndrome", flagged: 1, claims: 9, rateBp: 1111 },
+        { injuryType: "Laceration", flagged: 0, claims: 5, rateBp: 0 },
+      ],
+      totalCategories: 20,
+      truncated: true,
+      limit: 8,
+      sort: "rate_desc",
+    },
+    byEmployer: {
+      items: [
+        { employerId: 6, label: "Honeywell", flagged: 3, claims: 8, rateBp: 3750 },
+        { employerId: 3, label: "Caterpillar", flagged: 4, claims: 14, rateBp: 2857 },
+        { employerId: 9, label: "Toyota", flagged: 2, claims: 12, rateBp: 1667 },
+        { employerId: 4, label: "GE", flagged: 2, claims: 13, rateBp: 1538 },
+        { employerId: 2, label: "Boeing", flagged: 1, claims: 9, rateBp: 1111 },
+        { employerId: 10, label: "Whirlpool", flagged: 1, claims: 11, rateBp: 909 },
+        { employerId: 1, label: "3M", flagged: 0, claims: 8, rateBp: 0 },
+        { employerId: 5, label: "GM", flagged: 0, claims: 10, rateBp: 0 },
+        { employerId: 7, label: "John Deere", flagged: 0, claims: 8, rateBp: 0 },
+        { employerId: 8, label: "Lockheed", flagged: 0, claims: 7, rateBp: 0 },
+      ],
+      totalCategories: 10,
+      truncated: false,
+      limit: null,
+      sort: "rate_desc",
+    },
+    byHandler: {
+      items: [
+        { handlerId: 6, handlerName: "Dante Rossi", flagged: 3, claims: 9, rateBp: 3333 },
+        { handlerId: 4, handlerName: "Marcus Chen", flagged: 4, claims: 16, rateBp: 2500 },
+        { handlerId: 2, handlerName: "Sarah Williams", flagged: 2, claims: 8, rateBp: 2500 },
+        { handlerId: 1, handlerName: "Kaya Johnson", flagged: 4, claims: 45, rateBp: 889 },
+        { handlerId: 3, handlerName: "Liam O'Sullivan", flagged: 0, claims: 12, rateBp: 0 },
+        { handlerId: 5, handlerName: "Fatima Al-Mansoori", flagged: 0, claims: 10, rateBp: 0 },
+      ],
+      totalCategories: 6,
+      truncated: false,
+      limit: null,
+      sort: "rate_desc",
+    },
+    claimsInScope: 100,
+    flaggedClaims: 13,
+    fraudFlagScoreMin: 55,
+    rulesVersion: 6,
+  },
+};
+
+/**
+ * `FRAUD_RATES`' injury table under a **different** sort, and only that table.
+ *
+ * Its whole purpose is to be asserted *against* `FRAUD_RATES`. A page that sends
+ * the control's value and renders what came back reads differently under the two;
+ * one that re-ordered the cached rows in the browser reads the same, because the
+ * rows *are* the same rows.
+ *
+ * The order is `label_asc` — alphabetical — which is the one permutation no
+ * plausible client-side sort would produce from the rate order, and the `sort`
+ * field echoes it so the control can render the server's answer rather than its
+ * own last click. **The other two tables are untouched**, which is the other half:
+ * sorting one table must leave the other two at their declared defaults, and a
+ * shared parameter would move all three.
+ */
+export const FRAUD_RATES_SORTED = {
+  status: 200,
+  body: {
+    ...FRAUD_RATES.body,
+    byInjuryType: {
+      ...FRAUD_RATES.body.byInjuryType,
+      items: [...FRAUD_RATES.body.byInjuryType.items].sort((a, b) =>
+        a.injuryType.localeCompare(b.injuryType),
+      ),
+      sort: "label_asc",
+    },
+  },
+};
+
+/**
+ * A warm cache: three ranked clauses over four claims of a hundred (AD-10).
+ *
+ * **Every figure here describes the cache, not the claims**, which is the one
+ * thing a reader of this card has to understand and therefore the one thing this
+ * fixture has to make visible. `claimsWithInsight` is 4 against a
+ * `claimsInScope` of 100, so the coverage line says something worth saying; the
+ * top clause is named by 3 of those 4 and the bottom by 1, so "a count of one is
+ * ordinary" is on screen rather than only in the caption.
+ *
+ * `generatedFrom` and `generatedTo` are a **real range** rather than one instant,
+ * because a portfolio view spans generations and the card's whole job is to say
+ * how old the sentences in front of the reader are. `models` carries two names
+ * for the same reason: there is no single model behind a portfolio view, and the
+ * honest answer over a set is the set.
+ *
+ * `unreadable` is 1, so the "excluded and counted" sentence renders. A fixture
+ * with zero there would leave the one branch that reports a *degraded* cache
+ * untested, and it is the branch a reviewer most needs to see working.
+ */
+export const FRAUD_RED_FLAGS = {
+  status: 200,
+  body: {
+    items: [
+      { clause: "Injury reported more than a week after the incident date", claims: 3 },
+      { clause: "Treatment sought from a provider outside the employer network", claims: 2 },
+      { clause: "No witness named on the incident report", claims: 1 },
+    ],
+    totalClauses: 3,
+    truncated: false,
+    limit: 10,
+    claimsWithInsight: 4,
+    claimsInScope: 100,
+    unreadable: 1,
+    generatedFrom: "2026-08-18T09:15:00Z",
+    generatedTo: "2026-08-20T16:40:00Z",
+    models: ["qwen3:14b", "qwen3:8b"],
+  },
+};
+
+/**
+ * The cold cache — the seeded state, and the ordinary one.
+ *
+ * Nothing has been generated for a claim until a refresh reaches it, so this is
+ * what an analyst sees on a freshly reset stack. It is a **first-class empty
+ * card** rather than a spinner or a gap (NFR-3): a spinner would be a lie about
+ * work in progress, and this surface cannot start any — `services/rag` owns the
+ * writes and the affordance that regenerates an insight is on the claim.
+ *
+ * Both range ends are `null` rather than an epoch or a "now", because a card
+ * cannot draw a range that does not exist and must not invent one; `models` is
+ * empty for the same reason, which is what leaves the card with no provenance
+ * line to draw.
+ */
+export const FRAUD_RED_FLAGS_EMPTY = {
+  status: 200,
+  body: {
+    items: [],
+    totalClauses: 0,
+    truncated: false,
+    limit: 10,
+    claimsWithInsight: 0,
+    claimsInScope: 100,
+    unreadable: 0,
+    generatedFrom: null,
+    generatedTo: null,
+    models: [],
+  },
+};
+
 /** Install a fetch stub for `/api/*`; unmatched paths answer 404. */
 export function stubApi(routes: StubRoutes): void {
   // Story 6.4: each install starts a fresh recording, so a test never reads the
@@ -4536,6 +4903,22 @@ export function stubApi(routes: StubRoutes): void {
         // that is a fact about two strings and not a property anybody is
         // maintaining, and because the four dashboard routes read together.
         // `answerFor`, because this route is both filtered and paged.
+        // Story 7.1's three, **before** `/api/dashboard/claims` below. Here the
+        // ordering is not merely readability: `/api/dashboard/fraud/red-flags`
+        // and `/api/dashboard/fraud/rates` both contain `/api/dashboard/fraud`,
+        // so the two-segment paths have to be tested first or the panel's stub
+        // would answer all three. The relationship to `/api/dashboard/claims` is
+        // the incidental kind — the strings are disjoint — and the block is kept
+        // together so the seven dashboard routes read in one place.
+        if (url.includes("/api/dashboard/fraud/rates")) {
+          return answerFor(routes.fraudRates ?? FRAUD_RATES, url);
+        }
+        if (url.includes("/api/dashboard/fraud/red-flags")) {
+          return answer(routes.fraudRedFlags ?? FRAUD_RED_FLAGS);
+        }
+        if (url.includes("/api/dashboard/fraud")) {
+          return answer(routes.fraudPanel ?? FRAUD_PANEL);
+        }
         if (url.includes("/api/dashboard/claims")) {
           return answerFor(routes.drillClaims ?? DRILL_CLAIMS, url);
         }

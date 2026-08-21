@@ -51,13 +51,36 @@ It is also the first route in this file with a query parameter. Exactly one, and
 it is a `cursor`: an opaque token this service minted, not a scope and not a page
 size. The preamble above still holds — there is nowhere in any signature here to
 put an employer, a user or an "as".
+
+**Story 7.1's three `/dashboard/fraud*` routes are the first in this file that
+answer one role and refuse the other two**, and that is a deliberate inversion of
+the property Epic 5 shipped rather than a new precedent for the discriminator
+above. That discriminator decides whether a *payload* needs a gate; these routes
+are gated because of what they **are** — the analyst's own workspace, the first
+surface in this console that a supervisor does not have. So
+`test_the_analyst_reads_byte_identically_to_the_supervisor` stays true of every
+endpoint it was written about, and is false here by construction. The gate is
+`services.worklist.fraud.require_fraud_analytics_access`, a new allowlist over
+`{analyst}` beside `benchmarks.PERMITTED_ROLES` and never a widening of it: that
+list is the oversight capability two roles share, and reaching across both with
+one constant would have opened colleagues' performance figures to whatever the
+wider list grew to hold.
+
+`GET /dashboard/fraud/rates` is also the first route here with a `sort`. Exactly
+three, one per table, each a closed enum — and the reason a sort is safe here
+where `/dashboard/claims` refuses one is the shape of the payload rather than a
+change of mind: those tables carry no cursor and no `total`, so there is no offset
+whose meaning a re-ordering could invalidate. `services/worklist/fraud.py` carries
+the argument.
 """
 
 from collections.abc import Mapping
+from datetime import datetime
 from typing import Annotated, Final
 
 from fastapi import APIRouter, Query, Response, status
 
+from agents.schemas import read_fraud_clauses
 from api.deps import CallerContextDep, DbDep, SettingsDep
 from api.errors import PROBLEM_CONTENT_TYPE, ProblemDocument, ProblemException
 from api.routers.auth import UNAUTHENTICATED_RESPONSE
@@ -70,19 +93,31 @@ from rules.parameters import (
     weights_for,
     worklist_actions_for,
 )
-from services.derivations import ComplexityBand, CycleStatus, RiskBand
+from services.derivations import ComplexityBand, CycleStatus, FraudBand, RiskBand
 from services.worklist import (
     BenchmarksNotPermitted,
     DrillFilters,
+    EmployerRate,
+    FraudAnalyticsNotPermitted,
+    FraudRateSort,
+    FraudRateSorts,
+    HandlerRate,
+    InjuryTypeRate,
     InvalidCursor,
+    RateBreakdown,
     drill_through_claims,
+    fraud_panel,
+    fraud_rates,
+    fraud_red_flags,
     handler_benchmarks,
     portfolio_charts,
     portfolio_summary,
     priority_claims,
     require_benchmarks_access,
+    require_fraud_analytics_access,
 )
 from services.worklist.charts import CategoryCount, Distribution, EmployerPaid, LabelCount
+from services.worklist.fraud import HandlerCount
 from services.worklist.sla import SlaMetric, SlaMetricKey
 
 router = APIRouter(tags=["dashboard"])
@@ -1213,6 +1248,27 @@ async def drill_claims(  # noqa: PLR0913 - one parameter per published facet; se
             description="The priority worklist's population, before its cap.",
         ),
     ] = None,
+    fraud_band: Annotated[
+        FraudBand | None,
+        Query(
+            alias="filter[fraudBand]",
+            description=(
+                "The registered `fraud_band` banding of `fraud_score` **alone** — "
+                "no `fraud_flag` conjunct, so this is neither the review rule "
+                "above nor the referral rule below."
+            ),
+        ),
+    ] = None,
+    siu_review: Annotated[
+        bool | None,
+        Query(
+            alias="filter[siuReview]",
+            description=(
+                "The queue's SIU *referral* rule — deliberately narrower than "
+                "`filter[fraudFlagged]`'s review cut."
+            ),
+        ),
+    ] = None,
     cursor: Annotated[
         str | None,
         Query(description="An opaque `nextCursor` from a previous response."),
@@ -1220,9 +1276,9 @@ async def drill_claims(  # noqa: PLR0913 - one parameter per published facet; se
 ) -> DrillClaimsResponse:
     """The claims behind a KPI card, a chart segment, a handler row or a worklist.
 
-    ## Thirteen parameters, and not one of them is a scope
+    ## Fifteen parameters, and not one of them is a scope
 
-    Twelve facets and a cursor. Every facet is a *narrowing* applied after
+    Fourteen facets and a cursor. Every facet is a *narrowing* applied after
     `employer_scope(ctx)` has already decided which rows exist, so
     `filter[employerId]` and `filter[handlerId]` intersect the caller's book and
     can never widen it: a scoped supervisor naming an employer outside hers gets
@@ -1251,8 +1307,24 @@ async def drill_claims(  # noqa: PLR0913 - one parameter per published facet; se
     This route intersects **independent facets**: a supervisor drills into High
     Risk, then narrows to one employer, then to litigated claims, and each is a
     separate dimension of the same set. That is what the architecture's list
-    convention spells with brackets, and it is why the twelve arrive as twelve
-    parameters rather than as one enum.
+    convention spells with brackets, and it is why the fourteen arrive as
+    fourteen parameters rather than as one enum.
+
+    ## Story 7.1 adds two facets and changes none
+
+    `filter[fraudBand]` and `filter[siuReview]` are the analyst workspace's own
+    click targets — a band segment and a pipeline segment — and each is matched
+    through the registered derivation the segment was *counted* with. Every
+    existing facet answers exactly what it answered before, which is the contract
+    Story 5.5 owns and this story does not: `fraudFlagged` is still the review
+    rule and is deliberately not either of the new two, and a URL written before
+    this story still produces the same list and the same chips in the same order.
+
+    The route stays **ungated** with the two additions, and that is worth
+    checking rather than assuming: neither publishes a figure about a named
+    person, and the `handlerId` gate below is unchanged. The three
+    `/dashboard/fraud*` routes that *do* gate are gated because they are the
+    analyst's workspace, not because a fraud facet is sensitive.
 
     ## This endpoint is ungated, and the argument is re-applied rather than
     inherited
@@ -1294,7 +1366,7 @@ async def drill_claims(  # noqa: PLR0913 - one parameter per published facet; se
     Both blocks are loaded in the route and handed down, so the aggregate stays
     a composition of scope and parameters — `portfolio_summary`'s rule.
     `derivation_thresholds` decides the band on every row and the populations
-    behind three of the twelve facets; `priority_weights` decides the ordering,
+    behind five of the fourteen facets; `priority_weights` decides the ordering,
     the marker and the page size. Both are what the cursor is validated against,
     which is why they are resolved at today's date and never at the cursor's.
     """
@@ -1332,6 +1404,8 @@ async def drill_claims(  # noqa: PLR0913 - one parameter per published facet; se
         employer_id=employer_id,
         handler_id=handler_id,
         priority=priority,
+        fraud_band=fraud_band,
+        siu_review=siu_review,
     )
     try:
         page = await drill_through_claims(db, ctx, thresholds, weights, filters, cursor=cursor)
@@ -1384,4 +1458,629 @@ async def drill_claims(  # noqa: PLR0913 - one parameter per published facet; se
         ],
         rules_version=page.rules_version,
         thresholds_version=page.thresholds_version,
+    )
+
+
+# --- Story 7.1: the analyst workspace's Fraud section --------------------
+
+
+#: `FORBIDDEN_RESPONSE`'s shape, with this section's reason.
+#:
+#: A third copy of one structure in one file, and the argument is the one
+#: `DRILL_BAD_CURSOR_RESPONSE` makes: the constant above describes "the oversight
+#: capability", which is accurate for the benchmark table and exactly wrong here.
+#: These routes refuse a *supervisor*, who carries oversight in full — what they
+#: gate is the analyst workspace, a surface that persona does not have. A shared
+#: constant would have to describe both refusals and would end up describing
+#: neither, and the description is what a client reading the OpenAPI document has
+#: to reason about. Deliberately not imported from anywhere.
+FRAUD_ANALYTICS_FORBIDDEN_RESPONSE: dict[int | str, dict[str, object]] = {
+    403: {
+        "description": (
+            "The caller's role does not carry the analyst-workspace capability. "
+            "Answered before any claim is read and before any rule document is "
+            "loaded, so it says nothing about what is in the caller's scope "
+            "(RFC 9457 problem document)."
+        ),
+        "content": {PROBLEM_CONTENT_TYPE: {"schema": ProblemDocument.model_json_schema()}},
+    }
+}
+
+
+def _fraud_forbidden(exc: FraudAnalyticsNotPermitted) -> ProblemException:
+    """`FraudAnalyticsNotPermitted` as this section's 403 problem document.
+
+    `_forbidden`'s twin with its own problem *type*, and the separate type is the
+    point rather than tidiness: `/problems/benchmarks-not-permitted` tells a
+    client "you may not read colleagues' figures", which is untrue of a supervisor
+    refused here. One translator per refusal, each raised from both the gate at
+    the top of a route and the service's own check behind it, because two copies
+    of a problem type string is how the second one drifts.
+
+    `Cache-Control: no-store` is restated in the exception because raising
+    abandons the injected `Response`: the handler builds a fresh `JSONResponse`
+    and the header set in the route body is never sent.
+    """
+    return ProblemException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        title="Forbidden",
+        detail=str(exc),
+        type_="/problems/fraud-analytics-not-permitted",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+class HandlerCountResponse(ApiModel):
+    """One handler's share of the SIU pipeline — the id, the name, the count.
+
+    `handlerId` is the identity and `handlerName` the label,
+    `HandlerBenchmarkResponse`'s split and its reason: the segment opens
+    `filter[handlerId]`, and a drill keyed on a display name would merge two desks
+    that share one.
+
+    A handler with no referred claim is **absent** rather than a zero row: this is
+    a list of the desks carrying SIU work, and the denominator a reader wants —
+    how many claims that handler holds — is the rate breakdown's `claims` column
+    one route over, published there precisely so it is on screen rather than
+    inferred from an empty segment.
+    """
+
+    handler_id: int
+    handler_name: str
+    count: int
+
+
+def _handler_counts(
+    series: Distribution[HandlerCount],
+) -> DistributionResponse[HandlerCountResponse]:
+    """The per-handler series, field by field — `_categories`' reasoning."""
+    return DistributionResponse[HandlerCountResponse](
+        items=[
+            HandlerCountResponse(
+                handler_id=item.handler_id, handler_name=item.handler_name, count=item.count
+            )
+            for item in series.items
+        ],
+        total=series.total,
+        total_categories=series.total_categories,
+        truncated=series.truncated,
+        limit=series.limit,
+    )
+
+
+class FraudPanelResponse(ApiModel):
+    """The fraud-score distribution, the SIU pipeline, and the rules behind them.
+
+    **`byBand` is zero-filled and its two siblings are not**, which is the one
+    thing about this payload a consumer has to know. Every other distribution on
+    this dashboard omits a category the scope does not contain
+    (`PortfolioChartsResponse` says so at length), because those vocabularies are
+    columns'. `FraudBand` is a *rule's* answer over a score every claim carries,
+    so all three members are always present — and "no claim in this book scored
+    into the high band" is the single most valuable thing this chart can say. A
+    two-segment distribution a reader could not distinguish from a build that
+    forgot to draw the third would read as reassurance.
+
+    `siuByStage` and `siuByHandler` follow the omission rule: a stage with no
+    referred claim is a stage the pipeline does not reach.
+
+    **The four thresholds ride along** for the reason the KPI cards' two do: the
+    band legend quotes its edges and the pipeline caption names the referral
+    cut-off, so a client holding either would be a second copy of a rule it cannot
+    see change. All four arrive from the derivations that did the deciding, so the
+    published numbers are provably the ones the segments were produced at — and
+    all four are separate parameters even where two of them read the same integer
+    today, which is `derivation_thresholds.v6`'s whole argument.
+
+    **`flaggedClaims` is on this payload and is not a segment of `byBand`.** It is
+    the *review* population — `fraud_flagged`, the rule `/dashboard/summary`
+    counts as `fraudFlagged` and `/dashboard/claims?filter[fraudFlagged]=true`
+    reports as `total` — and the section's flagged-claims panel is that existing
+    list rather than a second one. Publishing the count here is what lets the
+    entry point state the size of the list before it is opened.
+
+    `rulesVersion` names the document all four thresholds came from. As on every
+    sibling payload it rides along unrendered: it is what makes a stored or
+    forwarded response self-describing, and the only thing a client wanting to
+    invalidate on a rules change could key on.
+    """
+
+    by_band: DistributionResponse[CategoryCountResponse]
+    siu_by_stage: DistributionResponse[CategoryCountResponse]
+    siu_by_handler: DistributionResponse[HandlerCountResponse]
+    claims_in_scope: int
+    flagged_claims: int
+    siu_claims: int
+    fraud_band_high_min: int
+    fraud_band_med_min: int
+    fraud_flag_score_min: int
+    siu_fraud_score_min: int
+    rules_version: int
+
+
+@router.get(
+    "/dashboard/fraud",
+    response_model=FraudPanelResponse,
+    summary="Fraud-score distribution and SIU pipeline for the session's analyst",
+    responses={**UNAUTHENTICATED_RESPONSE, **FRAUD_ANALYTICS_FORBIDDEN_RESPONSE},
+)
+async def fraud(
+    ctx: CallerContextDep,
+    db: DbDep,
+    response: Response,
+) -> FraudPanelResponse:
+    """The Fraud section's headline surfaces, for whoever holds the session cookie.
+
+    `summary`'s signature exactly: no parameters at all, so there is nowhere to
+    put an employer, a user or an "as" (AD-7). The role gate below decides whether
+    this endpoint answers; the scope predicate inside the repository decides what
+    it answers, and no code on this path branches on role to widen it.
+
+    ## This endpoint is gated, and the argument is not the file's usual one
+
+    The discriminator Stories 5.3, 5.4 and 5.5 settled asks whether a payload puts
+    a **named other person's performance** on the wire. It would answer "yes" here
+    — `siuByHandler` names handlers and counts their referred claims — and that is
+    enough on its own. But it is not the reason: this route would be gated if it
+    named nobody, because what it gates is the analyst *workspace*. Epic 5 shipped
+    an analyst who was a supervisor clone; this section is the first thing that
+    persona has and the other two do not, and role is what separates a persona's
+    surface from a view anyone may read.
+
+    So a supervisor gets 403 here while continuing to read every Epic 5 dashboard
+    route byte-identically to what she read before this story, which is what
+    `tests/test_fraud_analytics.py` asserts from both directions.
+
+    ## One document, loaded here
+
+    `derivation_thresholds`, handed down, so the aggregate stays a composition of
+    scope and parameters — `portfolio_summary`'s rule. One rather than three
+    because every rule this surface reaches is a registered derivation, and
+    `DerivationThresholds` is the single block all three are built from.
+    """
+    # `/stats/topbar`'s reasoning: this response is specific to one persona's
+    # scope, so it must never be served to another from a cache upstream. First
+    # statement in the body, so neither the refusal below nor any early return can
+    # skip it.
+    response.headers["Cache-Control"] = "no-store"
+    # **Before the document load, not after it.** The service raises the same
+    # refusal from the same allowlist and is still the real gate — capability
+    # lives with the module that owns the rows — but it is reached one
+    # `rule_document` read later, which would make "answered before any read" true
+    # of the claim read and false of everything above it. Deliberately the
+    # *service's* function rather than a copy of the condition: two spellings of
+    # one allowlist is how a future `UserRole` gets admitted by one of them.
+    try:
+        require_fraud_analytics_access(ctx)
+    except FraudAnalyticsNotPermitted as exc:
+        raise _fraud_forbidden(exc) from exc
+    thresholds = await thresholds_for(db)
+    # Belt and braces, and cheap: the service checks the same allowlist itself, so
+    # a refusal cannot escape as a 500 if this route is ever reordered or a second
+    # caller appears. Unreachable today — the call above already refused — which
+    # is why it delegates to the same translator rather than restating it.
+    try:
+        panel = await fraud_panel(db, ctx, thresholds)
+    except FraudAnalyticsNotPermitted as exc:  # pragma: no cover - the gate answered first
+        raise _fraud_forbidden(exc) from exc
+
+    return FraudPanelResponse(
+        by_band=_categories(panel.by_band),
+        siu_by_stage=_categories(panel.siu_by_stage),
+        siu_by_handler=_handler_counts(panel.siu_by_handler),
+        claims_in_scope=panel.claims_in_scope,
+        flagged_claims=panel.flagged_claims,
+        siu_claims=panel.siu_claims,
+        fraud_band_high_min=panel.fraud_band_high_min,
+        fraud_band_med_min=panel.fraud_band_med_min,
+        fraud_flag_score_min=panel.fraud_flag_score_min,
+        siu_fraud_score_min=panel.siu_fraud_score_min,
+        rules_version=thresholds.version,
+    )
+
+
+class InjuryTypeRateResponse(ApiModel):
+    """One injury type's flagged share, with its denominator on the wire.
+
+    `flagged`, `claims` **and** `rateBp`, all three. A rate alone is
+    uninterpretable over a thin bucket — one flagged claim of one is 100%, and so
+    is fifty of fifty — and the honest answer is not a suppression rule the server
+    would have to invent but the denominator beside the figure, so a reader can
+    see what the percentage is a percentage *of*.
+
+    `rateBp` is **basis points**, the unit the comp rate and the reserve ratio
+    already use: an integer over a fixed scale, decided server-side with its
+    rounding stated once, so the browser formats and divides nothing (AD-1).
+
+    `injuryType` is the exact stored string and is what `filter[injuryType]`
+    matches — no trimming, case-folding or merging, `LabelCountResponse`'s ruling
+    over the same column.
+    """
+
+    injury_type: str
+    flagged: int
+    claims: int
+    rate_bp: int
+
+
+class EmployerRateResponse(ApiModel):
+    """One employer's flagged share. `InjuryTypeRateResponse`'s figures, keyed by id.
+
+    `employerId` rather than the label, `EmployerPaidResponse`'s rule: a
+    `short_name` is a label and not an identity, and the drill-through has to
+    filter on something that cannot collide.
+    """
+
+    employer_id: int
+    label: str
+    flagged: int
+    claims: int
+    rate_bp: int
+
+
+class HandlerRateResponse(ApiModel):
+    """One handler's flagged share. `EmployerRateResponse`'s shape over the other id.
+
+    This is the row that puts a figure beside a named colleague — the very shape
+    this file's discriminator gates `/dashboard/handler-benchmarks` for — and it
+    is one of the reasons the whole section carries a role gate rather than
+    relying on scope.
+    """
+
+    handler_id: int
+    handler_name: str
+    flagged: int
+    claims: int
+    rate_bp: int
+
+
+class RateBreakdownResponse[RowT](ApiModel):
+    """One finished breakdown: the rows in their order, and how they were cut.
+
+    Generic over its row type so the four scalar fields are declared once and each
+    table still publishes its own concrete row shape in the contract —
+    `DistributionResponse`'s arrangement and its reason.
+
+    **No `total` and no `nextCursor`, deliberately.** `items` is the whole list,
+    which is `HandlerBenchmarksResponse`' shape, and it is what makes the `sort`
+    parameter safe: `/dashboard/claims` refuses a sort because an offset into one
+    ranking means nothing against another, and a list with no offset has nothing
+    to be ambiguous about. Twenty, ten and six rows on the full portfolio.
+
+    `sort` echoes the order that was applied, so a stored response is
+    self-describing and a control renders the server's answer rather than its own
+    last click — `appliedFilters`' reason on a different kind of input.
+
+    `limit`, `totalCategories` and `truncated` are the truncation contract:
+    `truncated` is decided here rather than left to a client comparing the other
+    two, and `limit` is `null` for the two breakdowns that are never cut.
+    """
+
+    items: list[RowT]
+    total_categories: int
+    truncated: bool
+    limit: int | None
+    sort: FraudRateSort
+
+
+class FraudRatesResponse(ApiModel):
+    """The three flagged-rate breakdowns over one scoped book.
+
+    **`flagged` is the *review* rule everywhere on this payload** — the same
+    `fraud_flagged` derivation the Fraud Flags card was counted with and
+    `filter[fraudFlagged]=true` opens — and deliberately not the SIU referral one,
+    which is the narrower population and would put a rate under a heading
+    promising the wider set. `fraudFlagScoreMin` rides along because the tables'
+    footnote quotes it.
+
+    `claimsInScope` and `flaggedClaims` are the portfolio-level pair every row is
+    a partition of, so the table is checkable from the screen: the `claims` column
+    sums to the first and the `flagged` column to the second, on the two uncapped
+    breakdowns.
+
+    `rulesVersion` names the document `fraudFlagScoreMin` came from, unrendered,
+    for its siblings' reason.
+    """
+
+    by_injury_type: RateBreakdownResponse[InjuryTypeRateResponse]
+    by_employer: RateBreakdownResponse[EmployerRateResponse]
+    by_handler: RateBreakdownResponse[HandlerRateResponse]
+    claims_in_scope: int
+    flagged_claims: int
+    fraud_flag_score_min: int
+    rules_version: int
+
+
+def _injury_rates(
+    breakdown: RateBreakdown[InjuryTypeRate],
+) -> RateBreakdownResponse[InjuryTypeRateResponse]:
+    """The injury-type breakdown, field by field — `_categories`' reasoning."""
+    return RateBreakdownResponse[InjuryTypeRateResponse](
+        items=[
+            InjuryTypeRateResponse(
+                injury_type=row.injury_type,
+                flagged=row.flagged,
+                claims=row.claims,
+                rate_bp=row.rate_bp,
+            )
+            for row in breakdown.items
+        ],
+        total_categories=breakdown.total_categories,
+        truncated=breakdown.truncated,
+        limit=breakdown.limit,
+        sort=breakdown.sort,
+    )
+
+
+def _employer_rates(
+    breakdown: RateBreakdown[EmployerRate],
+) -> RateBreakdownResponse[EmployerRateResponse]:
+    """The employer breakdown, field by field — `_categories`' reasoning."""
+    return RateBreakdownResponse[EmployerRateResponse](
+        items=[
+            EmployerRateResponse(
+                employer_id=row.employer_id,
+                label=row.label,
+                flagged=row.flagged,
+                claims=row.claims,
+                rate_bp=row.rate_bp,
+            )
+            for row in breakdown.items
+        ],
+        total_categories=breakdown.total_categories,
+        truncated=breakdown.truncated,
+        limit=breakdown.limit,
+        sort=breakdown.sort,
+    )
+
+
+def _handler_rates(
+    breakdown: RateBreakdown[HandlerRate],
+) -> RateBreakdownResponse[HandlerRateResponse]:
+    """The handler breakdown, field by field — `_categories`' reasoning."""
+    return RateBreakdownResponse[HandlerRateResponse](
+        items=[
+            HandlerRateResponse(
+                handler_id=row.handler_id,
+                handler_name=row.handler_name,
+                flagged=row.flagged,
+                claims=row.claims,
+                rate_bp=row.rate_bp,
+            )
+            for row in breakdown.items
+        ],
+        total_categories=breakdown.total_categories,
+        truncated=breakdown.truncated,
+        limit=breakdown.limit,
+        sort=breakdown.sort,
+    )
+
+
+@router.get(
+    "/dashboard/fraud/rates",
+    response_model=FraudRatesResponse,
+    summary="Flagged-claim rates by injury type, employer and handler",
+    responses={**UNAUTHENTICATED_RESPONSE, **FRAUD_ANALYTICS_FORBIDDEN_RESPONSE},
+)
+async def fraud_rate_breakdowns(
+    ctx: CallerContextDep,
+    db: DbDep,
+    response: Response,
+    injury_type_sort: Annotated[
+        FraudRateSort,
+        Query(
+            alias="sort[injuryType]",
+            description="The order the injury-type breakdown is served in.",
+        ),
+    ] = FraudRateSort.rate_desc,
+    employer_sort: Annotated[
+        FraudRateSort,
+        Query(alias="sort[employer]", description="The order the employer breakdown is served in."),
+    ] = FraudRateSort.rate_desc,
+    handler_sort: Annotated[
+        FraudRateSort,
+        Query(alias="sort[handler]", description="The order the handler breakdown is served in."),
+    ] = FraudRateSort.rate_desc,
+) -> FraudRatesResponse:
+    """Flagged-over-total by three dimensions, each independently ordered.
+
+    ## Three parameters, and not one of them is a scope
+
+    One `sort` per table, aliased in `filter[…]`'s style so the wire name and the
+    parameter name are one string — the property `drill/filters.ts` rests on. Each
+    is a closed `FraudRateSort`, so `sort[handler]=severity` is a 422 from
+    FastAPI's own coercion before this function runs: the **type is the check**,
+    and a vocabulary restated in the body would be the enum spelled twice.
+
+    They are three rather than one because the three tables are three
+    independent controls: sorting the injury-type breakdown must leave the other
+    two at their declared defaults, which a single shared parameter could not
+    express.
+
+    There is still nowhere in this signature to put an employer, a user or an
+    "as" (AD-7), and `?scopeAll=true` remains an unknown parameter FastAPI
+    ignores.
+
+    ## Why a `sort` here when `/dashboard/claims` refuses one
+
+    That list is cursored, and an offset into one ranking means nothing against a
+    different one, so a `sort` there would make every outstanding cursor
+    ambiguous. These breakdowns carry no cursor and no `total` —
+    `HandlerBenchmarksResponse`' shape — so a sort is a total order applied after
+    a read that did not change, with nothing paged for it to invalidate.
+
+    ## One document, loaded here
+
+    `derivation_thresholds`, for `fraud`'s reason: the `flagged` column is a
+    registered derivation's answer and that block is what it is built from.
+    """
+    # `/stats/topbar`'s reasoning, and first in the body so no refusal skips it.
+    response.headers["Cache-Control"] = "no-store"
+    # Before the document load — `fraud`'s note.
+    try:
+        require_fraud_analytics_access(ctx)
+    except FraudAnalyticsNotPermitted as exc:
+        raise _fraud_forbidden(exc) from exc
+    thresholds = await thresholds_for(db)
+    # Built field by field, like every response model in this file and for the
+    # same reason: the mapping from the route's three parameters to the service's
+    # three fields is the place a renamed table should fail to compile.
+    sorts = FraudRateSorts(
+        injury_type=injury_type_sort,
+        employer=employer_sort,
+        handler=handler_sort,
+    )
+    try:
+        rates = await fraud_rates(db, ctx, thresholds, sorts)
+    except FraudAnalyticsNotPermitted as exc:  # pragma: no cover - the gate answered first
+        raise _fraud_forbidden(exc) from exc
+
+    return FraudRatesResponse(
+        by_injury_type=_injury_rates(rates.by_injury_type),
+        by_employer=_employer_rates(rates.by_employer),
+        by_handler=_handler_rates(rates.by_handler),
+        claims_in_scope=rates.claims_in_scope,
+        flagged_claims=rates.flagged_claims,
+        fraud_flag_score_min=rates.fraud_flag_score_min,
+        rules_version=thresholds.version,
+    )
+
+
+class RedFlagClauseResponse(ApiModel):
+    """One cached red-flag clause and how many claims named it.
+
+    `claims` counts **distinct claims**, never mentions: a narrative listing one
+    indicator twice is one claim worrying about one thing, and counting it twice
+    would make one model's repetition look like a pattern across a book.
+
+    `clause` is the first-seen original spelling. Two claims whose clauses differ
+    only in case or in a trailing full stop are one row, and the row reads the way
+    the first of them wrote it — a casefolded sentence on screen would make the
+    view look generated by the fold rather than by the model.
+
+    **Not a click target, and that is a decision.** Every other segment on this
+    dashboard opens the claims behind it; a clause cannot, because "which claims
+    does this phrase name" is a question only the fold's own normalisation can
+    answer and turning that into a claim population would be the browser — or this
+    endpoint — asserting a classification nobody versioned (AD-2). The coverage
+    figures beside the ranking are what a reader navigates by instead.
+    """
+
+    clause: str
+    claims: int
+
+
+class FraudRedFlagsResponse(ApiModel):
+    """The ranked clauses across one scoped book, and the cache behind them (AD-10).
+
+    **Every figure here describes the cache, not the claims.** How many claims in
+    scope carry a fraud narrative at all, when the oldest and newest were
+    generated, how many rows this build could not read. AD-10's rule is that model
+    output is rendered with its generation time and never presented as claim data,
+    and on a portfolio-wide view the practical form of that rule is that the
+    coverage is published beside the ranking: five clauses over a hundred claims
+    and four narratives says something very different from five over a hundred and
+    a hundred.
+
+    **This is exact-text grouping over model-authored prose**, so a count of one is
+    the ordinary case and the ranking is a reading aid rather than a taxonomy. The
+    alternative — clustering or keyword-bucketing — would be the server
+    originating a classification nobody can version or review;
+    `services/worklist/fraud.py` carries the argument in full and the card's
+    caption says so on screen.
+
+    `generatedFrom` and `generatedTo` are both `null` on a cold cache, which is
+    the seeded state and the ordinary one. Two nulls rather than an epoch or a
+    "now", because a card cannot draw a range that does not exist and must not
+    invent one.
+
+    `unreadable` counts rows whose stored `content` failed re-validation — an
+    older prompt version whose schema has since moved. They are excluded from the
+    ranking, the coverage and the range, and counted here:
+    `ClaimInsightsResponse`'s tolerance applied to a fold, so one bad row cannot
+    take a portfolio view down and cannot be invisible either.
+
+    `models` is every distinct model that wrote a readable row, sorted. A portfolio
+    view spans generations, so there is no single model to label it with, and the
+    honest answer over a set is the set. Empty when nothing was readable — which
+    is when the card has no provenance line to draw and renders its empty state.
+
+    **No `rulesVersion`**, unlike every sibling payload on this dashboard, and the
+    absence is deliberate: this view reaches no rule. There is no threshold, no
+    band and no cut-off in it, so the route loads no document and there is no
+    version to name. Publishing one anyway would be claiming a provenance the
+    figures do not have.
+    """
+
+    items: list[RedFlagClauseResponse]
+    total_clauses: int
+    truncated: bool
+    limit: int
+    claims_with_insight: int
+    claims_in_scope: int
+    unreadable: int
+    generated_from: datetime | None
+    generated_to: datetime | None
+    models: list[str]
+
+
+@router.get(
+    "/dashboard/fraud/red-flags",
+    response_model=FraudRedFlagsResponse,
+    summary="Ranked red-flag clauses from the cached fraud narratives",
+    responses={**UNAUTHENTICATED_RESPONSE, **FRAUD_ANALYTICS_FORBIDDEN_RESPONSE},
+)
+async def fraud_red_flag_frequency(
+    ctx: CallerContextDep,
+    db: DbDep,
+    response: Response,
+) -> FraudRedFlagsResponse:
+    """The red-flag frequency view, for whoever holds the session cookie.
+
+    `fraud`'s signature: no parameters at all, so there is nowhere to put a scope
+    (AD-7). Gated for that route's reason — this is the analyst workspace, and the
+    gate runs before any read.
+
+    **The one thing this route hands the aggregate is a reader**, not a parameter
+    block: `agents.schemas.read_fraud_clauses`, which knows what a stored fraud
+    card looks like. `services/` may never import `agents/` (AD-5), so the shape's
+    owner supplies the reader and the fold receives it — `services/rag/insights.py`
+    takes an injected `InsightGenerator` for exactly this reason. `api/` sits
+    above both, which is why the injection happens here.
+
+    **No rule document is loaded here, and that is the only route in this file
+    where that sentence is true.** This view groups prose and counts claims; it
+    reaches no threshold, so there is nothing to load and nothing to publish. The
+    absence is stated because every neighbour loads one and a reader will wonder.
+
+    **Read-only over `services/rag`'s table (AD-12).** Nothing on this path writes,
+    and nothing on it triggers a refresh: a cold cache answers 200 with an empty
+    ranking and a null range, which the card renders as a first-class empty state
+    rather than as a spinner over work that is not happening. Regenerating an
+    insight is the claim surface's Refresh, owned by the service that owns the
+    rows.
+    """
+    # `/stats/topbar`'s reasoning, and first in the body so no refusal skips it.
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        require_fraud_analytics_access(ctx)
+    except FraudAnalyticsNotPermitted as exc:
+        raise _fraud_forbidden(exc) from exc
+    # Belt and braces — `fraud`'s note. Unreachable today.
+    try:
+        ranked = await fraud_red_flags(db, ctx, read_fraud_clauses)
+    except FraudAnalyticsNotPermitted as exc:  # pragma: no cover - the gate answered first
+        raise _fraud_forbidden(exc) from exc
+
+    return FraudRedFlagsResponse(
+        items=[RedFlagClauseResponse(clause=row.clause, claims=row.claims) for row in ranked.items],
+        total_clauses=ranked.total_clauses,
+        truncated=ranked.truncated,
+        limit=ranked.limit,
+        claims_with_insight=ranked.claims_with_insight,
+        claims_in_scope=ranked.claims_in_scope,
+        unreadable=ranked.unreadable,
+        generated_from=ranked.generated_from,
+        generated_to=ranked.generated_to,
+        models=list(ranked.models),
     )

@@ -44,7 +44,7 @@ SERVER_ROOT = Path(__file__).resolve().parents[1]
 # with that code however wrong both were. `tests/test_rules_engine.py` is
 # what ties these values back to the committed document.
 SEEDED_THRESHOLDS = DerivationThresholds(
-    version=5,
+    version=6,
     risk_high_min=65,
     risk_med_min=35,
     siu_fraud_score_min=60,
@@ -68,6 +68,14 @@ SEEDED_THRESHOLDS = DerivationThresholds(
     # referral number would have agreed with the one mistake this story is most
     # exposed to.
     fraud_flag_score_min=55,
+    # Story 7.1's two, added in version 6 — the edges of the fraud-score BAND the
+    # analyst workspace distributes on. A third rule over the fraud columns, not a
+    # re-spelling of either above it: both of those are conjoined with
+    # `fraud_flag`, and this pair bands the score alone. `fraud_band_high_min`
+    # carries the same integer as `fraud_flag_score_min` today, which is exactly
+    # why the oracle restates it separately rather than reusing the name.
+    fraud_band_high_min=55,
+    fraud_band_med_min=35,
 )
 
 
@@ -536,9 +544,9 @@ def test_no_derivation_module_is_named_after_the_value_it_exports() -> None:
 def test_no_module_outside_the_registry_hardcodes_the_band() -> None:
     """The grep-style regression test Task 2 asks for.
 
-    Deliberately blunt: any bare `65` or `35` outside the allowlist fails,
-    and the fix is either to call the derivation or to add a justified entry
-    below. A future story that needs 65 for an unrelated reason sees this
+    Deliberately blunt: any bare `65`, `55` or `35` outside the allowlist
+    fails, and the fix is either to call the derivation or to add a justified
+    entry below. A future story that needs 65 for an unrelated reason sees this
     message and makes that choice on purpose.
 
     Story 2.1 changes what the allowlist says rather than how it works.
@@ -547,6 +555,28 @@ def test_no_module_outside_the_registry_hardcodes_the_band() -> None:
     one line. The scan grew to cover `*.jdm.json` at the same time, so
     "the numbers live in a rule document" is enforced rather than merely
     intended: a JDM file authored anywhere else fails here too.
+
+    **Story 7.1 adds 55 to the set and deliberately leaves 60 out.** 55 is now
+    two rules at once — `fraudFlagScoreMin`, the dashboard's fraud *review*
+    threshold, and `fraudBandHighMin`, the top edge of the analyst workspace's
+    score band — and the whole argument of that story is that a number carrying
+    two rules must never be spelled in code, because the two move apart the day
+    an operator retunes either. Adding it costs nothing today: every occurrence
+    of a bare 55 in this tree is already inside the allowlist.
+
+    60 is the SIU referral threshold and belongs in this set on the same
+    argument, and it is out of it because the argument is not what the check
+    measures. Six files outside the allowlist carry a bare 60 and **not one of
+    them is a rule value**: a 60-second HTTP timeout in `config.py` and in
+    `api/routers/claims.py`, "6 000 is 60%" in a basis-points note in
+    `rules/parameters.py`, a `[10:60]` slice in `services/worklist/queue.py`,
+    and — in `agents/tools/fraud.py` and `services/worklist/drill_through.py` —
+    two *prose* mentions of `score >= 60` written precisely to explain why the
+    comparison is not in the code. Adding 60 would fail this test on six
+    comments, and the only ways out are to reword six explanations or to
+    allowlist five directories, both of which trade a real guard for a green
+    tick. The spec's rule is written down for exactly this case: leave the
+    number out of the set rather than weakening the allowlist, and say why.
     """
     allowed = {
         *(SERVER_ROOT / "rules" / "documents").rglob("*.jdm.json"),  # where they live now
@@ -555,7 +585,7 @@ def test_no_module_outside_the_registry_hardcodes_the_band() -> None:
         *(SERVER_ROOT / "data" / "seed").rglob("*.py"),  # the dataset itself
         *(SERVER_ROOT / "data" / "versions").rglob("*.py"),  # frozen migrations
     }
-    threshold = re.compile(r"(?<![\w.])(65|35)(?![\w.])")
+    threshold = re.compile(r"(?<![\w.])(65|55|35)(?![\w.])")
 
     offenders = [
         path.relative_to(SERVER_ROOT)
@@ -567,6 +597,7 @@ def test_no_module_outside_the_registry_hardcodes_the_band() -> None:
         and threshold.search(path.read_text())
     ]
     assert not offenders, (
-        f"{offenders} name a risk-band threshold directly — call "
-        "services.derivations.risk instead, or justify an allowlist entry"
+        f"{offenders} name a risk-band or fraud threshold directly — call "
+        "services.derivations.risk, .fraud_flagged or .fraud_band instead, "
+        "or justify an allowlist entry"
     )

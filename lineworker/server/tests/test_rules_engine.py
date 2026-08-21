@@ -70,7 +70,7 @@ DOCUMENTS_DIR = Path(__file__).resolve().parents[1] / "rules" / "documents"
 # reads the unversioned name at migration time and editing it would rewrite
 # v1's content on a fresh database.
 EFFECTIVE_DOCUMENTS: tuple[tuple[str, int, str], ...] = (
-    (DERIVATION_THRESHOLDS_KEY, 5, "derivation_thresholds.v5.jdm.json"),
+    (DERIVATION_THRESHOLDS_KEY, 6, "derivation_thresholds.v6.jdm.json"),
     (PRIORITY_WEIGHTS_KEY, 1, "priority_weights.jdm.json"),
     (INTAKE_REQUIRED_DOCUMENTS_KEY, 1, "intake_required_documents.jdm.json"),
     # Story 2.4's, missing from this tuple until Story 2.6's review pass found
@@ -106,6 +106,7 @@ SEEDED_DOCUMENTS: tuple[tuple[str, int, str], ...] = (
     (DERIVATION_THRESHOLDS_KEY, 2, "derivation_thresholds.v2.jdm.json"),
     (DERIVATION_THRESHOLDS_KEY, 3, "derivation_thresholds.v3.jdm.json"),
     (DERIVATION_THRESHOLDS_KEY, 4, "derivation_thresholds.v4.jdm.json"),
+    (DERIVATION_THRESHOLDS_KEY, 5, "derivation_thresholds.v5.jdm.json"),
     # Story 3.5's v1, superseded by Story 5.4's v2 above and still committed:
     # 0031 reads the unversioned filename at migration time, so this row exists
     # on every fresh database and is still a file that can silently disagree
@@ -140,7 +141,25 @@ EXPECTED_THRESHOLDS: dict[str, Any] = {
     # same column pair. Two rules, two thresholds, and this document is where
     # the difference is visible at a glance.
     "fraudFlagScoreMin": 55,
+    # Story 7.1's two, added in version 6. They parameterise `fraud_band`, which
+    # bands `fraud_score` **alone** — no `fraud_flag` conjunct — and is therefore
+    # a third rule over this column pair rather than a re-spelling of either
+    # above. `fraudBandHighMin` carries the same integer as `fraudFlagScoreMin`,
+    # and the document is where that coincidence is visible: two rules that agree
+    # on today's numbers are still two rules, and only one of them moves when the
+    # review population is retuned.
+    "fraudBandHighMin": 55,
+    "fraudBandMedMin": 35,
 }
+
+#: The parameters *added after* v3 and after v2, so the supersession assertion
+#: below reads as "this version is the one before it plus what its story added"
+#: rather than as a growing tuple of exclusions repeated three times. Written out
+#: here because each name is a story's addition and the set is the record of
+#: which: `ptdSeverityThreshold` is 3.1's, `fraudFlagScoreMin` 5.1's, and the two
+#: band edges 7.1's.
+_AFTER_V3: frozenset[str] = frozenset({"fraudFlagScoreMin", "fraudBandHighMin", "fraudBandMedMin"})
+_AFTER_V2: frozenset[str] = _AFTER_V3 | {"ptdSeverityThreshold"}
 
 # Story 3.1's document, restated. Rates are BASIS POINTS: 6667 is 66.67%.
 EXPECTED_BENEFIT_PARAMS: dict[str, Any] = {
@@ -304,21 +323,24 @@ async def test_every_superseded_version_is_still_exactly_what_it_was(
         2: {
             key: value
             for key, value in EXPECTED_THRESHOLDS.items()
-            if not key.startswith("path")
-            and key not in ("ptdSeverityThreshold", "fraudFlagScoreMin")
+            if not key.startswith("path") and key not in _AFTER_V2
         },
         # v3 is v2 plus the path three, and *without* Story 3.1's one — the
         # same assertion one story later, against the version the forms card
         # is still explained by.
-        3: {
-            key: value
-            for key, value in EXPECTED_THRESHOLDS.items()
-            if key not in ("ptdSeverityThreshold", "fraudFlagScoreMin")
-        },
+        3: {key: value for key, value in EXPECTED_THRESHOLDS.items() if key not in _AFTER_V2},
         # v4 is v3 plus Story 3.1's one, and *without* Story 5.1's — the same
         # assertion two epics later, against the version the seeded benefit
         # figures are still explained by.
-        4: {key: value for key, value in EXPECTED_THRESHOLDS.items() if key != "fraudFlagScoreMin"},
+        4: {key: value for key, value in EXPECTED_THRESHOLDS.items() if key not in _AFTER_V3},
+        # v5 is v4 plus Story 5.1's review threshold, and *without* Story 7.1's
+        # band pair — the same assertion an epic later, against the version the
+        # supervisor's Fraud Flags card is still explained by.
+        5: {
+            key: value
+            for key, value in EXPECTED_THRESHOLDS.items()
+            if key not in ("fraudBandHighMin", "fraudBandMedMin")
+        },
     }
 
     for version, expected in superseded.items():
@@ -457,7 +479,7 @@ async def test_the_typed_blocks_carry_the_evaluated_values(db: AsyncSession) -> 
     requirements = await intake_requirements_for(db)
 
     assert thresholds == DerivationThresholds(
-        version=5,
+        version=6,
         risk_high_min=EXPECTED_THRESHOLDS["riskHighMin"],
         risk_med_min=EXPECTED_THRESHOLDS["riskMedMin"],
         siu_fraud_score_min=EXPECTED_THRESHOLDS["siuFraudScoreMin"],
@@ -474,6 +496,8 @@ async def test_the_typed_blocks_carry_the_evaluated_values(db: AsyncSession) -> 
         path_fatality_severity_min=EXPECTED_THRESHOLDS["pathFatalitySeverityMin"],
         ptd_severity_threshold=EXPECTED_THRESHOLDS["ptdSeverityThreshold"],
         fraud_flag_score_min=EXPECTED_THRESHOLDS["fraudFlagScoreMin"],
+        fraud_band_high_min=EXPECTED_THRESHOLDS["fraudBandHighMin"],
+        fraud_band_med_min=EXPECTED_THRESHOLDS["fraudBandMedMin"],
     )
     assert await benefit_params_for(db) == BenefitParams(
         version=1,

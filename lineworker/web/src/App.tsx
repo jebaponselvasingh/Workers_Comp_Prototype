@@ -19,6 +19,7 @@ import { Navigate, Route, Routes } from "react-router";
 import { ToastHost, ToastProvider } from "@/components/ui/toast";
 import { LoginScreen } from "@/features/login/LoginScreen";
 import { DashboardPage } from "@/features/dashboard/DashboardPage";
+import { FraudPage } from "@/features/dashboard/fraud/FraudPage";
 import { DrillClaimsPage } from "@/features/dashboard/drill/DrillClaimsPage";
 import { ReadOnlyClaimPage } from "@/features/dashboard/drill/ReadOnlyClaimPage";
 import { DashboardShell } from "@/features/shell/DashboardShell";
@@ -50,6 +51,25 @@ export default function App() {
             {/* The business id, `WC-nnnn`, as the ID convention requires — the
                 claim's own identifier in the path rather than a surrogate. */}
             <Route path="claims/:claimId" element={<ReadOnlyClaimPage />} />
+
+            {/* Story 7.1's analyst workspace, behind an **inner** guard.
+
+                Nested rather than declared beside the dashboard block, so it
+                inherits `DashboardShell` — the analyst gains a section within
+                their own console rather than a second shell — and wrapped in a
+                narrower `RequireSession` so the role check is the route table's
+                and not a component's. A supervisor who types the URL is bounced
+                to `homeRouteFor("supervisor")`, which is `/dashboard`: the
+                guard's existing behaviour, applied one level down.
+
+                That the endpoints behind it are *also* gated
+                (`services/worklist/fraud.py`) is not redundancy. This guard
+                decides which screen renders; that one decides who may read the
+                figures, and scope decides which figures they are (AD-7). A
+                client-side check is a courtesy, never a control. */}
+            <Route element={<RequireSession allow={["analyst"]} />}>
+              <Route path="fraud" element={<FraudPage />} />
+            </Route>
           </Route>
         </Route>
 

@@ -1,5 +1,5 @@
 import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, expect, test, vi } from "vitest";
 
@@ -26,6 +26,19 @@ const SUPERVISOR = {
 const HANDLER = {
   status: 200,
   body: { id: 1, name: "Kaya Johnson", role: "handler", initials: "KJ" },
+};
+/**
+ * The analyst — the persona Story 7.1 stopped being a supervisor clone.
+ *
+ * Deliberately the *same human* as the supervisor above, because that is what
+ * the seed holds: David Bline is one person with two persona rows, and the role
+ * is the only thing that differs. It is the sharpest form of the assertion —
+ * whatever separates the two shells cannot be the name, the initials or the
+ * caseload.
+ */
+const ANALYST = {
+  status: 200,
+  body: { id: 8, name: "David Bline", role: "analyst", initials: "DB" },
 };
 
 /** Kaya's real seed numbers — deliberately different from the supervisor's. */
@@ -69,6 +82,52 @@ test("a role that does not belong on a shell is sent to its own", async () => {
   // handler shell is the correct destination for /dashboard.
   stubApi({ me: HANDLER });
   renderAt("/dashboard");
+
+  expect(await screen.findByRole("region", { name: /Claim workspace/ })).toBeInTheDocument();
+});
+
+test("an analyst sees exactly two workspace destinations", async () => {
+  // Epic 5's analyst read the supervisor's dashboard byte for byte. What this
+  // asserts is the first thing that stopped being true: a navigation, with
+  // exactly two entries. **Exactly** two rather than "at least" — Trends,
+  // segmentation and financial decomposition are Stories 7.2-7.4, and the
+  // instruction is to leave their slots unbuilt rather than stubbed-broken, so a
+  // third link appearing here is a promise the build cannot keep.
+  stubApi({ me: ANALYST });
+  renderAt("/dashboard");
+
+  const nav = await screen.findByRole("navigation", { name: /Analyst workspace/ });
+  expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual([
+    "Portfolio",
+    "Fraud",
+  ]);
+});
+
+test("an analyst reaches the fraud workspace", async () => {
+  stubApi({ me: ANALYST });
+  renderAt("/dashboard/fraud");
+
+  expect(await screen.findByRole("region", { name: /Fraud analytics/ })).toBeInTheDocument();
+});
+
+test("a supervisor sees no navigation and is bounced from the fraud route", async () => {
+  // Both halves in one test, because they are one property: the supervisor's
+  // console is what Epic 5 shipped, with nothing added to the shell and nothing
+  // new reachable from the address bar. A redirect rather than an error page —
+  // the server said this caller is a supervisor, so their own dashboard is the
+  // correct destination, which is `RequireSession`'s existing behaviour applied
+  // one route deeper.
+  stubApi({ me: SUPERVISOR });
+  renderAt("/dashboard/fraud");
+
+  expect(await screen.findByRole("region", { name: /Portfolio dashboard/ })).toBeInTheDocument();
+  expect(screen.queryByRole("navigation", { name: /Analyst workspace/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: /Fraud analytics/ })).not.toBeInTheDocument();
+});
+
+test("a handler is bounced from the fraud route to their own workspace", async () => {
+  stubApi({ me: HANDLER });
+  renderAt("/dashboard/fraud");
 
   expect(await screen.findByRole("region", { name: /Claim workspace/ })).toBeInTheDocument();
 });

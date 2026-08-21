@@ -58,7 +58,7 @@ PARAMS = BenefitParams(
 )
 
 THRESHOLDS = DerivationThresholds(
-    version=5,
+    version=6,
     risk_high_min=65,
     risk_med_min=35,
     siu_fraud_score_min=60,
@@ -75,6 +75,14 @@ THRESHOLDS = DerivationThresholds(
     # Story 5.1's, added in version 5 — the dashboard's fraud REVIEW cut-off,
     # which is deliberately not `siu_fraud_score_min` (the referral one).
     fraud_flag_score_min=55,
+    # Story 7.1's two, added in version 6 — the edges of the fraud-score BAND the
+    # analyst workspace distributes on. A third rule over the fraud columns, not a
+    # re-spelling of either above it: both of those are conjoined with
+    # `fraud_flag`, and this pair bands the score alone. `fraud_band_high_min`
+    # carries the same integer as `fraud_flag_score_min` today, which is exactly
+    # why the oracle restates it separately rather than reusing the name.
+    fraud_band_high_min=55,
+    fraud_band_med_min=35,
 )
 
 

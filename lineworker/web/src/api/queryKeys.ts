@@ -168,6 +168,55 @@ export const queryKeys = {
      */
     drillClaimPages: (filterKey: string, firstCursor: string | null) =>
       ["dashboard", "claims", filterKey, "pages", firstCursor] as const,
+    /**
+     * The analyst workspace's fraud panel (Story 7.1) — the band distribution
+     * and the SIU pipeline.
+     *
+     * A fifth sibling in this group rather than a group of its own, because it
+     * is the same `dashboard` feature and the same `/dashboard/*` prefix: the
+     * analyst workspace extends the supervisor dashboard (the Capability Map
+     * places FR-AN-1..6 there) rather than standing up a parallel one. Its own
+     * key rather than a field on `summary` for that key's recorded reason — a
+     * separate server answer with a separate cost, failing and refetching on its
+     * own, behind its own section state.
+     *
+     * **No persona and no role segment, although this endpoint gates on role.**
+     * A 403 is the absence of an answer rather than a different answer, and a
+     * supervisor never reaches this route. Putting a role here would imply the
+     * client picks which version of the panel it sees; the server answers for
+     * whoever holds the session cookie (AD-7), as it does for every key in this
+     * group. Switching personas clears the whole cache (`useLogout`).
+     */
+    fraud: ["dashboard", "fraud"] as const,
+    /**
+     * One reading of the three fraud-rate breakdowns, keyed by **the sort set
+     * that produced it**.
+     *
+     * The sorts are in the key for `drillClaims`' reason one surface up: a
+     * differently ordered table is a different server answer, computed over a
+     * scope the client does not hold in full, so two sort sets are two resources
+     * and therefore two cache entries. Going back to an order already fetched is
+     * then instant, which is what an analyst toggling a column expects — and it
+     * is the mechanism that makes "the browser sorts nothing" observable: a new
+     * order is a new request, not a re-render of the same rows.
+     *
+     * It takes the *serialised* sort set rather than the object, `drillClaims`'
+     * ruling: a TanStack key is compared structurally and a fresh object literal
+     * per render would be a fresh key per render.
+     */
+    fraudRates: (sortKey: string) => ["dashboard", "fraud", "rates", sortKey] as const,
+    /**
+     * The ranked red-flag clauses across the caller's book.
+     *
+     * Its own key rather than a field on `fraud` for that key's reason, with one
+     * extra: this one reads a *different table* (`ai_insight`, owned by
+     * `services/rag`) on a different cadence — it changes when a refresh job
+     * reaches a claim, not when a claim does — so folding it into the panel
+     * would tie a cache entry over model output to one over claim columns.
+     *
+     * No persona and no scope segment, for the group's recorded reason.
+     */
+    fraudRedFlags: ["dashboard", "fraud", "red-flags"] as const,
   },
   claims: {
     /**

@@ -116,6 +116,30 @@ router — and, like both of them, no role branch anywhere on the path. What it
 does *not* share with `priority_claims` is the cap: a drill-through shows all of
 its population, because a list that showed thirty of a card's ninety-two while
 reporting ninety-two would be the one failure this module exists to prevent.
+
+Story 7.1 opens Epic 7 with `fraud`, and it is the first module here whose
+surface belongs to **one persona** rather than to one question. The four Epic 5
+aggregates and `drill_through` answer for whoever holds the session cookie, gated
+by scope alone or — in `benchmarks`' case — by an oversight capability two roles
+share. This one is the analyst's workspace: `FRAUD_ANALYTICS_ROLES` is a new
+allowlist over `{analyst}` beside `benchmarks.PERMITTED_ROLES` rather than a
+widening of it, so a supervisor is refused here while every Epic 5 route keeps
+answering both roles identically.
+
+What it adds to the package's argument is the third rule over one column pair.
+Story 5.1's paragraph above explains why `fraud_flagged` had to be registered
+beside `siu_review`; this story registers `fraud_band`, which bands `fraud_score`
+with **no** `fraud_flag` conjunct and is therefore neither of them — and its high
+edge carries the same number as the review threshold today, which is exactly why
+it is a third parameter rather than a reuse. The distribution, the pipeline and
+the rate breakdowns each call a different one of the three by name, and the tests
+fold synthetic projections where the three disagree, because the seed cannot tell
+them apart. Structurally it is `charts`' shape three times over — one scoped read,
+one pure fold, every parameter block injected by the router — with two departures
+it states rather than hides: the band distribution zero-fills where `charts`
+omits (a rule's vocabulary is always complete), and the red-flag view takes *two*
+scoped reads, because a coverage figure needs a denominator the insight join
+cannot produce.
 """
 
 # **`priority_claims` is deliberately missing from this list**, and it is the
@@ -133,6 +157,7 @@ from services.worklist import (
     benchmarks,
     charts,
     drill_through,
+    fraud,
     priority,
     queue,
     sla,
@@ -183,6 +208,29 @@ from services.worklist.drill_through import (
     DrillRow,
     RankedClaim,
     drill_through_claims,
+)
+from services.worklist.fraud import (
+    FRAUD_ANALYTICS_ROLES,
+    EmployerRate,
+    FraudAnalyticsNotPermitted,
+    FraudClaim,
+    FraudClauseReader,
+    FraudPanel,
+    FraudRates,
+    FraudRateSort,
+    FraudRateSorts,
+    FraudRedFlags,
+    HandlerRate,
+    InjuryTypeRate,
+    RateBreakdown,
+    RedFlagClause,
+    fraud_panel,
+    fraud_rates,
+    fraud_red_flags,
+    panel_of,
+    rates_of,
+    red_flags_of,
+    require_fraud_analytics_access,
 )
 from services.worklist.priority import (
     QueueClaim,
@@ -247,10 +295,22 @@ __all__ = [
     "DrillFlags",
     "DrillRow",
     "EmployerPaid",
+    "EmployerRate",
     "FILTER_KEYS",
+    "FRAUD_ANALYTICS_ROLES",
+    "FraudAnalyticsNotPermitted",
+    "FraudClauseReader",
+    "FraudClaim",
+    "FraudPanel",
+    "FraudRateSort",
+    "FraudRateSorts",
+    "FraudRates",
+    "FraudRedFlags",
     "HandlerBenchmark",
     "HandlerBenchmarks",
+    "HandlerRate",
     "INJURY_TYPE_LIMIT",
+    "InjuryTypeRate",
     "InvalidCursor",
     "LabelCount",
     "MAX_PAGE_LIMIT",
@@ -268,6 +328,8 @@ __all__ = [
     "QueueFilter",
     "QueueFlags",
     "RankedClaim",
+    "RateBreakdown",
+    "RedFlagClause",
     "STAGE_ORDER",
     "STATE_LIMIT",
     "SlaMetric",
@@ -289,10 +351,15 @@ __all__ = [
     "drill_through",
     "drill_through_claims",
     "encode_cursor",
+    "fraud",
+    "fraud_panel",
+    "fraud_rates",
+    "fraud_red_flags",
     "generate_actions",
     "handler_benchmarks",
     "matches",
     "order_key",
+    "panel_of",
     "portfolio_charts",
     "portfolio_summary",
     "priority",
@@ -302,7 +369,10 @@ __all__ = [
     "qualifies_for_worklist",
     "queue",
     "rank",
+    "rates_of",
+    "red_flags_of",
     "require_benchmarks_access",
+    "require_fraud_analytics_access",
     "sla",
     "sla_strip",
     "strip_of",

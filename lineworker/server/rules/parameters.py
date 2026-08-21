@@ -227,6 +227,21 @@ class DerivationThresholds:
     # Two parameters in one block, adjacent, is the arrangement that makes the
     # difference legible to whoever reads either of them next.
     fraud_flag_score_min: int
+    # Story 7.1's two (document v6). The edges of the fraud-score *band* the
+    # analyst workspace's distribution is drawn from — and a third rule over the
+    # fraud columns rather than a re-spelling of either of the two above. Both of
+    # those are populations conjoined with `claim.fraud_flag`; this pair bands
+    # `fraud_score` on its own, so a claim nobody triaged still lands in a band,
+    # which is the only way a distribution can answer "how much of this book
+    # scores high and was never flagged". `fraudBandHighMin` and
+    # `fraud_flag_score_min` happen to carry the identical number today, and that
+    # coincidence is the reason they are two fields rather than one: collapsing
+    # them would make the analyst's high band
+    # definitionally the supervisor's Fraud Flags card, and widening the review
+    # threshold would silently re-band the whole portfolio's distribution with it.
+    # See `services/derivations/fraud_score_band.py`.
+    fraud_band_high_min: int
+    fraud_band_med_min: int
 
     def __post_init__(self) -> None:
         # Story 1.4's `Field(ge=0, le=100)`, in its new home. `severity_score`
@@ -266,6 +281,41 @@ class DerivationThresholds:
             raise RuleParameterError(
                 "fraudFlagScoreMin must be between 0 and 100 (fraud_score's range), "
                 f"got {self.fraud_flag_score_min}"
+            )
+        # `fraud_score`'s 0-100 range again, for the two band edges. The failure
+        # is the risk bands' failure over a different column: `fraudBandHighMin:
+        # 200` files every claim in the portfolio below `high` and the analyst's
+        # distribution renders three confident segments describing nothing.
+        for name, bound in (
+            ("fraudBandHighMin", self.fraud_band_high_min),
+            ("fraudBandMedMin", self.fraud_band_med_min),
+        ):
+            if not 0 <= bound <= 100:
+                raise RuleParameterError(
+                    f"{name} must be between 0 and 100 (fraud_score's range), got {bound}"
+                )
+        # **A band pair, so the ordering *is* checked** — and it is worth saying
+        # why that is not the refusal deliberately withheld twenty lines above.
+        # `fraudFlagScoreMin` against `siuFraudScoreMin` is two independent
+        # policies over one column, and an operator who decided to refer
+        # everything they review would be *stating* one; refusing it would be
+        # this tier legislating. These two are the edges of a single three-band
+        # scale, and an inverted pair is not a policy at all — `fraud_band` tests
+        # them in order, high first, so `medium` becomes unreachable and a
+        # middling score is banded `high`. Nothing anybody could mean by
+        # "medium above high" survives the reading.
+        #
+        # **Strictly less than**, `HandlerPerformance`'s complexity pair rather
+        # than `ReserveBands`' `<=`: equal cut-points do not invert the scale,
+        # they delete the middle band — and the segment that vanishes is the one
+        # most of a portfolio sits in, so nobody notices until somebody asks why
+        # nothing is medium any more. A document that wants two bands is asking
+        # for a different rule, not for these two numbers to coincide.
+        if self.fraud_band_med_min >= self.fraud_band_high_min:
+            raise RuleParameterError(
+                f"fraudBandMedMin ({self.fraud_band_med_min}) must be below "
+                f"fraudBandHighMin ({self.fraud_band_high_min}) — equal cut-points make "
+                "the medium band unreachable rather than re-tuning it"
             )
         # Story 1.4's `_bands_must_not_overlap`, in its new home. An
         # inverted pair puts scores in two bands at once and the derivation
@@ -369,6 +419,8 @@ class DerivationThresholds:
             path_fatality_severity_min=_integer(document, result, "pathFatalitySeverityMin"),
             ptd_severity_threshold=_integer(document, result, "ptdSeverityThreshold"),
             fraud_flag_score_min=_integer(document, result, "fraudFlagScoreMin"),
+            fraud_band_high_min=_integer(document, result, "fraudBandHighMin"),
+            fraud_band_med_min=_integer(document, result, "fraudBandMedMin"),
         )
 
 

@@ -1,6 +1,6 @@
 # Story 7.1: Fraud Analytics Workspace
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -100,10 +100,91 @@ No UX-DR covers this screen (the Epic 7 gap). Borrow: UX-DR7 (Recharts dashboard
 
 ### Agent Model Used
 
-<!-- filled by dev-story -->
+Claude Opus 5 (1M context), via the `bmad-dev-auto` unattended workflow.
 
 ### Debug Log References
 
 ### Completion Notes List
 
+Implemented against `spec-7-1-fraud-analytics-workspace.md`; see that file's `Auto Run Result` for
+the full record. Neither of the spec's two `Block If` conditions triggered: the two new drill
+facets were added to `DrillFilters` without touching any existing facet's meaning (the twelve
+pre-existing ones are asserted unchanged against the same `seed_fixture` oracle
+`test_drill_through.py` uses), and the fraud routes are gated by a **new**
+`fraud.FRAUD_ANALYTICS_ROLES` allowlist over `{analyst}` beside `benchmarks.PERMITTED_ROLES`, which
+is unchanged.
+
+Four deliberate deviations from this file's task text, each argued in the spec or forced by an
+existing guard:
+
+- **Task 2 asks for a "histogram" and this ships bands.** The seeded `fraud_score` runs 3-65, so a
+  ten-bucket 0-100 histogram has four permanently empty top bins, and `charts.py`'s omission rule
+  would drop exactly the bins the histogram existed to show. Bands dissolve that and buy three
+  things a histogram cannot: segments that name a population the drill list can filter on, a
+  vocabulary the rules tier owns, and the severity-distribution idiom the console already reads.
+  The spec's Design Note 1 carries the argument.
+- **Task 2 asks for a "flagged-claims list endpoint" and none was built.**
+  `/dashboard/claims?filter[fraudFlagged]=true` already is one — cursored, scoped, server-ranked
+  and reconciliation-tested — so the Fraud section embeds its first page through the existing
+  `useDrillClaims` hook and links to the full view. Building a second would fork the component
+  Task 5 forbids forking. Spec Design Note 5.
+- **AC 1's "by status/handler" is implemented as by *stage*/handler.** `status` carries six seeded
+  values that mix lifecycle with disposition and is not a drill facet; `stage` is the four-value
+  lifecycle every other surface groups on and is the facet the drill list accepts, so grouping on
+  `status` would produce pipeline segments no click could resolve. `summary.py:152-161` records the
+  same ruling. Spec Design Note 6.
+- **The new derivation's module is `services/derivations/fraud_score_band.py`, not `fraud_band.py`.**
+  The package's naming rule — enforced by `test_no_derivation_module_is_named_after_the_value_it_
+  exports` — forbids a module named after the value it exports, because
+  `from services.derivations.fraud_band import fraud_band` rebinds the package attribute from the
+  submodule to the `Derivation` and makes `services.derivations.fraud_band.FraudBand` an
+  `AttributeError`. `risk_band.py` exporting `risk` is the precedent; the registered name is still
+  `fraud_band`.
+
+One structural change the spec did not anticipate: `red_flags_of` takes the stored-card reader as an
+**injected callable** rather than importing `agents.schemas`. `tests/test_layering.py` machine-checks
+that `services/` never imports `agents/`, so the `TypeAdapter(FraudRiskInsight)` re-validation the
+spec asked for lives in `agents/schemas.py::read_fraud_clauses` and the router passes it down —
+`services/rag/insights.py`'s injected-`InsightGenerator` arrangement, for its reason. There is still
+exactly one `TypeAdapter` for that union in the build.
+
 ### File List
+
+**Server — new**
+- `services/derivations/fraud_score_band.py`
+- `services/worklist/fraud.py`
+- `rules/documents/derivation_thresholds.v6.jdm.json`
+- `data/versions/20260821_0045_fraud_band_thresholds.py`
+- `tests/test_fraud_analytics.py`
+
+**Server — changed**
+- `services/derivations/__init__.py`, `rules/parameters.py`, `agents/schemas.py`,
+  `data/repositories/insights.py`, `services/worklist/__init__.py`,
+  `services/worklist/drill_through.py`, `api/routers/dashboard.py`
+- `tests/seed_fixture.py`, `tests/test_derivations.py`, `tests/test_rule_parameters.py`,
+  `tests/test_rules_engine.py`, `tests/test_claim_detail.py`, `tests/test_claims_queue.py`,
+  `tests/test_portfolio_charts.py`, `tests/test_portfolio_summary.py`,
+  `tests/test_priority_claims.py`, `tests/test_drill_through.py`,
+  `tests/test_benefit_calculation.py`, `tests/test_case_file_derivations.py`,
+  `tests/test_claim_financials.py`, `tests/test_payment_projection.py`
+
+**Web — new**
+- `src/features/dashboard/fraud/FraudPage.tsx`, `FraudDistributionCard.tsx`,
+  `SiuPipelineCard.tsx`, `FraudRateTables.tsx`, `RedFlagFrequencyCard.tsx`, `FraudPage.test.tsx`
+- `src/features/shell/WorkspaceNav.tsx`
+
+**Web — changed**
+- `src/App.tsx`, `src/App.test.tsx`, `src/api/schema.d.ts` (regenerated), `src/api/dashboard.ts`,
+  `src/api/queryKeys.ts`, `src/features/shell/DashboardShell.tsx`, `src/features/shell/routes.ts`,
+  `src/features/dashboard/charts/chartTheme.ts`, `src/features/dashboard/drill/filters.ts`,
+  `src/features/queue/noDerivation.test.ts`, `src/test/api-mock.ts`
+
+**E2E — new**
+- `stories/7-1-fraud-analytics-workspace.spec.ts`
+
+**E2E — changed**
+- `fixtures/seed.ts`
+
+**Bookkeeping**
+- `_bmad-output/implementation-artifacts/deferred-work.md`, `sprint-status.yaml`,
+  `spec-7-1-fraud-analytics-workspace.md`

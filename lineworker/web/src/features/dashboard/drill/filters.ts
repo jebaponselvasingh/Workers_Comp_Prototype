@@ -1,8 +1,8 @@
 /**
  * The drill-through's filter vocabulary — the browser's one copy of it
- * (Story 5.5).
+ * (Story 5.5, widened by 7.1).
  *
- * Twelve facets, and three different places have to agree about them: the URL
+ * Fourteen facets, and three different places have to agree about them: the URL
  * a supervisor can bookmark and share, the request the client sends, and the
  * TanStack Query key the answer is cached under. Written out three times they
  * would agree until the first facet was added, so they are written out once —
@@ -36,12 +36,18 @@ import type { AppliedFilter } from "@/api/dashboard";
 import type { paths } from "@/api/schema";
 
 /**
- * The twelve facet names, in the order a chip row draws them.
+ * The fourteen facet names, in the order a chip row draws them.
  *
  * The same order the server publishes `appliedFilters` in, and the same order
  * the route declares its parameters in — so a URL built here, a chip row drawn
  * from the response, and a reviewer reading the OpenAPI document all see one
  * sequence.
+ *
+ * **Story 7.1's two are appended, and the position is load-bearing.** The
+ * server's `FILTER_KEYS` is read off `DrillFilters`' field order and the two
+ * arrived at the end of that dataclass; inserting `fraudBand` beside
+ * `fraudFlagged` here — where it reads more naturally — would put the chip row
+ * out of step with the server's `appliedFilters` on every URL carrying both.
  */
 export const FILTER_KEYS = [
   "stage",
@@ -56,6 +62,8 @@ export const FILTER_KEYS = [
   "employerId",
   "handlerId",
   "priority",
+  "fraudBand",
+  "siuReview",
 ] as const;
 
 export type FilterKey = (typeof FILTER_KEYS)[number];
@@ -161,6 +169,8 @@ export function toQueryParams(filters: DrillFilters): DrillQuery {
     "filter[employerId]": idValue(filters.employerId),
     "filter[handlerId]": idValue(filters.handlerId),
     "filter[priority]": boolValue(filters.priority),
+    "filter[fraudBand]": enumValue(filters.fraudBand) as DrillQuery["filter[fraudBand]"],
+    "filter[siuReview]": boolValue(filters.siuReview),
   };
 }
 
@@ -299,6 +309,21 @@ export const FILTER_LABEL: Record<FilterKey, string> = {
   employerId: "Employer",
   handlerId: "Handler",
   priority: "Priority worklist",
+  // Story 7.1's two, and they are named for the *surface* rather than the rule,
+  // per this map's own convention: "Fraud band" is the analyst workspace's
+  // distribution and "SIU review" is its pipeline. Both sit beside "Fraud flags"
+  // above, which is a third population over the same two columns — the chips are
+  // the one place a reader sees all three side by side, so they have to be
+  // distinguishable at a glance rather than three spellings of "fraud".
+  fraudBand: "Fraud band",
+  siuReview: "SIU review",
+};
+
+/** The fraud-score bands' copy, without the edges the legend quotes. */
+const FRAUD_BAND_VALUE_LABEL: Record<string, string> = {
+  low: "Low",
+  medium: "Medium",
+  high: "High",
 };
 
 /** The settlement donut's copy, which is the KPI cards' copy. */
@@ -368,6 +393,8 @@ const VALUE_LABEL: Partial<Record<FilterKey, Record<string, string>>> = {
   surgery: BOOLEAN_VALUE_LABEL,
   oshaRecordable: BOOLEAN_VALUE_LABEL,
   priority: BOOLEAN_VALUE_LABEL,
+  fraudBand: FRAUD_BAND_VALUE_LABEL,
+  siuReview: BOOLEAN_VALUE_LABEL,
 };
 
 /**

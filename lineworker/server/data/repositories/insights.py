@@ -133,6 +133,70 @@ async def select_claim_insights(
     return rows.all()
 
 
+async def select_fraud_insights(
+    db: AsyncSession,
+    ctx: CallerContext,
+) -> Sequence[sa.Row[Any]]:
+    """Every cached **fraud** narrative in the caller's book — scoped, id-ordered.
+
+    The first portfolio-wide read in this module. `select_claim_insights` above
+    answers "what does *this claim* have", which is the shape every consumer
+    needed until Story 7.1's analyst workspace asked the opposite question:
+    across the whole scoped book, which red-flag clauses recur, and over how many
+    claims. A per-claim selector called in a loop would be one query per claim in
+    the portfolio for a single card.
+
+    **Four columns rather than the entity**, and the first of them is the
+    *business* id. The fold that consumes this counts **distinct claims** per
+    clause, so it needs a stable claim identity — and `claim.claim_id` is the one
+    the console names a claim by everywhere else, so nothing downstream has to
+    resolve a surrogate key it was handed. `content`, `generated_at` and `model`
+    are the three the card renders: the clauses, the range the caption states,
+    and the provenance line AD-10 requires beside any narrative.
+
+    **Filtered by `kind` and by nothing else.** This is the one narrowing that is
+    a fact about the *table* rather than about the answer — a `similar_case`
+    row's JSONB has no `red_flags` key at all and would fail re-validation for a
+    reason that says nothing about the data. Everything else the service decides:
+    there is no `outcome` filter here, because `low_risk` rows are exactly what
+    make the published coverage figure honest (they raise `claimsWithInsight` and
+    contribute no clause), and a repository that dropped them would be deciding
+    what the card may say. That is this module's standing refusal, and
+    `claims.select_drill_rows` makes the same one at greater length.
+
+    **No `predicate` parameter**, for `claims.select_queue_rows`' reason and one
+    sharper: the clause grouping runs over model-authored prose inside a JSONB
+    blob, so any narrowing worth having is a Python fold rather than a SQL
+    `WHERE`. This module decides *which rows* — scope, and nothing else.
+
+    An **inner** join to `claim`: an `ai_insight` row's `claim_id` is a
+    non-nullable foreign key, so an outer join would add a `None` branch that
+    cannot happen. The scope predicate is `employer_scope(ctx)`, the same one
+    every other function here reaches `claim` through — a caller outside a
+    claim's employer partition gets no row for it, which is the same silence a
+    per-claim read gives.
+
+    Ordered by `Claim.claim_id` for `select_claim_insights`' reason: two reads of
+    one book return the rows in one order, so "first-seen spelling" — which is
+    what the fold displays a grouped clause in — is a property of the data rather
+    than of whatever order the database felt like.
+    """
+    rows = await db.execute(
+        sa.select(
+            Claim.claim_id,
+            AiInsight.content,
+            AiInsight.generated_at,
+            AiInsight.model,
+        )
+        .select_from(AiInsight)
+        .join(Claim, AiInsight.claim_id == Claim.id)
+        .where(employer_scope(ctx))
+        .where(AiInsight.kind == InsightKind.fraud_risk_indicators)
+        .order_by(Claim.claim_id)
+    )
+    return rows.all()
+
+
 async def select_claims_needing_insights(
     db: AsyncSession,
     ctx: CallerContext,

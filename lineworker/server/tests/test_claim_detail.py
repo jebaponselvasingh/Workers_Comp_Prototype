@@ -496,10 +496,11 @@ async def test_the_payload_names_the_rules_version_behind_it(seeded_db_url: str)
     answerable from the response."""
     payload = await detail_for(seeded_db_url, KAYA, _one_of(KAYA, "treatment")["claim_id"])
 
-    # Five since Story 5.1 added the dashboard's fraud-review cut-off (four
-    # since 3.1 added the PTD threshold). Pinned rather than read from the
-    # loader, for `seed_fixture`'s reason.
-    assert payload["thresholdsVersion"] == 5
+    # Six since Story 7.1 added the analyst workspace's fraud-band edges (five
+    # since 5.1 added the dashboard's fraud-review cut-off, four since 3.1 added
+    # the PTD threshold). Pinned rather than read from the loader, for
+    # `seed_fixture`'s reason.
+    assert payload["thresholdsVersion"] == 6
     # Intake is the only variant that consults the requirements document, so
     # it is the only one that names a version for it.
     assert payload["requirementsVersion"] is None

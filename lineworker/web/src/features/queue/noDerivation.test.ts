@@ -453,7 +453,39 @@ const DERIVED_FIELDS =
   //   is on this list beside `handlerName` for the reason that field is: any
   //   arithmetic on it — an index recovered from it, a comparison against
   //   another — would be the browser treating a surrogate key as a position.
-  "appliedFilters|handlerId";
+  "appliedFilters|handlerId|" +
+  // Story 7.1's four, and the alternation above was read before adding them —
+  // 5.4's review caught exactly the mistake of appending tokens that were
+  // already alternatives, three lines below a comment stating the discipline.
+  // `truncated`, `total`, `limit`, `handlerName`, `handlerId`, `fraudFlagged`
+  // and `fraudFlagScoreMin` are all already here; a fraud panel and a rate table
+  // add these four names and nothing else.
+  //
+  // - `fraudBand` is the analyst workspace's whole subject and the single most
+  //   tempting entry on this list to reconstruct: the panel publishes
+  //   `fraudBandHighMin` and `fraudBandMedMin` beside the distribution, and the
+  //   *per-claim* fraud score is on every drill row one route over — so
+  //   `row.fraudScore >= data.fraudBandHighMin ? "high" : …` is one line, reads
+  //   like formatting, and is the browser re-deciding a rule whose high edge
+  //   happens to equal the review threshold today and will not tomorrow. The two
+  //   published edges are guarded as *fields* rather than by name for the reason
+  //   `medRiskSeverityMin` is: they are rule-document values a caption quotes.
+  // - `rateBp` is the flagged rate in basis points, and it is the one field on
+  //   this surface with an obvious unit conversion attached. Dividing it by a
+  //   hundred in a component is exactly the "unit conversion at a call site"
+  //   `lib/rate.ts` exists to prevent — that module is outside the scanned roots
+  //   and is the only place allowed to do it.
+  // - `flagged` is the numerator every rate was computed from, published beside
+  //   its denominator so the thin-bucket case is legible. Both on one row means
+  //   `row.flagged / row.claims` is one line and would round differently from
+  //   the server. (`claims` is deliberately **not** on this list: it is far too
+  //   common a word in this codebase to guard textually — `list.data.claims`,
+  //   `claims.length` — and guarding the numerator catches the same division.)
+  // - `claimsWithInsight` is the red-flag card's coverage numerator, and
+  //   `claimsWithInsight / claimsInScope` is the percentage a caption would
+  //   "just" show. The card states both figures instead, which is what makes the
+  //   coverage checkable rather than presented.
+  "fraudBand|fraudBandHighMin|fraudBandMedMin|rateBp|flagged|claimsWithInsight";
 
 const FLAGS = "siuReview|rtwBlocked|paymentDue|fraudFlag|litigationFlag|surgeryRequired";
 
@@ -714,6 +746,37 @@ test("the scan reaches the files it claims to", () => {
   expect(scanned).toContain(
     path.join("features", "claim-detail", "actions", "ActionsCard.tsx"),
   );
+  // Story 7.1's five, in a nested folder `DashboardPage.tsx` being scanned says
+  // nothing about — and the folder with the strongest pull on the page since
+  // 5.2's, because it is the first surface where the browser holds a *rule's
+  // vocabulary* beside the score that vocabulary bands.
+  //
+  // `FraudPage.tsx` holds all four query results at once, including two
+  // populations over one column pair that are equal on today's data and are two
+  // different rules — so deriving either from the other is one line and would be
+  // right until an operator retuned a threshold. `FraudDistributionCard.tsx`
+  // renders a band legend quoting both published edges, which is where a
+  // re-banding would go. `SiuPipelineCard.tsx` draws two segment sets whose
+  // drill-throughs carry two facets each, which is where a browser-side
+  // intersection would go. `FraudRateTables.tsx` is handed three sortable tables
+  // with a numerator and a denominator on every row, so `.sort()` and a division
+  // are each one line. `RedFlagFrequencyCard.tsx` holds a ranked list, a cut and
+  // a coverage pair — a re-rank, a re-cut and a percentage, on one object.
+  for (const file of [
+    "FraudPage.tsx",
+    "FraudDistributionCard.tsx",
+    "SiuPipelineCard.tsx",
+    "FraudRateTables.tsx",
+    "RedFlagFrequencyCard.tsx",
+  ]) {
+    expect(scanned).toContain(path.join("features", "dashboard", "fraud", file));
+  }
+  // Story 7.1's navigation, in `features/shell` — which is scanned, but by a
+  // root added for the *queue* payload five stories ago. Named because it is the
+  // first component in that folder that branches on a value from `/api/me`, and
+  // "which persona sees which section" is exactly the kind of rule that grows a
+  // comparison.
+  expect(scanned).toContain(path.join("features", "shell", "WorkspaceNav.tsx"));
   expect(scanned.some((name) => name.includes(".test."))).toBe(false);
 });
 
@@ -835,6 +898,17 @@ test("the guard would notice a derivation if one were added", () => {
     // and re-cutting a page of a filtered list at a count the server published.
     "const chips = params.filter((p) => p.appliedFilters);",
     "const shown = rows.slice(0, data.total);",
+    // Story 7.1's four, and they are the four this workspace is most tempted by.
+    // Re-banding the fraud score from the edge published beside it — the
+    // prototype's own uncoloured-score gap, filled in the browser instead of by
+    // the derivation; turning basis points into a percentage at a call site;
+    // recomputing a rate from the numerator and denominator on one row; and
+    // turning the coverage pair into a percentage in a caption.
+    'const band = row.fraudScore >= data.fraudBandHighMin ? "high" : "medium";',
+    "const pct = row.rateBp / 100;",
+    "const rate = (row.flagged / row.claims) * 100;",
+    "const covered = data.claimsWithInsight - data.unreadable;",
+    "rows.sort((a, b) => b.rateBp - a.rateBp);",
   ];
 
   for (const smell of smells) {
@@ -904,6 +978,15 @@ test("the guard does not fire on rendering the server's answers", () => {
     // the shape `FilterChips.tsx` and `HandlerBenchmarkTable.tsx` are full of.
     "const applied = list.data?.appliedFilters ?? [];",
     "to={drillHref({ handlerId: String(row.handlerId) })}",
+    // Story 7.1's: rendering a rate through the one function allowed to convert
+    // basis points, reading two published counts to *state* them, and handing a
+    // band's wire value to a link builder. None computes anything, and all three
+    // are the shape `FraudRateTables.tsx` and `RedFlagFrequencyCard.tsx` are full
+    // of — a guard that fired on them would be the guard training the code.
+    "<span>{formatBasisPoints(row.rateBp)}%</span>",
+    "<span>{row.flagged} of {row.claims}</span>",
+    "<p>{data.claimsWithInsight} of {data.claimsInScope} claims</p>",
+    "onSelect={(band) => void navigate(drillHref({ fraudBand: band }))}",
   ];
 
   for (const line of innocent) {

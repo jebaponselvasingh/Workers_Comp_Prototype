@@ -107,7 +107,7 @@ development_status:
 
   # Epic 7: Analyst Workspace
   epic-7: in-progress
-  7-1-fraud-analytics-workspace: ready-for-dev
+  7-1-fraud-analytics-workspace: done
   7-2-trend-cohort-analytics: ready-for-dev
   7-3-segmentation-universal-drill-down: ready-for-dev
   7-4-financial-decomposition: ready-for-dev

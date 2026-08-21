@@ -641,14 +641,18 @@ async def test_both_rule_document_versions_that_ranked_the_queue_are_reported(
     payload = await queue_for(seeded_db_url, *KAYA)
 
     assert payload["rulesVersion"] == 1
-    # Five, not one, since Story 2.2 superseded the thresholds document with
+    # Six, not one, since Story 2.2 superseded the thresholds document with
     # a v2 carrying the treatment-phase parameters, Story 2.5 a v3 carrying the
-    # claim-path ones, Story 3.1 a v4 carrying the PTD cut-off and Story 5.1 a
-    # v5 carrying the dashboard's fraud-review threshold. Pinned rather than
+    # claim-path ones, Story 3.1 a v4 carrying the PTD cut-off, Story 5.1 a
+    # v5 carrying the dashboard's fraud-review threshold and Story 7.1 a v6
+    # carrying the analyst workspace's two fraud-band edges. Pinned rather than
     # read from the loader for `seed_fixture`'s reason — and the number moving
     # is the mechanism working: a retuned threshold re-ranks the queue, so the
-    # payload has to say which version answered.
-    assert payload["thresholdsVersion"] == 5
+    # payload has to say which version answered. (v6 re-ranks nothing on
+    # today's values, and the cursor still refuses a page cut under v5: the
+    # version records which document decided the ordering, not whether the
+    # ordering changed.)
+    assert payload["thresholdsVersion"] == 6
 
 
 async def test_both_totals_are_published_so_the_client_adds_nothing_up(
@@ -730,7 +734,7 @@ async def test_a_second_priority_weights_version_reranks_the_queue(seeded_db_url
         after = await queue_for(seeded_db_url, *KAYA)
 
     assert after["rulesVersion"] == 2
-    assert after["thresholdsVersion"] == 5, "only one document was superseded"
+    assert after["thresholdsVersion"] == 6, "only one document was superseded"
     assert ids(after["groups"]["treatment"]) == expected
     # The marker rule is data too: with the categorical weights gone, no
     # claim clears a threshold of 30 and no card carries a 🔺.

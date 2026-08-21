@@ -942,7 +942,7 @@ async def test_a_superseded_rule_document_moves_the_bands(
 ) -> None:
     """AD-8 end to end, on the one surface here that reads a rule.
 
-    A v6 of `derivation_thresholds` lowering `riskHighMin` is inserted effective
+    A v7 of `derivation_thresholds` lowering `riskHighMin` is inserted effective
     today; the same request comes back with a larger High slice *and* a lower
     published boundary, so the legend's caption follows the document. Nothing is
     deployed, nothing is restarted and no Python changes.
@@ -965,7 +965,7 @@ async def test_a_superseded_rule_document_moves_the_bands(
     await db.execute(
         sa.text(
             "INSERT INTO rule_document (key, version, effective_from, content, created_at) "
-            "VALUES (:key, 6, :today, CAST(:content AS jsonb), now())"
+            "VALUES (:key, 7, :today, CAST(:content AS jsonb), now())"
         ),
         {
             "key": DERIVATION_THRESHOLDS_KEY,
@@ -990,7 +990,7 @@ async def test_a_superseded_rule_document_moves_the_bands(
         assert expected > high_before, "the retune must actually widen the band"
         assert high_after == expected
         assert after["highRiskSeverityMin"] == lowered
-        assert after["rulesVersion"] == 6
+        assert after["rulesVersion"] == 7
         # One parameter changed, one donut changed.
         assert after["byStage"] == before["byStage"]
         assert after["byState"] == before["byState"]
@@ -998,7 +998,7 @@ async def test_a_superseded_rule_document_moves_the_bands(
         assert after["sla"] == before["sla"]
     finally:
         await db.execute(
-            sa.text("DELETE FROM rule_document WHERE key = :key AND version = 6"),
+            sa.text("DELETE FROM rule_document WHERE key = :key AND version = 7"),
             {"key": DERIVATION_THRESHOLDS_KEY},
         )
         await db.commit()

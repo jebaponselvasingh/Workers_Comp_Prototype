@@ -2577,7 +2577,15 @@ export type DrillFacet =
   | "state"
   | "employerId"
   | "handlerId"
-  | "priority";
+  | "priority"
+  // Story 7.1's two. Read the three fraud facets together before adding to
+  // them: `fraudFlagged` is the dashboard's *review* population, `siuReview` is
+  // the queue's narrower *referral* one, and `fraudBand` bands `fraud_score`
+  // with **no** flag conjunct at all. Three rules over one column pair, and an
+  // oracle that shared a restatement between any two would agree with an
+  // implementation that had collapsed the same pair.
+  | "fraudBand"
+  | "siuReview";
 
 export type DrillFilters = Partial<Record<DrillFacet, string>>;
 
@@ -2635,6 +2643,18 @@ function matchesFacet(claim: SeedClaim, facet: DrillFacet, value: string): boole
     // The worklist's population, before its cap.
     case "priority":
       return String(qualifiesForWorklist(claim)) === value;
+    // The band of the score **alone** — no `fraud_flag` conjunct, which is what
+    // makes it a third rule rather than a re-spelling of either fraud facet
+    // above. A claim nobody triaged still has a band.
+    case "fraudBand":
+      return fraudBand(claim.fraud_score) === value;
+    // The queue's SIU *referral* rule — 9 seeded claims against the review
+    // rule's 13, and restated rather than shared with `fraudFlagged` for that
+    // facet's recorded reason.
+    case "siuReview":
+      return (
+        String(claim.fraud_flag && claim.fraud_score >= SIU_FRAUD_SCORE_MIN) === value
+      );
   }
 }
 
@@ -2666,6 +2686,8 @@ const DRILL_FACET_LABEL: Record<DrillFacet, string> = {
   employerId: "Employer",
   handlerId: "Handler",
   priority: "Priority worklist",
+  fraudBand: "Fraud band",
+  siuReview: "SIU review",
 };
 
 /** What a chip says the *value* is, for the ten facets the UI labels. */
@@ -2687,6 +2709,11 @@ const DRILL_VALUE_LABEL: Partial<Record<DrillFacet, Record<string, string>>> = {
   surgery: { true: "Yes", false: "No" },
   oshaRecordable: { true: "Yes", false: "No" },
   priority: { true: "Yes", false: "No" },
+  // Three bands, and `medium` spelled out — deliberately not `RiskBand`'s
+  // `med`. Two vocabularies over two columns, and the abbreviation is only
+  // worth its ambiguity where something already spells it that way.
+  fraudBand: { low: "Low", medium: "Medium", high: "High" },
+  siuReview: { true: "Yes", false: "No" },
 };
 
 /**
@@ -2709,6 +2736,13 @@ const DRILL_FACET_ORDER: DrillFacet[] = [
   "employerId",
   "handlerId",
   "priority",
+  // Appended, and the position is load-bearing: the server's `FILTER_KEYS` is
+  // read off `DrillFilters`' field order and the two arrived at the end of that
+  // dataclass, so inserting them beside `fraudFlagged` — where they read more
+  // naturally — would put this oracle out of step with the chip row on every
+  // URL carrying both.
+  "fraudBand",
+  "siuReview",
 ];
 
 /**
@@ -2786,4 +2820,223 @@ export function drillUrl(filters: DrillFilters = {}): string {
   }
   const query = params.toString();
   return query === "" ? "/dashboard/claims" : `/dashboard/claims?${query}`;
+}
+
+// --- Story 7.1: the fraud workspace ---------------------------------------
+//
+// Three rules over one column pair, and this block is where the seed stops
+// being able to tell them apart:
+//
+//   siuReview    = fraud_flag && fraud_score >= SIU_FRAUD_SCORE_MIN   (60)
+//   fraudFlagged = fraud_flag && fraud_score >= FRAUD_FLAG_SCORE_MIN  (55)
+//   fraudBand    = band(fraud_score) against MED (35) and HIGH (55)
+//
+// On the seeded portfolio `fraud_flag` and `fraud_score >= 55` coincide exactly,
+// so `fraudFlagged` and the `high` band name the same thirteen claims. An oracle
+// that shared one number between them would still agree with an implementation
+// that had collapsed the two — which is why the two constants below are written
+// out separately although they hold the same integer, and why the server suite
+// carries synthetic projections where the three disagree. This file cannot: it
+// reads the seed, and the seed is the thing that cannot tell them apart.
+//
+// `FRAUD_BAND_MED_MIN` is likewise not `MED_RISK_MIN` above, although both are
+// 35: one bands a severity score and the other a fraud score, and the whole
+// reason they are two rule parameters is that they must be able to move apart.
+
+const FRAUD_BAND_HIGH_MIN = 55;
+const FRAUD_BAND_MED_MIN = 35;
+
+/** The `FraudBand` declaration order — low to high, a distribution's reading. */
+const FRAUD_BAND_ORDER = ["low", "medium", "high"] as const;
+
+/** The injury-type cut the rate breakdown applies — the chart's, restated. */
+const FRAUD_INJURY_TYPE_LIMIT = 8;
+
+/** `fraud_score` banded — the score alone, with no `fraud_flag` conjunct. */
+function fraudBand(fraudScore: number): string {
+  if (fraudScore >= FRAUD_BAND_HIGH_MIN) return "high";
+  if (fraudScore >= FRAUD_BAND_MED_MIN) return "medium";
+  return "low";
+}
+
+/** The dashboard's fraud *review* rule, restated — never the referral one. */
+function fraudFlagged(claim: SeedClaim): boolean {
+  return claim.fraud_flag && claim.fraud_score >= FRAUD_FLAG_SCORE_MIN;
+}
+
+/** The queue's SIU *referral* rule, restated — never the review one. */
+function siuReferred(claim: SeedClaim): boolean {
+  return claim.fraud_flag && claim.fraud_score >= SIU_FRAUD_SCORE_MIN;
+}
+
+export interface ExpectedFraudAnalytics {
+  /** The band legend's rows, as rendered text, in the rule's order. */
+  bandRows: string[];
+  /** The SIU pipeline's stage rows, as rendered text, in `STAGES`' order. */
+  siuStageRows: string[];
+  /** The SIU pipeline's handler rows, as rendered text, in the server's order. */
+  siuHandlerRows: string[];
+  /** The two population cards' figures, as rendered text. */
+  flagged: string;
+  siu: string;
+  /** The first row of each rate table under the default order, as rendered. */
+  topInjuryRate: string;
+  topEmployerRate: string;
+  topHandlerRate: string;
+}
+
+/**
+ * `65` → `"0.65%"`. `web/src/lib/rate.ts::formatBasisPoints`, restated.
+ *
+ * The same integer arithmetic rather than an import, for this file's standing
+ * reason: the point of the assertion is that the page turned the server's basis
+ * points into these characters, and an oracle that called the shipped formatter
+ * would agree with it whatever it did. Always two decimals, so `2000` reads
+ * `"20.00%"`.
+ */
+function formatRate(basisPoints: number): string {
+  const whole = Math.trunc(basisPoints / 100);
+  const hundredths = Math.abs(basisPoints % 100);
+  return `${String(whole)}.${String(hundredths).padStart(2, "0")}%`;
+}
+
+/** `flagged / claims` in basis points, half-up — the service's arithmetic. */
+function rateBp(flagged: number, claims: number): number {
+  // `Math.round` is half-*up* for positive numbers in JavaScript, which is what
+  // the server's `ROUND_HALF_UP` does for a non-negative rate. Stated rather than
+  // assumed, because JavaScript's `Math.round(-0.5)` is `-0` and a rate is never
+  // negative — so the agreement holds over this function's whole domain.
+  return Math.round((flagged / claims) * 10000);
+}
+
+/**
+ * What a persona's Fraud section must render.
+ *
+ * **Rendered strings rather than numbers**, `expectedPortfolioSummaryFor`'s
+ * discipline: a spec comparing numbers would still pass if the page printed a
+ * handler id where a name belongs, or a rate the browser divided itself.
+ *
+ * The band rows are the **legend's** text, including the edges the caption
+ * quotes — so a page holding its own 55 fails here rather than in a comment.
+ * They are all three, always, because the server zero-fills a rule's
+ * vocabulary; the pipeline rows are only the stages and handlers the scope
+ * actually reaches, because a stage is a column. The two rules sit in one oracle
+ * so the difference is asserted rather than described.
+ */
+export function expectedFraudAnalyticsFor(persona: {
+  name: string;
+  role: string;
+}): ExpectedFraudAnalytics {
+  const visible = claimsFor(persona.name, persona.role);
+
+  const bands = new Map<string, number>();
+  for (const band of FRAUD_BAND_ORDER) bands.set(band, 0);
+  for (const claim of visible) {
+    const band = fraudBand(claim.fraud_score);
+    bands.set(band, (bands.get(band) ?? 0) + 1);
+  }
+  const BAND_LABEL: Record<string, string> = {
+    low: "Low",
+    medium: `Medium (≥ ${String(FRAUD_BAND_MED_MIN)})`,
+    high: `High (≥ ${String(FRAUD_BAND_HIGH_MIN)})`,
+  };
+
+  const referred = visible.filter(siuReferred);
+
+  const stageCounts = new Map<string, number>();
+  for (const claim of referred) {
+    stageCounts.set(claim.stage, (stageCounts.get(claim.stage) ?? 0) + 1);
+  }
+  const STAGE_LABEL: Record<string, string> = {
+    settled: "Settled & Closed",
+    treatment: "Under Treatment",
+    intake: "Intake",
+    investigation: "Investigation",
+  };
+
+  const handlerCounts = new Map<string, number>();
+  for (const claim of referred) {
+    handlerCounts.set(claim.handler, (handlerCounts.get(claim.handler) ?? 0) + 1);
+  }
+  const handlerRows = [...handlerCounts.entries()].sort(
+    (a, b) =>
+      b[1] - a[1] ||
+      a[0].localeCompare(b[0]) ||
+      handlerIdOf(a[0]) - handlerIdOf(b[0]),
+  );
+
+  /** One rate table's top row under the default order — worst rate first. */
+  function topRate(keyOf: (claim: SeedClaim) => string, labelOf: (key: string) => string): string {
+    const tallies = new Map<string, { flagged: number; claims: number }>();
+    for (const claim of visible) {
+      const key = keyOf(claim);
+      const tally = tallies.get(key) ?? { flagged: 0, claims: 0 };
+      if (fraudFlagged(claim)) tally.flagged += 1;
+      tally.claims += 1;
+      tallies.set(key, tally);
+    }
+    const ordered = [...tallies.entries()].sort((a, b) => {
+      const rateA = rateBp(a[1].flagged, a[1].claims);
+      const rateB = rateBp(b[1].flagged, b[1].claims);
+      // Rate descending, then the *label* ascending, then the key — the server's
+      // total order, restated. Without the tie-break this oracle would disagree
+      // with a correct implementation whenever two rows tie, which on a rate of
+      // zero is most of the table.
+      return (
+        rateB - rateA ||
+        labelOf(a[0]).localeCompare(labelOf(b[0])) ||
+        a[0].localeCompare(b[0])
+      );
+    });
+    const [key, tally] = ordered[0];
+    return `${labelOf(key)} ${formatRate(rateBp(tally.flagged, tally.claims))} ${String(
+      tally.flagged,
+    )} ${String(tally.claims)}`;
+  }
+
+  const shortNames = new Map(seed.employers.map((row) => [row.name, row.short_name]));
+
+  return {
+    bandRows: FRAUD_BAND_ORDER.map(
+      (band) => `${BAND_LABEL[band]}:${String(bands.get(band) ?? 0)}`,
+    ),
+    // `STAGES`' declaration order, and only the stages the referred claims are
+    // actually in — the omission rule, which is the opposite of the band rows
+    // one field up and is the difference this oracle exists to assert.
+    siuStageRows: STAGES.filter((stage) => stageCounts.has(stage)).map(
+      (stage) => `${STAGE_LABEL[stage]}: ${String(stageCounts.get(stage) ?? 0)}`,
+    ),
+    siuHandlerRows: handlerRows.map(([name, count]) => `${name}: ${String(count)}`),
+    flagged: String(visible.filter(fraudFlagged).length),
+    siu: String(referred.length),
+    topInjuryRate: topRate(
+      (claim) => claim.injury_type,
+      (key) => key,
+    ),
+    topEmployerRate: topRate(
+      (claim) => claim.employer,
+      (key) => shortNames.get(key) ?? key,
+    ),
+    topHandlerRate: topRate(
+      (claim) => claim.handler,
+      (key) => key,
+    ),
+  };
+}
+
+/**
+ * How many injury types the rate breakdown shows, and how many it cut from.
+ *
+ * Published so the spec can assert the truncation caption from the *seed*
+ * rather than from a number typed into a test — the same reason the drill
+ * oracle publishes its page cut.
+ */
+export function expectedFraudInjuryCut(persona: { name: string; role: string }): {
+  shown: number;
+  total: number;
+} {
+  const types = new Set(
+    claimsFor(persona.name, persona.role).map((claim) => claim.injury_type),
+  );
+  return { shown: Math.min(FRAUD_INJURY_TYPE_LIMIT, types.size), total: types.size };
 }
