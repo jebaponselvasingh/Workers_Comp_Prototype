@@ -3,7 +3,8 @@ title: 'Story 6.6 — Honest Degradation'
 type: 'feature'
 created: '2026-08-21'
 baseline_revision: 'dea454090d4f5a4e1158eece11e1d5d39c1573b6'
-status: 'in-review'
+final_revision: '95bcad631ecf18ad7622a7c1447da079c434a5a3'
+status: 'done'
 review_loop_iteration: 0
 followup_review_recommended: true # twenty-one findings were patched into the diff, four of them high and all four on the paths the story exists to make honest — a catch-all that reported any graph defect as a model outage, an entry point where `ai_limit` could not fire at all, a truncation flag that failed runs which had completed, and a manual retry defeated by the server's own probe cache. Six were found independently by both reviewers, which is the signal that the model wrapper and the availability latch are dense rather than that the reviewers were thorough. The error vocabulary and the false-path guarantee are settled; what a second pass should read is the wrapper's `_astream`/`_agenerate` parity under the vendor's callback contract, the per-completion truncation reset across a real tool loop, and the frontend's outage latch across query failure, forced re-check and recovery
 context:
