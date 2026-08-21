@@ -89,7 +89,7 @@ then waits on a streamed completion, so a session held across the node would be
 a pooled connection idle-in-transaction for the length of an answer.
 """
 
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Mapping, Sequence
 from typing import Any, Protocol
 
 import structlog
@@ -164,6 +164,46 @@ class QasNode(Protocol):
     def __call__(
         self, state: CopilotState, *, runtime: Runtime[CopilotContext]
     ) -> Awaitable[dict[str, Any]]: ...
+
+
+class NarratingBuilder(Protocol):
+    """A builder for a `requires_llm: True` key: it is handed a model and a prompt.
+
+    Half of Story 6.6's structural half. `_BUILDERS` used to be one
+    `Mapping[str, Callable[..., QasNode]]`, and that `...` erased the whole
+    pairing the map exists to declare: every builder was handed a model, whether
+    or not its entry said it needed one, and `prompt_key` arrived as `str | None`
+    at builders that require a `str`. The review of Story 6.4 recorded the
+    erasure in `deferred-work.md` and named this story as the one that would
+    feel it.
+
+    Split in two, the flag becomes a type. A narrating builder's signature says
+    it takes a model and a *non-optional* prompt key; a deterministic one's says
+    it takes neither. See `DeterministicBuilder` for what that buys.
+    """
+
+    def __call__(self, *, model: BaseChatModel, prompt_key: str) -> QasNode: ...
+
+
+class DeterministicBuilder(Protocol):
+    """A builder for a `requires_llm: False` key: **it is handed no model at all**.
+
+    The other half, and the one that makes AD-14's false path honest by types
+    rather than by a promise. `data_alignment` genuinely calls no model today and
+    `tests/test_copilot_qas.py` asserts it — but nothing prevented the next
+    `_narrate(...)` from being added inside its builder, because the builder was
+    holding a `BaseChatModel` it had been handed "so that every entry in the map
+    is built the same way". A model in scope is an invitation with a comment
+    beside it asking readers not to accept.
+
+    Not handing it one makes the mistake a mypy error at the moment it is
+    written, in the builder, rather than an outage the e2e degradation spec
+    discovers three stories later. The existing test becomes the belt to this
+    braces: types stop the model being *reachable*, the test stops it being
+    *called*, and neither alone is the guarantee.
+    """
+
+    def __call__(self) -> QasNode: ...
 
 
 #: What a node says when the thread has no claim to ask about.
@@ -887,7 +927,7 @@ def _build_rtw(*, model: BaseChatModel, prompt_key: str) -> QasNode:
     return node
 
 
-def _build_data_alignment(*, model: BaseChatModel, prompt_key: str | None) -> QasNode:
+def _build_data_alignment() -> QasNode:
     """📊 Data alignment note — **no model call**, and that is declared up front.
 
     `requires_llm: False`, which makes this the false path Story 6.6 gates its
@@ -913,10 +953,17 @@ def _build_data_alignment(*, model: BaseChatModel, prompt_key: str | None) -> Qa
     node most at risk of it, because it is the only one that formats tool output
     for a human — so it touches the structured half and nothing else.
 
-    `model` and `prompt_key` are accepted and unused, so that every entry in the
-    map is built the same way and adding a model call to this node would be a
-    change to the map's `requires_llm` flag rather than a quiet change of
-    behaviour behind an unchanged declaration.
+    ## It takes no arguments at all, and that is Story 6.6's correction
+
+    Until 6.6 this builder accepted `model` and `prompt_key` and used neither,
+    "so that every entry in the map is built the same way". That symmetry was
+    the wrong thing to optimise for: it put a live `BaseChatModel` in the scope
+    of the one node whose entire declared property is that it does not have one,
+    leaving the `requires_llm: False` flag enforced by a comment asking the next
+    author not to type `_narrate`. The parameters are gone, so that mistake is
+    now a mypy error in this function rather than a stopped container's problem.
+    `build_node` selects on the flag and hands this builder nothing; see
+    `DeterministicBuilder`.
     """
 
     async def node(state: CopilotState, *, runtime: Runtime[CopilotContext]) -> dict[str, Any]:
@@ -968,29 +1015,43 @@ def _build_data_alignment(*, model: BaseChatModel, prompt_key: str | None) -> Qa
     return node
 
 
-#: Quick-action key → the builder that makes its node.
+#: Quick-action key → the builder that makes its node, **for the six that narrate**.
 #:
 #: A dict rather than a chain of `if`s so that `build_node` cannot silently
 #: answer for a key nobody wrote a node for: a missing key is a `KeyError` at
 #: graph-compile time, in `lifespan`, which is a process that fails to start
 #: rather than a quick action that falls through to free text at run time.
 #:
-#: The keys here and the keys in `agents/graph.py::QUICK_ACTIONS` are asserted
-#: equal by `tests/test_copilot_qas.py`, which is what keeps "one importable
-#: structure" true across the two files the split needs.
-_BUILDERS: Mapping[str, Callable[..., QasNode]] = {
+#: The keys of the two maps together, and the keys in
+#: `agents/graph.py::QUICK_ACTIONS`, are asserted equal by
+#: `tests/test_copilot_qas.py` — which is what keeps "one importable structure"
+#: true across the two files the split needs, now that the builders are in two
+#: maps rather than one.
+_NARRATING_BUILDERS: Mapping[str, NarratingBuilder] = {
     "laborlaw": _build_labor_law,
     "similar": _build_similar,
     "rtw": _build_rtw,
     "reserve": _build_reserve,
     "fraud": _build_fraud,
     "nextactions": _build_next_actions,
+}
+
+#: Quick-action key → the builder that makes its node, **for the ones that do not**.
+#:
+#: One entry today. A map rather than a special case in `build_node` because
+#: the seventh key is not special — it is the only *current* member of a
+#: category the architecture declares (`requires_llm: False`, AD-14), and a
+#: second deterministic action added later should be an entry here rather than
+#: an `if` somebody has to notice.
+_DETERMINISTIC_BUILDERS: Mapping[str, DeterministicBuilder] = {
     "data_alignment": _build_data_alignment,
 }
 
 
-def build_node(key: str, *, prompt_key: str | None, model: BaseChatModel) -> QasNode:
-    """The node for one quick-action key, closed over the process's chat model.
+def build_node(
+    key: str, *, requires_llm: bool, prompt_key: str | None, model: BaseChatModel
+) -> QasNode:
+    """The node for one quick-action key — with a model, or without one.
 
     Called once per key from `agents/graph.build_graph`, which is itself called
     once from `lifespan`. **No node constructs a model** — the model arrives by
@@ -999,13 +1060,66 @@ def build_node(key: str, *, prompt_key: str | None, model: BaseChatModel) -> Qas
     once" from acquiring a second model per node.
 
     `prompt_key` comes from the map entry rather than from a constant in this
-    module, so a key's prompt file is named in exactly one place. It is `None`
-    for `data_alignment`, which makes no model call and has no prompt file — and
-    the builder that accepts a `None` is the one whose docstring says why.
+    module, so a key's prompt file is named in exactly one place.
 
-    Raises `KeyError` for a key with no node, at compile time. See `_BUILDERS`.
+    ## `requires_llm` selects, and that is Story 6.6's structural claim
+
+    The flag was a declaration nothing acted on: every builder was handed the
+    model regardless, so "this action needs no model" was true because the
+    author of one function had chosen not to call one. Selecting on it here
+    means a `requires_llm: False` key is **not handed a model** — see
+    `DeterministicBuilder` — so the declaration is load-bearing in the type
+    system rather than in a comment.
+
+    ## Both mismatches raise, and both raise in `lifespan`
+
+    A `requires_llm: True` entry with no prompt file has no instructions to send
+    (AD-16: the versioned files are the only instruction channel), and a
+    `requires_llm: False` entry *with* one is a prompt nothing will ever load.
+    Neither can be expressed as a type on `QuickAction` — the two fields are
+    independent there — so they are checked here, where the pairing is used, and
+    they fail the process at start-up rather than one quick action at run time.
+    `graph.py::QuickAction` records that the two `None`s travel together by
+    construction; this is that sentence made checkable.
+
+    ## The missing builder is diagnosed first, and that ordering is the fix
+
+    Raises `KeyError` for a key with no node, at compile time, exactly as the
+    single-map lookup did before the split — and the *order* of the checks below
+    is what preserves that. Written the other way round, a key added to
+    `QUICK_ACTIONS` with no builder anywhere fell out of this function as
+    "declares requires_llm and names no prompt file", which is a sentence about
+    the wrong field: the author's mistake was a node they had not written, and
+    the message sent them to look at a prompt directory. Splitting one map into
+    two made a `KeyError` naming the key reachable only after two other
+    conditions had been satisfied, so the lookup moved first.
+
+    A key registered in the map its flag does not name gets its own sentence for
+    the same reason — "there is no builder for this" and "the builder for this
+    is the other kind" are different mistakes, and a reader at start-up should
+    not have to diff two dicts to tell which they made.
+
+    See the two maps.
     """
-    return _BUILDERS[key](model=model, prompt_key=prompt_key)
+    narrating = _NARRATING_BUILDERS.get(key)
+    deterministic = _DETERMINISTIC_BUILDERS.get(key)
+    if narrating is None and deterministic is None:
+        raise KeyError(f"quick action {key!r} has no node builder in either map")
+    if requires_llm:
+        if narrating is None:
+            raise KeyError(
+                f"quick action {key!r} declares requires_llm and its only builder is deterministic"
+            )
+        if prompt_key is None:
+            raise ValueError(f"quick action {key!r} declares requires_llm and names no prompt file")
+        return narrating(model=model, prompt_key=prompt_key)
+    if deterministic is None:
+        raise KeyError(
+            f"quick action {key!r} declares no model call and its only builder is a narrating one"
+        )
+    if prompt_key is not None:
+        raise ValueError(f"quick action {key!r} makes no model call and names a prompt file")
+    return deterministic()
 
 
 #: `REGISTRY` is re-exported deliberately, and it is the one name here that is

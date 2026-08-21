@@ -167,6 +167,24 @@ STUB_WRITE_TOOL = "update_claim_field"
 STUB_WRITE_FIELD = "icd_desc"
 STUB_WRITE_VALUE = "Laceration of left hand, deterministic stub"
 
+#: The phrase that makes this stub stop on its token ceiling (Story 6.6).
+#:
+#: Request-shape-driven, like `STUB_WRITE_PHRASE` above and for the same
+#: reasons: no control endpoint, no state, and a condition a caller can reach
+#: only by sending words it chose to send. One condition rather than that
+#: branch's two, because there is no tool to offer — a completion either ends
+#: `stop` or ends `length`, and the phrase is the whole of what selects.
+#:
+#: **It exists because `ai_limit` had no coverage outside one hand-rolled
+#: fake.** The stub emitted `done_reason: "stop"` unconditionally, so no
+#: integration or e2e test could reach `/problems/copilot-output-truncated`;
+#: the only test drove a fake whose `generation_info` this repository wrote,
+#: and therefore asserted the fake's own shape rather than
+#: `langchain_ollama`'s. If the vendor stopped publishing the field, truncated
+#: answers would have quietly gone back to reporting `done` and every test
+#: would still have passed. Now the e2e stack produces the real thing.
+STUB_TRUNCATE_PHRASE = os.environ.get("STUB_TRUNCATE_PHRASE", "answer at length forever")
+
 #: How the claim and its version are read out of the request's own messages.
 #:
 #: The claim id because a write has to name one and the stub has no other way to
@@ -495,6 +513,19 @@ def _proposed_write(body: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def _stops_on_length(body: dict[str, Any]) -> bool:
+    """Whether this request asked to be cut off at its token ceiling (6.6).
+
+    See `STUB_TRUNCATE_PHRASE`. The stub does not count tokens and must not
+    start: `num_predict` is enforced by the model server, and a stub that
+    reimplemented the enforcement would be asserting its own arithmetic. What it
+    reproduces is the **wire fact** a real Ollama publishes when the ceiling is
+    reached — `done_reason: "length"` on the terminal NDJSON line — which is the
+    one thing the server under test reads.
+    """
+    return STUB_TRUNCATE_PHRASE in _message_text(body)
+
+
 def _envelope(body: dict[str, Any], content: str) -> dict[str, Any]:
     """One Ollama chat response object, done in a single turn.
 
@@ -504,6 +535,11 @@ def _envelope(body: dict[str, Any], content: str) -> dict[str, Any]:
     content is empty on that turn, because a turn that calls a tool has not said
     anything yet, and a stub that put prose beside a tool call would be teaching
     the transcript to render a paraphrase of a pending write (AD-16).
+
+    `done_reason` is `stop` unless the request asked otherwise (Story 6.6). It
+    is the field the copilot reads to tell a completed answer from one that hit
+    `copilot_max_output_tokens`, so a stub that could only say `stop` left the
+    `ai_limit` path unreachable from the composed stack.
     """
     proposed = _proposed_write(body)
     message: dict[str, Any] = {"role": "assistant", "content": "" if proposed else content}
@@ -514,7 +550,7 @@ def _envelope(body: dict[str, Any], content: str) -> dict[str, Any]:
         "created_at": "2026-01-01T00:00:00Z",
         "message": message,
         "done": True,
-        "done_reason": "stop",
+        "done_reason": "length" if _stops_on_length(body) else "stop",
     }
 
 
@@ -563,7 +599,9 @@ def chat(body: dict[str, Any]) -> Any:
     The shape is Ollama's own: `STUB_CHAT_CHUNKS` lines carrying a slice of the
     content with `done: false`, then one final line with **empty** content and
     `done: true`. `done_reason` is `stop` rather than `load`, which the client
-    skips. See the module docstring on why one line was not enough.
+    skips — or `length` when the request carries `STUB_TRUNCATE_PHRASE`, which
+    is Story 6.6's `ai_limit` made reachable from the composed stack. See the
+    module docstring on why one line was not enough.
 
     Non-streaming requests get the whole thing as a plain JSON body, so both
     call shapes exercise the real client against the real wire format.

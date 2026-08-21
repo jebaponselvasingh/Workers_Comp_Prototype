@@ -479,3 +479,37 @@ def test_a_proposed_write_streams_as_one_terminal_line() -> None:
     assert len(lines) == 1
     assert lines[0]["done"] is True
     assert lines[0]["message"]["tool_calls"][0]["function"]["arguments"]["expected_version"] == 2
+
+
+def test_the_truncation_phrase_ends_the_turn_on_length() -> None:
+    """Story 6.6's `ai_limit`, made reachable from the composed stack.
+
+    The stub emitted `done_reason: "stop"` unconditionally, so no integration or
+    e2e test could reach `/problems/copilot-output-truncated`: the only coverage
+    drove a fake whose `generation_info` this repository writes, which asserts
+    this repository's idea of the wire format rather than `langchain_ollama`'s.
+    A vendor that stopped publishing the field would have sent truncated answers
+    quietly back to terminating `done` with every test still green.
+
+    Request-shape-driven like the write proposal beside it: no control endpoint,
+    no state, and a condition a caller reaches only by sending words it chose to
+    send. Both directions are asserted, because a stub that answered `length`
+    unconditionally would satisfy the first half and break every other spec.
+    """
+    from fastapi.testclient import TestClient
+
+    def _stop_reasons(message: str) -> list[str]:
+        with TestClient(stub.app) as client:
+            response = client.post(
+                "/api/chat",
+                json={
+                    "model": "model-stub",
+                    "stream": True,
+                    "messages": [{"role": "user", "content": message}],
+                },
+            )
+            lines = [json.loads(line) for line in response.text.splitlines() if line.strip()]
+        return [line["done_reason"] for line in lines if line["done"]]
+
+    assert _stop_reasons(f"Please {stub.STUB_TRUNCATE_PHRASE} about WC-20017.") == ["length"]
+    assert _stop_reasons("Please summarise WC-20017.") == ["stop"]

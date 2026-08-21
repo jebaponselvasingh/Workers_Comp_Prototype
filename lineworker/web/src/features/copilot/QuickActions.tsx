@@ -25,10 +25,25 @@
  * could not have known — the 409 is the guarantee, and a greyed-out button is
  * the courtesy. (`Composer` takes the same prop for the same reason.)
  *
- * **Per-key degradation is Story 6.6's**, not this component's. When the model
- * server is unreachable the actions that declare `requires_llm: false` still
- * answer, and disabling exactly the affected six is that story's job — which is
- * why `disabled` here has one source and not two.
+ * ## Per-key degradation arrived in Story 6.6, through the same one expression
+ *
+ * When the model server is unreachable the actions that declare
+ * `requires_llm: false` still answer (AD-14), so exactly the affected six
+ * disable and the seventh does not. `unavailableKeys` is how that reaches this
+ * component — **a set of keys, decided by the caller**, not a boolean this
+ * component resolves against a table of its own.
+ *
+ * That shape is the whole of the design. The authority on which keys need a
+ * model is `agents/graph.py::QUICK_ACTIONS`, published on
+ * `GET /copilot/availability`; a `requiresLlm` field added to
+ * `quickActionMeta.ts` would have been a second copy of server truth in the
+ * browser, which that file's docstring argues against at length and which would
+ * go quietly wrong the day an eighth key was added. So the strip receives the
+ * answer and renders it.
+ *
+ * `disabled` still has one source and not two: `busy || unavailableKeys.has(key)`
+ * is one expression, and the read-only case remains **absence** rather than
+ * disabling — see below.
  *
  * The strip is **absent** on a superseded thread rather than disabled, which is
  * `Composer`'s rule and its reason: a greyed-out control invites a handler to
@@ -40,10 +55,22 @@ import { QUICK_ACTIONS, QUICK_ACTION_KEYS, type QuickActionKey } from "./quickAc
 export function QuickActions({
   onPick,
   busy,
+  unavailableKeys,
 }: {
   onPick: (key: QuickActionKey, label: string) => void;
   /** Whether a run is in flight — the client half of the single-flight rule. */
   busy?: boolean;
+  /**
+   * Which keys cannot answer right now — Story 6.6's per-key degradation.
+   *
+   * A set rather than a flag, so the six that need the model and the one that
+   * does not are told apart by the server's own answer rather than by a list
+   * spelled a second time in the browser. Absent means "nothing is degraded",
+   * which is also what a pending or failed availability query means: an
+   * unknown state is treated as available, so a slow probe never disables a
+   * working model.
+   */
+  unavailableKeys?: ReadonlySet<QuickActionKey>;
 }) {
   return (
     <div
@@ -63,7 +90,7 @@ export function QuickActions({
             type="button"
             data-testid="copilot-quick-action"
             data-quick-action={key}
-            disabled={busy}
+            disabled={Boolean(busy) || Boolean(unavailableKeys?.has(key))}
             onClick={() => onPick(key, meta.label)}
             className="flex w-full items-start gap-2 rounded border border-border bg-surface px-2 py-1.5 text-left hover:bg-steel-soft disabled:cursor-not-allowed disabled:opacity-50"
           >

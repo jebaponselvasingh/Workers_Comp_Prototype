@@ -101,6 +101,29 @@
  * blocking dialog, and **stored with the thread it was raised about** so that
  * "this conversation is busy" does not follow the handler onto the next one they
  * select. Both single-flight causes carry one `type`, so there is one sentence.
+ *
+ * ## Degradation disables inputs; it never disables the pane (Story 6.6)
+ *
+ * When the local model is unreachable, what changes here is exactly three
+ * things: the composer is `disabled`, the six `requiresLlm` quick actions are
+ * `disabled`, and an inline `warn` notice with a manual "Try again" appears
+ * above them. Everything else stays live — the thread switcher, the transcript,
+ * the greeting, the 📓 Diary tab beside this one, and the ⚡ data-alignment
+ * action, which answers without a model by design (AD-14).
+ *
+ * The disabled *set* is derived from one server response rather than from
+ * anything in `web/`: `GET /copilot/availability` carries both whether the
+ * model answered and which keys need it, so adding an eighth quick action
+ * changes no code in this directory. And the state is read from two places that
+ * cannot disagree for long — a polled probe, and the run that actually hit the
+ * outage — combined by timestamp so that recovery clears the reactive half
+ * without a second flag. See `api/copilot.ts` for both, and for the argument
+ * that justifies the SPA's first `refetchInterval`.
+ *
+ * **No failed run is ever re-fired** (NFR-6). "Try again" re-probes the model
+ * server — bypassing the api's own probe cache, so the answer is about *now*
+ * rather than about the last ten seconds — and what it re-enables is an input,
+ * not a question.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -110,14 +133,17 @@ import {
 import type { LangChainMessage } from "@assistant-ui/react-langgraph";
 
 import {
+  isAiUnavailable,
   isThreadBusy,
   isThreadReadOnly,
   pendingAction,
   rtwDraftOf,
   streamRun,
   useClaimThreads,
+  useCopilotAvailability,
   useCopilotWriteInFlight,
   useNewThread,
+  useRecheckAvailability,
   useThreadTranscript,
   type ApprovalDecision,
   type CopilotRunRequest,
@@ -131,7 +157,11 @@ import { ApprovalCard } from "./ApprovalCard";
 import { Composer } from "./Composer";
 import { COPILOT_DISCLAIMER } from "./disclaimer";
 import { QuickActions } from "./QuickActions";
-import { QUICK_ACTIONS, type QuickActionKey } from "./quickActionMeta";
+import {
+  QUICK_ACTIONS,
+  QUICK_ACTION_KEYS,
+  type QuickActionKey,
+} from "./quickActionMeta";
 import { RtwLetterDialog, type RtwLetterDraft } from "./RtwLetterDialog";
 import { ThreadSwitcher } from "./ThreadSwitcher";
 import { Transcript, type TranscriptTurn } from "./Transcript";
@@ -169,6 +199,27 @@ const MINT_FAILED_MESSAGE =
  */
 const SAVE_UNPINNED_MESSAGE =
   "⚠ This letter cannot be saved: the claim version it was drafted against is not known. Run 📄 Review RTW Policy again.";
+
+/**
+ * What the pane says while the model server is unreachable (Story 6.6, UX-DR8).
+ *
+ * A quiet inline sentence in the `warn` tokens, **not a toast and not a
+ * dialog** (UX-DR11, NFR-3): the copilot deliberately does not toast, and a
+ * modal over an outage would block the case file the outage is not stopping
+ * anybody from working on.
+ *
+ * What it says is chosen as carefully as where it appears. It names the thing
+ * that is unavailable — the AI, not "the copilot", which is the whole pane and
+ * is still working — and it says what still works, because the handler's next
+ * question is whether they can carry on. No pre-authored answer to their actual
+ * question appears anywhere; that is the `offlineAnswer` pattern AD-14 bans by
+ * name, and a sentence about availability is not one.
+ */
+const AI_UNAVAILABLE_MESSAGE =
+  "AI is unavailable — the local model is not responding. Everything else on this claim still works, and ⚡ actions that need no model still answer.";
+
+/** An empty set, shared, so a re-render does not hand `QuickActions` a new one. */
+const NO_DISABLED_KEYS: ReadonlySet<QuickActionKey> = new Set<QuickActionKey>();
 
 /**
  * The handler's turn when they save the letter.
@@ -228,6 +279,50 @@ export function ActionsTab({ claimId }: { claimId: string | null }) {
   // its own notice rather than a `refusal` with an invented thread id.
   const [mintFailed, setMintFailed] = useState(false);
 
+  // **The degradation signal, from two sources that cannot disagree for long**
+  // (Story 6.6, AD-14). `useCopilotAvailability` polls a server-side probe;
+  // `outageAt` records the moment a run *actually* hit an outage, which is
+  // knowledge the poll cannot have yet — the run is the thing that tried.
+  //
+  // The two are combined by **time**, not by precedence, and that is what makes
+  // recovery work without a second flag to clear. A reactive outage counts only
+  // while it is newer than the last successful probe: press "Try again" (or let
+  // the interval elapse) and a probe that answers `available: true` is stamped
+  // later than the outage, which supersedes it. A boolean cleared "on the next
+  // successful query" would instead be cleared by the poll that was already in
+  // flight when the run failed, and the notice would flicker away a second
+  // after appearing.
+  //
+  // `dataUpdatedAt` is 0 before the first successful fetch, so an outage
+  // observed while the probe has never answered still counts.
+  //
+  // **The stamp it is compared against is the later of the query's two**, which
+  // the first cut of this story got wrong in a way that could not recover.
+  // `dataUpdatedAt` only advances on a *successful* fetch, and `outageAt` is
+  // never reset — so if the availability request itself started failing (a 401
+  // after a session expiry, a proxy hiccup, a network blip on the poll) the
+  // latch could never be superseded and the composer stayed disabled for the
+  // life of the pane, under a "Try again" that could not clear it. Comparing
+  // against `errorUpdatedAt` too means a probe that *answered at all*, even to
+  // fail, moves the pane on; combined with "pending or errored reads as
+  // available" below, a query that is failing leaves nothing disabled, which is
+  // the safe direction.
+  //
+  // `>=` rather than `>`, because both operands are millisecond stamps and a
+  // probe that resolves in the same millisecond as the failing run would
+  // otherwise silently drop the reactive signal — the one case where the run
+  // knows something the probe cannot.
+  const availability = useCopilotAvailability();
+  const recheck = useRecheckAvailability();
+  const [outageAt, setOutageAt] = useState<number | null>(null);
+  const availabilityAnsweredAt = Math.max(
+    availability.dataUpdatedAt,
+    availability.errorUpdatedAt,
+  );
+  const modelDown =
+    availability.data?.available === false ||
+    (outageAt !== null && outageAt >= availabilityAnsweredAt);
+
   const items = useMemo(() => threads.data?.items ?? [], [threads.data]);
   const currentThreadId = threads.data?.currentThreadId ?? null;
   // The selection follows the server's current thread until the handler picks
@@ -257,6 +352,44 @@ export function ActionsTab({ claimId }: { claimId: string | null }) {
     setRefusal(null);
     setMintFailed(false);
   }
+
+  // Which buttons cannot answer right now — **derived from the server's own
+  // flags**, never from a list in the browser (`quickActionMeta.ts` argues why).
+  //
+  // Empty whenever the model is up, and empty *also* when the model is known to
+  // be down but the flag list has not arrived. That second case looks like an
+  // omission and is a decision: without the flags this pane cannot tell which
+  // six of the seven need a model, and the only safe guess is the one that does
+  // not disable `data_alignment` — AD-14's whole point is that the deterministic
+  // action keeps working, and disabling it during an outage would be a worse
+  // failure than leaving six buttons live to fail honestly.
+  //
+  // Filtered through `QUICK_ACTION_KEYS` rather than cast, so a key the server
+  // grows that this build does not render is dropped here instead of arriving
+  // in a component as a `QuickActionKey` it is not.
+  //
+  // **A key the server no longer publishes is treated as needing the model**,
+  // and that asymmetry is deliberate. The list arriving without a key this
+  // build still renders means the two have drifted — a key retired on the
+  // server, a build deployed against an older api — and the button is then
+  // orphaned: nobody knows whether it needs a model, and the honest answer
+  // during an outage is "assume it does". The alternative left an unknown
+  // button enabled through an outage so that pressing it produced a failed run,
+  // which is the discovery-by-failure this whole story exists to remove. The
+  // *absence of the whole list* is still read the other way, above: that is a
+  // query that has not answered rather than a server that has, and disabling
+  // `data_alignment` because a probe was slow would break AD-14's one promise
+  // that survives an outage.
+  const availableFlags = availability.data?.quickActions;
+  const unavailableKeys = useMemo<ReadonlySet<QuickActionKey>>(() => {
+    if (!modelDown || !availableFlags) return NO_DISABLED_KEYS;
+    return new Set(
+      QUICK_ACTION_KEYS.filter((key) => {
+        const flag = availableFlags.find((published) => published.key === key);
+        return flag === undefined || flag.requiresLlm;
+      }),
+    );
+  }, [modelDown, availableFlags]);
 
   // **The first conversation, minted once.** See the module docstring: this is
   // AC 1's "the SPA POSTs once when the list comes back empty", and the ref is
@@ -434,6 +567,17 @@ export function ActionsTab({ claimId }: { claimId: string | null }) {
       // `activeThreadId` directly: this callback is created once and would
       // otherwise close over the thread selected at mount.
       onError: (error: unknown) => {
+        // **The reactive half of the degradation signal** (Story 6.6). The
+        // failed run is the only thing in this pane that *knows* the model is
+        // down — the availability poll is by construction behind — so the
+        // inputs disable now rather than at the next interval, and the handler
+        // is not left retyping a question into a composer that cannot send it.
+        //
+        // Read off the frame's `code` and not its `type`, so a second problem
+        // URI for the same outage would need no change here. Nothing is
+        // re-fired: the notice re-enables an input, it does not re-ask the
+        // question (NFR-6).
+        if (isAiUnavailable(error)) setOutageAt(Date.now());
         const threadId = activeThreadRef.current;
         if (!threadId) return;
         const detail =
@@ -905,6 +1049,12 @@ export function ActionsTab({ claimId }: { claimId: string | null }) {
           // pressing. Resume is the only way forward, and the card is the only
           // control that offers one.
           busy={busy || running || awaitingApproval}
+          // **Exactly the affected buttons, never the strip** (Story 6.6,
+          // AD-14/UX-DR8). The set is the server's answer intersected with an
+          // outage; `data_alignment` is not in it, so the ⚡ note still answers
+          // with the model container stopped, which is the promise this whole
+          // story exists to make observable.
+          unavailableKeys={unavailableKeys}
           onPick={(key, label) => void send(label, key)}
         />
       )}
@@ -948,6 +1098,46 @@ export function ActionsTab({ claimId }: { claimId: string | null }) {
         />
       ) : null}
 
+      {/* **The outage notice** (Story 6.6, UX-DR8/UX-DR11). Inline, in the
+          `warn` tokens, immediately above the controls it explains — so the
+          reason a composer is greyed out is beside the composer rather than in
+          a toast that has already gone.
+
+          Absent on a read-only thread, where the composer and the strip are
+          themselves absent: a notice explaining why controls that are not there
+          are disabled is noise, and the read-only line below already says why
+          this conversation takes no input.
+
+          The retry is **manual and re-probes only** (NFR-6). It does not
+          re-send the message that failed: an automatic re-fire is how a brief
+          outage becomes a queue of duplicate runs, and the handler may well
+          want to ask something else once the model is back.
+
+          It goes through `useRecheckAvailability` rather than the query's own
+          `refetch()`, which is the difference between a control that works and
+          one that only claims to: `refetch()` re-issues a request the server
+          answers from a ten-second cache, so inside that window it returned the
+          identical stale `false` and the handler had no way to tell. See that
+          hook. */}
+      {items.length === 0 || readOnly || !modelDown ? null : (
+        <div
+          data-testid="copilot-degraded"
+          role="status"
+          className="flex flex-shrink-0 items-center justify-between gap-2 border-t border-border bg-warn-soft px-3 py-1.5"
+        >
+          <span className="text-[10.5px] text-warn">{AI_UNAVAILABLE_MESSAGE}</span>
+          <button
+            type="button"
+            data-testid="copilot-degraded-retry"
+            onClick={() => recheck.mutate()}
+            disabled={recheck.isPending}
+            className="shrink-0 rounded border border-border bg-surface px-[6px] py-[2px] text-[10.5px] font-semibold text-text hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Try again
+          </button>
+        </div>
+      )}
+
       {mintFailed ? (
         <p
           data-testid="copilot-mint-error"
@@ -987,6 +1177,13 @@ export function ActionsTab({ claimId }: { claimId: string | null }) {
         <Composer
           onSend={(text) => void send(text)}
           busy={busy || running || awaitingApproval}
+          // **The prop `Composer` reserved for this story.** Free text is the
+          // one input that always reaches a model, so it is disabled outright
+          // during an outage rather than left to fail — and it is *disabled*
+          // rather than absent, because absence is what read-only history
+          // means here and a handler should be able to see that the input is
+          // still theirs and merely unusable (UX-DR8).
+          disabled={modelDown}
         />
       )}
 

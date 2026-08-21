@@ -1,12 +1,22 @@
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 
-const COMPOSE_FILE = path.resolve(import.meta.dirname, "../../deploy/compose.e2e.yaml");
+export const COMPOSE_FILE = path.resolve(import.meta.dirname, "../../deploy/compose.e2e.yaml");
 
 const E2E_OWNER_URL = "postgresql://lineworker_e2e_owner:lineworker_e2e@postgres:5432/lineworker";
 const E2E_OWNER_LOCAL_URL = E2E_OWNER_URL.replace("@postgres:", "@localhost:");
 
-function compose(...args: string[]): void {
+/**
+ * Run one `docker compose` subcommand against the e2e profile.
+ *
+ * **Exported since Story 6.6**, which needs to stop and start the `model-stub`
+ * container from inside a spec (AD-15 names that as *the* degradation
+ * technique). Exported rather than copied: a second `execFileSync("docker",
+ * ["compose", "-f", …])` in another fixture would be a second place the compose
+ * file is located, and the day the profile moves one of them would keep
+ * working against a stale path.
+ */
+export function compose(...args: string[]): void {
   execFileSync("docker", ["compose", "-f", COMPOSE_FILE, ...args], {
     stdio: ["ignore", "inherit", "inherit"],
   });

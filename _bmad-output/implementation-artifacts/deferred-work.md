@@ -680,6 +680,17 @@ reviewers raised was patched into the diff and is itemised in the spec's Review 
     how the map is declared rather than a line — and the story that next adds a key (6.5 reuses
     `rtw`, 6.6 gates on the flags) is the one that will feel the gap and can design it against two
     consumers instead of one.
+  resolved_by: `_bmad-output/implementation-artifacts/spec-6-6-honest-degradation.md` (2026-08-21).
+    Fixed as the typed protocol this entry predicted, and by the story it named. `_BUILDERS` is now
+    two maps — `_NARRATING_BUILDERS: Mapping[str, NarratingBuilder]` and
+    `_DETERMINISTIC_BUILDERS: Mapping[str, DeterministicBuilder]` — and `build_node` selects between
+    them on `requires_llm`. A narrating builder's signature takes a **non-optional** `prompt_key`, so
+    the runtime failure inside `prompts.load(None)` is now a mypy error; the mismatched pairings the
+    types cannot express (a true flag with no prompt file, a false flag with one) raise in
+    `build_graph`, which is `lifespan` and therefore a process that will not start. The reason 6.6
+    felt it rather than 6.5 is the one this entry gives: it is the story whose whole subject is that
+    the flag means something, and `_build_data_alignment` holding a `BaseChatModel` it promised not
+    to use was the flag being enforced by a comment.
 
 ## Deferred from: code review of 6-5-human-gated-writes-the-rtw-letter (2026-08-21)
 
@@ -697,3 +708,16 @@ reviewers raised were patched into the diff and are itemised in the spec's Revie
 - source_spec: `_bmad-output/implementation-artifacts/spec-6-5-human-gated-writes-the-rtw-letter.md`
   summary: **`lineworker/web` has no formatter and no `format` script, so roughly a third of this story's web diff is unrelated reflow.**
   evidence: Real and repo-wide. `DiaryNav.tsx` shows ~60 of 90 changed lines as pure reflow — import lists, `CLOSED_COMPOSER`, `ComposerPrefill`, the JSX return — where the actual change is two fields and one callback; `CopilotPane.tsx`, `ClaimDetailPane.tsx`, `DocumentViewerDialog.tsx` and `api/copilot.ts` carry the same. The cause is that `package.json` has no prettier config and no `format` script while the server side has ruff in CI, so one editor's 80-column default was applied over a repo written at ~100 and nothing objected. The cost lands on review: on a diff whose whole subject is a write path a reviewer must be able to trace, the signal is diluted. The fix is to adopt a formatter with a committed config and a CI check, and to land the one-time reflow as its own commit — a repo-wide convention decision that should not be taken inside a copilot story, and which the server's ruff scope change (patched in this pass) is the precedent for.
+
+## Deferred from: code review of 6-6-honest-degradation (2026-08-21)
+
+Two findings that are real but are decisions rather than defects. The other twenty-one the two
+reviewers raised were patched into the diff and are itemised in the spec's Review Triage Log.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-6-6-honest-degradation.md`
+  summary: **`probe_model` builds a fresh `httpx.AsyncClient` per probe**, in a module whose docstring is largely about amortising upstream cost.
+  evidence: Real, and the same shape as the deferral Story 6.1's review already recorded against the embedding client — which is why it is recorded here rather than fixed here. The cost is genuinely small: the cache coalesces concurrent callers and bounds the rate at one probe per `ai_health_probe_cache_seconds`, so a connection setup every ten seconds is not on any hot path, where the embedding client pays it per claim per refresh cycle. What makes it worth writing down is that the build now has two modules constructing a client per call for the same stated reason and one (`agents/chat_model.py`) pooling by construction with an argued docstring saying why the other two cannot. The honest repair is one decision about client lifetime taken across all three readers of `ollama_base_url`, not a third local fix — and `chat_model.py` already names the shape that decision should take.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-6-6-honest-degradation.md`
+  summary: **The SPA's only polling query is now started by the Insights tab as well as the copilot**, so a supervisor who never opens the copilot still polls model availability every thirty seconds.
+  evidence: Real and a direct consequence of a fix taken in this pass — `RefreshInsightsButton` consuming `useCopilotAvailability()` is what stops the 503 being the discovery mechanism, and TanStack Query starts the interval as soon as any component subscribes. The poll is bounded and cheap (one cached probe, shared across every subscriber on the page), so this is a design consequence rather than a leak. But `src/api/dashboard.ts:38` records "nothing in the app polls" as a deliberate stance, and this story broke it for one reason on one surface and then inherited it on a second surface for free. The choice is either to accept availability as an app-wide signal and say so where that stance is written down, or to give the Insights control a one-shot check instead of a subscription — and the first is the more honest reading of what the flag now is, which makes it a convention decision rather than a fix.

@@ -33,12 +33,16 @@
  * move in Playwright).
  */
 import { QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 import { createQueryClient } from "@/api/queryClient";
+import { queryKeys } from "@/api/queryKeys";
 import {
+  COPILOT_AVAILABLE,
+  COPILOT_RUN_AI_LIMIT,
+  COPILOT_RUN_AI_UNAVAILABLE,
   COPILOT_RUN_INTERRUPT,
   COPILOT_RUN_OK,
   COPILOT_RUN_RTW_DRAFT,
@@ -49,6 +53,7 @@ import {
   COPILOT_TRANSCRIPT,
   COPILOT_TRANSCRIPT_EMPTY,
   COPILOT_TRANSCRIPT_PENDING,
+  COPILOT_UNAVAILABLE,
   copilotRunBodies,
   sseFrame,
   stubApi,
@@ -58,6 +63,15 @@ import {
 import { ActionsTab } from "./ActionsTab";
 import { COPILOT_DISCLAIMER } from "./disclaimer";
 
+/**
+ * Renders the pane and hands back its query client.
+ *
+ * The client is returned (rather than created inline, as it was until Story
+ * 6.6) so a test can drive a **refetch** the way the fifteen-second poll would.
+ * That is the only way to write the one degradation case a component test can
+ * otherwise not reach: the availability query itself starting to fail. See
+ * `an availability query that starts failing does not latch the outage`.
+ */
 function renderTab(
   routes: Partial<StubRoutes> = {},
   claimId: string | null = "WC-20017",
@@ -67,11 +81,13 @@ function renderTab(
     copilotTranscript: COPILOT_TRANSCRIPT,
     ...routes,
   });
-  return render(
-    <QueryClientProvider client={createQueryClient()}>
+  const client = createQueryClient();
+  render(
+    <QueryClientProvider client={client}>
       <ActionsTab claimId={claimId} />
     </QueryClientProvider>,
   );
+  return client;
 }
 
 beforeEach(() => {
@@ -500,6 +516,11 @@ test("the frames of a run that ends in an error surface as a notice", async () =
           status: 503,
           detail:
             "The copilot could not finish answering. Nothing was changed on the claim.",
+          // The fifth member since Story 6.6. Present here so the fixture is
+          // what the server actually sends, and `copilot_run_failed` rather
+          // than `ai_unavailable` because this frame is the catch-all — the
+          // assertion below is that it does *not* disable anything.
+          code: "copilot_run_failed",
         }),
       ],
     },
@@ -993,4 +1014,312 @@ test("a refused save keeps the letter modal open with the handler's text", async
   expect(await screen.findByTestId("rtw-body-input")).toHaveValue(
     "Handler wrote this.",
   );
+});
+
+// --- Story 6.6: honest degradation ---------------------------------------
+
+/** The six keys the server declares `requiresLlm` — read off the fixture, not
+ *  re-listed, so this file holds no second copy of server truth either. */
+const LLM_BACKED_KEYS = COPILOT_UNAVAILABLE.body.quickActions
+  .filter((flag) => flag.requiresLlm)
+  .map((flag) => flag.key);
+
+/** One quick-action button, by the key it sends. */
+function actionButton(key: string): HTMLElement {
+  return screen
+    .getAllByTestId("copilot-quick-action")
+    .find((button) => button.dataset.quickAction === key)!;
+}
+
+test("an unavailable model disables exactly the composer and the six LLM actions", async () => {
+  // AD-14/UX-DR8's central claim, and the one a coarser implementation would
+  // fail in the direction that matters: the pane stays alive. `data_alignment`
+  // declares `requires_llm: false` and answers without a model, so a strip that
+  // greyed out all seven would have taken away the one action that still works.
+  renderTab({ copilotAvailability: COPILOT_UNAVAILABLE });
+
+  await screen.findByTestId("copilot-quick-actions");
+  await waitFor(() => expect(screen.getByTestId("copilot-input")).toBeDisabled());
+
+  // **Not `expect(copilot-send).toBeDisabled()`.** `Composer` disables send
+  // whenever the draft is empty, and the draft is always empty at this point —
+  // that assertion passed on a fully working pane and proved nothing, which is
+  // what the review of this story found. The claim that carries weight is that
+  // the form refuses to start a run: the input cannot be typed into, and a
+  // submit reaching `Composer` while `disabled` is set posts nothing.
+  fireEvent.submit(screen.getByTestId("copilot-composer"));
+  expect(copilotRunBodies).toHaveLength(0);
+
+  for (const key of LLM_BACKED_KEYS) {
+    expect(actionButton(key)).toBeDisabled();
+  }
+  expect(actionButton("data_alignment")).toBeEnabled();
+
+  // …and the rest of the pane is untouched. Degradation is the *disabled* case,
+  // never the absent one: the transcript, the greeting and "+ New" all stay.
+  expect(screen.getByTestId("copilot-composer")).toBeInTheDocument();
+  expect(screen.getByTestId("copilot-transcript")).toBeInTheDocument();
+  expect(screen.getByTestId("copilot-greeting")).toBeInTheDocument();
+  expect(screen.getByTestId("copilot-new-thread")).toBeEnabled();
+});
+
+test("an unavailable model shows an inline warn notice with a manual retry", async () => {
+  // UX-DR11/NFR-3: inline, never a dialog and never a toast — the `beforeEach`
+  // above already fails any test that reaches for `window.alert`. `role=status`
+  // rather than `alert` because an outage is a state the pane is in rather than
+  // an interruption, which is also how the refusal notice beside it is written.
+  renderTab({ copilotAvailability: COPILOT_UNAVAILABLE });
+
+  const notice = await screen.findByTestId("copilot-degraded");
+  expect(notice).toHaveAttribute("role", "status");
+  expect(notice).toHaveTextContent(/AI is unavailable/i);
+  expect(screen.getByTestId("copilot-degraded-retry")).toBeEnabled();
+});
+
+test("an available model disables nothing at all", async () => {
+  // The positive control. Every assertion above would also pass against a pane
+  // that disabled its inputs permanently.
+  renderTab();
+
+  await screen.findByTestId("copilot-quick-actions");
+  expect(screen.queryByTestId("copilot-degraded")).not.toBeInTheDocument();
+  expect(screen.getByTestId("copilot-input")).toBeEnabled();
+  for (const key of LLM_BACKED_KEYS) {
+    expect(actionButton(key)).toBeEnabled();
+  }
+
+  // …and the send button, which needs a draft before its state says anything at
+  // all. This is the control the degraded test above cannot make: with the same
+  // typed text and a working model, send is live.
+  await userEvent.type(screen.getByTestId("copilot-input"), "what is the reserve?");
+  expect(screen.getByTestId("copilot-send")).toBeEnabled();
+});
+
+test("an ai_limit run reports the ceiling and disables nothing", async () => {
+  // The second `ai_limit` shape on the client (Story 6.6). A completion that
+  // hit `copilot_max_output_tokens` is a *bound this deployment set* being
+  // reached, not a model server that is down — so the pane says what happened
+  // and leaves every input live, which is the opposite of what it does for
+  // `ai_unavailable`. A panel that greyed its composer here would be disabling
+  // inputs over a model answering perfectly well.
+  renderTab({
+    copilotTranscript: COPILOT_TRANSCRIPT_EMPTY,
+    copilotRun: { sse: COPILOT_RUN_AI_LIMIT },
+  });
+
+  await userEvent.type(
+    await screen.findByTestId("copilot-input"),
+    "tell me everything",
+  );
+  await userEvent.click(screen.getByTestId("copilot-send"));
+
+  expect(await screen.findByTestId("copilot-refusal")).toBeInTheDocument();
+  expect(screen.queryByTestId("copilot-degraded")).not.toBeInTheDocument();
+  expect(screen.getByTestId("copilot-input")).toBeEnabled();
+  expect(actionButton("reserve")).toBeEnabled();
+  // …and what streamed before the stop is still on screen. AC 4's "whatever
+  // streamed before the stop remains in the transcript", from the pane's side.
+  expect(screen.getByTestId("copilot-turn-assistant")).toHaveTextContent(
+    "Deterministic partial answer",
+  );
+});
+
+test("a pending availability query disables nothing — unknown reads as available", async () => {
+  // A slow probe must never block a working model. The failure this prevents is
+  // the worst kind of degradation bug: a console that disables its copilot
+  // because it has not yet been told the copilot is fine.
+  renderTab({ copilotAvailability: "pending" });
+
+  await screen.findByTestId("copilot-quick-actions");
+  expect(screen.queryByTestId("copilot-degraded")).not.toBeInTheDocument();
+  expect(screen.getByTestId("copilot-input")).toBeEnabled();
+  expect(actionButton("reserve")).toBeEnabled();
+});
+
+test("an ai_unavailable frame marks the model down without waiting for the poll", async () => {
+  // The reactive half (Story 6.6). The availability query says the model is up —
+  // it answered before the outage — and the run is what discovers otherwise. A
+  // pane that trusted the poll alone would leave the composer live and let the
+  // handler retype the same question into it until the interval elapsed.
+  renderTab({
+    copilotTranscript: COPILOT_TRANSCRIPT_EMPTY,
+    copilotRun: { sse: COPILOT_RUN_AI_UNAVAILABLE },
+  });
+
+  await userEvent.type(
+    await screen.findByTestId("copilot-input"),
+    "what is the reserve?",
+  );
+  await userEvent.click(screen.getByTestId("copilot-send"));
+
+  expect(await screen.findByTestId("copilot-degraded")).toBeInTheDocument();
+  await waitFor(() => expect(screen.getByTestId("copilot-input")).toBeDisabled());
+  expect(actionButton("reserve")).toBeDisabled();
+  expect(actionButton("data_alignment")).toBeEnabled();
+});
+
+test("an outage leaves a typed error state and no assistant-styled prose", async () => {
+  // AD-14's named enemy, asserted as an absence. The prototype answered a failed
+  // API call with `offlineAnswer()` — pre-written claim-specific text in an
+  // assistant bubble — and the whole point of this story is that failure looks
+  // like failure. So: the handler's own turn is there, the typed notice is
+  // there, and there is **no assistant turn at all**.
+  renderTab({
+    copilotTranscript: COPILOT_TRANSCRIPT_EMPTY,
+    copilotRun: { sse: COPILOT_RUN_AI_UNAVAILABLE },
+  });
+
+  await userEvent.type(
+    await screen.findByTestId("copilot-input"),
+    "what is the reserve?",
+  );
+  await userEvent.click(screen.getByTestId("copilot-send"));
+
+  await screen.findByTestId("copilot-degraded");
+  expect(screen.getByTestId("copilot-turn-user")).toHaveTextContent(
+    "what is the reserve?",
+  );
+  expect(screen.queryByTestId("copilot-turn-assistant")).not.toBeInTheDocument();
+  // The failure is stated in the pane's own inline notice, which is a state
+  // rather than a message the copilot wrote.
+  expect(screen.getByTestId("copilot-refusal")).toBeInTheDocument();
+});
+
+test("Try again re-enables the inputs once the model is back", async () => {
+  // Recovery, and the clause that goes with it: **no automatic re-fire**. The
+  // handler's failed question is not re-sent when the flag flips — "Try again"
+  // refetches the probe and re-enables an input, and asking again is the
+  // handler's decision.
+  const asked: string[] = [];
+  renderTab({
+    copilotAvailability: (url) => {
+      asked.push(url);
+      return asked.length === 1 ? COPILOT_UNAVAILABLE : COPILOT_AVAILABLE;
+    },
+  });
+
+  await waitFor(() => expect(screen.getByTestId("copilot-input")).toBeDisabled());
+
+  await userEvent.click(screen.getByTestId("copilot-degraded-retry"));
+
+  await waitFor(() =>
+    expect(screen.queryByTestId("copilot-degraded")).not.toBeInTheDocument(),
+  );
+  expect(screen.getByTestId("copilot-input")).toBeEnabled();
+  expect(actionButton("reserve")).toBeEnabled();
+
+  // **And the retry asked the *server*, not the api's ten-second cache.** This
+  // is the assertion the first cut of the story could not have made: it called
+  // the query's own `refetch()`, which re-issues the poll's request, which the
+  // probe cache answers with the same stale `false` — so the control claimed to
+  // shorten the wait to zero and did nothing at all inside that window. The
+  // poll must *not* carry the flag, or the cache would never coalesce anything.
+  expect(asked[0]).not.toContain("force=true");
+  expect(asked.at(-1)).toContain("force=true");
+
+  // Nothing was posted on the handler's behalf: the only bodies on the wire are
+  // the ones they caused, and here there are none.
+  expect(copilotRunBodies).toHaveLength(0);
+});
+
+test("an availability query that starts failing does not latch the outage", async () => {
+  // The recovery path that could not recover (6.6 review). `modelDown` compares
+  // the reactive `outageAt` against the query's `dataUpdatedAt`, which only
+  // advances on a *successful* fetch — and `outageAt` is never reset. So a 401
+  // after a session refresh, a proxy hiccup or a network blip on the poll left
+  // the composer disabled for the life of the pane, under a "Try again" that
+  // could not clear it, with the model perfectly capable of answering.
+  //
+  // Comparing against the later of `dataUpdatedAt` and `errorUpdatedAt` fixes
+  // it: a probe that answered *at all* moves the pane on, and an errored
+  // availability query then reads as unknown, which reads as available — the
+  // safe direction, and the same rule a pending query already followed.
+  //
+  // A 404 rather than a 500 so the shared client does not retry it (this file's
+  // own convention, three tests up).
+  let succeed = true;
+  const client = renderTab({
+    copilotTranscript: COPILOT_TRANSCRIPT_EMPTY,
+    copilotRun: { sse: COPILOT_RUN_AI_UNAVAILABLE },
+    copilotAvailability: () =>
+      succeed
+        ? COPILOT_AVAILABLE
+        : {
+            status: 404,
+            body: {
+              type: "about:blank",
+              title: "Not Found",
+              status: 404,
+              detail: "no",
+            },
+          },
+  });
+
+  await userEvent.type(
+    await screen.findByTestId("copilot-input"),
+    "what is the reserve?",
+  );
+  await userEvent.click(screen.getByTestId("copilot-send"));
+  await screen.findByTestId("copilot-degraded");
+
+  // The poll fires again and this time the request fails outright.
+  succeed = false;
+  await act(async () => {
+    await client.invalidateQueries({
+      queryKey: queryKeys.copilot.availability,
+    });
+  });
+
+  await waitFor(() =>
+    expect(screen.queryByTestId("copilot-degraded")).not.toBeInTheDocument(),
+  );
+  expect(screen.getByTestId("copilot-input")).toBeEnabled();
+  expect(actionButton("reserve")).toBeEnabled();
+});
+
+test("a quick action the server no longer publishes is disabled during an outage", async () => {
+  // The orphaned button (6.6 review). The disabled set is an intersection of
+  // "the model is down" with "this key needs a model", read off the server's
+  // own flags — so a key this build still renders and the server has stopped
+  // publishing falls through the intersection and stays *enabled* through an
+  // outage, for a handler to press and discover the failure with.
+  //
+  // Discovery-by-failure is the thing this story exists to remove, so an
+  // unknown key is treated as needing the model. Note what is *not* changed:
+  // the whole list being absent still reads as available, because that is a
+  // query that has not answered rather than a server that has.
+  renderTab({
+    copilotAvailability: {
+      status: 200,
+      body: {
+        available: false,
+        quickActions: COPILOT_UNAVAILABLE.body.quickActions.filter(
+          (flag) => flag.key !== "data_alignment",
+        ),
+      },
+    },
+  });
+
+  await screen.findByTestId("copilot-quick-actions");
+  await waitFor(() =>
+    expect(actionButton("data_alignment")).toBeDisabled(),
+  );
+});
+
+test("a read-only conversation shows no outage notice", async () => {
+  // The notice explains why the composer and the strip are unusable, and on a
+  // superseded thread neither is *there* — the read-only line already says why.
+  // Two overlapping explanations for one absent control is noise.
+  renderTab({
+    copilotThreads: COPILOT_THREADS_TWO,
+    copilotAvailability: COPILOT_UNAVAILABLE,
+  });
+
+  await userEvent.selectOptions(
+    await screen.findByTestId("copilot-thread-picker"),
+    "claim.WC-20017.u1.s1",
+  );
+
+  expect(await screen.findByTestId("copilot-read-only")).toBeInTheDocument();
+  expect(screen.queryByTestId("copilot-degraded")).not.toBeInTheDocument();
 });

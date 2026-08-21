@@ -30,11 +30,13 @@ import anyio
 import httpx
 import pytest
 import sqlalchemy as sa
+from langchain_core.language_models import BaseChatModel
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from sqlalchemy.exc import IntegrityError
 
+from agents.degradation import ModelAvailabilityProbe
 from agents.graph import build_graph
 from agents.threads import mint_thread_id
 from api import create_app
@@ -190,7 +192,7 @@ def a_conversation_free_claim(seeded_db_url: str) -> None:
 async def make_client(
     db_url: str,
     *,
-    model: GenericFakeChatModel | None = None,
+    model: BaseChatModel | None = None,
     run_timeout_seconds: float | None = None,
     tools: Sequence[Any] | None = None,
 ) -> AsyncIterator[httpx.AsyncClient]:
@@ -207,6 +209,14 @@ async def make_client(
     tests are the exception, because a write that pauses has to be a write that
     can then *execute*, and an unbound tool is a `ToolMessage` reading "not a
     valid tool" where the approved row should be.
+
+    `model` is typed `BaseChatModel` rather than `GenericFakeChatModel` since
+    Story 6.6 — widened, not loosened. That story's degradation tests drive the
+    **shipped** `DegradingChatOllama` through this harness with its transport
+    monkeypatched, because the property under test is that a vendor failure
+    becomes `ChatUnavailable` becomes an `ai_unavailable` frame, and a fake that
+    raised `ChatUnavailable` itself would have skipped the two translations that
+    can go wrong. Every caller in this module still passes a fake.
     """
     app = create_app(Settings(database_url=db_url, env="e2e"))  # type: ignore[arg-type]
     async with app.router.lifespan_context(app):
@@ -221,7 +231,7 @@ async def make_client(
 
 
 def _replace_model(
-    app: object, model: GenericFakeChatModel, *, tools: Sequence[Any] | None = None
+    app: object, model: BaseChatModel, *, tools: Sequence[Any] | None = None
 ) -> None:
     """Recompile the graph over the same saver, with a scripted model.
 
@@ -760,10 +770,18 @@ async def test_a_model_that_refuses_ends_the_run_with_exactly_one_error(
         assert terminals == ["error"]
         assert events[-1] == "error"
         # The frame's payload **is** an RFC 9457 document — there is nowhere
-        # else to put one once the status is 200.
+        # else to put one once the status is 200. Five members since Story 6.6:
+        # the four fixed ones, plus `code` as an §3.2 extension. `type` and
+        # `status` are unchanged, which is what that story's `code` was designed
+        # around — the SPA discriminates on `type` and did not have to stop.
         problem = payloads[-1]
-        assert set(problem) == {"type", "title", "status", "detail"}
+        assert set(problem) == {"type", "title", "status", "detail", "code"}
         assert problem["type"] == "/problems/copilot-run-failed"
+        # A defect, not an outage. `RuntimeError` from a scripted model is the
+        # catch-all's own case, and it stays distinguishable from
+        # `ai_unavailable` — which is the whole reason Story 6.6 added a branch
+        # rather than widening this one.
+        assert problem["code"] == "copilot_run_failed"
 
 
 async def test_a_run_that_answers_nothing_is_an_error_rather_than_a_done(
@@ -786,6 +804,11 @@ async def test_a_run_that_answers_nothing_is_an_error_rather_than_a_done(
 
         assert [event for event in events if event in {"done", "interrupt", "error"}] == ["error"]
         assert payloads[-1]["type"] == "/problems/copilot-empty-answer"
+        # Its own code since Story 6.6, and deliberately not `ai_unavailable`:
+        # the model server answered perfectly well and said nothing, so a panel
+        # that greyed out its composer for this would be disabling inputs over
+        # a working model.
+        assert payloads[-1]["code"] == "copilot_empty_answer"
 
 
 async def read_save_stream(
@@ -1278,6 +1301,11 @@ async def test_a_pause_with_no_readable_payload_ends_the_run_as_an_error() -> No
     assert "event: interrupt" not in text
     assert "event: error" in text
     assert "/problems/copilot-approval-unreadable" in text
+    # Its own code since Story 6.6, and not `ai_unavailable`: the model was
+    # reachable and the pause is real — what failed is this process's ability to
+    # describe it, which is a defect in this build rather than an outage in
+    # another container.
+    assert '"code":"copilot_approval_unreadable"' in text
 
 
 @pytest.mark.parametrize("blank", ["", "   ", "\n\t "])
@@ -1387,6 +1415,21 @@ def _runtime_stub() -> Any:
         # embed anything — the same choice `graph=None` makes one field up.
         embedding_client=None,  # type: ignore[arg-type]
         embedding_staleness_days=7,
+        # Story 6.6's probe. **A real one**, unlike the two `None`s above, and
+        # the difference is not fastidiousness: `availability_probe` is a
+        # non-optional field, so `None` here is a typed lie held in place by an
+        # `ignore` — and the moment anything on the stream path reads it, the
+        # test fails with an `AttributeError` on `NoneType` instead of with
+        # whatever it was actually asserting. Nothing reads it today (no run
+        # consults availability — a run attempts the model and reports what
+        # happened), which is exactly why the cost of being honest here is a
+        # constructor call.
+        #
+        # It probes a port nothing listens on, so if something ever does read
+        # it, it answers `False` rather than raising.
+        availability_probe=ModelAvailabilityProbe(
+            Settings(database_url="postgresql://unused:unused@127.0.0.1:1/unused", env="e2e")  # type: ignore[arg-type]
+        ),
     )
 
 
@@ -1652,6 +1695,11 @@ async def test_a_run_that_outlasts_its_wall_clock_is_one_error_frame(
         assert [event for event in events if event in {"done", "interrupt", "error"}] == ["error"]
         assert payloads[-1]["type"] == "/problems/copilot-run-timeout"
         assert payloads[-1]["status"] == 504
+        # `ai_limit` since Story 6.6, on an unchanged `type` and an unchanged
+        # `status`. The bound belongs to this build rather than to the model
+        # server, so a run that reached it must not be reported as an outage —
+        # `tests/test_copilot_degradation.py` holds the other half of that rule.
+        assert payloads[-1]["code"] == "ai_limit"
         # …and the lock is gone, which is what makes the thread usable again
         # after a timeout rather than after a restart.
         assert not _run_started(thread)

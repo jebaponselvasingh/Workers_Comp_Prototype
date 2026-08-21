@@ -825,6 +825,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/copilot/availability": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Whether the local model is answering, and which quick actions need it
+         * @description The panel's degradation signal. One cached probe, and the map's flags.
+         *
+         *     Authenticated like everything else on this router. It takes no claim and no
+         *     thread — the answer is a property of the deployment rather than of a
+         *     conversation — which also means it can be fetched before the panel knows
+         *     which claim it is showing.
+         *
+         *     ## `force`, and why a query parameter rather than a second route
+         *
+         *     The panel's "Try again" control promised to shorten the post-recovery wait
+         *     to zero and could not: `refetch()` re-issued this request, which the cache
+         *     answered with the same stale `false` it had been answering with for the last
+         *     ten seconds. The review of this story found three docstrings making that
+         *     promise and an acceptance criterion resting on it.
+         *
+         *     So the *caller* says which question it is asking, because only the caller
+         *     knows: a poll wants the cheap cached answer and a human who has just
+         *     restarted their model container wants the true one. One parameter on one
+         *     route rather than `/availability/fresh` beside it, because the response is
+         *     the same document either way — what differs is how old it is allowed to be,
+         *     which is a property of the request. The cache is untouched and stays the
+         *     default; coalescing the poll is the whole reason it exists, and
+         *     `agents/degradation.py` keeps forced callers coalesced with each other too,
+         *     so three tabs pressing the button are still one upstream request.
+         *
+         *     `ctx` is declared and unread, which is the same shape `/personas` takes and
+         *     for the same reason: the dependency **is** the authentication, and a route
+         *     that omitted it would publish a dependency's state to anonymous callers.
+         *     Nothing here branches on who the caller is, because the model server is up
+         *     or down for everybody.
+         *
+         *     **Nothing about the probe's answer is logged here.** The probe logs its own
+         *     failure once, with a class name (AD-11), and a route that logged every poll
+         *     would write six lines a minute per open panel for a fact that has not
+         *     changed.
+         */
+        get: operations["availability_copilot_availability_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/copilot/claims/{claim_business_id}/threads": {
         parameters: {
             query?: never;
@@ -1600,6 +1654,48 @@ export interface components {
             key: string;
             /** Value */
             value: string;
+        };
+        /**
+         * AvailabilityResponse
+         * @description Whether the model server is answering, and which actions care.
+         *
+         *     The whole of what the copilot panel needs to disable exactly the affected
+         *     inputs and nothing else (AD-14, UX-DR8): `available` says whether the model
+         *     is reachable, `quickActions` says which keys depend on it, and the panel
+         *     intersects the two.
+         *
+         *     ## This is a UI signal, and no run consults it
+         *
+         *     A `requires_llm: true` run attempts the model and reports what actually
+         *     happened, even when this endpoint has already said the model is down. Two
+         *     sources of truth about reachability would eventually disagree, and the one
+         *     that matters is the one the run experienced — which is also why the SPA
+         *     marks the model unavailable *reactively* on an `ai_unavailable` frame rather
+         *     than trusting the poll alone. `agents/degradation.py` records the rule in
+         *     full.
+         *
+         *     ## `available: false` is a 200
+         *
+         *     The endpoint never errors because the thing it reports on is unhealthy. A
+         *     health signal that 503s during an outage has told its caller nothing it can
+         *     render, and the panel would then have to treat "the probe failed" and "the
+         *     model is down" as two states with one meaning.
+         *
+         *     ## …and `/healthz` is untouched
+         *
+         *     Deliberately. The api container is healthy without its model — see
+         *     `agents/degradation.py` and `api/app.py` — so this is an authenticated route
+         *     on the copilot's own router rather than a member of the unauthenticated
+         *     public set `tests/test_problem_json.py` pins.
+         */
+        AvailabilityResponse: {
+            /**
+             * Available
+             * @description Whether the local model server answered a liveness probe within `ai_health_probe_timeout_seconds`. Cached for `ai_health_probe_cache_seconds`, so N clients cost one upstream request. `false` never means this endpoint failed — it means the model server did not answer.
+             */
+            available: boolean;
+            /** Quickactions */
+            quickActions: components["schemas"]["QuickActionAvailability"][];
         };
         /**
          * BenefitResponse
@@ -4333,6 +4429,27 @@ export interface components {
          * @enum {string}
          */
         QueueFilter: "all" | "active" | "high_risk" | "fraud" | "litigation" | "payment_due" | "surgery" | "siu";
+        /**
+         * QuickActionAvailability
+         * @description One quick-action key and whether it needs the model to answer.
+         *
+         *     `agents/graph.py::QUICK_ACTIONS` is the authority on both facts and this is
+         *     its projection on the wire — see `quick_action_flags()` for why the node
+         *     name is not here.
+         *
+         *     **Published rather than mirrored in the browser** (Story 6.6).
+         *     `web/src/features/copilot/quickActionMeta.ts` argues at length that server
+         *     truth should not be copied into the SPA, and `requires_llm` is server truth.
+         *     A client that knew which buttons need a model but not whether one is up — or
+         *     the reverse — still could not disable the right set, which is why this rides
+         *     the same response as `available` rather than a second endpoint.
+         */
+        QuickActionAvailability: {
+            /** Key */
+            key: string;
+            /** Requiresllm */
+            requiresLlm: boolean;
+        };
         /**
          * RecoveryWindow
          * @description How long the claim is expected to take — the prototype's five options.
@@ -8215,6 +8332,56 @@ export interface operations {
                         /** Type */
                         type: string;
                     };
+                };
+            };
+        };
+    };
+    availability_copilot_availability_get: {
+        parameters: {
+            query?: {
+                /** @description Bypass the server-side probe cache and ask the model server now. For an explicit human retry only — the panel's background poll omits it, which is what keeps N clients one upstream request per `ai_health_probe_cache_seconds`. */
+                force?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AvailabilityResponse"];
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

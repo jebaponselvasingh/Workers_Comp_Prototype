@@ -194,6 +194,48 @@ QUICK_ACTIONS: Mapping[str, QuickAction] = {
 }
 
 
+@dataclass(frozen=True)
+class QuickActionFlag:
+    """One key and whether it needs the model — the map's **public projection**.
+
+    Story 6.6, and it exists so that `GET /copilot/availability` can tell the
+    panel which buttons to disable during an outage without the router reaching
+    into `QUICK_ACTIONS`' internals. What the panel needs is exactly two fields;
+    what a `QuickAction` carries is three, and `node` is graph topology — a
+    private name (`qas_reserve`) that would be published on a wire for no
+    consumer, and would then have to keep meaning something the day the node was
+    renamed.
+
+    A projection rather than a widened response model over `QuickAction` for
+    that reason, and a frozen dataclass rather than a tuple pair so the router
+    serialises `flag.requires_llm` instead of `flag[1]`.
+    """
+
+    key: str
+    requires_llm: bool
+
+
+def quick_action_flags() -> tuple[QuickActionFlag, ...]:
+    """Every quick-action key with its `requires_llm`, in the map's own order.
+
+    The one function `api/routers/copilot.py` calls to answer the availability
+    endpoint's `quickActions` array — so adding an eighth key changes this file
+    and no other, and changes no client code at all. That property is the whole
+    argument for shipping the flags over the wire rather than mirroring them in
+    the browser: `web/src/features/copilot/quickActionMeta.ts` argues at length
+    against a client-side copy of server truth, and `requires_llm` is server
+    truth (see `QuickAction.requires_llm` above).
+
+    Ordered rather than a mapping, because the browser renders the buttons in
+    the order `quickActionMeta.ts` declares and a set has no order to disagree
+    with. The order here is the map's, which is the prototype's.
+    """
+    return tuple(
+        QuickActionFlag(key=key, requires_llm=action.requires_llm)
+        for key, action in QUICK_ACTIONS.items()
+    )
+
+
 def route_entry(state: CopilotState) -> Route:
     """Which node this turn goes to. Deterministic; reads one channel.
 
@@ -456,10 +498,21 @@ def build_graph(
     # `model` the agent harness above was given, so a graph test can drive all
     # seven against a scripted model and AD-6's "one graph, compiled once" does
     # not acquire a second model per node.
+    #
+    # **`requires_llm` is passed through since Story 6.6**, and it is what makes
+    # the flag structural: `build_node` selects a builder on it, and the false
+    # path's builder is handed no model at all. The declaration in the map above
+    # therefore constrains what its node can reach rather than merely describing
+    # what its author chose to do.
     for key, action in QUICK_ACTIONS.items():
         builder.add_node(
             action.node,
-            qas.build_node(key, prompt_key=action.prompt_key, model=model),
+            qas.build_node(
+                key,
+                requires_llm=action.requires_llm,
+                prompt_key=action.prompt_key,
+                model=model,
+            ),
         )
     builder.add_edge(START, ENTRY_NODE)
     # The dispatch hook, filled by Story 6.4. `route_entry` returns a node name,
@@ -526,11 +579,13 @@ __all__ = [
     "ENTRY_NODE",
     "QUICK_ACTIONS",
     "QuickAction",
+    "QuickActionFlag",
     "Route",
     "build_graph",
     "caller_ref",
     "declared_channels",
     "entry_router",
+    "quick_action_flags",
     "resume_inputs",
     "route_entry",
     "run_inputs",

@@ -20,7 +20,7 @@ import {
 } from "@tanstack/react-query";
 
 import { api } from "./client";
-import { problemExtension } from "./errors";
+import { ApiError, problemExtension } from "./errors";
 import { queryKeys } from "./queryKeys";
 import type { components } from "./schema";
 
@@ -1361,6 +1361,28 @@ export function useClaimInsights(claimId: string | null) {
  * Nothing is invalidated beyond this claim's own insights: a narrative is not a
  * claim fact, so no queue card, no top-bar tile and no case file changes
  * because one was regenerated.
+ *
+ * ## The one exception, and it is an outage (Story 6.6)
+ *
+ * A 503 here **does** invalidate `queryKeys.copilot.availability`, which is the
+ * one key outside this claim that this mutation touches. Story 6.6's rule is
+ * that the copilot's model outage is discovered by a probe and rendered as a
+ * disabled control, never discovered by pressing something and failing — and
+ * the probe is cached server-side and polled every fifteen seconds, so there is
+ * a window in which the model has gone down and the Refresh button is still
+ * enabled. A handler who presses it inside that window has just learned, at
+ * first hand and more reliably than any probe could, that the model server is
+ * not answering; leaving the button enabled after that would be inviting them
+ * to find out again. Invalidating marks the outage immediately, and the button
+ * and the copilot panel both disable off the same cache entry.
+ *
+ * **Matched on the status and not on a `code`**, deliberately. The stream's
+ * closed `StreamErrorCode` vocabulary belongs to the SSE frames; this route
+ * predates it and answers a plain `about:blank` problem document, and widening
+ * that vocabulary onto an ordinary HTTP route to save a comparison here would
+ * be a server change made for a client's convenience. 503 is what this route
+ * says "the local model server did not answer" with, and it is the only 503 it
+ * has.
  */
 export function useRefreshInsights(claimId: string) {
   const client = useQueryClient();
@@ -1401,6 +1423,19 @@ export function useRefreshInsights(claimId: string) {
         exact: true,
         refetchType: "none",
       });
+    },
+    onError: (error: unknown) => {
+      // See the docstring: the press that failed is better evidence than the
+      // probe that has not run yet, so the outage is marked now rather than up
+      // to fifteen seconds from now. Refetched rather than merely marked stale
+      // — unlike the insights key above — because the whole point is that the
+      // control disables while the handler is still looking at it.
+      if (error instanceof ApiError && error.status === 503) {
+        void client.invalidateQueries({
+          queryKey: queryKeys.copilot.availability,
+          exact: true,
+        });
+      }
     },
   });
 }

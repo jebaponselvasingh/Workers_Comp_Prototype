@@ -351,6 +351,43 @@ def test_the_map_holds_the_seven_keys_and_declares_requires_llm_on_every_one() -
     assert model_free == {"data_alignment"}
 
 
+def test_a_model_free_builder_is_never_handed_a_model() -> None:
+    """`requires_llm: False` enforced by a **signature**, not by a promise (6.6).
+
+    The stronger form of the claim the call-count test below makes. That one
+    asserts `data_alignment` did not call a model on the run it observed; this
+    asserts it *could not have*, because its builder is not given one.
+
+    Until Story 6.6 `_build_data_alignment` accepted `model` and `prompt_key`
+    and used neither, "so that every entry in the map is built the same way" —
+    which put a live `BaseChatModel` in the scope of the one node whose entire
+    declared property is that it has none, leaving the flag enforced by a
+    comment asking the next author not to type `_narrate`. Adding one would have
+    been a green build and a stopped container's problem three stories later.
+
+    Written as an assertion about parameters rather than about behaviour on
+    purpose: behaviour is what the other test covers, and the gap between the
+    two is exactly the mistake this closes.
+    """
+    import inspect
+
+    deterministic = inspect.signature(qas_module._build_data_alignment)
+    assert deterministic.parameters == {}, (
+        "a requires_llm: False builder takes an argument; if that is a model, "
+        "the flag is a comment again"
+    )
+
+    # …and the positive control, which is what stops this passing on a module
+    # where nothing takes a model at all: every narrating builder takes one, and
+    # takes a `prompt_key` that is not optional.
+    for key, builder in qas_module._NARRATING_BUILDERS.items():
+        parameters = inspect.signature(builder).parameters
+        assert set(parameters) == {"model", "prompt_key"}, f"{key} has an unexpected signature"
+        assert parameters["prompt_key"].annotation is str, (
+            f"{key} accepts an optional prompt file; `prompts.load(None)` is a run-time failure"
+        )
+
+
 def test_the_keys_and_the_node_builders_are_the_same_seven() -> None:
     """ "One importable structure" across the two files the split needs.
 
@@ -359,8 +396,24 @@ def test_the_keys_and_the_node_builders_are_the_same_seven() -> None:
     Without this, a key added to the map with no builder is a `KeyError` in
     `lifespan` — a process that will not start — and a builder with no key is
     dead code nothing routes to.
+
+    **Two builder maps since Story 6.6**, not one, because the `requires_llm`
+    flag now selects between them — so the union is what has to equal the map's
+    keys, and the two maps must also be disjoint: a key in both would make
+    "which builder answers for this key?" depend on which branch `build_node`
+    took, which is precisely the ambiguity the split exists to remove.
     """
-    assert set(QUICK_ACTIONS) == set(qas_module._BUILDERS)
+    narrating = set(qas_module._NARRATING_BUILDERS)
+    deterministic = set(qas_module._DETERMINISTIC_BUILDERS)
+
+    assert narrating & deterministic == set()
+    assert set(QUICK_ACTIONS) == narrating | deterministic
+    # …and each key is in the map its flag says it is in, which is the half a
+    # union comparison alone would let slide.
+    assert {key for key, action in QUICK_ACTIONS.items() if action.requires_llm} == narrating
+    assert {key for key, action in QUICK_ACTIONS.items() if not action.requires_llm} == (
+        deterministic
+    )
 
 
 @pytest.mark.parametrize("key", sorted(QUICK_ACTIONS))

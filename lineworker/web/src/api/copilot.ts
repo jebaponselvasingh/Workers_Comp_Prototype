@@ -57,6 +57,49 @@ export type CopilotThreads = components["schemas"]["ThreadListResponse"];
 export type CopilotTranscript = components["schemas"]["TranscriptResponse"];
 export type CopilotMessage = components["schemas"]["TranscriptMessage"];
 export type CopilotRunRequest = components["schemas"]["RunRequest"];
+export type CopilotAvailability =
+  components["schemas"]["AvailabilityResponse"];
+export type CopilotQuickActionFlag =
+  components["schemas"]["QuickActionAvailability"];
+
+/**
+ * Why an AI run stopped — the server's closed vocabulary, mirrored **once**.
+ *
+ * `api/routers/copilot.py::StreamErrorCode` is the declaration and this is the
+ * mirror, spelled here rather than read off `schema.d.ts` for
+ * `quickActionMeta.ts`'s reason in reverse: the code rides on a problem
+ * document *inside an SSE frame*, and an SSE payload has no OpenAPI schema to
+ * generate from — the runs endpoint's response body is `text/event-stream`.
+ * So the union is written out, and the e2e spec is what keeps the two honest:
+ * it asserts the literal `ai_unavailable` off a real frame from a real server
+ * with the model container stopped.
+ *
+ * **The array is the declaration and the type is derived from it**, which is the
+ * form the argument above actually requires. The first cut of this story
+ * declared the union and then wrote the same five literals out again as a
+ * `readonly StreamErrorCode[]` so that `streamErrorCode` could test membership —
+ * two copies of a vocabulary, in the same file, in a diff whose central claim is
+ * that a vocabulary has exactly one copy, with nothing keeping them in step: a
+ * sixth code added to the type alone would have compiled and then been reported
+ * as `null` for ever. `as const` plus an indexed access type costs one line and
+ * makes the array the single source.
+ *
+ * **`code` answers a coarser question than `type` does**, which is why both
+ * exist. `problemType` tells a component *which* failure happened and is what
+ * the two 409 predicates below read; this tells it *why the AI stopped*, which
+ * is the granularity a disabled composer needs — the panel does not care
+ * whether the model was unreachable on a quick action or on free chat, only
+ * that it was.
+ */
+const STREAM_ERROR_CODES = [
+  "ai_unavailable",
+  "ai_limit",
+  "copilot_empty_answer",
+  "copilot_approval_unreadable",
+  "copilot_run_failed",
+] as const;
+
+export type StreamErrorCode = (typeof STREAM_ERROR_CODES)[number];
 
 /**
  * The single-flight refusal — a run is streaming, or an approval is pending.
@@ -78,6 +121,156 @@ export function isThreadBusy(error: unknown): boolean {
 /** Whether a failed run was refused because the thread has been superseded. */
 export function isThreadReadOnly(error: unknown): boolean {
   return problemType(error) === THREAD_READ_ONLY;
+}
+
+/**
+ * The `code` on a problem document, if it carries one this build knows.
+ *
+ * Beside `problemType` in spirit and beside `isThreadBusy`/`isThreadReadOnly`
+ * in placement: one narrowing, here, so no component holds a cast. Anything
+ * outside the union reads as `null` rather than throwing — a copilot pane that
+ * crashed on an unrecognised code would take the whole workspace column with
+ * it, which is `pendingAction`'s recorded rule and the same one applies.
+ *
+ * It takes the raw `error` object the runtime's `onError` hands over rather
+ * than an `ApiError`, because that is where this is read: a mid-stream failure
+ * is a *frame* carrying the problem document inline, never a rejection, so it
+ * never becomes an `ApiError` at all.
+ */
+export function streamErrorCode(error: unknown): StreamErrorCode | null {
+  if (typeof error !== "object" || error === null) return null;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" && (STREAM_ERROR_CODES as readonly string[]).includes(code)
+    ? (code as StreamErrorCode)
+    : null;
+}
+
+/**
+ * Whether a run ended because the local model server did not answer.
+ *
+ * **The reactive half of the degradation signal** (Story 6.6, AD-14). The
+ * availability query below polls, and a poll is by definition behind: the run
+ * that actually hit the outage knows about it first and knows it for certain,
+ * because it is the one that tried. So the panel marks the model unavailable
+ * from this the moment an `error` frame carries it, rather than leaving the
+ * handler to press a disabled-looking button again while the interval elapses.
+ *
+ * It reads the `code` and not the `type`, deliberately. A second `type` for the
+ * same outage — a future `/problems/ai-unavailable-on-resume`, say — would have
+ * to be added to a list here to keep working; a code is what the vocabulary is
+ * for.
+ */
+export function isAiUnavailable(error: unknown): boolean {
+  return streamErrorCode(error) === "ai_unavailable";
+}
+
+/**
+ * How often the panel re-asks whether the model is up. **The SPA's first poll.**
+ *
+ * `api/dashboard.ts` records "nothing in the app polls" as a deliberate stance
+ * and `queryClient.ts` turns `refetchOnWindowFocus` off, so this is a departure
+ * and it needs its reason stated rather than assumed.
+ *
+ * Availability is the one piece of state in this console that **changes without
+ * any user action and whose staleness silently costs the handler work**. Every
+ * other server fact the SPA holds moves because somebody moved it — a claim is
+ * edited, a payment is approved, a note is written — so a refetch on the next
+ * mutation or the next mount is exactly right. A model container restarting is
+ * nobody's action, and a panel that only learned about it by sending a message
+ * would be discovering the outage the way this story exists to stop it being
+ * discovered: by failing.
+ *
+ * Fifteen seconds, and the arithmetic is deliberate. The server caches its
+ * probe for `ai_health_probe_cache_seconds` (ten), so a poll faster than that
+ * would cost requests to receive an identical cached answer; a poll much slower
+ * would leave the composer disabled for a noticeable stretch after a recovery.
+ * The manual "Try again" control exists so a handler never has to wait for it
+ * at all — see `useRecheckAvailability`, which is what makes that sentence true
+ * rather than merely written — and there is deliberately no automatic re-fire
+ * of the failed run when the flag flips back (NFR-6): recovery re-enables the
+ * input, it does not re-ask the question.
+ */
+export const AVAILABILITY_POLL_MS = 15_000;
+
+/**
+ * Whether the local model is answering, and which quick actions need it.
+ *
+ * One query for two facts, which is the server's decision and the right one: a
+ * client that knew which buttons need a model but not whether one is up — or
+ * the reverse — still could not disable the right set, and two queries would
+ * let the panel render a half-decided state while one of them was in flight.
+ *
+ * **Not `enabled`-gated on a claim.** The answer is a property of the
+ * deployment, so the panel can hold it before it knows which case file it is
+ * showing, and the Insights tab's Refresh control reads the same cache entry
+ * without paying for a second request.
+ *
+ * `staleTime` is deliberately absent: the interval is what governs freshness
+ * here, and a stale time longer than it would silently cancel the poll.
+ *
+ * **This hook never sends `force`.** The poll wants the server's cached answer —
+ * that cache is what makes an endpoint every open panel polls cost one upstream
+ * request per ten seconds regardless of how many panels there are. Bypassing it
+ * is a human's decision and has its own hook below.
+ */
+export function useCopilotAvailability() {
+  return useQuery({
+    queryKey: queryKeys.copilot.availability,
+    queryFn: async (): Promise<CopilotAvailability> => {
+      const { data } = await api.GET("/copilot/availability");
+      return data!;
+    },
+    refetchInterval: AVAILABILITY_POLL_MS,
+  });
+}
+
+/**
+ * "Try again" — ask the model server **now**, not the ten-second-old answer.
+ *
+ * The panel's manual retry, and it is a mutation rather than the query's own
+ * `refetch()` for a reason the review of this story found the hard way. Three
+ * docstrings in this build promised that pressing the button "shortens to zero"
+ * the wait after a recovery, and AC 5 rests on it — but `refetch()` re-issues
+ * `GET /copilot/availability`, which the server answers out of
+ * `ModelAvailabilityProbe`'s cache. Inside that window the retry handed back the
+ * identical stale `false`, so a handler who had just restarted their model
+ * container pressed a control that could not help them and had no way to know
+ * why. `?force=true` is the fix; the cache stays, because coalescing the *poll*
+ * is what it is for.
+ *
+ * A `useMutation` because the semantics are a mutation's: it happens because
+ * somebody pressed something, exactly once per press, and it exposes
+ * `isPending` for the button's own disabled state. The result is written into
+ * the poll's cache entry with `setQueryData` rather than left beside it —
+ * everything that renders a disabled input reads that one entry, and a second
+ * source of truth about availability inside the SPA would be the client-side
+ * version of the mistake the server side spends `agents/degradation.py` arguing
+ * against.
+ *
+ * `setQueryData` also stamps `dataUpdatedAt`, which is what clears
+ * `ActionsTab`'s reactive outage latch: a probe answered *after* the run that
+ * failed supersedes it, with no second flag to reset.
+ *
+ * **It re-fires nothing** (NFR-6). What it refreshes is a fact about the
+ * deployment; asking the question again is the handler's decision, not this
+ * hook's.
+ */
+export function useRecheckAvailability() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: async (): Promise<CopilotAvailability> => {
+      const { data } = await api.GET("/copilot/availability", {
+        params: { query: { force: true } },
+      });
+      return data!;
+    },
+    onSuccess: (fresh) => {
+      client.setQueryData<CopilotAvailability>(
+        queryKeys.copilot.availability,
+        fresh,
+      );
+    },
+  });
 }
 
 /**
@@ -341,13 +534,26 @@ interface TranslatedFrame {
  * Shaped as the same four RFC 9457 members every other failure in the SPA
  * carries, so `onError` needs no second branch to read it. `status: 503` because
  * that is what the server would have said had it been able to say anything.
+ *
+ * **And a `code`, since Story 6.6**, because a frame without one would be the
+ * single hole in a vocabulary whose whole value is being closed —
+ * `streamErrorCode` would answer `null` for it and every future reader would
+ * need a branch for that. `copilot_run_failed` is the honest member: a
+ * connection that ended early is the catch-all's own case, "the copilot could
+ * not finish answering", and this build genuinely does not know why.
+ *
+ * It is deliberately **not** `ai_unavailable`. A dropped stream is a transport
+ * failure — a closed laptop lid, a proxy, a redeploy — and marking the model
+ * unavailable from it would disable the composer over something the model
+ * server had no part in. A real outage sends a real frame that says so.
  */
-const TRUNCATED_STREAM: Problem = {
+const TRUNCATED_STREAM: Problem & { code: StreamErrorCode } = {
   type: "/problems/copilot-run-truncated",
   title: "Copilot unavailable",
   status: 503,
   detail:
     "The connection to the copilot ended before it finished answering. Anything above may be incomplete, and nothing was changed on the claim.",
+  code: "copilot_run_failed",
 };
 
 /**

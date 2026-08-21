@@ -1,6 +1,6 @@
 # Story 6.6: Honest Degradation
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -19,27 +19,27 @@ so that AI unavailability never blocks claim operations.
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: `ai_unavailable` server path (AC: 1)
-  - [ ] Detect Ollama unreachability at the chat-client boundary in `agents/` (connect/read failure, health probe); a `requires_llm: true` QAS action or free-chat run terminates with the `error` stream event, problem+json body inline, code `ai_unavailable` — exactly one terminal event, thread returns to accepting state (single-flight cleared)
-  - [ ] Bounded retry server-side: small fixed attempt count with backoff on the failed call — never a retry storm, never queue-and-wait; there is **no cloud fallback** (AD-5 — no such code path exists to fall into) and **no canned text** (`offlineAnswer` is the explicitly banned prototype pattern — an outage message is a typed error, never prose presented as model output)
-  - [ ] Embeddings outage note: 6.1's refresh jobs already just skip-and-retry-next-cycle (staleness stays flagged); confirm no crash-loop, nothing more to build
-- [ ] Task 2: `requires_llm: false` actions keep working (AC: 2)
-  - [ ] With the chat model unreachable, dispatching a `requires_llm: false` key from 6.4's map must never touch the chat client: execute tools, stream results, terminate `done` — add a guard/test that the false-path makes zero model calls (that is what makes the flag honest)
-- [ ] Task 3: AI-availability signal + partial UI disabling (AC: 1, 2)
-  - [ ] Expose availability without new machinery where possible: a lightweight AI-health flag (e.g. on an existing status/health endpoint or a tiny `GET` probe in `api/`) polled via TanStack Query, **plus** reactive marking on receipt of an `ai_unavailable` stream error; recovery flips the flag back on a successful probe — bounded polling interval (config knob), no storm
-  - [ ] Copilot panel (`web/src/features/copilot/`): when unavailable, disable **exactly** the affected inputs — free-text composer and `requires_llm: true` quick-action buttons (from the 6.4 map's flags, which the UI must receive or mirror from one source) — with a quiet inline notice; `requires_llm: false` buttons, the Diary tab, thread history reading, and the whole rest of the pane stay live (UX-DR8 disabled-state treatment; never grey the pane)
-  - [ ] Client retry is bounded too: a manual "try again" affordance and the poll — no automatic client re-fire loops (NFR-6)
-- [ ] Task 4: No hard dependency from claim screens (AC: 3)
-  - [ ] Audit `web/` for any agent-runtime dependency outside `features/copilot/` (imports, queries, render-blocking calls): queue, claim detail (all tabs incl. AI Insights — cards render cached rows + empty states without the runtime), financials, dashboard, diary must load and function with Ollama down; fix anything found
-  - [ ] Server-side: no non-copilot endpoint may touch the chat client; AI-health probe failure must not degrade `/healthz` container health (the api container is healthy without its model — deliberate: compose must not restart the api over an Ollama outage; document in the probe's docstring)
-- [ ] Task 5: `ai_limit` bounds (AC: 4)
-  - [ ] Enforce 6.3's wired bounds: `num_predict` passed to the model call; wall-clock timeout wrapping the run; either overrun terminates the stream with `error` code `ai_limit` (problem+json inline), partial output stays visible in the transcript as whatever streamed, and the thread returns to accepting (single-flight cleared, no stuck `pending_approval` — an interrupt never got raised)
-  - [ ] Both bounds are config knobs (already in `server/config.py` from 6.3); no hardcoding
-- [ ] Task 6: Tests (AC: all)
-  - [ ] Unit/graph: chat-client failure → `ai_unavailable` terminal error + accepting thread; retry attempts bounded (assert call count); `requires_llm: false` path makes zero model calls; timeout/num_predict overrun → `ai_limit` + accepting thread
-  - [ ] Integration: stop/point-away the stub → free chat run over real SSE yields the `error` event with `ai_unavailable` problem+json; restart → recovery
-  - [ ] E2E: `e2e/stories/6-6-honest-degradation.spec.ts` tagged `@story:6-6 @epic:6` — AD-15 names this pattern: **stop the model-stub**, then assert: (a) `@smoke` happy path — queue, claim detail, financials, diary all fully function with the stub stopped (AC 3's Playwright clause); (b) copilot pane shows exactly the affected inputs disabled, a `requires_llm: false` action still streams to `done`, a free-chat attempt surfaces the `ai_unavailable` error state; assert structure/event codes, never prose
-  - [ ] Verify no canned text: assert the outage UI/transcript contains a typed error state and no assistant-styled prose message
+- [x] Task 1: `ai_unavailable` server path (AC: 1)
+  - [x] Detect Ollama unreachability at the chat-client boundary in `agents/` (connect/read failure, health probe); a `requires_llm: true` QAS action or free-chat run terminates with the `error` stream event, problem+json body inline, code `ai_unavailable` — exactly one terminal event, thread returns to accepting state (single-flight cleared)
+  - [x] Bounded retry server-side: small fixed attempt count with backoff on the failed call — never a retry storm, never queue-and-wait; there is **no cloud fallback** (AD-5 — no such code path exists to fall into) and **no canned text** (`offlineAnswer` is the explicitly banned prototype pattern — an outage message is a typed error, never prose presented as model output)
+  - [x] Embeddings outage note: 6.1's refresh jobs already just skip-and-retry-next-cycle (staleness stays flagged); confirm no crash-loop, nothing more to build
+- [x] Task 2: `requires_llm: false` actions keep working (AC: 2)
+  - [x] With the chat model unreachable, dispatching a `requires_llm: false` key from 6.4's map must never touch the chat client: execute tools, stream results, terminate `done` — add a guard/test that the false-path makes zero model calls (that is what makes the flag honest)
+- [x] Task 3: AI-availability signal + partial UI disabling (AC: 1, 2)
+  - [x] Expose availability without new machinery where possible: a lightweight AI-health flag (e.g. on an existing status/health endpoint or a tiny `GET` probe in `api/`) polled via TanStack Query, **plus** reactive marking on receipt of an `ai_unavailable` stream error; recovery flips the flag back on a successful probe — bounded polling interval (config knob), no storm
+  - [x] Copilot panel (`web/src/features/copilot/`): when unavailable, disable **exactly** the affected inputs — free-text composer and `requires_llm: true` quick-action buttons (from the 6.4 map's flags, which the UI must receive or mirror from one source) — with a quiet inline notice; `requires_llm: false` buttons, the Diary tab, thread history reading, and the whole rest of the pane stay live (UX-DR8 disabled-state treatment; never grey the pane)
+  - [x] Client retry is bounded too: a manual "try again" affordance and the poll — no automatic client re-fire loops (NFR-6)
+- [x] Task 4: No hard dependency from claim screens (AC: 3)
+  - [x] Audit `web/` for any agent-runtime dependency outside `features/copilot/` (imports, queries, render-blocking calls): queue, claim detail (all tabs incl. AI Insights — cards render cached rows + empty states without the runtime), financials, dashboard, diary must load and function with Ollama down; fix anything found
+  - [x] Server-side: no non-copilot endpoint may touch the chat client; AI-health probe failure must not degrade `/healthz` container health (the api container is healthy without its model — deliberate: compose must not restart the api over an Ollama outage; document in the probe's docstring)
+- [x] Task 5: `ai_limit` bounds (AC: 4)
+  - [x] Enforce 6.3's wired bounds: `num_predict` passed to the model call; wall-clock timeout wrapping the run; either overrun terminates the stream with `error` code `ai_limit` (problem+json inline), partial output stays visible in the transcript as whatever streamed, and the thread returns to accepting (single-flight cleared, no stuck `pending_approval` — an interrupt never got raised)
+  - [x] Both bounds are config knobs (already in `server/config.py` from 6.3); no hardcoding
+- [x] Task 6: Tests (AC: all)
+  - [x] Unit/graph: chat-client failure → `ai_unavailable` terminal error + accepting thread; retry attempts bounded (assert call count); `requires_llm: false` path makes zero model calls; timeout/num_predict overrun → `ai_limit` + accepting thread
+  - [x] Integration: stop/point-away the stub → free chat run over real SSE yields the `error` event with `ai_unavailable` problem+json; restart → recovery
+  - [x] E2E: `e2e/stories/6-6-honest-degradation.spec.ts` tagged `@story:6-6 @epic:6` — AD-15 names this pattern: **stop the model-stub**, then assert: (a) `@smoke` happy path — queue, claim detail, financials, diary all fully function with the stub stopped (AC 3's Playwright clause); (b) copilot pane shows exactly the affected inputs disabled, a `requires_llm: false` action still streams to `done`, a free-chat attempt surfaces the `ai_unavailable` error state; assert structure/event codes, never prose
+  - [x] Verify no canned text: assert the outage UI/transcript contains a typed error state and no assistant-styled prose message
 
 ## Dev Notes
 
@@ -98,10 +98,28 @@ No new tables, no schema changes. New config knobs only: AI-health poll interval
 
 ### Agent Model Used
 
-<!-- filled by dev-story -->
+Claude Opus 5 (1M context), via the `bmad-dev-auto` unattended workflow.
 
 ### Debug Log References
 
 ### Completion Notes List
+
+Implemented against `spec-6-6-honest-degradation.md`; see that file's `Auto Run Result` for the
+full record, and its `Review Triage Log` for the twenty-one findings patched in the review pass.
+
+Two deliberate deviations from this file's task text, both argued in the spec:
+- Task 3 asked for the AI-health flag "on an existing status/health endpoint or a tiny GET probe".
+  `/healthz` was deliberately left alone — the api container is healthy without its model, and
+  folding an Ollama check into it would let compose treat a model outage as an api failure and
+  would leak a dependency's state to unauthenticated callers. The signal is an authenticated
+  `GET /copilot/availability` on the copilot router instead, which also carries each quick action's
+  `requiresLlm` so the panel's disabled set comes from one server response.
+- Task 2 asked for "a guard/test" that the false path makes zero model calls. It is now a type
+  error rather than a test: a `requires_llm: false` builder is not handed a model at all, which
+  also closes the `_BUILDERS` erasure `deferred-work.md` recorded from 6.4's review.
+
+Both `Block If` conditions in the spec were checked empirically and neither triggered: the vendor
+does publish its stop reason where this build reads it, and `create_agent` inherits the same model
+wrapper `_narrate` uses, so free chat and the quick actions cannot disagree about what an outage is.
 
 ### File List

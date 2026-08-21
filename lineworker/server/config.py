@@ -400,6 +400,110 @@ class Settings(BaseSettings):
     # cut short rather than merely noticed.
     copilot_max_tool_calls_per_run: int = Field(default=8, gt=0)
 
+    # --- Honest degradation (Story 6.6) -------------------------------
+    # How many times one model call is attempted before the run reports the
+    # outage. **Two, and the ceiling is arithmetic rather than taste**: a
+    # retried call is retried only when it failed *before its first streamed
+    # chunk* (`agents/degradation.py` argues why a mid-stream retry would
+    # duplicate tokens in the transcript), each attempt is bounded by
+    # `chat_request_timeout_seconds` at 120 s, and the whole loop is bounded by
+    # `copilot_run_timeout_seconds` at 300 s.
+    #
+    # **The worst case, stated rather than implied**: against a server that
+    # accepts the connection and then hangs, the retry does not shorten
+    # anything — it *doubles* the wait. Two attempts at 120 s plus one 0.5 s
+    # backoff is 240.5 s before the handler is told anything, inside a 300 s run
+    # bound with about a minute of headroom. Three attempts is 361 s, which the
+    # run bound cuts off first — so the handler would be told `ai_limit` about
+    # what was plainly an outage, which is the wrong failure. That is not a
+    # judgement left to whoever next raises the knob: `_bounded_retry_fits_the_
+    # run` below refuses to start a process whose retry cannot finish inside its
+    # own run bound.
+    #
+    # A knob rather than a constant because AD-14 says "bounded retry" and
+    # leaves the bound to the deployment: a GPU box behind a restarting Ollama
+    # wants a different number from a laptop, and the story that surfaces the
+    # bound to a handler is the story that has to state it. `gt=0` because zero
+    # attempts is a model that is never called, which is a copilot that is
+    # always unavailable.
+    chat_max_attempts: int = Field(default=2, gt=0)
+    # How long to wait between those attempts. Half a second: long enough that
+    # a container mid-restart has moved on between attempts, short enough that
+    # a handler waiting on a genuinely dead model server is told so promptly
+    # rather than watching a spinner. Linear rather than exponential, because
+    # with two attempts there is exactly one wait and an exponent over one
+    # interval is a decision with nothing to decide.
+    #
+    # `ge=0` rather than `gt=0` — unlike every timeout in this file, zero is a
+    # meaningful value here and means "retry immediately", which is the right
+    # setting for a test that asserts the attempt count without paying for the
+    # sleep.
+    chat_retry_backoff_seconds: float = Field(default=0.5, ge=0)
+    # The per-request timeout on the availability probe — `GET /api/version` on
+    # the Ollama base URL, the same path `deploy/compose.e2e.yaml`'s stub
+    # healthcheck uses. Three seconds, and it is deliberately *far* shorter
+    # than `chat_request_timeout_seconds`: a probe asks whether the server is
+    # answering at all, not whether it can decode a thousand tokens, and a
+    # probe that took two minutes to report an outage would be reporting it
+    # long after the handler had discovered it by other means. `gt=0` for
+    # `embedding_request_timeout_seconds`' reason.
+    ai_health_probe_timeout_seconds: float = Field(default=3.0, gt=0)
+    # How long a probe result is reused before the next caller pays for a fresh
+    # one. Ten seconds, which is what makes `GET /copilot/availability` cheap
+    # enough to be polled by every open panel: N clients on a ten-second cache
+    # are one upstream request per ten seconds regardless of N, and the SPA's
+    # own poll interval is longer still.
+    #
+    # It is a *staleness* bound and not a correctness one, which is why ten
+    # seconds is comfortable: no run consults this probe (`agents/degradation.py`
+    # says why a second source of truth about reachability would be a defect),
+    # so the worst a stale `true` costs is one run that fails honestly, and the
+    # worst a stale `false` costs is ten seconds of a disabled composer after a
+    # recovery — which the panel's manual "Try again" shortens to zero. `gt=0`
+    # because a zero cache is a probe per request, which is the storm the cache
+    # exists to prevent.
+    ai_health_probe_cache_seconds: float = Field(default=10.0, gt=0)
+
+    @model_validator(mode="after")
+    def _bounded_retry_fits_the_run(self) -> "Settings":
+        """The retry must be able to finish before the run bound cuts it off.
+
+        Four knobs, and three of them can be turned independently by a
+        deployment that has no reason to suspect the fourth is involved. Raise
+        `chat_max_attempts` to three, or `chat_request_timeout_seconds` to 180,
+        and the arithmetic quietly inverts: the run's own `asyncio.timeout`
+        fires while the wrapper is still waiting on an attempt, so **every
+        outage is reported as `ai_limit`** — the code that means "a bound this
+        deployment set was reached" — and the panel never disables an input over
+        a model server that is genuinely down. The failure is silent, it is in
+        production only, and it is precisely the conflation this story exists to
+        remove, wearing the other story's clothes.
+
+        A validator rather than a comment, then, and at start-up rather than at
+        the first outage: the process refuses to boot naming both numbers, which
+        is the same treatment `payment_batch_weekday_numbers` gives a misspelled
+        day and for the same reason.
+
+        Strictly less than, not less than or equal: a retry that finishes at the
+        exact instant the run bound fires is a race whose winner decides which
+        code the handler is shown, and a bound worth setting is one whose
+        outcome does not depend on scheduler jitter.
+        """
+        worst_case = (
+            self.chat_max_attempts * self.chat_request_timeout_seconds
+            + (self.chat_max_attempts - 1) * self.chat_retry_backoff_seconds
+        )
+        if worst_case >= self.copilot_run_timeout_seconds:
+            raise ValueError(
+                f"CHAT_MAX_ATTEMPTS={self.chat_max_attempts} at "
+                f"CHAT_REQUEST_TIMEOUT_SECONDS={self.chat_request_timeout_seconds} with "
+                f"CHAT_RETRY_BACKOFF_SECONDS={self.chat_retry_backoff_seconds} is {worst_case}s "
+                f"of retry inside a COPILOT_RUN_TIMEOUT_SECONDS="
+                f"{self.copilot_run_timeout_seconds}s run: a model outage would be reported as "
+                "ai_limit rather than ai_unavailable"
+            )
+        return self
+
     @property
     def payment_batch_weekday_numbers(self) -> frozenset[int]:
         """The configured cadence as `date.weekday()` values (Mon=0 … Sun=6).

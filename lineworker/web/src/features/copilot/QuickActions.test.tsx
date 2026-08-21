@@ -24,7 +24,11 @@ import userEvent from "@testing-library/user-event";
 import { expect, test, vi } from "vitest";
 
 import { QuickActions } from "./QuickActions";
-import { QUICK_ACTIONS, QUICK_ACTION_KEYS } from "./quickActionMeta";
+import {
+  QUICK_ACTIONS,
+  QUICK_ACTION_KEYS,
+  type QuickActionKey,
+} from "./quickActionMeta";
 
 test("all seven actions render, with their glyphs, in the prototype's order", () => {
   render(<QuickActions onPick={vi.fn()} />);
@@ -92,4 +96,55 @@ test("every button is disabled while a run is in flight", async () => {
   }
   await userEvent.click(screen.getAllByTestId("copilot-quick-action")[0]!);
   expect(picked).not.toHaveBeenCalled();
+});
+
+// --- Story 6.6: per-key degradation --------------------------------------
+
+test("only the keys the caller names are disabled during an outage", async () => {
+  // The property AD-14 turns on: an outage disables *exactly* the actions that
+  // need the model, and the one that does not keeps working. Asserted with a
+  // set the test invents rather than with the real six, because this component
+  // has no opinion about which keys need a model — that is server truth
+  // (`GET /copilot/availability`), and a component that had a view of its own
+  // would be the second copy `quickActionMeta.ts` argues against.
+  const picked = vi.fn();
+  render(
+    <QuickActions
+      onPick={picked}
+      unavailableKeys={new Set<QuickActionKey>(["reserve", "fraud"])}
+    />,
+  );
+
+  const buttonFor = (key: string) =>
+    screen
+      .getAllByTestId("copilot-quick-action")
+      .find((button) => button.dataset.quickAction === key)!;
+
+  expect(buttonFor("reserve")).toBeDisabled();
+  expect(buttonFor("fraud")).toBeDisabled();
+  expect(buttonFor("data_alignment")).toBeEnabled();
+  expect(buttonFor("laborlaw")).toBeEnabled();
+
+  await userEvent.click(buttonFor("data_alignment"));
+  expect(picked).toHaveBeenCalledWith(
+    "data_alignment",
+    QUICK_ACTIONS.data_alignment.label,
+  );
+});
+
+test("a run in flight still disables everything, degraded or not", async () => {
+  // The two reasons compose rather than compete: single-flight is about *this
+  // thread*, degradation is about *this key*, and a button that answered
+  // because it needed no model would still be a second POST on a busy thread.
+  render(
+    <QuickActions
+      onPick={vi.fn()}
+      busy
+      unavailableKeys={new Set<QuickActionKey>(["reserve"])}
+    />,
+  );
+
+  for (const button of screen.getAllByTestId("copilot-quick-action")) {
+    expect(button).toBeDisabled();
+  }
 });

@@ -62,6 +62,15 @@ vocabulary for a terminal one — an interrupt *raises* rather than yielding —
 the end of its body, after every path has assigned one. The only way to emit two
 would be to add a second `yield`, which is a one-line diff a reviewer can see.
 
+Story 6.6 added two more ways a run can end — a model server that did not answer
+and a completion that hit its token ceiling — and **added no terminal `yield`**.
+Both are branches inside `_terminal_for`: `ChatUnavailable` arrives from
+`agents/degradation.py` through the producer's exception sink, and
+`_OutputTruncated` is raised after the astream loop the way `_Interrupted` is.
+The `error` frame's problem document grew a fifth member, `code`, drawn from the
+closed `StreamErrorCode` vocabulary declared beside `_problem_frame`; `type` and
+`status` are untouched.
+
 That `yield` sits **inside** the `try` whose `finally` releases the run's lock,
 so the frame reaches the client before the thread becomes available again. It
 is one statement's worth of nesting and it closes a window in which a finished
@@ -79,7 +88,7 @@ from uuid import uuid4
 
 import anyio
 import structlog
-from fastapi import APIRouter, Path, Request, Response, status
+from fastapi import APIRouter, Path, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import BaseMessage
 from langgraph.graph.state import CompiledStateGraph
@@ -87,8 +96,9 @@ from langgraph.types import Command
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agents.client import ChatUnavailable
 from agents.context import CopilotContext
-from agents.graph import QUICK_ACTIONS, resume_inputs, run_inputs
+from agents.graph import QUICK_ACTIONS, quick_action_flags, resume_inputs, run_inputs
 from agents.greeting import claim_greeting
 from agents.qas import QAS_NOTE, RTW_DRAFT
 from agents.state import ProposedWrite
@@ -873,7 +883,55 @@ def _keepalive() -> bytes:
     return b": keepalive\n\n"
 
 
-def _problem_frame(*, title: str, detail: str, type_: str, status_code: int) -> dict[str, Any]:
+#: Every `code` an `error` frame may carry. **A closed set, declared once.**
+#:
+#: Story 6.6, and it is what AC 1 and AC 4 are actually asking for: the SPA has
+#: always discriminated on the relative `type` URI (`web/src/api/errors.ts::
+#: problemType`), which answers "which failure was this?" — and a handler's
+#: panel needs the coarser question answered too, "why did the AI stop?", so
+#: that one expression can disable the affected inputs.
+#:
+#: `code` is an RFC 9457 §3.2 **extension member** added beside the four fixed
+#: ones, never a replacement for any of them: `type` and `status` keep their
+#: present meanings and their present values, `api/errors.py::problem_response`
+#: already merges extensions flat, and `RESERVED_PROBLEM_MEMBERS` already guards
+#: the name clash. Nothing that reads this API today reads it differently
+#: because a fifth member arrived.
+#:
+#: **Required rather than optional on `_problem_frame`**, which is the whole
+#: reason this is a `Literal` a reviewer can trust: an optional `code` would be
+#: a vocabulary with an unlabelled remainder, and mypy would have nothing to
+#: check a new branch against. Every existing branch therefore gained a code in
+#: the same change.
+#:
+#: The one consequence worth stating out loud: **`ai_limit` covers two shapes
+#: with two statuses** — 504 on the wall clock and 503 on a length stop. That is
+#: deliberate. `type` and `status` continue to say *what kind of failure and
+#: which one*; `code` says *why the AI stopped*, and from the handler's point of
+#: view both overruns stopped for the same reason — a bound this deployment
+#: configured was reached.
+StreamErrorCode = Literal[
+    # The model server could not be reached, or did not answer (AD-14). The one
+    # code the panel acts on reactively: see `web/src/api/copilot.ts`.
+    "ai_unavailable",
+    # A bound this deployment set was reached — `copilot_run_timeout_seconds` on
+    # the wall clock, or `copilot_max_output_tokens` on the completion.
+    "ai_limit",
+    # The graph finished and no assistant text reached the wire.
+    "copilot_empty_answer",
+    # The graph paused for an approval this process could not describe.
+    "copilot_approval_unreadable",
+    # Anything else. The catch-all, and it stays a catch-all: a new failure
+    # worth telling apart gets a branch and a code rather than being folded in
+    # here, which is the discipline that stopped a stopped model container from
+    # being reported as a bug in the graph.
+    "copilot_run_failed",
+]
+
+
+def _problem_frame(
+    *, title: str, detail: str, type_: str, status_code: int, code: StreamErrorCode
+) -> dict[str, Any]:
     """The problem+json body an `error` frame carries inline.
 
     The Copilot stream convention: an `error` event's payload **is** an RFC 9457
@@ -881,11 +939,152 @@ def _problem_frame(*, title: str, detail: str, type_: str, status_code: int) -> 
     already 200 and there is nowhere else to put one. So a client reads the same
     four members it reads from any other failure on this API, and the SPA's
     existing `Problem` type covers it with no second shape to learn.
+
+    Plus `code` since Story 6.6 — the fifth member, an extension rather than a
+    replacement. See `StreamErrorCode` for why it is required and why it is a
+    closed `Literal`.
     """
-    return {"type": type_, "title": title, "status": status_code, "detail": detail}
+    return {
+        "type": type_,
+        "title": title,
+        "status": status_code,
+        "detail": detail,
+        "code": code,
+    }
+
+
+class QuickActionAvailability(ApiModel):
+    """One quick-action key and whether it needs the model to answer.
+
+    `agents/graph.py::QUICK_ACTIONS` is the authority on both facts and this is
+    its projection on the wire — see `quick_action_flags()` for why the node
+    name is not here.
+
+    **Published rather than mirrored in the browser** (Story 6.6).
+    `web/src/features/copilot/quickActionMeta.ts` argues at length that server
+    truth should not be copied into the SPA, and `requires_llm` is server truth.
+    A client that knew which buttons need a model but not whether one is up — or
+    the reverse — still could not disable the right set, which is why this rides
+    the same response as `available` rather than a second endpoint.
+    """
+
+    key: str
+    requires_llm: bool
+
+
+class AvailabilityResponse(ApiModel):
+    """Whether the model server is answering, and which actions care.
+
+    The whole of what the copilot panel needs to disable exactly the affected
+    inputs and nothing else (AD-14, UX-DR8): `available` says whether the model
+    is reachable, `quickActions` says which keys depend on it, and the panel
+    intersects the two.
+
+    ## This is a UI signal, and no run consults it
+
+    A `requires_llm: true` run attempts the model and reports what actually
+    happened, even when this endpoint has already said the model is down. Two
+    sources of truth about reachability would eventually disagree, and the one
+    that matters is the one the run experienced — which is also why the SPA
+    marks the model unavailable *reactively* on an `ai_unavailable` frame rather
+    than trusting the poll alone. `agents/degradation.py` records the rule in
+    full.
+
+    ## `available: false` is a 200
+
+    The endpoint never errors because the thing it reports on is unhealthy. A
+    health signal that 503s during an outage has told its caller nothing it can
+    render, and the panel would then have to treat "the probe failed" and "the
+    model is down" as two states with one meaning.
+
+    ## …and `/healthz` is untouched
+
+    Deliberately. The api container is healthy without its model — see
+    `agents/degradation.py` and `api/app.py` — so this is an authenticated route
+    on the copilot's own router rather than a member of the unauthenticated
+    public set `tests/test_problem_json.py` pins.
+    """
+
+    available: bool = Field(
+        description=(
+            "Whether the local model server answered a liveness probe within "
+            "`ai_health_probe_timeout_seconds`. Cached for "
+            "`ai_health_probe_cache_seconds`, so N clients cost one upstream "
+            "request. `false` never means this endpoint failed — it means the "
+            "model server did not answer."
+        )
+    )
+    quick_actions: list[QuickActionAvailability]
 
 
 # --- routes -------------------------------------------------------------
+
+
+@router.get(
+    "/availability",
+    response_model=AvailabilityResponse,
+    summary="Whether the local model is answering, and which quick actions need it",
+    responses={**UNAUTHENTICATED_RESPONSE},
+)
+async def availability(
+    request: Request,
+    ctx: CallerContextDep,
+    force: Annotated[
+        bool,
+        Query(
+            description=(
+                "Bypass the server-side probe cache and ask the model server "
+                "now. For an explicit human retry only — the panel's background "
+                "poll omits it, which is what keeps N clients one upstream "
+                "request per `ai_health_probe_cache_seconds`."
+            )
+        ),
+    ] = False,
+) -> AvailabilityResponse:
+    """The panel's degradation signal. One cached probe, and the map's flags.
+
+    Authenticated like everything else on this router. It takes no claim and no
+    thread — the answer is a property of the deployment rather than of a
+    conversation — which also means it can be fetched before the panel knows
+    which claim it is showing.
+
+    ## `force`, and why a query parameter rather than a second route
+
+    The panel's "Try again" control promised to shorten the post-recovery wait
+    to zero and could not: `refetch()` re-issued this request, which the cache
+    answered with the same stale `false` it had been answering with for the last
+    ten seconds. The review of this story found three docstrings making that
+    promise and an acceptance criterion resting on it.
+
+    So the *caller* says which question it is asking, because only the caller
+    knows: a poll wants the cheap cached answer and a human who has just
+    restarted their model container wants the true one. One parameter on one
+    route rather than `/availability/fresh` beside it, because the response is
+    the same document either way — what differs is how old it is allowed to be,
+    which is a property of the request. The cache is untouched and stays the
+    default; coalescing the poll is the whole reason it exists, and
+    `agents/degradation.py` keeps forced callers coalesced with each other too,
+    so three tabs pressing the button are still one upstream request.
+
+    `ctx` is declared and unread, which is the same shape `/personas` takes and
+    for the same reason: the dependency **is** the authentication, and a route
+    that omitted it would publish a dependency's state to anonymous callers.
+    Nothing here branches on who the caller is, because the model server is up
+    or down for everybody.
+
+    **Nothing about the probe's answer is logged here.** The probe logs its own
+    failure once, with a class name (AD-11), and a route that logged every poll
+    would write six lines a minute per open panel for a fact that has not
+    changed.
+    """
+    copilot: CopilotRuntime = request.app.state.copilot
+    return AvailabilityResponse(
+        available=await copilot.availability_probe.available(force=force),
+        quick_actions=[
+            QuickActionAvailability(key=flag.key, requires_llm=flag.requires_llm)
+            for flag in quick_action_flags()
+        ],
+    )
 
 
 @router.get(
@@ -1463,6 +1662,76 @@ class _InterruptUnreadable(Exception):
     """
 
 
+class _OutputTruncated(Exception):
+    """The model stopped because it hit `num_predict`, not because it was finished.
+
+    Story 6.6's `ai_limit`, in the dimension a clock does not cover.
+    `copilot_max_output_tokens` is passed to every completion
+    (`agents/chat_model.py` argues why), and until this story **nothing noticed
+    it had been reached**: a four-hundred-word answer cut off mid-sentence
+    terminated `done`, and the panel told the handler their question had been
+    answered.
+
+    **Raised, not yielded** — `_Interrupted`'s pattern and its reason.
+    `_run_frames` contains no terminal event name at all, so a condition only it
+    can see becomes an exception the producer's sink hands to `_terminal_for`,
+    and the one-terminal-event rule stays structural.
+
+    **Raised *after* the astream loop**, which is the half that matters to a
+    handler. Everything the model did decode has already gone out as `messages`
+    frames and is already in the transcript; the run is a completed answer that
+    was cut short, not a lost one, and AC 4 asks for exactly that — "whatever
+    streamed before the stop remains in the transcript". Raising at the moment
+    the stop reason was seen would abandon the iteration and cost the checkpoint
+    write the rest of the graph still owes.
+    """
+
+
+#: The vendor's stop reason for "the completion hit its token ceiling".
+#:
+#: Ollama's own vocabulary — `done_reason` is `stop`, `length` or `load` — and
+#: `langchain_ollama` puts the whole final NDJSON object on the last streamed
+#: chunk's `generation_info`, which `langchain_core` merges into
+#: `AIMessageChunk.response_metadata` before the callback LangGraph's `messages`
+#: stream mode listens on. So the fact is available at the one place this
+#: process sees every model call, whichever path made it: `_narrate`'s direct
+#: `astream` and `create_agent`'s internal `ainvoke` both stream their chunks
+#: through that callback.
+#:
+#: Read off the vendor rather than counted here, and that is the point.
+#: Comparing a token count against `copilot_max_output_tokens` would be a second
+#: source of truth about the model's own stop reason — one that has to tokenise
+#: the same way the server did to be right, and that is wrong quietly when it is
+#: not. `deploy/model-stub/app.py` emits the same field, so the e2e stack and a
+#: real Ollama answer this question identically.
+_LENGTH_STOP_REASONS = frozenset({"length"})
+
+
+def _stop_reason(message: Any) -> str | None:
+    """The vendor's stop reason off one streamed chunk, or `None` if it has none.
+
+    Three-valued rather than the boolean this started as, and the third value is
+    the one that matters: **"this chunk ends a completion and says why" has to
+    be distinguishable from "this chunk says nothing about stopping"**, or the
+    caller cannot tell a completion that finished cleanly from a chunk in the
+    middle of one. `_run_frames` needs exactly that distinction to track the
+    *last* completion in a run rather than latching on the first truncated one.
+
+    Defensive about *shape* and not about content, `_interrupt_value`'s rule:
+    `response_metadata` is a plain dict on every message class this build sees,
+    but a chunk arriving without one is a vendor difference rather than a reason
+    to end a working run with an error. Absent metadata reads as "said nothing
+    about stopping", which is the safe direction — the alternative would report
+    `ai_limit` on every run against a model server whose client stopped
+    publishing the field.
+    """
+    metadata = getattr(message, "response_metadata", None)
+    if not isinstance(metadata, Mapping):
+        return None
+    reason = metadata.get("done_reason")
+    return reason if isinstance(reason, str) else None
+
+
 async def _stream(
     *,
     lock: AbstractAsyncContextManager[bool],
@@ -1597,6 +1866,26 @@ def _terminal_for(
     paused for a human, and `error` for everything else — a model that did not
     answer, a timeout, a bug.
 
+    **Story 6.6 added two branches and no fourth outcome**, which is the shape
+    that keeps AD-14's promises checkable without loosening AD-6's invariant.
+    `ChatUnavailable` from `agents/degradation.py` becomes `ai_unavailable`, and
+    `_OutputTruncated` becomes the second `ai_limit`. Both are *branches inside
+    this function* rather than a second terminal `yield` somewhere else, which
+    is the property `_stream`'s docstring turns into a one-line diff a reviewer
+    can see.
+
+    **The `isinstance` order below is not load-bearing, and that is worth
+    saying once.** `ChatUnavailable` is a `RuntimeError` and `TimeoutError` is
+    an `OSError`; the branch classes are disjoint, so no failure can match two
+    of them and reordering them would change nothing. The property that keeps
+    the wall clock and an outage apart is upstream of this function, in
+    `agents/degradation.py`: the wrapper re-raises `CancelledError` untranslated,
+    so a run bound that fired while the task was suspended inside a model call
+    still arrives here as a `TimeoutError` rather than as a `ChatUnavailable`.
+    An earlier draft of this docstring claimed the ordering mattered *because*
+    the classes overlap and then said in the next sentence that they cannot be
+    confused; both halves cannot be true and the second one is.
+
     **`done` requires an answer**, which it did not until the review of Story
     6.3. A graph that completed without emitting one token of assistant text is
     a run that finished cleanly and told the handler nothing, and `done` is the
@@ -1630,6 +1919,7 @@ def _terminal_for(
             ),
             type_="/problems/copilot-empty-answer",
             status_code=503,
+            code="copilot_empty_answer",
         )
     if isinstance(failure, _Interrupted):
         # **The payload rides the terminal frame** (Story 6.5, AC 5). Until this
@@ -1658,6 +1948,32 @@ def _terminal_for(
             ),
             type_="/problems/copilot-approval-unreadable",
             status_code=503,
+            code="copilot_approval_unreadable",
+        )
+    if isinstance(failure, _OutputTruncated):
+        # **`ai_limit`, and the tokens stay** (Story 6.6, AC 4). See
+        # `_OutputTruncated`: the answer is on screen and it is incomplete, so
+        # the honest frame says the answer was cut short rather than that the
+        # copilot failed. A new `type` rather than reusing the timeout's,
+        # because the two are genuinely different failures a support engineer
+        # has to tell apart — a run that was too slow and a completion that was
+        # too long need different knobs turned — and only the *code* they share.
+        log.warning(
+            "copilot.output_truncated",
+            thread_id=thread_id,
+            duration_ms=int((time.monotonic() - started) * 1000),
+        )
+        return "error", _problem_frame(
+            title="Copilot answer cut short",
+            detail=(
+                "The copilot reached this deployment's answer-length limit and "
+                "stopped mid-answer. What is above is what it wrote; nothing "
+                "was changed on the claim. Ask a narrower question to get a "
+                "complete answer."
+            ),
+            type_="/problems/copilot-output-truncated",
+            status_code=503,
+            code="ai_limit",
         )
     if isinstance(failure, TimeoutError):
         log.warning(
@@ -1672,6 +1988,58 @@ def _terminal_for(
             ),
             type_="/problems/copilot-run-timeout",
             status_code=504,
+            # `ai_limit` and **not** `ai_unavailable`, and the distinction is
+            # this story's central one. `copilot_run_timeout_seconds` is a bound
+            # *this build* set on its own loop; a run that reached it says
+            # nothing about whether the model server is up, and reporting it as
+            # an outage would grey out the composer for a model that is
+            # answering perfectly well. `agents/degradation.py` keeps the other
+            # half of the rule: the wrapper re-raises `CancelledError`
+            # untranslated, so the run bound firing mid-model-call still arrives
+            # here as the `TimeoutError` this branch is reading.
+            code="ai_limit",
+        )
+    if isinstance(failure, ChatUnavailable):
+        # **The outage branch** (Story 6.6, AC 1, AD-14). The reason this is a
+        # branch at all is that until this story it was not: `ChatUnavailable`
+        # did not exist on this path, an unreachable Ollama arrived as an
+        # anonymous vendor exception, and the catch-all below reported it as
+        # `/problems/copilot-run-failed` — byte-identical to a bug in the graph.
+        # A handler could not tell "the model container is down" from "this
+        # console is broken", and neither could anybody reading the logs.
+        #
+        # There is **no fallback** underneath this (AD-5): no cloud path exists
+        # to fall into, and no pre-authored sentence is streamed in the model's
+        # place. The prototype's `offlineAnswer` has no successor. What the
+        # handler gets is a typed error and a console in which everything
+        # deterministic still works.
+        #
+        # **The sentence branches on `answered`, because the screen does.** A
+        # model that drops the connection after two hundred tokens raises
+        # un-retried — correctly, since retrying would decode a second answer on
+        # top of the first — and a frame that then said "the copilot could not
+        # reply" would be contradicted by the half-answer sitting above it in
+        # the transcript. A handler reading a paragraph under a notice telling
+        # them nothing was said learns to distrust the notice, which is the same
+        # dishonesty as the one this branch exists to fix, in miniature. So the
+        # run says which of the two happened; the `code`, the `type` and the
+        # status are identical either way, because the failure is.
+        log.warning("copilot.ai_unavailable", thread_id=thread_id, answered=answered)
+        return "error", _problem_frame(
+            title="AI is unavailable",
+            detail=(
+                (
+                    "The local model server stopped answering part-way through, "
+                    "so the reply above is incomplete."
+                    if answered
+                    else "The local model server did not answer, so the copilot could not reply."
+                )
+                + " Nothing was changed on the claim. Everything else in the "
+                "console still works — try again in a moment."
+            ),
+            type_="/problems/ai-unavailable",
+            status_code=503,
+            code="ai_unavailable",
         )
     log.warning("copilot.run_failed", thread_id=thread_id, error=type(failure).__name__)
     return "error", _problem_frame(
@@ -1679,6 +2047,7 @@ def _terminal_for(
         detail=("The copilot could not finish answering. Nothing was changed on the claim."),
         type_="/problems/copilot-run-failed",
         status_code=503,
+        code="copilot_run_failed",
     )
 
 
@@ -1715,7 +2084,10 @@ async def _run_frames(
     The split from `_stream` is what makes the one-terminal rule structural: this
     function's vocabulary is `messages` and `updates`, and there is no `done`,
     `interrupt` or `error` string anywhere in it. An interrupt raises
-    `_Interrupted` rather than yielding, so the decision stays in `_terminal_for`.
+    `_Interrupted` rather than yielding, so the decision stays in `_terminal_for`
+    — and Story 6.6's `_OutputTruncated` is raised the same way for the same
+    reason, which is what let a second `ai_limit` shape be added without adding
+    a second terminal `yield`.
 
     The iteration is bounded by `copilot_run_timeout_seconds` with
     `asyncio.timeout`, so a model that stops producing becomes a `TimeoutError`
@@ -1756,6 +2128,21 @@ async def _run_frames(
     # same pause at more than one level — the first one carrying a value is the
     # one the gate raised.
     interrupted: list[Any] = []
+    # Whether the **last** completion in this run stopped because it hit
+    # `num_predict` (Story 6.6). A flag rather than a raise at the moment it is
+    # seen, for `_OutputTruncated`'s reason: the decoded tokens have already
+    # gone out as `messages` frames and the graph still owes a checkpoint write,
+    # so the loop runs to completion and the raise happens below.
+    #
+    # **Assigned per completion, never latched**, which the first cut of this
+    # story got wrong. A `create_agent` turn that calls a tool is a completion
+    # of its own, and an intermediate one that hit the ceiling says nothing
+    # about whether the *answer* the handler is reading was cut short — a
+    # latched boolean ended such a run `error`/`ai_limit` over a final
+    # completion that finished perfectly normally, which is a false failure
+    # shown to a handler looking at a complete answer. So each completion's own
+    # stop reason overwrites the last, and a clean finish clears it.
+    truncated = False
     payload: Any = inputs
     if resume is not None:
         payload = Command(resume=resume["resume"], update=dict(inputs))
@@ -1784,6 +2171,21 @@ async def _run_frames(
             namespace, mode, chunk = part
             if mode == "messages":
                 message, _metadata = chunk
+                # **Read before the content check, and off every chunk** (Story
+                # 6.6). Ollama's `done_reason` rides the *final* chunk of a
+                # completion, which carries no content at all — so a check
+                # inside the `if text` below would never see it. Every model
+                # call in the run passes through here, including the ones
+                # `create_agent` makes where this build has no call site, which
+                # is what makes one detection site cover both paths.
+                #
+                # Only a chunk that *carries* a reason moves the flag: a chunk
+                # in the middle of a completion has nothing to say about how it
+                # will end, and treating its silence as "not truncated" would
+                # clear the answer's own verdict a token later.
+                reason = _stop_reason(message)
+                if reason is not None:
+                    truncated = reason in _LENGTH_STOP_REASONS
                 text = getattr(message, "content", "")
                 # Only assistant text goes on the wire. A tool-call chunk has
                 # empty content, and a tool *result* is a service payload the
@@ -1854,6 +2256,16 @@ async def _run_frames(
         if value is None:
             raise _InterruptUnreadable
         raise _Interrupted(value)
+    if truncated:
+        # **After the interrupt check, deliberately.** A run that both paused
+        # for approval and hit the token ceiling has a pending write the handler
+        # must answer, and a thread left interrupt-pending with no card on
+        # screen 409s every later message with nothing saying why — the
+        # `_InterruptUnreadable` lesson, arrived at from the other direction. So
+        # the pause wins: an unanswerable thread is a worse outcome than an
+        # unreported ceiling, and the ceiling is visible in the transcript
+        # regardless because the answer above the card stops mid-sentence.
+        raise _OutputTruncated
 
 
 __all__ = ["router"]

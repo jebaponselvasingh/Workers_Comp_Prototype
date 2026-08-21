@@ -306,6 +306,30 @@ def test_exactly_the_declared_modules_read_the_ollama_base_url() -> None:
 
     The equality stays an equality. A fifth reader should be a diff somebody
     argues for here, which is the entire mechanism.
+
+    ## The fifth reader: `agents/degradation.py` (Story 6.6)
+
+    Here is that diff, and here is the argument for it. AD-14 requires the SPA
+    to know whether the model server is reachable *before* a handler discovers
+    it by sending a message that fails, which means something in this process
+    has to ask the model server whether it is answering — a `GET /api/version`,
+    the same path `deploy/compose.e2e.yaml`'s stub healthcheck already targets.
+    Asking requires the URL.
+
+    It could not have been folded into an existing reader without making one of
+    them worse. `services/rag/client.py` is the embeddings client and its whole
+    claim is that it makes one kind of request; `agents/client.py` is
+    structured-only by design and has said so since 6.2; `agents/chat_model.py`
+    builds a `BaseChatModel` and a liveness probe is not one. So the probe lives
+    beside the wrapper that translates the outage it reports on, in the module
+    that owns the degradation seam.
+
+    **The property this guard actually protects is untouched by it.** Every
+    member of the set still lives in `agents/` or `services/rag/`, still talks
+    to the internal Ollama and nothing else, and there is still no cloud host
+    anywhere in the tree. A reader that appeared in `api/`, `services/` outside
+    `rag`, or `data/` would be the failure this test exists to catch, and this
+    is not one.
     """
     readers = {
         str(path.relative_to(SERVER_ROOT))
@@ -323,6 +347,7 @@ def test_exactly_the_declared_modules_read_the_ollama_base_url() -> None:
         "services/rag/client.py",
         "agents/client.py",
         "agents/chat_model.py",
+        "agents/degradation.py",
     }
 
 

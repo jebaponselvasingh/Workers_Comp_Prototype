@@ -96,13 +96,13 @@ development_status:
   epic-5-retrospective: optional
 
   # Epic 6: AI Adjuster Copilot & RAG
-  epic-6: in-progress
+  epic-6: done
   6-1-local-model-serving-embedding-foundation: done
   6-2-ai-insight-cache-insights-tab: done
   6-3-copilot-chat-with-persistent-threads: done
   6-4-deterministic-quick-actions-qas: done
   6-5-human-gated-writes-the-rtw-letter: done
-  6-6-honest-degradation: ready-for-dev
+  6-6-honest-degradation: done
   epic-6-retrospective: optional
 
   # Epic 7: Analyst Workspace

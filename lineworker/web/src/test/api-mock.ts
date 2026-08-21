@@ -119,6 +119,21 @@ export interface StubRoutes {
   /** `GET /copilot/threads/{id}/messages` (6.3) — one checkpointed transcript. */
   copilotTranscript?: StubRouteFor;
   /**
+   * `GET /copilot/availability` (Story 6.6) — the degradation signal.
+   *
+   * Matched **before** the two `/api/copilot/…` branches below, and unlike most
+   * of the orderings in this file that one really is load-bearing in one
+   * direction: `/api/copilot/availability` does not contain `/api/copilot/
+   * threads/` or `/api/copilot/claims/`, so it would fall through to the case
+   * file's catch-all rather than to either of them — a component test would then
+   * see a claim payload where an availability answer should be, and would render
+   * an available model for the wrong reason.
+   *
+   * Defaults to `COPILOT_AVAILABLE`, so every test written before this story
+   * keeps seeing a working model and nothing had to be amended to stay green.
+   */
+  copilotAvailability?: StubRouteFor;
+  /**
    * `POST /copilot/threads/{id}/runs` (6.3) — the SSE run.
    *
    * **The only route in this file whose success is not JSON**, which is why it
@@ -4230,6 +4245,94 @@ export const COPILOT_RUN_OK: readonly string[] = [
   sseFrame("done", { threadId: "claim.WC-20017.u1.s1" }),
 ];
 
+/**
+ * The seven flags the availability endpoint publishes (Story 6.6).
+ *
+ * The server's own `requires_llm` values, and they are here rather than derived
+ * from `quickActionMeta.ts` on purpose: shipping these over the wire exists
+ * precisely so the browser holds no copy of them, and a fixture that computed
+ * them from a client-side table would make the tests agree with the SPA about
+ * something neither of them is the authority on.
+ */
+const COPILOT_QUICK_ACTION_FLAGS = [
+  { key: "laborlaw", requiresLlm: true },
+  { key: "similar", requiresLlm: true },
+  { key: "rtw", requiresLlm: true },
+  { key: "reserve", requiresLlm: true },
+  { key: "fraud", requiresLlm: true },
+  { key: "nextactions", requiresLlm: true },
+  { key: "data_alignment", requiresLlm: false },
+];
+
+/** `GET /copilot/availability` with the model answering. The default. */
+export const COPILOT_AVAILABLE = {
+  status: 200,
+  body: { available: true, quickActions: COPILOT_QUICK_ACTION_FLAGS },
+};
+
+/**
+ * …and with it unreachable. **Still a 200**, which is the server's contract.
+ *
+ * A health signal that errored when the thing it reports on was unhealthy would
+ * leave the panel unable to tell "the probe failed" from "the model is down",
+ * so the endpoint answers `available: false` rather than 503 — and a fixture
+ * that got that wrong would make the SPA's degraded path untested while looking
+ * as though it were covered.
+ */
+export const COPILOT_UNAVAILABLE = {
+  status: 200,
+  body: { available: false, quickActions: COPILOT_QUICK_ACTION_FLAGS },
+};
+
+/**
+ * The frames an outage produces: whatever streamed, then one typed `error`.
+ *
+ * The problem document is the server's own, `code` included — the member the
+ * panel reads to mark the model unavailable reactively rather than waiting for
+ * the next poll. There is deliberately no assistant-styled turn in here: an
+ * outage is a typed error and never pre-authored prose (AD-14), and
+ * `ActionsTab.test.tsx` asserts the absence.
+ */
+export const COPILOT_RUN_AI_UNAVAILABLE: readonly string[] = [
+  sseFrame("updates", { node: "entry_router" }),
+  sseFrame("error", {
+    type: "/problems/ai-unavailable",
+    title: "AI is unavailable",
+    status: 503,
+    detail:
+      "The local model server did not answer, so the copilot could not reply. Nothing was changed on the claim. Everything else in the console still works — try again in a moment.",
+    code: "ai_unavailable",
+  }),
+];
+
+/** What a length-capped answer decoded before the ceiling cut it off. */
+const TRUNCATED_TEXT = "Deterministic partial answer that stops before it is";
+
+/**
+ * The other `ai_limit` shape: a completion that hit `num_predict` (Story 6.6).
+ *
+ * **Tokens first, then the terminal `error`**, which is the ordering AC 4 is
+ * about — the run is a completed answer that was cut short rather than a lost
+ * one, so what decoded stays in the transcript and the frame is appended to it.
+ *
+ * It exists so the SPA's `ai_limit` branch is covered at all: the panel must
+ * report the ceiling *and leave every input enabled*, because a bound this
+ * deployment set says nothing about whether the model server is up. A pane that
+ * treated the two codes alike would grey out a composer over a model answering
+ * perfectly well, and no test would have noticed.
+ */
+export const COPILOT_RUN_AI_LIMIT: readonly string[] = [
+  sseFrame("messages", { content: TRUNCATED_TEXT }),
+  sseFrame("error", {
+    type: "/problems/copilot-output-truncated",
+    title: "Copilot answer cut short",
+    status: 503,
+    detail:
+      "The copilot reached this deployment's answer-length limit and stopped mid-answer. What is above is what it wrote; nothing was changed on the claim. Ask a narrower question to get a complete answer.",
+    code: "ai_limit",
+  }),
+];
+
 /** `GET /copilot/claims/{id}/threads` on a claim with one conversation. */
 export const COPILOT_THREADS = {
   status: 200,
@@ -4557,6 +4660,12 @@ export function stubApi(routes: StubRoutes): void {
         //
         // The two `/copilot/claims/…/threads` routes share one URL and differ
         // only by method, the meetings block's arrangement.
+        // Story 6.6's degradation signal, before the two 6.3 branches: its URL
+        // contains neither of their prefixes, so without this it would reach the
+        // case file's catch-all. See the field's docstring.
+        if (url.includes("/api/copilot/availability")) {
+          return answerFor(routes.copilotAvailability ?? COPILOT_AVAILABLE, url);
+        }
         if (url.includes("/api/copilot/threads/") && url.endsWith("/runs")) {
           // **The body is recorded before the route answers** (Story 6.4). A
           // quick action differs from a chat message only by a key on this

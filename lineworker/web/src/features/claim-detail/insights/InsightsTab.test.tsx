@@ -34,8 +34,11 @@ import {
   CLAIM_INSIGHTS_NOT_GENERATED,
   CLAIM_INSIGHTS_PARTIAL_REFRESH,
   CLAIM_INSIGHTS_REFRESHED,
+  COPILOT_AVAILABLE,
+  COPILOT_UNAVAILABLE,
   ME_HANDLER,
   type StubRoute,
+  type StubRoutes,
   stubApi,
 } from "@/test/api-mock";
 
@@ -52,8 +55,9 @@ afterEach(() => {
 function renderTab(
   claimInsights: StubRoute = CLAIM_INSIGHTS,
   refreshInsights?: StubRoute,
+  extra: Partial<StubRoutes> = {},
 ) {
-  stubApi({ me: ME_HANDLER, claimInsights, refreshInsights });
+  stubApi({ me: ME_HANDLER, claimInsights, refreshInsights, ...extra });
   const client = createQueryClient();
   render(
     <QueryClientProvider client={client}>
@@ -387,5 +391,78 @@ test("a failed read still offers the refresh that would repair it", async () => 
   await waitFor(() => {
     expect(screen.getByTestId("insight-similar-generated")).toBeInTheDocument();
   });
+  expect(screen.queryByTestId("insights-error")).not.toBeInTheDocument();
+});
+
+// --- Story 6.6: the refresh control during a model outage -----------------
+
+test("Refresh disables itself when the model is unavailable, and says why", async () => {
+  // Task 4's audit found exactly two non-copilot server surfaces that reach the
+  // chat client, and this is the one with a button on it. The 503 that
+  // `POST …/insights/refresh` answers is unchanged and still the backstop — what
+  // changes is that it stops being the *discovery* mechanism, which is the same
+  // "disable exactly the affected input" rule the copilot panel follows.
+  renderTab(CLAIM_INSIGHTS, undefined, {
+    copilotAvailability: COPILOT_UNAVAILABLE,
+  });
+
+  await screen.findByTestId("insights-tab");
+  await waitFor(() =>
+    expect(screen.getByTestId("insights-refresh")).toBeDisabled(),
+  );
+  expect(
+    screen.getByTestId("insights-refresh-unavailable"),
+  ).toHaveTextContent(/AI is unavailable/i);
+});
+
+test("a 503 from Refresh marks the outage instead of leaving the button live", async () => {
+  // The window the probe cannot cover. It is cached server-side and polled
+  // every fifteen seconds, so the model can go down while this control is still
+  // enabled — and a handler who presses it has learned, first hand and sooner
+  // than any probe could, that the model server is not answering. Leaving the
+  // button enabled after that would invite them to find out again, which is the
+  // discovery-by-failure Story 6.6 exists to remove.
+  //
+  // The availability route answers `true` first and `false` afterwards, so the
+  // assertion below can only pass if the failed press caused a **refetch**: a
+  // mutation that merely marked the entry stale would leave the first answer
+  // rendered until the interval elapsed.
+  let polls = 0;
+  renderTab(
+    CLAIM_INSIGHTS,
+    { status: 503, body: { detail: "Model server unavailable" } },
+    {
+      copilotAvailability: () => {
+        polls += 1;
+        return polls === 1 ? COPILOT_AVAILABLE : COPILOT_UNAVAILABLE;
+      },
+    },
+  );
+  await screen.findByTestId("insights-tab");
+  expect(screen.getByTestId("insights-refresh")).toBeEnabled();
+
+  await userEvent.click(screen.getByTestId("insights-refresh"));
+
+  await screen.findByTestId("insights-refresh-error");
+  await waitFor(() =>
+    expect(screen.getByTestId("insights-refresh")).toBeDisabled(),
+  );
+  expect(
+    screen.getByTestId("insights-refresh-unavailable"),
+  ).toBeInTheDocument();
+});
+
+test("the cached cards keep rendering while the model is down", async () => {
+  // The **read** path is deliberately untouched: `GET …/insights` answers 200
+  // from a cache that needs no model, so an outage costs a handler the ability
+  // to regenerate and nothing else. A tab that had gone to an error state here
+  // would be exactly the hard dependency on the agent runtime AC 3 forbids.
+  renderTab(CLAIM_INSIGHTS, undefined, {
+    copilotAvailability: COPILOT_UNAVAILABLE,
+  });
+
+  expect(
+    await screen.findByTestId("insight-similar-generated"),
+  ).toBeInTheDocument();
   expect(screen.queryByTestId("insights-error")).not.toBeInTheDocument();
 });

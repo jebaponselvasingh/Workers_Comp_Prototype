@@ -54,8 +54,7 @@ run ids, event names and durations, and that is the whole of what a copilot run
 is allowed to say about itself.
 """
 
-from langchain_ollama import ChatOllama
-
+from agents.degradation import DegradingChatOllama
 from config import Settings
 
 #: Decoding temperature for chat. Zero, for `agents/client.py`'s reason and one
@@ -70,7 +69,7 @@ from config import Settings
 CHAT_TEMPERATURE = 0.0
 
 
-def copilot_chat_model(settings: Settings) -> ChatOllama:
+def copilot_chat_model(settings: Settings) -> DegradingChatOllama:
     """The streaming chat model, from configuration. The one construction site.
 
     Takes `Settings` rather than reading `get_settings()`, `chat_client`'s rule:
@@ -81,26 +80,45 @@ def copilot_chat_model(settings: Settings) -> ChatOllama:
     A wall-clock timeout stops a model that is slow; it does not stop one that
     is fast and verbose, and a four-thousand-token answer about a claim is a
     misunderstood question rather than a thorough one.
-    `copilot_max_output_tokens` is that ceiling. Story 6.6 surfaces hitting it
-    as `ai_limit`; this story's job is that no run is ever unbounded in the
-    meantime.
+    `copilot_max_output_tokens` is that ceiling. **Story 6.6 has now surfaced
+    hitting it as `ai_limit`**, which is the forward reference above discharged:
+    `api/routers/copilot.py` reads the vendor's stop reason off the streamed
+    chunk's `response_metadata` and ends such a run with an `error` frame whose
+    `code` is `ai_limit`, with everything that decoded before the stop still in
+    the transcript.
 
     **The timeout here is per HTTP request, not per run.** A `create_agent` loop
     may make several model calls, so `chat_request_timeout_seconds` bounds each
     hop and `copilot_run_timeout_seconds` — enforced by the runs endpoint around
     the whole stream — bounds the loop. Two bounds because there are two things
-    that can hang, and one of them is the loop itself.
+    that can hang, and one of them is the loop itself. Story 6.6 gives the two
+    different codes for the same reason they are two knobs: a hop that timed out
+    is a server that did not answer (`ai_unavailable`), and a loop that ran out
+    of wall clock is this build's own bound (`ai_limit`).
+
+    **The object returned is `DegradingChatOllama`, and that is the whole of the
+    outage seam** (Story 6.6, AD-14). This function is the one construction
+    site, so it is the one place a wrapper can be installed such that *both*
+    model callers inherit it — `agents/qas.py::_narrate`, which is visible, and
+    `create_agent`'s internal call, which happens inside the vendored harness
+    where this build has no call site at all. `agents/degradation.py` argues the
+    choice at length; what matters here is that "the copilot's model" and "the
+    model that translates its own failures" are one object rather than two,
+    because free chat and a quick action disagreeing about what an outage is
+    would be precisely the dishonesty AD-14 exists to prevent.
 
     The trailing slash is stripped for `OllamaChatClient`'s reason: the value
     comes from an operator's env file, and a URL that works depending on how it
     was typed is a support question waiting to happen.
     """
-    return ChatOllama(
+    return DegradingChatOllama(
         base_url=settings.ollama_base_url.rstrip("/"),
         model=settings.chat_model,
         temperature=CHAT_TEMPERATURE,
         num_predict=settings.copilot_max_output_tokens,
         async_client_kwargs={"timeout": settings.chat_request_timeout_seconds},
+        max_attempts=settings.chat_max_attempts,
+        retry_backoff_seconds=settings.chat_retry_backoff_seconds,
     )
 
 

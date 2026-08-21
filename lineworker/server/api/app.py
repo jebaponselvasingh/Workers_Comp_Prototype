@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import (
 
 from agents import InsightGenerationDeps, chat_client, refresh_pending_insights
 from agents.chat_model import copilot_chat_model
+from agents.degradation import ModelAvailabilityProbe
 from agents.graph import build_graph
 from api.deps import enforce_authenticated
 from api.errors import register_error_handlers
@@ -263,6 +264,25 @@ class CopilotRuntime:
     #: knob would let the Insights card and the chat tell one handler two
     #: different numbers about the same neighbour in the same session.
     embedding_staleness_days: int
+    #: The model-availability probe the copilot panel's degradation reads
+    #: (Story 6.6, AD-14).
+    #:
+    #: An **object** rather than the two knobs it holds, and it is here for both
+    #: of the reasons the fields above are. The bounds are values on this
+    #: runtime so that a request cannot widen them and so that nothing reads
+    #: `Settings` at request time — the same rule `run_timeout_seconds` keeps.
+    #: And the object carries the probe's cache, so one process makes one
+    #: upstream request per `ai_health_probe_cache_seconds` however many panels
+    #: are polling; a probe constructed per request would be a cache with
+    #: nothing in it, which is the storm the cache exists to prevent.
+    #:
+    #: **Nothing on the run path consults it.** See `agents/degradation.py`: a
+    #: `requires_llm: true` run attempts the model and reports what happened,
+    #: because two sources of truth about reachability would eventually disagree
+    #: and the one that matters is the one the run experienced. This exists to
+    #: drive a disabled state in a browser, and `/healthz` deliberately does not
+    #: read it — the api container is healthy without its model.
+    availability_probe: ModelAvailabilityProbe
 
 
 async def build_copilot(
@@ -330,6 +350,7 @@ async def build_copilot(
         sse_keepalive_seconds=settings.copilot_sse_keepalive_seconds,
         embedding_client=embedding_client(settings),
         embedding_staleness_days=settings.insight_staleness_disclosure_days,
+        availability_probe=ModelAvailabilityProbe(settings),
     )
     return runtime, pool
 

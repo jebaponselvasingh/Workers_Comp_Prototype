@@ -525,6 +525,22 @@ export const queryKeys = {
      * single-flight 409.
      */
     writes: ["copilot", "write"] as const,
+    /**
+     * Whether the local model is answering, and which quick actions need it
+     * (Story 6.6).
+     *
+     * **No claim and no thread in the key**, unlike everything else in this
+     * group, and that is the shape of the fact rather than an omission: the
+     * model server is up or down for the whole deployment, so a per-claim key
+     * would poll the same endpoint once per open case file and cache N copies
+     * of one answer.
+     *
+     * It is the **only key in the SPA with a `refetchInterval`** behind it —
+     * see `api/copilot.ts::AVAILABILITY_POLL_MS`, which argues why the
+     * no-polling stance recorded on `dashboard.ts` is broken exactly here and
+     * nowhere else.
+     */
+    availability: ["copilot", "availability"] as const,
   },
   /**
    * The handler's stakeholder emails (Story 4.3) — **a top-level group beside
