@@ -3,6 +3,7 @@ title: 'Story 7.1 — Fraud Analytics Workspace'
 type: 'feature'
 created: '2026-08-21'
 baseline_revision: 'a921899504b118fcaff22c66db2c28d683d4d026'
+final_revision: '1ad8493fad4e704d0dcfcc9619188dbdda304385'
 status: 'done'
 review_loop_iteration: 0
 followup_review_recommended: true # fifteen findings were patched into the diff, two of them high and both on the paths this story exists to make legible — a truncation whose contents moved with a display preference, so a fraud table dropped its twelve most concentrated injury types on a click and captioned the result truthfully, and a red "Review indicated" chip the browser drew from a payload carrying no verdict. The fixes reach past this story's own files into three shared surfaces an earlier story owns (`InsightShell`'s empty message, `DistributionDonut`'s emptiness rule, `WorkspaceNav`'s active partition), and one of them changed what Epic 5's charts consider empty. The strongest signal for a second pass is not the count but the oracle: `e2e/fixtures/seed.ts::topRate` carried the same sort-then-cut defect as the implementation and agreed with it by sharing it, so the independent check was not independent on the one property that was wrong. What a follow-up should read is the cut/sort split under a scoped book, `DistributionDonut`'s new zero-total branch against its pre-7.1 callers, and whether any other seed oracle mirrors an implementation it is supposed to check
