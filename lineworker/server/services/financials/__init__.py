@@ -83,6 +83,8 @@ from services.financials.reserve import (
     CLOSED_FINAL_RATIONALE,
     ZERO_RESERVE_CLEAR_RATIO_BP,
     ZERO_RESERVE_EXPOSED_RATIO_BP,
+    IdentifiedReserveClaim,
+    MissingReserveVerdict,
     ReserveCheck,
     ReserveClaim,
     ReserveVerdict,
@@ -90,6 +92,7 @@ from services.financials.reserve import (
     indemnity_terms,
     reserve_check_for_claim,
     reserve_check_from_rows,
+    reserve_checks_for_claims,
     unpaid_medical_cents,
 )
 from services.financials.schedule import (
@@ -134,6 +137,8 @@ __all__ = [
     "BenefitClaim",
     "ClaimFinancials",
     "FinancialSummary",
+    "IdentifiedReserveClaim",
+    "MissingReserveVerdict",
     "LineItemGroup",
     "LineItemView",
     "MaterializationPlan",
@@ -166,6 +171,7 @@ __all__ = [
     "project_payments",
     "reserve_check_for_claim",
     "reserve_check_from_rows",
+    "reserve_checks_for_claims",
     "reserve_rationale",
     "round_half_up",
     "run_payment_batch",

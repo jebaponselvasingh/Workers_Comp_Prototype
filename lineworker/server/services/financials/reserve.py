@@ -97,7 +97,7 @@ thing this server formats money into; the same argument applies here, and
 paragraph and in the row above it.
 """
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum
@@ -171,6 +171,60 @@ class ReserveClaim(ScheduleClaim, Protocol):
 
     @property
     def reserve(self) -> int: ...
+
+
+class MissingReserveVerdict(RuntimeError):
+    """A verdict was needed for a claim nobody loaded one for (Story 7.4).
+
+    **Declared here rather than in either of the two modules that raise it**,
+    which is AD-2's ownership applied to a failure rather than to a computation:
+    the thing that is missing is *this module's* answer, and the two callers —
+    `services/worklist/decomposition.adequacy_of` and
+    `drill_through._matches_reserve_verdict` — reach it from opposite directions.
+    It is also the only home with no import cycle in it:
+    `services/worklist/segmentation.py` imports `drill_through`, so `drill_through`
+    cannot import `decomposition`, which imports `fraud`, which imports
+    `segmentation`. `services/financials` imports nothing from `services/worklist`
+    at all.
+
+    A programming error rather than a response, and **loud rather than empty**:
+    both callers build the caseload and the verdict map from one another, so the
+    only way to reach this is a code path that produced one and not the other.
+    The alternatives are a distribution whose total is quietly smaller than
+    `claimsInScope` on the one card whose subject is how a *whole* book is
+    reserved, and a drill list that silently returns nothing for a filter it
+    accepted — both of which look like answers.
+
+    `RuntimeError` rather than a new root: nothing catches this, and the process
+    reaching it is the point.
+    """
+
+
+class IdentifiedReserveClaim(ReserveClaim, Protocol):
+    """A reserve claim that also knows which claim it is (Story 7.4).
+
+    `ReserveClaim` extended by one member rather than restated, which is the
+    arrangement that class already makes over `ScheduleClaim` and for the same
+    reason: the four columns the verdict is computed from are one list, and the
+    business id is not one of them — `classify_reserve` never sees it and must
+    not, or a verdict could come to depend on which claim it is about.
+
+    It exists because the **bulk** path needs a key. `reserve_check_for_claim`
+    is handed one claim and answers one check, so the caller already knows whose
+    it is; `reserve_checks_for_claims` answers a mapping, and the only honest key
+    is the same business id `select_bills_for_claims` and
+    `select_payment_schedule_for_claims` group their rows by. A separate
+    `Sequence[str]` of ids beside the claims would be two lists a caller could
+    hand over in different orders.
+
+    Structural rather than a base class, `PaidColumns`' idiom throughout this
+    package: `services/worklist/decomposition.FinancialClaim` and
+    `services/worklist/drill_through.DrillClaim` both satisfy it by shape, and
+    neither imports anything from here to do so.
+    """
+
+    @property
+    def claim_id(self) -> str: ...
 
 
 @dataclass(frozen=True)
@@ -573,10 +627,79 @@ async def reserve_check_for_claim(
     )
 
 
+async def reserve_checks_for_claims(
+    db: AsyncSession,
+    ctx: CallerContext,
+    claims: Sequence[IdentifiedReserveClaim],
+    *,
+    bands: ReserveBands,
+) -> Mapping[str, ReserveCheck]:
+    """Every claim's verdict, from stored rows, in two reads — **no refresh**.
+
+    The seam Story 7.4's portfolio distribution reaches the verdict through, and
+    it lives here rather than in `services/worklist` because the verdict is this
+    module's (AD-2/AD-12). What the analyst workspace adds is a *shape* — a
+    mapping over a book instead of an answer about a claim — and every entry in
+    it comes out of `reserve_check_from_rows`, the same function
+    `reserve_check_for_claim` calls and `services/financials/summary.py` calls.
+    A portfolio bucket and a case file's chip are therefore one computation with
+    three callers rather than two that agree on today's data.
+
+    **It deliberately does not materialize, and that is the whole difference
+    from `reserve_check_for_claim`.** That function refreshes the schedule before
+    reading it, because two *claim-level* surfaces must not disagree and three of
+    the five week statuses move with the calendar — and a refresh is a **write**.
+    An analyst aggregate cannot take one: the workspace is read-only by role
+    capability (`fraud.FRAUD_ANALYTICS_ROLES`), a dashboard request that
+    rewrote the schedule of every claim in a portfolio would be write
+    amplification with an audit story nobody asked for, and the route it serves
+    answers a `GET`. `services/worklist/priority_claims.py::_action_labels` is
+    the precedent: it reads `select_payment_schedule_for_claims` in bulk and
+    folds the stored rows, for the same reason and with the same consequence.
+
+    **What that costs, stated rather than hidden.** A claim whose week boundary
+    has passed since anyone last opened it carries a stored status one step
+    behind the one a case file would show, so its `remaining_indemnity_cents`
+    can be higher here than there until the next single-claim read refreshes it.
+    That moves a verdict only across a band edge and only for a claim in that
+    window; the alternative — a write on a read path — is worse, and the
+    portfolio card names the staleness in its footnote rather than implying a
+    freshness it does not have.
+
+    **Two reads, both scoped, both grouped by business id.**
+    `select_payment_schedule_for_claims` and `select_bills_for_claims` already
+    exist and already carry `employer_scope(ctx)`, so a claim the caller cannot
+    see contributes no rows — and a caller who somehow named one would get the
+    same answer as a claim with no rows at all rather than a leak.
+
+    A claim absent from either mapping is folded with an **empty** sequence, and
+    that is the identical answer the single-claim path gives: `select_bills`
+    returns `[]` for a claim with no bills and `unpaid_total(())` is `0`, which
+    is "no unpaid bills" rather than "bills not on file". The `None` that means
+    the second is `unpaid_medical_cents`' and this function never produces it —
+    the same as `reserve_check_from_rows`, deliberately, because the two paths
+    have to agree claim for claim.
+    """
+    claim_ids = [claim.claim_id for claim in claims]
+    weeks = await claim_repo.select_payment_schedule_for_claims(db, ctx, claim_ids)
+    bills = await claim_repo.select_bills_for_claims(db, ctx, claim_ids)
+    return {
+        claim.claim_id: reserve_check_from_rows(
+            claim,
+            weeks=weeks.get(claim.claim_id, ()),
+            bills=bills.get(claim.claim_id, ()),
+            bands=bands,
+        )
+        for claim in claims
+    }
+
+
 __all__ = [
     "CLOSED_FINAL_RATIONALE",
     "ZERO_RESERVE_CLEAR_RATIO_BP",
     "ZERO_RESERVE_EXPOSED_RATIO_BP",
+    "IdentifiedReserveClaim",
+    "MissingReserveVerdict",
     "ReserveCheck",
     "ReserveClaim",
     "ReserveVerdict",
@@ -584,5 +707,6 @@ __all__ = [
     "indemnity_terms",
     "reserve_check_for_claim",
     "reserve_check_from_rows",
+    "reserve_checks_for_claims",
     "unpaid_medical_cents",
 ]

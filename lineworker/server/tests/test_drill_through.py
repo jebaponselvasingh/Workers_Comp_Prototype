@@ -106,7 +106,7 @@ ROW_KEYS = {
     "priorityMarker",
 }
 
-#: The twenty-five parameters the route may declare, and no others.
+#: The twenty-six parameters the route may declare, and no others.
 #:
 #: Derived from `WIRE_KEYS` rather than written out, which makes it an allowlist
 #: about *shape* — what may appear beside the facets — rather than about the
@@ -117,10 +117,18 @@ ROW_KEYS = {
 #: route without a number in a test moving.
 PARAMETER_NAMES = {f"filter[{wire}]" for wire in WIRE_KEYS.values()} | {"cursor"}
 
-#: How many facets the route publishes. Its own literal, so "twenty-four facets
+#: How many facets the route publishes. Its own literal, so "twenty-five facets
 #: and a cursor" is a sentence a reader can check rather than a set comparison
 #: that would pass at any size.
-FACET_COUNT = 24
+#:
+#: Story 7.4 moved it from 24 to 25 — `filter[reserveVerdict]`, appended — which
+#: is the change this constant exists to require rather than one it was surprised
+#: by. It is also the one facet that changes what the route *costs*: the verdict
+#: is not a column, so setting it loads each claim's schedule and bills and the
+#: `reserve_bands` document. `test_financial_decomposition.py` counts those
+#: reads, in both directions, so the shipped one-scoped-read guarantee stays true
+#: of every other drill URL.
+FACET_COUNT = 25
 
 TODAY = date(2026, 8, 18)
 
@@ -218,6 +226,8 @@ def drill_claim(
     icd: str = "S61.219A",
     age: int = 30,
     gender: Gender = Gender.male,
+    reserve: int = 0,
+    recovery: RecoveryWindow = RecoveryWindow.weeks_4_6,
 ) -> DrillClaim:
     """One synthetic projection row, with every field defaulted to *quiet*.
 
@@ -268,6 +278,8 @@ def drill_claim(
         icd=icd,
         age=age,
         gender=gender,
+        reserve=reserve,
+        recovery=recovery,
     )
 
 

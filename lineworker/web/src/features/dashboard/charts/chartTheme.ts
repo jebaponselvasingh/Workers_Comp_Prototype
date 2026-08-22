@@ -21,7 +21,7 @@
  * extension hues, and nothing else — see `CATEGORICAL_FILLS`.
  */
 import type { FraudBand } from "@/api/dashboard";
-import type { RiskBand, Stage } from "@/api/claims";
+import type { ReserveVerdict, RiskBand, Stage } from "@/api/claims";
 import type { ReturnStatus } from "@/api/claims";
 
 /**
@@ -89,6 +89,54 @@ export const FRAUD_BAND_FILL: Record<NonNullable<FraudBand>, string> = {
   high: "var(--color-error)",
   medium: "var(--color-warn)",
   low: "var(--color-ok)",
+};
+
+/**
+ * Reserve verdict → the tone the case file already gives it (Story 7.4).
+ *
+ * **The chart's twin of `features/claim-detail/reserveAccent.ts`, and the
+ * correspondence is stated here because the two exist for different reasons and
+ * must not drift.** That map is Tailwind *classes* — a card needs a text colour
+ * and a soft box — and this one is CSS variables, because these values land on
+ * SVG attributes Recharts writes itself and a class cannot reach one
+ * (`RiskGauge`'s precedent, restated at the top of this file). Two spellings of
+ * one semantic, and the semantic is the case file's: a light reserve and a
+ * heavy one are painted here exactly as they are painted on the claim a reader
+ * clicks through to.
+ *
+ * **Note which way round the two warnings go, because it reads backwards at
+ * first glance: light is the error.** A light reserve is one that will not cover
+ * the exposure — money the carrier has not put aside — while a heavy one is
+ * capital tied up, which is a warning rather than a problem. `reserveAccent.ts`
+ * carries the argument in full and the prototype makes the same call; it is
+ * repeated here because it is exactly the pairing a later refactor "corrects",
+ * and correcting it in one of the two files would leave a donut segment and the
+ * chip it drills to arguing about the same claim.
+ *
+ * `closed_final` and `indeterminate` take the neutral, and for the two reasons
+ * that map gives: a settled claim's verdict is a statement rather than a status
+ * to act on, and an *absent* comparison must not be painted in any of the three
+ * status colours or the console would be implying it had reached a conclusion.
+ * Both are `--color-muted-text`, which is `UNKNOWN_KEY_FILL`'s neutral — the
+ * same "there is a category here and it is not a verdict about exposure" the
+ * fallbacks below say.
+ *
+ * **No new colour enters this file**, which is this module's standing
+ * constraint: the five members take four of the existing semantic tokens and
+ * nothing else. Keyed by the wire value and exhaustive over the generated enum,
+ * so a sixth verdict fails the build here rather than rendering a colourless arc
+ * nobody notices.
+ */
+export const RESERVE_VERDICT_FILL: Record<ReserveVerdict, string> = {
+  light: "var(--color-error)",
+  adequate: "var(--color-ok)",
+  heavy: "var(--color-warn)",
+  // `text-faint`, matching `VERDICT_ACCENT`'s entry for the same verdict — the
+  // two maps are one semantic in two spellings, and this is the bucket holding
+  // most of a settled book, so a chip and its arc disagreeing here is the drift
+  // the map's own docstring warns about rather than a rounding of it.
+  closed_final: "var(--color-faint)",
+  indeterminate: "var(--color-muted-text)",
 };
 
 /**

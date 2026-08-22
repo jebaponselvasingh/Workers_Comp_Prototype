@@ -414,7 +414,7 @@ async def select_drill_rows(
     db: AsyncSession,
     ctx: CallerContext,
 ) -> Sequence[sa.Row[Any]]:
-    """`select_queue_rows`, plus the eleven columns the drill filters read.
+    """`select_queue_rows`, plus the thirteen columns the drill filters read.
 
     Story 5.5's dashboard drill-through renders the *queue card* — the same
     thirteen columns, so a card opened from a KPI number looks like the card
@@ -422,12 +422,23 @@ async def select_drill_rows(
     of facets, several of which name columns no queue card shows:
     `Claim.employer_id`, `Claim.handler_id`, `Claim.state` and
     `Claim.osha_recordable` from that story, `Claim.doi`, `Claim.disability`
-    and `Employer.sector` from Story 7.2's trend drills, and `Claim.region`,
+    and `Employer.sector` from Story 7.2's trend drills, `Claim.region`,
     `Claim.icd`, `Employee.age` and `Employee.gender` from Story 7.3's
-    segmentation vocabulary. Those eleven and nothing else — `Claim.froi_date`
+    segmentation vocabulary, and `Claim.reserve` and `Claim.recovery` from
+    Story 7.4's reserve-verdict facet. Those thirteen and nothing else —
+    `Claim.froi_date`
     is already in `QUEUE_ROW_COLUMNS`, because a queue card shows the claim's
     age, and `filter[fnolFrom]` reads the same column the age is derived from
     rather than asking for a second copy of it.
+
+    **Story 7.4's two are the first columns here that are read by nothing in
+    this projection's own fold.** `Claim.reserve` and `Claim.recovery` exist so
+    a `DrillClaim` satisfies `services/financials.IdentifiedReserveClaim` by
+    shape, which is what lets `filter[reserveVerdict]` compare Epic 3's own
+    verdict rather than a re-derivation of it — `claim_id`, `stage` and `doi`
+    were already here. Two columns in one SELECT, no extra join, and no extra
+    query: the *verdict* costs two reads and they are paid for in the service,
+    only when the facet is set.
 
     **Story 7.3's four ride joins that are already here**, exactly as
     `Employer.sector` does: `region` and `icd` are columns of `claim` that
@@ -517,6 +528,8 @@ async def select_drill_rows(
             Claim.icd,
             Employee.age,
             Employee.gender,
+            Claim.reserve,
+            Claim.recovery,
         )
         .select_from(Claim)
         .join(Employee, Claim.employee_id == Employee.id)

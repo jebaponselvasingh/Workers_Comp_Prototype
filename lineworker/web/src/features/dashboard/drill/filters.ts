@@ -35,7 +35,10 @@
 import type { ReturnStatus, RiskBand, Stage } from "@/api/claims";
 import type { AppliedFilter } from "@/api/dashboard";
 import type { paths } from "@/api/schema";
-import { DISABILITY_LABEL } from "@/features/claim-detail/labels";
+import {
+  DISABILITY_LABEL,
+  RESERVE_VERDICT_LABEL,
+} from "@/features/claim-detail/labels";
 
 /**
  * The twenty facet names, in the order a chip row draws them.
@@ -91,6 +94,19 @@ export const FILTER_KEYS = [
   "icd10",
   "ageGroup",
   "gender",
+  // Story 7.4's one, appended for exactly the reason 7.1's two, 7.2's six and
+  // 7.3's four were: this array's order is the server's `FILTER_KEYS` order and
+  // the chip row's draw order, so inserting `reserveVerdict` beside `severityBand`
+  // — where it reads more naturally, since both are bands of a claim — would put
+  // this row out of step with the server's `appliedFilters` on every URL
+  // carrying both.
+  //
+  // It is the Financial section's own click target: a segment of the
+  // reserve-adequacy donut. It is deliberately **not** in `SEGMENTATION_KEYS`
+  // below, for that tuple's stated rule — a verdict is something a card
+  // published and a reader clicked, not a dimension a workspace-wide picker
+  // offers.
+  "reserveVerdict",
 ] as const;
 
 /**
@@ -269,6 +285,14 @@ export function toQueryParams(filters: DrillFilters): DrillQuery {
       filters.ageGroup,
     ) as DrillQuery["filter[ageGroup]"],
     "filter[gender]": enumValue(filters.gender) as DrillQuery["filter[gender]"],
+    // Story 7.4's one, spelled out individually rather than looped for this
+    // function's founding reason: each line is a line a rename breaks. An enum
+    // whose vocabulary only the server can check — and the one facet on this
+    // list whose value the server cannot reach from a claim row alone, which is
+    // why setting it costs that route two extra reads.
+    "filter[reserveVerdict]": enumValue(
+      filters.reserveVerdict,
+    ) as DrillQuery["filter[reserveVerdict]"],
   };
 }
 
@@ -586,6 +610,11 @@ export const FILTER_LABEL: Record<FilterKey, string> = {
   icd10: "ICD-10",
   ageGroup: "Age group",
   gender: "Gender",
+  // Story 7.4's one, named for the *surface* per this map's convention: "Reserve"
+  // is the adequacy card's dimension and the word the case file's own chip uses.
+  // Deliberately not "Reserve verdict" — the value beside it already reads
+  // "Reserve Light", and "Reserve verdict: Reserve Light" says it twice.
+  reserveVerdict: "Reserve",
 };
 
 /** The fraud-score bands' copy, without the edges the legend quotes. */
@@ -699,6 +728,14 @@ const VALUE_LABEL: Partial<Record<FilterKey, Record<string, string>>> = {
   // `sector` is free text where the stored value *is* the label.
   disability: DISABILITY_LABEL,
   // Story 7.3's one labelled facet. The other three are absent on purpose:
+  // Story 7.4's one. **Imported rather than restated**, which is `disability`'s
+  // ruling one entry up and is sharper here: a reserve verdict is "Reserve
+  // Light" wherever it appears — on the treatment card, on the Bills summary,
+  // in the adequacy donut's legend and on this chip — and AD-10's "one
+  // semantic, every surface" is a statement about the *label* as much as about
+  // the figure. A second copy of five strings would be five strings free to
+  // drift on the one surface that sits between a chart and a case file.
+  reserveVerdict: RESERVE_VERDICT_LABEL,
   // `region` and `icd10` are free text where the stored value *is* the label,
   // and `ageGroup` is the one facet in the whole vocabulary whose label cannot
   // live in a static map — its members are ordinal words and the range a reader

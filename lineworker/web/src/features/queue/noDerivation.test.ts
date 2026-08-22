@@ -584,7 +584,66 @@ const DERIVED_FIELDS =
   // to the server, which is the AD-8 violation the ordinal names exist to
   // prevent. A guard that forced the rule into two tiers would be worse than the
   // gap it closed.
-  "claimsMatching";
+  "claimsMatching|" +
+  // Story 7.4's eight, and the alternation above was read before adding them —
+  // 5.4's review caught exactly the mistake of appending tokens that were
+  // already alternatives. `paidCents`, `total`, `count`, `truncated`, `\.limit`,
+  // `totalCategories`, `claimsInScope`, `verdict`, `severityBand` and
+  // `rulesVersion` are all already here; a financial decomposition adds eight
+  // names, and every one of them names a *sum, a count or a rule edge the
+  // browser is handed beside the ingredients of a second opinion*.
+  //
+  // - `reserveCents` and `projectedCents` are the two the section exists to
+  //   keep apart, and they are one `+` from each other: `projectedCents` **is**
+  //   `paidCents + reserveCents` on today's data, published rather than added
+  //   because it is the registered `total_claim_projected` derivation and
+  //   because the day the paid basis moves (`deferred-work.md`'s open product
+  //   decision) the identity stops holding. A browser that added the first two
+  //   would be right until that day and silently wrong after it. `reserveCents`
+  //   also appears on the claim-level reserve block, where the same addition is
+  //   the second computer AD-10 forbids — `totalClaimProjectedCents` is on this
+  //   list for that surface already.
+  // - `claimCount` is a group's and a cohort's denominator, and it is the one a
+  //   card is most tempted to divide by: `projectedCents / claimCount` is the
+  //   average the server already floor-divides and publishes, with its own
+  //   rounding. Adding the two cohorts' counts is the other shape, and it is
+  //   how "what share of the book is surgical" gets computed over a scope the
+  //   client does not hold in full. Guarded as a bare word rather than as a
+  //   property because no ordinary local carries the name.
+  // - `averageProjectedCents` is that published average, and it is `null` for
+  //   an empty cohort — so the tempting arithmetic on it is a `?? 0`, which is
+  //   not a comparison and not caught here. It is on the list for the *other*
+  //   shape: subtracting one cohort's average from the other to draw "costs
+  //   $N more", which is a third figure no endpoint publishes and no owner has.
+  // - `groupCount` is how many groups the segment holds before the cut, and
+  //   `groupCount - limit` is the "and N more" caption a client would write
+  //   instead of the one the server's two numbers already spell.
+  // - `lightRatioBp` and `heavyRatioBp` are published rule edges, and this is
+  //   the strongest case on the whole list: the adequacy card is handed both
+  //   ratios *and* — one drill away, on the claim block — the reserve and the
+  //   exposure they band. `projected * 10000 > lightRatioBp * reserve` is the
+  //   server's own cross-multiplication, transliterated, and it would agree with
+  //   `services/financials/reserve.py` on most claims and disagree on the ones
+  //   where a stale week or a missing bill decides. AC 2's "never a
+  //   re-derivation" is what this entry defends.
+  //
+  //   **And what this entry cannot defend**, said plainly because a guard
+  //   nobody has measured is worse than no guard: these rules match a forbidden
+  //   operator beside a *published field name*. A helper that takes an edge as
+  //   a parameter — `f(edge, reserve) { return exposure * 10000 > edge * reserve }`,
+  //   called with `data.lightRatioBp` — puts an ordinary identifier next to
+  //   every operator and passes. `formatRatio` in `ReserveAdequacyCard.tsx` is
+  //   the one sanctioned division of an edge and is exactly that shape one
+  //   rename away. So this list makes a second verdict awkward to write in the
+  //   browser; what makes it *detectable* is server-side, where the buckets
+  //   come from and where `test_the_bucket_a_claim_lands_in_is_its_own_case_
+  //   files_verdict` compares every claim against Epic 3's own answer.
+  // - `bandsVersion` is on the list beside `rulesVersion`, which is already
+  //   here, for that field's reason: it is a document identity, and any
+  //   arithmetic or comparison on one means somebody has started deciding
+  //   locally which rules a payload was produced under.
+  "reserveCents|projectedCents|claimCount|averageProjectedCents|groupCount|" +
+  "lightRatioBp|heavyRatioBp|bandsVersion";
 
 const FLAGS = "siuReview|rtwBlocked|paymentDue|fraudFlag|litigationFlag|surgeryRequired";
 
@@ -909,6 +968,36 @@ test("the scan reaches the files it claims to", () => {
   // in the `DERIVED_FIELDS` note that leaves those three fields off the list.
   for (const file of ["SegmentationBar.tsx", "useSegmentation.ts", "ageBands.ts"]) {
     expect(scanned).toContain(path.join("features", "dashboard", "segmentation", file));
+  }
+  // Story 7.4's five, in a fourth Epic 7 folder `DashboardPage.tsx` being
+  // scanned says nothing about — and the folder with the strongest pull on the
+  // page since the epic began, because it is the first surface where the browser
+  // holds **money over a book**: a paid figure, a reserve figure, their sum,
+  // twelve groups whose figures add up to that sum, and four cohorts whose
+  // counts partition it.
+  //
+  // `FinancialPage.tsx` holds both query results at once, so `paid + reserve`,
+  // a share of a total and a difference between two cohort averages are each one
+  // line, in one file. `TotalsCard.tsx` renders the three figures side by side,
+  // which is where the addition would actually be written. `BreakdownCard.tsx`
+  // is handed a ranked, cut series beside the portfolio total it is a partition
+  // of, so a re-rank, a re-cut and an "Other" bucket are each one line — and it
+  // is the file that would hold a client-side regroup if anybody wrote one.
+  // `ReserveAdequacyCard.tsx` is the sharpest of the five: it is handed a
+  // distribution *and* the two band ratios it was banded at, and the claim block
+  // one drill away carries the reserve and the exposure — so the server's own
+  // cross-multiplication is transliterable here, which is exactly the second
+  // computer AC 2 forbids. `CostDriverCard.tsx` puts two cohorts side by side
+  // with a count, three totals and an average each, which is the shape that
+  // invites "how much more".
+  for (const file of [
+    "FinancialPage.tsx",
+    "TotalsCard.tsx",
+    "BreakdownCard.tsx",
+    "ReserveAdequacyCard.tsx",
+    "CostDriverCard.tsx",
+  ]) {
+    expect(scanned).toContain(path.join("features", "dashboard", "financial", file));
   }
   // Story 7.1's navigation, in `features/shell` — which is scanned, but by a
   // root added for the *queue* payload five stories ago. Named because it is the

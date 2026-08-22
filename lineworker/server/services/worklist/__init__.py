@@ -164,6 +164,41 @@ an empty period really did see nothing, while means and rates go `null` because 
 mean over an empty set is not zero — `sla`'s own `no_data` vocabulary, inherited
 rather than invented.
 
+Story 7.4 adds `decomposition`, the workspace's fourth section and the first
+aggregate in this package whose subject is **money**. Every other module here
+counts claims, averages days or bands a score; this one sums three cent figures
+over the segmented book, breaks them down by any one of the ten segmentation
+dimensions, and counts Epic 3's reserve verdict across a portfolio. It reuses
+rather than re-declares at every seam: `fraud.require_fraud_analytics_access`
+gates it, because a fourth section of one workspace must not carry a fourth
+spelling of one allowlist; `segmentation.narrowed` narrows it, over rows one
+scoped read returned; `derivations.total_paid` and
+`derivations.total_claim_projected` are the two money computers, so a portfolio
+total here and the Total Paid KPI card cannot disagree; and the verdict comes
+from `services/financials/reserve.reserve_checks_for_claims`, the bulk seam that
+folds stored rows through the *same* `reserve_check_from_rows` the case file and
+the Bills tab reach the verdict through.
+
+What it adds to the package's argument is that AD-2 survives being *counted*.
+The temptation on this surface is enormous and is one comparison wide: a reserve,
+an exposure and the two published band edges all arrive on one payload, so
+re-checking a claim against the ratios is a line somebody would write — and it
+would agree with the case file on most claims and disagree on the ones where a
+week boundary or a missing bill decides. There is no such line: this module holds
+no ratio, no band and no reserve comparison, and its distribution is a `dict` of
+counters keyed on a verdict somebody else computed. `tests/test_reserve_block.py`
+greps this package for the arithmetic — the reason it can is that there is
+nothing here to find — and the agreement test asserts the rest the only way it
+can be asserted: the bucket the portfolio puts a sampled claim in *is* what
+`reserve_check_for_claim` answers for that claim.
+
+Its one structural departure is the read count, and it is stated rather than
+hidden: the decomposition takes one scoped read like its three siblings, and the
+adequacy distribution takes **three** — the claims, then the payment-schedule
+weeks and the bills every verdict's exposure terms are read off, both in bulk and
+neither materialized, because an analyst route is read-only by role capability
+and `reserve_check_for_claim`'s refresh-then-read is a write.
+
 Story 7.3 adds `segmentation`, and it is the only module in this package that
 answers no question of its own. Every other one folds a book into a figure; this
 one *narrows the book* — ten dimensions, ANDed, applied inside `fraud` and
@@ -193,6 +228,7 @@ from services.worklist import (
     approvals,
     benchmarks,
     charts,
+    decomposition,
     drill_through,
     fraud,
     priority,
@@ -236,6 +272,24 @@ from services.worklist.charts import (
     PortfolioCharts,
     charts_of,
     portfolio_charts,
+)
+from services.worklist.decomposition import (
+    BREAKDOWN_LIMIT,
+    DEFAULT_BREAKDOWN,
+    BreakdownDimension,
+    BreakdownGroup,
+    CostDriverCohort,
+    CostDriverPair,
+    FinancialBreakdown,
+    FinancialClaim,
+    FinancialDecomposition,
+    MoneyTotals,
+    ReserveAdequacy,
+    VerdictCount,
+    adequacy_of,
+    decomposition_of,
+    financial_decomposition,
+    reserve_adequacy,
 )
 from services.worklist.drill_through import (
     FILTER_KEYS,
@@ -345,6 +399,23 @@ from services.worklist.trends import (
 )
 
 __all__ = [
+    "reserve_adequacy",
+    "financial_decomposition",
+    "decomposition_of",
+    "decomposition",
+    "adequacy_of",
+    "VerdictCount",
+    "ReserveAdequacy",
+    "MoneyTotals",
+    "FinancialDecomposition",
+    "FinancialClaim",
+    "FinancialBreakdown",
+    "CostDriverPair",
+    "CostDriverCohort",
+    "BreakdownGroup",
+    "BreakdownDimension",
+    "DEFAULT_BREAKDOWN",
+    "BREAKDOWN_LIMIT",
     "APPROVAL_KINDS",
     "SEGMENTATION_KEYS",
     "SEGMENTATION_WIRE_KEYS",

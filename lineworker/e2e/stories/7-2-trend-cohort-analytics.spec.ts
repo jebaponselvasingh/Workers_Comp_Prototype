@@ -176,13 +176,16 @@ test.describe("@story:7-2 @epic:7 trend and cohort analytics", () => {
   }) => {
     await loginAs(page, ANALYST);
 
-    // The console's navigation is three entries now — Portfolio, Fraud and this
-    // story's. Asserted as a list rather than a count because the partition that
-    // decides which one is marked current is read off this same set.
+    // The console's navigation is four entries since Story 7.4 — Portfolio,
+    // Fraud, this story's and Financial. Asserted as a list rather than a count
+    // because the partition that decides which one is marked current is read off
+    // this same set, and a section added without being subtracted from
+    // Portfolio's catch-all marks two entries at once.
     await expect(byTestId(page, "workspace-nav").locator("a")).toHaveText([
       "Portfolio",
       "Fraud",
       "Trends",
+      "Financial",
     ]);
 
     await byTestId(page, "nav-trends").click();

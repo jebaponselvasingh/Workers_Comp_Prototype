@@ -308,6 +308,57 @@ export const queryKeys = {
      */
     segmentationValues: (filterKey: string) =>
       ["dashboard", "segmentation", "values", filterKey] as const,
+    /**
+     * The Financial section's totals, breakdown and cost drivers (Story 7.4).
+     *
+     * An eighth sibling in this group rather than a group of its own, for
+     * `fraud`'s recorded reason: the analyst workspace extends the supervisor
+     * dashboard, so its sections are `/dashboard/*` answers and belong on the
+     * `dashboard` prefix.
+     *
+     * **Two serialised strings, and they are separate segments rather than one
+     * concatenation** — `fraudRates`' ruling. A `groupBy` and a filter are
+     * different kinds of question: one decides how the money is *grouped* and
+     * the other decides which claims are folded at all, and keeping them apart
+     * leaves `[…, "totals", paramsKey]` a prefix a later invalidation could use
+     * to reach every filter of one grouping. The control comes first because it
+     * is the narrower of the two on this screen: one card reads it and the whole
+     * workspace reads the filter.
+     *
+     * **The `groupBy` is in the key**, which is what makes "the browser groups
+     * nothing" observable rather than merely claimed: changing the selector
+     * changes the key, which issues a request, which returns rows the *server*
+     * grouped and ranked. A client-side regroup would redraw the same claims and
+     * never touch the network.
+     *
+     * **The leaf segment is `totals`, and `["dashboard","financials"]` is left an
+     * unowned prefix** — the blast-radius lesson this group learned from `fraud`,
+     * applied before the mistake rather than after it. `reserveAdequacy` below
+     * hangs off the same section, and Story 7.5's export will too.
+     *
+     * No persona and no role segment, although this endpoint gates on role — the
+     * group's recorded reason: a 403 is the absence of an answer rather than a
+     * different answer, and switching personas clears the whole cache.
+     */
+    financials: (paramsKey: string, filterKey: string) =>
+      ["dashboard", "financials", "totals", paramsKey, filterKey] as const,
+    /**
+     * The reserve-adequacy distribution (Story 7.4).
+     *
+     * **Its own key rather than a field on `financials`**, and the reason is the
+     * same one that made it its own route: it is three scoped reads and a second
+     * rule document where the totals are one and one, so a shared entry would
+     * make every totals render pay for it and would let one failure blank both
+     * cards. `fraudRedFlags` is beside `fraud` for the identical shape of reason.
+     *
+     * It takes **no `paramsKey`**, and the asymmetry with its sibling is the
+     * point rather than an omission: `groupBy` is the breakdown's control and
+     * this distribution has none — a five-member closed vocabulary has nothing to
+     * group by and nothing to sort — so a params segment here would be a cache
+     * dimension nothing varies.
+     */
+    reserveAdequacy: (filterKey: string) =>
+      ["dashboard", "financials", "adequacy", filterKey] as const,
   },
   claims: {
     /**

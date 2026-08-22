@@ -1270,15 +1270,16 @@ def test_the_six_new_facets_are_appended_in_this_order_and_nothing_moved() -> No
     shared. The head of the tuple is asserted too, because "appended" is a claim
     about both ends.
 
-    **Story 7.3 appended four more, so this story's six are no longer the tail**,
-    and the slice moved rather than the assertion weakening: the six still sit
-    where they were sent, immediately after Story 7.1's two and immediately
-    before the segmentation vocabulary's remainder.
+    **Story 7.3 appended four more and Story 7.4 a fifth, so this story's six are
+    no longer the tail**, and the slice moved each time rather than the assertion
+    weakening: the six still sit where they were sent, immediately after Story
+    7.1's two and immediately before the segmentation vocabulary's remainder.
     `test_segmentation.py::test_the_four_new_facets_are_appended_after_this_
-    storys_six` asserts the other end.
+    storys_six` asserts the next stretch and
+    `test_financial_decomposition.py` the far end.
     """
     assert FILTER_KEYS[:3] == ("stage", "severity_band", "fraud_flagged")
-    assert FILTER_KEYS[-10:-4] == (
+    assert FILTER_KEYS[-11:-5] == (
         "fnol_from",
         "fnol_to",
         "doi_from",
@@ -1286,7 +1287,7 @@ def test_the_six_new_facets_are_appended_in_this_order_and_nothing_moved() -> No
         "disability",
         "sector",
     )
-    assert [WIRE_KEYS[key] for key in FILTER_KEYS[-10:-4]] == [
+    assert [WIRE_KEYS[key] for key in FILTER_KEYS[-11:-5]] == [
         "fnolFrom",
         "fnolTo",
         "doiFrom",

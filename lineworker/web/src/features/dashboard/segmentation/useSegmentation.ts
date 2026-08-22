@@ -59,7 +59,14 @@ export type ControlName =
   | "cohort"
   | "sort[injuryType]"
   | "sort[employer]"
-  | "sort[handler]";
+  | "sort[handler]"
+  // Story 7.4's one. A **bare** name under the route's own spelling, like
+  // `grain` and unlike `filter[…]`: `groupBy` decides how the Financial
+  // section's money is *presented* and narrows nothing, so it belongs with the
+  // section controls rather than with the ten dimensions — which is what keeps
+  // "Clear all" from clearing it and keeps `WorkspaceNav` from carrying it
+  // between sections.
+  | "groupBy";
 
 export interface WorkspaceUrl {
   /** The active segmentation, as the URL spells it. */

@@ -268,9 +268,16 @@ def test_the_four_new_facets_are_appended_after_this_storys_six() -> None:
     more naturally — would silently re-order the chips on every drill-through URL
     anybody has already shared. The other end is asserted in
     `test_trend_analytics.py`, which owns the six before these four.
+
+    **Story 7.4 appended a twenty-fifth, so this story's four are no longer the
+    tail**, and the slice moved rather than the assertion weakening — which is the
+    move this test's own neighbour in `test_trend_analytics.py` made one story
+    ago and recorded. The four still sit where they were sent, immediately after
+    Story 7.2's six and immediately before `reserve_verdict`;
+    `test_financial_decomposition.py` asserts the far end.
     """
-    assert FILTER_KEYS[-4:] == ("region", "icd10", "age_group", "gender")
-    assert [WIRE_KEYS[key] for key in FILTER_KEYS[-4:]] == [
+    assert FILTER_KEYS[-5:-1] == ("region", "icd10", "age_group", "gender")
+    assert [WIRE_KEYS[key] for key in FILTER_KEYS[-5:-1]] == [
         "region",
         "icd10",
         "ageGroup",

@@ -1,6 +1,6 @@
 # Story 7.4: Financial Decomposition
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -91,10 +91,15 @@ No UX-DR covers this screen (the Epic 7 gap). Borrow: UX-DR7 (Recharts idioms; e
 
 ### Agent Model Used
 
-<!-- filled by dev-story -->
+Claude Opus 5 (1M context), via `bmad-dev-auto` — plan, implement, two adversarial review passes, patch.
 
 ### Debug Log References
 
 ### Completion Notes List
+
+- Spec, review triage and full result: [spec-7-4-financial-decomposition.md](spec-7-4-financial-decomposition.md).
+- All three ACs met. AC 2's "never a re-derivation" is enforced as agreement: every seeded claim's portfolio bucket is compared against `reserve_check_for_claim`'s own verdict, and the claim-level path is in turn compared against the rule restated in `seed_fixture.py`.
+- Two decisions the story file left open: the distribution publishes **all five** `ReserveVerdict` members rather than only Light/Adequate/Heavy (the two others hold most of a settled book, so three buckets would have contradicted `claimsInScope`), and the third money figure is published as `projectedCents` / "Total (projected)" rather than "incurred", following `claim_financials.py`'s recorded refusal to spread that naming discrepancy.
+- Six deferred entries were recorded across implementation and review; none blocks 7.5, which reuses these aggregate functions for export.
 
 ### File List

@@ -2149,3 +2149,307 @@ def expected_segmentation_chips(
             )
         chips.append({"key": key, "value": value, "display": display})
     return chips
+
+
+# --- Story 7.4: the financial decomposition, restated independently --------
+#
+# **Money is where an oracle that agrees with the implementation does the most
+# damage**, so this block restates *what each figure sums* rather than reaching
+# for a helper that already sums something similar. Three of the four blocks
+# above hold a paid figure of some kind — `expected_portfolio_summary` sums the
+# three paid columns for a KPI card, `expected_portfolio_charts` sums them per
+# employer for a bar, and `expected_priority_claims` does not sum money at all —
+# and reusing any of them would have made this oracle unable to notice the day
+# the *basis* moved, which is the one change `deferred-work.md` records as
+# pending with an owner.
+#
+# What is reused rather than restated is `claims_for` (scope, one restatement,
+# already here and reused by every block in this file), `risk_band` (the one
+# registered `risk` derivation this console bands severity with everywhere) and
+# `_segment_matches`/`age_band` from the Story 7.3 block directly above — the
+# segmentation vocabulary, restated once, and a second restatement of it here
+# would be pretending there are two filters. What is written fresh is every
+# money rule, every cohort predicate and the reserve band arithmetic.
+#
+# **The three money words are three quantities and the names below say which:**
+#
+#     PAID       = paid_indemnity + paid_medical + paid_expense   (the columns)
+#     RESERVE    = reserve                                        (the column)
+#     PROJECTED  = PAID + RESERVE
+#
+# `_total_paid_cents` is written out here although `expected_portfolio_summary`
+# already adds the same three columns forty lines up, and the duplication is the
+# point: that one is an oracle for a **KPI card** and this is an oracle for a
+# **decomposition**, and the open product decision at `deferred-work.md` moves
+# exactly one of them first. An oracle that shared the expression could not fail
+# on the day they diverged, which is the day it would matter most.
+#
+# **The reserve verdict is restated as a *rule*, not as a distribution.** The
+# per-claim exposure terms come from tables this file cannot see — the payment
+# schedule is materialized by a migration at `upgrade head` time and its statuses
+# move with the calendar — so a static count of light/adequate/heavy claims would
+# be a number that goes stale overnight rather than an oracle. What *is* static,
+# and is what the tests actually need, is (a) the two band ratios, (b) the
+# closed-final population, which is a seed column, (c) that `indeterminate` is
+# unreachable against this seed because every claim carries bills, and (d) the
+# band arithmetic itself, which `expected_reserve_verdict` executes over exposure
+# terms a caller supplies. The distribution is then asserted against
+# `reserve_check_for_claim` claim by claim, which is the only form AC 2's "never
+# a re-derivation" can take.
+
+#: The two reserve band ratios, in basis points — `reserve_bands` v1, restated.
+#:
+#: Written out here rather than loaded for `HIGH_RISK_MIN`'s reason, and under
+#: their own names although nothing else in this file carries either number: the
+#: point of restating is that a document retune has to break a test rather than
+#: move an expectation with it.
+RESERVE_LIGHT_RATIO_BP = 11_500
+RESERVE_HEAVY_RATIO_BP = 6_000
+
+#: The scale a ratio is expressed on. 11 500 is 115%.
+RESERVE_BASIS_POINTS_PER_UNIT = 10_000
+
+#: The stage a claim has to be in for the band arithmetic not to run.
+#:
+#: Its own constant beside `TREATMENT_STAGE` above rather than a bare string at
+#: the two call sites: "settled" decides a *verdict* here and a *cohort* in three
+#: other blocks, and the reason it is checked first in `expected_reserve_verdict`
+#: is that a settled claim has been judged rather than not judged.
+SETTLED_STAGE = "settled"
+
+
+def _total_paid_cents(claim: dict[str, Any]) -> int:
+    """The `total_paid` derivation, restated for this block — the three columns.
+
+    A second expression of the same addition `expected_portfolio_summary`
+    performs, deliberately: see this block's banner. It is *not* "paid to date" —
+    the columns are zero on every open seeded claim while the bills and the
+    schedule show real disbursements — and the decomposition publishes this
+    figure precisely so it cannot disagree with the KPI card.
+    """
+    total: int = claim["paid_indemnity"] + claim["paid_medical"] + claim["paid_expense"]
+    return total
+
+
+def _projected_cents(claim: dict[str, Any]) -> int:
+    """`total_claim_projected`, restated — paid to date plus the reserve held.
+
+    Named for what it adds up rather than "incurred", which is the discrepancy
+    `services/derivations/claim_money.py` records and this console refuses to
+    spread: the case file already labels the paid-only figure "Total incurred".
+    """
+    reserve: int = claim["reserve"]
+    return _total_paid_cents(claim) + reserve
+
+
+def expected_reserve_verdict(
+    stage: str,
+    reserve_cents: int,
+    remaining_indemnity_cents: int,
+    remaining_medical_cents: int | None,
+) -> str:
+    """The reserve band rule, restated — a claim's verdict from its exposure.
+
+    **The exposure terms are arguments and not read from the seed**, and that is
+    what makes this an oracle rather than a copy: the indemnity term comes from
+    `payment_schedule_week` rows a migration materialized at `upgrade head` time
+    against that day's calendar, and the medical term from `bills.json`. A
+    version of this function that reached for either would be restating the
+    implementation's *inputs* as well as its rule; a caller supplies them, and
+    the tests that use it get them from the claim-level path — which is the
+    agreement AC 2 asks for.
+
+    Four rules, in the order they decide, and each is a fact about the claim
+    rather than a step in the server's function:
+
+    1. **A settled claim is `closed_final`** and the band arithmetic does not run
+       at all. It has been judged, which is different from having no answer.
+    2. **An unknown medical term withholds two of the three bands.** The unknown
+       quantity is non-negative, so the exposure computed without it is a *lower
+       bound*: `light` still holds (an addition cannot bring an exposure back
+       under a threshold it has passed) while `adequate` and `heavy` are claims
+       about an upper bound and become `indeterminate`. Unreachable against this
+       seed — every claim carries bills — and restated because the day it becomes
+       reachable is the day it must not silently default.
+    3. **A zero reserve is light while exposure remains and adequate when none
+       does.** The prototype's sentinel, and a verdict rather than a division
+       guard: a claim carrying exposure against no reserve *is* under-reserved.
+    4. **Otherwise the ratio bands, strictly, on cross-multiplied integers.** A
+       claim sitting exactly on either boundary is `adequate`, which is the
+       answer that asks a handler to do nothing.
+    """
+    known = remaining_indemnity_cents + (remaining_medical_cents or 0)
+    if stage == SETTLED_STAGE:
+        return "closed_final"
+    complete = remaining_medical_cents is not None
+    if reserve_cents > 0:
+        light = known * RESERVE_BASIS_POINTS_PER_UNIT > RESERVE_LIGHT_RATIO_BP * reserve_cents
+        heavy = known * RESERVE_BASIS_POINTS_PER_UNIT < RESERVE_HEAVY_RATIO_BP * reserve_cents
+    else:
+        light = known > 0
+        heavy = False
+    if light:
+        return "light"
+    if not complete:
+        return "indeterminate"
+    return "heavy" if heavy else "adequate"
+
+
+def expected_closed_final_claims(persona_name: str, role: str, **filters: str) -> set[str]:
+    """Which claims are `closed_final` — a pure seed fact, and the one bucket
+    of the five this file can name without a schedule.
+
+    Settled *stage*, never `status == "settled_closed"` — Story 5.1's ruling,
+    restated here because the two differ by eight claims on the seeded book and
+    this is a count the adequacy distribution publishes.
+    """
+    return {
+        claim["claim_id"]
+        for claim in claims_for(persona_name, role)
+        if claim["stage"] == SETTLED_STAGE
+        and all(_segment_matches(claim, key, value) for key, value in filters.items())
+    }
+
+
+def expected_financials(persona_name: str, role: str, **filters: str) -> dict[str, Any]:
+    """The portfolio totals and both cost-driver pairs, for one persona and filter.
+
+    Payload-shaped and camelCase so a test compares whole objects rather than
+    picking figures out one at a time — `expected_fraud_panel`'s discipline.
+
+    **The two cohorts of each pair partition the segment**, which is the property
+    the payload's shape encodes and this oracle reproduces by construction: every
+    visible claim goes into exactly one side of each pair, so a card cannot end
+    up comparing a surgery cohort against a portfolio total that contains it.
+
+    **`averageProjectedCents` is `None` for an empty cohort, never `0`** — a mean
+    over an empty set is not zero, and a cohort reporting nothing would read as a
+    cohort that costs nothing. Floor division, because the figure is an average
+    of *cents* that nothing multiplies.
+
+    The breakdown is deliberately **not** here: it is `expected_financial_breakdown`
+    below, because a ranked and cut series is a different kind of assertion from a
+    sum and putting them in one object would let a test that only cared about the
+    totals drag the cut along with it.
+    """
+    visible = [
+        claim
+        for claim in claims_for(persona_name, role)
+        if all(_segment_matches(claim, key, value) for key, value in filters.items())
+    ]
+
+    def totals(claims: list[dict[str, Any]]) -> dict[str, int]:
+        return {
+            "paidCents": sum(_total_paid_cents(claim) for claim in claims),
+            "reserveCents": sum(claim["reserve"] for claim in claims),
+            "projectedCents": sum(_projected_cents(claim) for claim in claims),
+        }
+
+    def cohort(key: str, claims: list[dict[str, Any]]) -> dict[str, Any]:
+        summed = totals(claims)
+        return {
+            "key": key,
+            "claimCount": len(claims),
+            "totals": summed,
+            "averageProjectedCents": (
+                None if not claims else summed["projectedCents"] // len(claims)
+            ),
+        }
+
+    def pair(facet: str, column: str) -> dict[str, Any]:
+        return {
+            "facet": facet,
+            "withDriver": cohort("true", [c for c in visible if c[column]]),
+            "withoutDriver": cohort("false", [c for c in visible if not c[column]]),
+        }
+
+    return {
+        "totals": totals(visible),
+        "claimsInScope": len(visible),
+        # The two columns the story names, each already a shipped drill facet —
+        # which is why the cost-driver drills cost Story 7.4 no new facet.
+        "surgery": pair("surgery", "surgery_required"),
+        "litigation": pair("litigation", "litigation_flag"),
+    }
+
+
+def expected_financial_breakdown(
+    persona_name: str, role: str, dimension: str, limit: int, **filters: str
+) -> dict[str, Any]:
+    """One dimension's money groups, ranked and cut — the payload's own shape.
+
+    **Ranked by projected cents descending, then by key ascending**, and the
+    tie-break is executed rather than transcribed: the pair is built first and
+    sorted as a pair, so the ordering is a property of the list rather than of a
+    key expression that happens to be spelled the same way on both sides —
+    `_expected_option_order`'s ruling, which exists because the first version of
+    that function was the implementation's own `sorted(...)` key.
+
+    **Projected rather than paid**, and the reason is a fact about this seed
+    rather than a preference: the paid columns are zero on all 38 open claims, so
+    a paid ranking would put the whole open book in one tie and the cut would
+    land inside it. The oracle ranks the way the payload has to be ranked for its
+    caption to mean anything, and the test that reads it asserts the *kept set*.
+
+    `label` is `None` for nine of the ten dimensions and the employer's short
+    name for the tenth — an id is not a name, and it is the only value on this
+    payload a browser could not read.
+    """
+    visible = [
+        claim
+        for claim in claims_for(persona_name, role)
+        if all(_segment_matches(claim, key, value) for key, value in filters.items())
+    ]
+    employers = {row["name"]: row for row in seed()["employers"]}
+    employees = _employees_by_id()
+
+    def key_of(claim: dict[str, Any]) -> tuple[str, str | None]:
+        employer = employers[claim["employer"]]
+        employee = employees[claim["employee_id"]]
+        keys: dict[str, tuple[str, str | None]] = {
+            "severityBand": (risk_band(claim["severity_score"]), None),
+            "injuryType": (claim["injury_type"], None),
+            "state": (claim["state"], None),
+            "employerId": (str(_employer_id(claim["employer"])), employer["short_name"]),
+            "disability": (claim["disability"], None),
+            "sector": (employer["sector"], None),
+            "region": (claim["region"], None),
+            "icd10": (claim["icd"], None),
+            "ageGroup": (age_band(employee["age"]), None),
+            "gender": (employee["gender"], None),
+        }
+        if dimension not in keys:
+            raise AssertionError(f"no seeded oracle for breakdown dimension {dimension!r}")
+        return keys[dimension]
+
+    grouped: dict[str, dict[str, Any]] = {}
+    for claim in visible:
+        key, label = key_of(claim)
+        bucket = grouped.setdefault(
+            key,
+            {
+                "key": key,
+                "label": label,
+                "claimCount": 0,
+                "totals": {"paidCents": 0, "reserveCents": 0, "projectedCents": 0},
+            },
+        )
+        bucket["claimCount"] += 1
+        bucket["totals"]["paidCents"] += _total_paid_cents(claim)
+        bucket["totals"]["reserveCents"] += claim["reserve"]
+        bucket["totals"]["projectedCents"] += _projected_cents(claim)
+
+    ranked = [
+        group
+        for _rank, group in sorted(
+            ((-group["totals"]["projectedCents"], group["key"]), group)
+            for group in grouped.values()
+        )
+    ]
+    return {
+        "dimension": dimension,
+        "items": ranked[:limit],
+        "groupCount": len(grouped),
+        "truncated": len(grouped) > limit,
+        "limit": limit,
+    }

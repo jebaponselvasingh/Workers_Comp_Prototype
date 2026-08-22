@@ -700,3 +700,162 @@ export function useSegmentationValues(segmentation: DrillFilters) {
     staleTime: 30_000,
   });
 }
+
+export type FinancialDecomposition =
+  components["schemas"]["FinancialDecompositionResponse"];
+/** Which of the ten segmentation dimensions the money is grouped by. */
+export type BreakdownDimension = components["schemas"]["BreakdownDimension"];
+/**
+ * One breakdown row, and one cohort of one cost-driver pair.
+ *
+ * Read off `FinancialDecomposition` rather than named directly,
+ * `CategoryDistribution`'s reason: the generated names are stable and would put
+ * the code generator's convention in every consuming component's import list.
+ */
+export type BreakdownGroup =
+  FinancialDecomposition["breakdown"]["items"][number];
+export type CostDriverPair = FinancialDecomposition["surgery"];
+export type CostDriverCohort = CostDriverPair["withDriver"];
+
+/**
+ * The one control the Financial section sets — which dimension the money is
+ * grouped by.
+ *
+ * An interface over a single field rather than the bare union, `TrendParams`'
+ * shape and its recorded reason: the section's URL contract, its query key and
+ * its request are built from one object, so a second control arriving later is
+ * an addition to this interface and to `toFinancialParamsKey` and nothing else.
+ */
+export interface FinancialParams {
+  groupBy: BreakdownDimension;
+}
+
+/**
+ * The grouping the section starts on — the server's own default, restated.
+ *
+ * Restated rather than left unsent, `DEFAULT_TREND_PARAMS`' ruling: an omitted
+ * parameter and an explicit `employerId` are the same request to the server and
+ * would be two different `paramsKey`s here. Sending it always keeps one cache
+ * entry per *visible* grouping.
+ *
+ * The employer, because that is the only breakdown this console already ships a
+ * money chart for (`/dashboard/charts`' by-employer bars), so an analyst opening
+ * the section cold sees figures they can reconcile against a screen they know.
+ */
+export const DEFAULT_FINANCIAL_PARAMS: FinancialParams = {
+  groupBy: "employerId",
+};
+
+/**
+ * A stable string identifying one control set, for a TanStack Query key.
+ *
+ * Built from the same object the request is built from — `toTrendParamsKey`'s
+ * arrangement — so the cache entry and the query string cannot describe
+ * different questions. Written out field by field rather than `JSON.stringify`,
+ * which is key-insertion-ordered; one field today and the discipline is the
+ * point, because the second control is what would break the shortcut.
+ */
+export function toFinancialParamsKey(params: FinancialParams): string {
+  return params.groupBy;
+}
+
+/**
+ * Server state for the Financial section's money (FR-AN-5, Story 7.4).
+ *
+ * `useTrends`' shape and its emptiness, for the same reason: the three portfolio
+ * totals, every group's three totals, the ranking, the cut, both cohort splits
+ * and both floor-divided averages are decided by
+ * `services/worklist/decomposition.py` over the caller's scope, and this hook
+ * exists to fetch them and nothing else.
+ *
+ * **No `select`**, deliberately, and this payload is the strongest invitation to
+ * one anywhere in the console: the browser is handed a paid figure, a reserve
+ * figure and their sum, twelve groups whose three figures add up to that sum,
+ * and four cohorts whose counts partition the book. `paid + reserve`, "what
+ * share of the total is this group", "how much more does a surgical claim cost"
+ * and "the twelve rows do not add up, let me put the remainder in an Other
+ * bucket" are each one line, and each is a second answer to a number already on
+ * the wire. With no transform there is nothing for `noDerivation.test.ts` to
+ * have to read, and `api/dashboard.ts` stays out of its `ROOT_FILES`.
+ *
+ * **The control set is in the key and in the request, from one source** —
+ * `useTrends`' rule applied to a grouping rather than to a grain. Changing the
+ * selector changes the key, which issues a request, which returns groups the
+ * server ranked and cut; a client-side regroup would redraw the same claims and
+ * never touch the network.
+ *
+ * **`placeholderData: keepPreviousData`**, its siblings' second option and for
+ * their reason, one card wider: the totals tiles, the breakdown chart and both
+ * cost-driver cards ride this single query. Without it a `groupBy` change would
+ * drop `data` to `undefined` and blank four surfaces at once for a reader who
+ * asked one question about one of them. The previous figures stay on screen and
+ * only the card that was asked reports busy, and that is *not* a transform: what
+ * is drawn is still a server answer, just the previous one, and
+ * `isPlaceholderData` says so.
+ *
+ * The same `staleTime` as its seven siblings, so the dashboard and the workspace
+ * go stale on one schedule. Nothing polls.
+ */
+export function useFinancials(params: FinancialParams, segmentation: DrillFilters) {
+  return useQuery({
+    queryKey: queryKeys.dashboard.financials(
+      toFinancialParamsKey(params),
+      toFilterKey(segmentation),
+    ),
+    placeholderData: keepPreviousData,
+    queryFn: async (): Promise<FinancialDecomposition> => {
+      const { data } = await api.GET("/dashboard/financials", {
+        params: {
+          query: { groupBy: params.groupBy, ...toSegmentationParams(segmentation) },
+        },
+      });
+      return data!;
+    },
+    staleTime: 30_000,
+  });
+}
+
+export type ReserveAdequacy = components["schemas"]["ReserveAdequacyResponse"];
+/** One bucket of the distribution — `verdict` is also its drill facet's value. */
+export type VerdictCount = ReserveAdequacy["items"][number];
+
+/**
+ * Server state for the portfolio's reserve-adequacy distribution (AC 2).
+ *
+ * `useFinancials`' shape and its emptiness, and **its own query rather than a
+ * field on that one** for the reason it is its own route: it costs three scoped
+ * reads and a second rule document where the totals cost one and one, so a
+ * shared entry would make every totals render pay for it and would let one
+ * failure blank both cards (NFR-3).
+ *
+ * What it fetches is **Epic 3's verdict, counted** — not a banding this hook or
+ * anything below it performs. The five buckets, the zero-fill, both published
+ * band edges and the rules version arrive decided;
+ * `services/financials/reserve.py` is the only place a reserve is judged.
+ *
+ * **No `select`**, deliberately, and the temptation here is specific: the
+ * payload carries a distribution *and* the two ratios it was banded at, so
+ * "collapse the two non-band buckets" or "re-check this claim against
+ * `lightRatioBp`" is one line — and the second is exactly the second computer
+ * AD-2 exists to prevent.
+ *
+ * **No `paramsKey`** — this distribution has no control. See
+ * `queryKeys.dashboard.reserveAdequacy`.
+ *
+ * `placeholderData: keepPreviousData` and the same `staleTime` as its siblings,
+ * so a filter change keeps the donut on screen while the new answer is in
+ * flight. Nothing polls.
+ */
+export function useReserveAdequacy(segmentation: DrillFilters) {
+  return useQuery({
+    queryKey: queryKeys.dashboard.reserveAdequacy(toFilterKey(segmentation)),
+    placeholderData: keepPreviousData,
+    queryFn: async (): Promise<ReserveAdequacy> => {
+      const { data } = await api.GET("/dashboard/financials/reserve-adequacy", {
+        params: { query: toSegmentationParams(segmentation) },
+      });
+      return data!;
+    },
+    staleTime: 30_000,
+  });
+}

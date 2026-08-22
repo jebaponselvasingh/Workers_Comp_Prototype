@@ -74,18 +74,20 @@ test.describe("@story:7-1 @epic:7 fraud analytics workspace", () => {
   }) => {
     await loginAs(page, ANALYST);
 
-    // The console's first navigation. **Amended by Story 7.2**, which added the
-    // Trends destination and re-cut Portfolio's catch-all to be the complement
-    // of *every* section rather than of one — so the list is three now, and it
-    // is still asserted as a list because the partition that decides which entry
-    // is marked current below is read off this same set. Segmentation and
-    // financial decomposition are 7.3-7.4 and their slots stay deliberately
-    // unbuilt rather than stubbed.
+    // The console's first navigation. **Amended by Story 7.2 and again by 7.4**,
+    // each of which added a destination and each of which had to re-cut
+    // Portfolio's catch-all to be the complement of *every* section rather than
+    // of one — so the list is four now, and it is still asserted as a list
+    // because the partition that decides which entry is marked current below is
+    // read off this same set. Segmentation (7.3) is deliberately *not* on it: a
+    // filter is not a place, so it landed as a bar mounted on these routes
+    // rather than as an entry beside them.
     await expect(byTestId(page, "workspace-nav")).toBeVisible();
     await expect(byTestId(page, "workspace-nav").locator("a")).toHaveText([
       "Portfolio",
       "Fraud",
       "Trends",
+      "Financial",
     ]);
 
     await byTestId(page, "nav-fraud").click();

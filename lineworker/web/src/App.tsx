@@ -19,6 +19,7 @@ import { Navigate, Route, Routes } from "react-router";
 import { ToastHost, ToastProvider } from "@/components/ui/toast";
 import { LoginScreen } from "@/features/login/LoginScreen";
 import { DashboardPage } from "@/features/dashboard/DashboardPage";
+import { FinancialPage } from "@/features/dashboard/financial/FinancialPage";
 import { FraudPage } from "@/features/dashboard/fraud/FraudPage";
 import { TrendsPage } from "@/features/dashboard/trends/TrendsPage";
 import { DrillClaimsPage } from "@/features/dashboard/drill/DrillClaimsPage";
@@ -78,6 +79,17 @@ export default function App() {
                   wrapping one route would be the same rule written twice, free
                   to disagree the first time somebody widened one of them. */}
               <Route path="trends" element={<TrendsPage />} />
+              {/* Story 7.4's third section, inside the **same** guard for the
+                  reason stated one route up: one `RequireSession
+                  allow={["analyst"]}` for the whole workspace is what makes
+                  "the analyst workspace is analyst-only" a property of the route
+                  table, and a third guard wrapping a third route would be the
+                  same rule written three times, free to disagree the first time
+                  somebody widened one of them.
+
+                  `financials`, plural, matching the API path and `FINANCIAL_ROUTE`
+                  — see that constant on why the folder beside it is singular. */}
+              <Route path="financials" element={<FinancialPage />} />
             </Route>
           </Route>
         </Route>

@@ -108,16 +108,16 @@ import base64
 import binascii
 import json
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from datetime import date
 from typing import Any, Final
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from data.context import CallerContext
-from data.models.enums import ClaimStatus, Disability, Gender, ReturnStatus, Stage
+from data.models.enums import ClaimStatus, Disability, Gender, RecoveryWindow, ReturnStatus, Stage
 from data.repositories import claims as claim_repo
-from rules.parameters import DerivationThresholds, PriorityWeights
+from rules.parameters import DerivationThresholds, PriorityWeights, reserve_bands_for
 from services import derivations
 from services.derivations import (
     AgeBand,
@@ -131,6 +131,12 @@ from services.derivations import (
     RtwBlockedDerivation,
     SiuReviewDerivation,
     utc_today,
+)
+from services.financials.reserve import (
+    MissingReserveVerdict,
+    ReserveCheck,
+    ReserveVerdict,
+    reserve_checks_for_claims,
 )
 from services.worklist.priority import (
     QueueClaim,
@@ -233,6 +239,21 @@ class DrillClaim:
     icd: str
     age: int
     gender: Gender
+    # Story 7.4's two, appended for the reason every group above is appended.
+    # They are here for **one** facet — `filter[reserveVerdict]` — and neither is
+    # read by anything else in this module: `reserve` is the figure Epic 3's
+    # verdict is a judgement of, and `recovery` is one of the two inputs the
+    # payment-schedule projection takes. Together with `claim_id`, `stage` and
+    # `doi`, which this projection already carried, they are exactly what makes a
+    # `DrillClaim` satisfy `financials.IdentifiedReserveClaim` **structurally** —
+    # so `reserve_checks_for_claims` can reach the verdict for a page of these
+    # rows without this module knowing what a verdict is.
+    #
+    # Carried rather than banded, `age`'s rule one line up: the verdict is a
+    # *derived* value with exactly one computer (`services/financials/reserve.py`)
+    # and arrives through `DrillFlags`; these are the columns that computer reads.
+    reserve: int
+    recovery: RecoveryWindow
 
 
 @dataclass(frozen=True)
@@ -278,6 +299,21 @@ class DrillFlags:
     # returned rather than pushed into SQL: half of one filter in `data/` and
     # half in `services/` is the split `claims.py` refuses in writing, twice.
     age_group: AgeBand
+    # Story 7.4's one, and it is the **only member of this bundle that is not
+    # computed here**. Every other field is a registered derivation this module
+    # builds a computer for and calls; the reserve verdict is `services/financials`'
+    # (AD-2) and needs two more table reads to reach — a payment schedule and a
+    # bill list — so it cannot be produced from a `DrillClaim` and a threshold
+    # block the way the seven above it can.
+    #
+    # `None` therefore means "nobody loaded one", not "this claim has no
+    # verdict": every claim has one, and the map is loaded **only when
+    # `filter[reserveVerdict]` is set** so the shipped one-scoped-read guarantee
+    # survives for every other caller. `_matches_reserve_verdict` raises rather
+    # than treating the `None` as a non-match, because a facet that quietly
+    # matched nothing would answer a narrowing request with an empty list that
+    # looks exactly like a legitimate empty page.
+    reserve_verdict: ReserveVerdict | None
 
 
 @dataclass(frozen=True)
@@ -399,6 +435,7 @@ class DrillFilters:
     icd10: str | None = None
     age_group: AgeBand | None = None
     gender: Gender | None = None
+    reserve_verdict: ReserveVerdict | None = None
 
 
 #: The facet names, in the order a chip row draws them, declared once.
@@ -456,6 +493,11 @@ WIRE_KEYS: Final[Mapping[str, str]] = {
     "icd10": "icd10",
     "age_group": "ageGroup",
     "gender": "gender",
+    # Story 7.4's one. `reserveVerdict` names the *answer* rather than the rule
+    # that produced it (`reserve_bands`) or the column it judges (`claim.reserve`),
+    # because a chip reads "Reserve: Reserve Light" and a caller filtering by it
+    # is thinking about the verdict on the card they clicked.
+    "reserve_verdict": "reserveVerdict",
 }
 
 assert set(WIRE_KEYS) == set(FILTER_KEYS), (
@@ -605,6 +647,37 @@ def _matches_priority(claim: DrillClaim, flags: DrillFlags, value: object) -> bo
     return qualifies_for_worklist(claim, flags) == value
 
 
+def _matches_reserve_verdict(claim: DrillClaim, flags: DrillFlags, value: object) -> bool:
+    """`filter[reserveVerdict]` — Epic 3's verdict, compared and never re-derived.
+
+    A named function rather than a lambda for `_matches_priority`'s reason and
+    one more: it is the only entry in the table below that can **fail**, and the
+    failure has to be loud.
+
+    `flags.reserve_verdict` is `None` exactly when the verdicts were not loaded,
+    which is every code path that did not set this facet — see
+    `drill_through_claims`, which pays for two extra reads only when it is set.
+    Treating that `None` as "does not match" would answer a narrowing request
+    with an empty page indistinguishable from a legitimate one: a caller would
+    see `total: 0` under a chip reading "Reserve: Reserve Light" and have no way
+    to tell a book with no light claims from a build that forgot to load the
+    verdicts. So it raises, and `MissingReserveVerdict` says which claim.
+
+    What it does **not** do is any part of the verdict: there is no ratio here,
+    no reserve read, no band comparison and no `stage` branch. The value on
+    `flags` came out of `reserve_check_from_rows`, which is the same function the
+    case file's chip and the Bills tab's summary reach the verdict through — so
+    the list a distribution segment opens holds exactly the claims that segment
+    counted, because one function answered both (AD-2, AC 2).
+    """
+    if flags.reserve_verdict is None:
+        raise MissingReserveVerdict(
+            f"filter[reserveVerdict] was applied to {claim.claim_id} with no verdict loaded; "
+            "the facet requires the schedule and bill reads that produce one"
+        )
+    return flags.reserve_verdict == value
+
+
 #: One predicate per facet, in one mapping — total by construction against
 #: `FILTER_KEYS`, and checkable as such (the assertion below runs at import).
 #:
@@ -676,6 +749,13 @@ _PREDICATES: Final[Mapping[str, Callable[[DrillClaim, DrillFlags, Any], bool]]] 
     "icd10": lambda claim, _flags, value: claim.icd == value,
     "age_group": lambda _claim, flags, value: flags.age_group == value,
     "gender": lambda claim, _flags, value: claim.gender == value,
+    # Story 7.4's one, and the third facet in this table matched through a rule's
+    # answer rather than against a column — `severity_band` and `age_group` are
+    # the other two. It is the only one whose rule lives outside
+    # `services/derivations`: the reserve verdict is `services/financials`' and
+    # reaching it costs two table reads, which is why it is handed in rather than
+    # computed in `_flags_of` beside the seven that are.
+    "reserve_verdict": _matches_reserve_verdict,
 }
 
 # Every facet has a predicate, and every predicate names a facet. A filter
@@ -720,7 +800,15 @@ def _wire_value(value: object) -> str | int | bool:
     wire everywhere else in this console.
     """
     if isinstance(
-        value, Stage | RiskBand | ReturnStatus | FraudBand | Disability | AgeBand | Gender
+        value,
+        Stage
+        | RiskBand
+        | ReturnStatus
+        | FraudBand
+        | Disability
+        | AgeBand
+        | Gender
+        | ReserveVerdict,
     ):
         return value.value
     # Before the `int`/`str` branch, because a `date` is neither and would
@@ -772,6 +860,23 @@ class Cursor:
       row *and* the populations behind `filter[severityBand]`,
       `filter[fraudFlagged]` and `filter[priority]` — so it can change which
       claims are in the list as well as where they sit in it.
+    - `bands_version` (`reserve_bands`) is the third document and the newest,
+      and it is `None` on every cursor minted without `filter[reserveVerdict]`.
+      It is compared for `thresholds_version`'s reason exactly: the bands decide
+      which bucket every claim falls in, so a retune between page one and page
+      two re-partitions the list a cursor is an offset into. Recorded as
+      optional rather than always populated because the document is only read
+      when the facet is set — a cursor that always carried it would cost every
+      other drill URL the read this route conditionalises, which is the whole
+      argument of the block in `drill_through_claims`.
+
+    **What no version field can pin.** The verdict is derived from
+    `payment_schedule_week.status`, which `reserve_check_for_claim` *writes* on
+    a single-claim read, so a claim can leave the `light` bucket between two
+    pages with no document having changed. That is the ordinary hazard every
+    facet over mutable columns carries — a stage edited between pages moves a
+    claim out of `filter[stage]=treatment` the same way — and it is why `total`
+    and the marker are recomputed per request rather than carried.
 
     Both versions are compared against what is effective **today**, which is why
     `drill_through_claims` resolves nothing at the cursor's own date: a
@@ -795,6 +900,7 @@ class Cursor:
     weights_version: int
     thresholds_version: int
     as_of: date
+    bands_version: int | None = None
 
 
 def encode_cursor(cursor: Cursor) -> str:
@@ -814,6 +920,10 @@ def encode_cursor(cursor: Cursor) -> str:
             "v": cursor.weights_version,
             "t": cursor.thresholds_version,
             "d": cursor.as_of.isoformat(),
+            # Absent rather than null when no verdict facet was set, so the
+            # cursors every existing drill URL mints stay byte-identical to the
+            # ones they minted before this story.
+            **({} if cursor.bands_version is None else {"b": cursor.bands_version}),
         },
         separators=(",", ":"),
     )
@@ -859,6 +969,12 @@ def decode_cursor(raw: str, as_of: date | None = None) -> Cursor:
             weights_version=int(data["v"]),
             thresholds_version=int(data["t"]),
             as_of=date.fromisoformat(data["d"]),
+            # `.get`, because the key is only minted alongside
+            # `filter[reserveVerdict]`; a forged non-numeric value is the
+            # `ValueError` this block already catches, and a forged *absent* one
+            # is refused a layer up, where the facet and the field are compared
+            # together.
+            bands_version=None if data.get("b") is None else int(data["b"]),
         )
     except (
         AttributeError,
@@ -974,6 +1090,7 @@ _COERCE: Final[Mapping[str, Callable[[Any], object]]] = {
     "icd10": _as_str,
     "age_group": lambda raw: AgeBand(_as_str(raw)),
     "gender": lambda raw: Gender(_as_str(raw)),
+    "reserve_verdict": lambda raw: ReserveVerdict(_as_str(raw)),
 }
 
 assert set(_COERCE) == set(FILTER_KEYS), (
@@ -1016,12 +1133,26 @@ class _Computers:
         )
 
 
-def _flags_of(claim: DrillClaim, computers: _Computers) -> DrillFlags:
-    """One claim's seven derived values, every one of them asked of the registry.
+def _flags_of(
+    claim: DrillClaim,
+    computers: _Computers,
+    verdicts: Mapping[str, ReserveCheck] | None = None,
+) -> DrillFlags:
+    """One claim's seven derived values, every one of them asked of the registry
+    — plus the reserve verdict, which is **handed in**.
 
     Takes the built computers rather than the threshold block, which is the
     difference between one build and one per claim — `queue._rows_to_cards`'
     shape, for its reason. `select` builds them once, above its loop.
+
+    `verdicts` is `None` on every path that did not set `filter[reserveVerdict]`,
+    and the field is then `None` too. It is deliberately **not** defaulted to a
+    computed value: the verdict is `services/financials`' (AD-2) and needs a
+    payment schedule and a bill list to reach, so computing it here would either
+    put a second implementation in this module or turn a pure fold into an
+    awaiting one. Looking it up by `claim_id` — the key
+    `reserve_checks_for_claims` groups on — rather than by position, because a
+    mapping cannot be handed over in the wrong order.
     """
     band = computers.risk.of(claim.severity_score)
     return DrillFlags(
@@ -1046,6 +1177,12 @@ def _flags_of(claim: DrillClaim, computers: _Computers) -> DrillFlags:
         # other — type-checking the whole way and producing a plausible
         # distribution of the wrong column.
         age_group=computers.age_band.of(age=claim.age),
+        # Read out of the map, never computed. A claim missing from a map that
+        # was supplied is a `KeyError` rather than a `None` — the map is built
+        # from this same caseload one call earlier, so a gap means the two
+        # describe different populations, which is the failure
+        # `MissingReserveVerdict` exists for one layer up.
+        reserve_verdict=None if verdicts is None else verdicts[claim.claim_id].verdict,
     )
 
 
@@ -1092,11 +1229,41 @@ class RankedClaim:
     priority_score: float
 
 
+def _without_reserve_verdict(
+    caseload: Sequence[DrillClaim],
+    filters: DrillFilters,
+    thresholds: DerivationThresholds,
+) -> list[DrillClaim]:
+    """The claims that survive every facet **except** the reserve verdict.
+
+    Pure, and deliberately not a variant of `select`: it neither scores nor
+    sorts, because its answer is not a list anybody reads — it is the set of
+    claims worth fetching a payment schedule and a bill list for.
+
+    `filter[reserveVerdict]` is the one facet whose predicate cannot run over a
+    row, and `drill_through_claims` is the only caller. Running the other
+    twenty-four first is what keeps the two reads it pays for proportional to
+    the *filtered* list rather than to the caller's whole book — see the block
+    there, and note that this route has no role gate, so "the whole book" is
+    reachable by any authenticated session with one query parameter.
+
+    The verdict facet is cleared rather than skipped: `matches` is an `and` over
+    the facets that are *set*, so handing it a filter set whose verdict field is
+    `None` is the same question as "which claims does everything else leave
+    standing", asked in the vocabulary the module already has instead of a
+    second matcher that would have to be kept total by hand.
+    """
+    computers = _Computers.of(thresholds)
+    without = replace(filters, reserve_verdict=None)
+    return [claim for claim in caseload if matches(claim, _flags_of(claim, computers), without)]
+
+
 def select(
     caseload: Sequence[DrillClaim],
     filters: DrillFilters,
     thresholds: DerivationThresholds,
     weights: PriorityWeights,
+    verdicts: Mapping[str, ReserveCheck] | None = None,
 ) -> tuple[list[RankedClaim], int]:
     """The filtered population, ranked. Pure — no session, no clock, no rule load.
 
@@ -1111,7 +1278,13 @@ def select(
 
     1. Derive every claim's flags through the registry (AD-10). **Before** the
        filter, because three of the twenty facets — `severityBand`,
-       `fraudFlagged`, `priority` — *are* derived values.
+       `fraudFlagged`, `priority` — *are* derived values. The reserve verdict is
+       the fourth kind and is the one thing this function does not derive: it
+       arrives in `verdicts`, keyed by claim id, because reaching it costs two
+       table reads and lives in `services/financials` (AD-2). `None` — the
+       default, and what every caller that did not set `filter[reserveVerdict]`
+       passes — leaves the field unset and is what keeps this fold pure and this
+       endpoint at one read.
     2. Apply every set facet (`matches`). An unset facet narrows nothing.
     3. Sort with `priority.order_key` over `priority.priority_score` — the
        queue's ordering and the queue's scorer, imported. Not "the same
@@ -1131,7 +1304,7 @@ def select(
     computers = _Computers.of(thresholds)
     scored: list[tuple[DrillClaim, DrillFlags, QueueClaim, float]] = []
     for claim in caseload:
-        flags = _flags_of(claim, computers)
+        flags = _flags_of(claim, computers, verdicts)
         if not matches(claim, flags, filters):
             continue
         queue_claim = _queue_claim(claim)
@@ -1266,10 +1439,17 @@ async def drill_through_claims(
     the day the claims are aged against; a cursor's recorded day wins there, and
     only there, so page two is cut from the list page one was.
 
-    **One awaited read, regardless of page size or filter set.** The ranking is
-    a total order over the filtered population, so there is no page of it to
-    read, and the two id chips are resolved from the rows that read returned.
+    **One awaited read, regardless of page size — and regardless of filter set
+    with exactly one exception.** The ranking is a total order over the filtered
+    population, so there is no page of it to read, and the two id chips are
+    resolved from the rows that read returned.
     `test_the_aggregate_takes_exactly_one_scoped_read` counts the statements.
+
+    The exception is `filter[reserveVerdict]` (Story 7.4), which costs two more
+    scoped reads and one more rule document — see the conditional below. It is
+    conditional precisely so the sentence above stays true of every drill URL
+    this console had issued before that facet existed, and so the extra cost is
+    legible at the one call site that incurs it rather than paid by everybody.
 
     No role appears anywhere in this path. Supervisor, analyst and handler take
     the identical scoped route through the repository, which is the whole of
@@ -1346,11 +1526,58 @@ async def drill_through_claims(
             icd=row.icd,
             age=row.age,
             gender=row.gender,
+            reserve=row.reserve,
+            recovery=row.recovery,
         )
         for row in rows
     ]
 
-    ranked, total = select(caseload, filters, thresholds, weights)
+    # **Two more reads, and only when the twenty-fifth facet is set.** The
+    # reserve verdict is not a column and cannot become one
+    # (`tests/test_no_derived_columns.py`), so `filter[reserveVerdict]` is the
+    # only way a segment of the adequacy distribution can open its own claims —
+    # and reaching it means a payment schedule and a bill list per claim, plus
+    # the `reserve_bands` document neither of this route's two blocks contains.
+    #
+    # Conditional rather than unconditional, which is what keeps the guarantee
+    # every other caller already had: `test_the_aggregate_takes_exactly_one_
+    # scoped_read` stays true of every drill URL ever issued, the cost is visible
+    # exactly where it is paid for, and a supervisor drilling a KPI card pays
+    # nothing for a facet the analyst workspace introduced.
+    #
+    # `reserve_bands_for(db, today)` rather than the cursor's date, for the two
+    # blocks above's reason: a document resolved at the cursor's own day could
+    # only ever agree with itself. Note the verdicts are **not** in the cursor's
+    # compared payload — `filters` is, and the verdict facet is one of its
+    # fields, so a cursor minted under a different verdict is already refused.
+    #
+    # **The other facets are applied first, and that is not an optimisation.**
+    # This route carries no role gate — every authenticated session can reach
+    # it — so loading a verdict for every claim in scope before any narrowing
+    # would let one query parameter turn a filtered list into a whole-book
+    # schedule-and-bill materialisation, and `filter[employerId]` beside it
+    # would not reduce it by a row. Narrowing first makes the two reads cost
+    # what the *filtered* list costs, which is the only sense in which they are
+    # paid for by the caller who asked for them. It also keeps the verdict map
+    # total over exactly the population `select` folds, which is what
+    # `_flags_of`'s `KeyError` is there to prove.
+    verdicts: Mapping[str, ReserveCheck] | None = None
+    population = caseload
+    if filters.reserve_verdict is not None:
+        bands = await reserve_bands_for(db, today)
+        if decoded is not None and decoded.bands_version != bands.version:
+            raise InvalidCursor(
+                f"That page was bucketed by reserve_bands v{decoded.bands_version}, "
+                f"and v{bands.version} is now effective; "
+                "reload the list from the first page."
+            )
+        population = _without_reserve_verdict(caseload, filters, thresholds)
+        verdicts = await reserve_checks_for_claims(db, ctx, population, bands=bands)
+        bands_version: int | None = bands.version
+    else:
+        bands_version = None
+
+    ranked, total = select(population, filters, thresholds, weights, verdicts)
     # Over the whole filtered list, before the page is cut — `priority_markers`'
     # own ruling, which this surface inherits unchanged: the marker describes the
     # top of the list it is drawn on, and asking for page 2 must never make a
@@ -1386,6 +1613,7 @@ async def drill_through_claims(
                     weights_version=weights.version,
                     thresholds_version=thresholds.version,
                     as_of=aged_on,
+                    bands_version=bands_version,
                 )
             )
         ),

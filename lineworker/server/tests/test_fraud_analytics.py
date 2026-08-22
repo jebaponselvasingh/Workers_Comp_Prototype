@@ -2249,6 +2249,12 @@ async def test_the_two_new_facets_join_the_vocabulary_and_change_no_other(
         "filter[icd10]",
         "filter[ageGroup]",
         "filter[gender]",
+        # Story 7.4's one, appended after 7.3's four. The Financial section's own
+        # click target — a segment of the reserve-adequacy distribution — and the
+        # only facet in the vocabulary whose value cannot be reached from a claim
+        # row at all, which is why setting it is the one thing that changes what
+        # this route costs. `test_financial_decomposition.py` counts those reads.
+        "filter[reserveVerdict]",
         "cursor",
     }
 

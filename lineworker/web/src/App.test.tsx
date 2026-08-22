@@ -86,16 +86,18 @@ test("a role that does not belong on a shell is sent to its own", async () => {
   expect(await screen.findByRole("region", { name: /Claim workspace/ })).toBeInTheDocument();
 });
 
-test("an analyst sees exactly three workspace destinations", async () => {
+test("an analyst sees exactly four workspace destinations", async () => {
   // Epic 5's analyst read the supervisor's dashboard byte for byte. What this
   // asserts is the first thing that stopped being true: a navigation, with
-  // exactly the sections that are built. **Exactly** rather than "at least" —
-  // segmentation and financial decomposition are Stories 7.3-7.4, and the
-  // instruction is to leave their slots unbuilt rather than stubbed-broken, so a
-  // fourth link appearing here is a promise the build cannot keep.
+  // exactly the sections that are built. **Exactly** rather than "at least" — an
+  // unbuilt section's slot is left unbuilt rather than stubbed-broken, so a
+  // fifth link appearing here is a promise the build cannot keep.
   //
-  // Story 7.2 amended the expected list from two entries to three, which is the
-  // change this test was written to require rather than one it was surprised by.
+  // Story 7.2 amended the expected list from two entries to three and Story 7.4
+  // amends it to four, which is the change this test was written to require
+  // rather than one it was surprised by. Segmentation (7.3) is deliberately
+  // *not* on it: a filter is not a place, so it landed as a bar mounted on these
+  // routes rather than as an entry beside them.
   stubApi({ me: ANALYST });
   renderAt("/dashboard");
 
@@ -104,10 +106,12 @@ test("an analyst sees exactly three workspace destinations", async () => {
     "Portfolio",
     "Fraud",
     "Trends",
+    "Financial",
   ]);
   expect(within(nav).getByTestId("nav-portfolio")).toHaveAttribute("aria-current", "page");
   expect(within(nav).getByTestId("nav-fraud")).not.toHaveAttribute("aria-current");
   expect(within(nav).getByTestId("nav-trends")).not.toHaveAttribute("aria-current");
+  expect(within(nav).getByTestId("nav-financial")).not.toHaveAttribute("aria-current");
 });
 
 test("the fraud route marks the fraud destination and not the portfolio one", async () => {
@@ -138,6 +142,48 @@ test("the trends route marks the trends destination and nothing else", async () 
       .filter((link) => link.getAttribute("aria-current") === "page")
       .map((link) => link.textContent),
   ).toEqual(["Trends"]);
+});
+
+test("the financial route marks the financial destination and nothing else", async () => {
+  // The partition's third arm, and the single most likely defect in Story 7.4's
+  // client slice: `owns` is a partition and Portfolio's predicate is the
+  // *complement of every section*, so adding a Financial entry without adding
+  // its route to `SECTION_ROUTES` leaves two entries marked current here — a
+  // navigation saying you are in two places at once, which is the quieter of the
+  // two failures this partition has already had.
+  stubApi({ me: ANALYST });
+  renderAt("/dashboard/financials");
+
+  const nav = await screen.findByRole("navigation", { name: /Analyst workspace/ });
+  expect(
+    within(nav)
+      .getAllByRole("link")
+      .filter((link) => link.getAttribute("aria-current") === "page")
+      .map((link) => link.textContent),
+  ).toEqual(["Financial"]);
+});
+
+test("an analyst reaches the financial workspace", async () => {
+  stubApi({ me: ANALYST });
+  renderAt("/dashboard/financials");
+
+  expect(
+    await screen.findByRole("region", { name: /Financial decomposition/ }),
+  ).toBeInTheDocument();
+});
+
+test("a supervisor is bounced from the financial route to their own dashboard", async () => {
+  // The route table's guard on the third analyst section — and the client half
+  // of the server's 403 on both financial endpoints. A redirect rather than an
+  // error page: the server said this caller is a supervisor, so their own
+  // dashboard is the correct destination.
+  stubApi({ me: SUPERVISOR });
+  renderAt("/dashboard/financials");
+
+  expect(await screen.findByRole("region", { name: /Portfolio dashboard/ })).toBeInTheDocument();
+  expect(
+    screen.queryByRole("region", { name: /Financial decomposition/ }),
+  ).not.toBeInTheDocument();
 });
 
 test("an analyst reaches the trends workspace", async () => {

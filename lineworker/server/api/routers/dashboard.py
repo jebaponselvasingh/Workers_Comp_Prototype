@@ -89,14 +89,17 @@ from api.schemas import ApiModel
 from data.models.enums import Disability, Gender, ReturnStatus, Stage
 from rules.parameters import (
     handler_performance_for,
+    reserve_bands_for,
     thresholds_for,
     trend_periods_for,
     weights_for,
     worklist_actions_for,
 )
 from services.derivations import AgeBand, ComplexityBand, CycleStatus, FraudBand, RiskBand
+from services.financials import ReserveVerdict
 from services.worklist import (
     BenchmarksNotPermitted,
+    BreakdownDimension,
     DrillFilters,
     EmployerRate,
     FraudAnalyticsNotPermitted,
@@ -115,6 +118,7 @@ from services.worklist import (
     TrendRangeInvalid,
     TrendRangeTooWide,
     drill_through_claims,
+    financial_decomposition,
     fraud_panel,
     fraud_rates,
     fraud_red_flags,
@@ -125,9 +129,16 @@ from services.worklist import (
     priority_claims,
     require_benchmarks_access,
     require_fraud_analytics_access,
+    reserve_adequacy,
     segmentation_values,
 )
 from services.worklist.charts import CategoryCount, Distribution, EmployerPaid, LabelCount
+from services.worklist.decomposition import (
+    DEFAULT_BREAKDOWN,
+    CostDriverPair,
+    FinancialBreakdown,
+    MoneyTotals,
+)
 from services.worklist.fraud import HandlerCount
 from services.worklist.segmentation import DimensionValues
 from services.worklist.sla import SlaMetric, SlaMetricKey
@@ -1394,6 +1405,20 @@ async def drill_claims(  # noqa: PLR0913 - one parameter per published facet; se
         Gender | None,
         Query(alias="filter[gender]", description="The injured worker's gender."),
     ] = None,
+    reserve_verdict: Annotated[
+        ReserveVerdict | None,
+        Query(
+            alias="filter[reserveVerdict]",
+            description=(
+                "Epic 3's reserve adequacy verdict for the claim, as the analyst "
+                "workspace's adequacy distribution counted it. **This is the one "
+                "facet that costs extra reads**: the verdict is not a column, so "
+                "setting it loads each claim's payment schedule and bills and the "
+                "`reserve_bands` document. Every other facet leaves the route at "
+                "one scoped read."
+            ),
+        ),
+    ] = None,
     cursor: Annotated[
         str | None,
         Query(description="An opaque `nextCursor` from a previous response."),
@@ -1401,9 +1426,9 @@ async def drill_claims(  # noqa: PLR0913 - one parameter per published facet; se
 ) -> DrillClaimsResponse:
     """The claims behind a KPI card, a chart segment, a handler row or a worklist.
 
-    ## Twenty-five parameters, and not one of them is a scope
+    ## Twenty-six parameters, and not one of them is a scope
 
-    Twenty-four facets and a cursor. Every facet is a *narrowing* applied after
+    Twenty-five facets and a cursor. Every facet is a *narrowing* applied after
     `employer_scope(ctx)` has already decided which rows exist, so
     `filter[employerId]` and `filter[handlerId]` intersect the caller's book and
     can never widen it: a scoped supervisor naming an employer outside hers gets
@@ -1432,8 +1457,28 @@ async def drill_claims(  # noqa: PLR0913 - one parameter per published facet; se
     This route intersects **independent facets**: a supervisor drills into High
     Risk, then narrows to one employer, then to litigated claims, and each is a
     separate dimension of the same set. That is what the architecture's list
-    convention spells with brackets, and it is why the twenty-four arrive as
-    twenty-four parameters rather than as one enum.
+    convention spells with brackets, and it is why the twenty-five arrive as
+    twenty-five parameters rather than as one enum.
+
+    ## Story 7.4 adds one facet and changes none
+
+    `filter[reserveVerdict]`, **appended** for the reason 7.1's two, 7.2's six
+    and 7.3's four were: `appliedFilters` is the chip row's order, it is read off
+    `DrillFilters`' field order, and inserting a facet anywhere but the end
+    silently renumbers the chips on every drill-through URL anybody has shared.
+
+    It is the analyst workspace's Financial section's own click target — a
+    segment of the reserve-adequacy distribution — and it is matched through the
+    registered computation that segment was *counted* with
+    (`services/financials/reserve.py`), which is this route's founding rule
+    applied to a value that is not a derivation and not a column. It is also the
+    only facet here whose value cannot be reached from the claim row alone, which
+    is why it is the only one that changes what this route costs; see the
+    parameter's own description and `drill_through_claims`.
+
+    The route stays **ungated** with the addition: a reserve verdict is a
+    judgement about a claim the session can already open one at a time, and the
+    payload still names nobody.
 
     ## Story 7.3 adds four facets and changes none
 
@@ -1559,8 +1604,8 @@ async def drill_claims(  # noqa: PLR0913 - one parameter per published facet; se
     thresholds = await thresholds_for(db)
     weights = await weights_for(db)
     # Built field by field, like every response model in this file and for the
-    # same reason: the mapping from the route's twenty parameters to the
-    # service's twenty fields is the place a renamed facet should fail to
+    # same reason: the mapping from the route's twenty-five parameters to the
+    # service's twenty-five fields is the place a renamed facet should fail to
     # compile, and a `**locals()`-shaped shortcut is the place it silently
     # would not.
     filters = DrillFilters(
@@ -1588,6 +1633,7 @@ async def drill_claims(  # noqa: PLR0913 - one parameter per published facet; se
         icd10=icd10,
         age_group=age_group,
         gender=gender,
+        reserve_verdict=reserve_verdict,
     )
     try:
         page = await drill_through_claims(db, ctx, thresholds, weights, filters, cursor=cursor)
@@ -3181,5 +3227,466 @@ async def segmentation_dimension_values(
         age_younger_min=values.age_younger_min,
         age_older_min=values.age_older_min,
         age_oldest_min=values.age_oldest_min,
+        rules_version=thresholds.version,
+    )
+
+
+# --- Story 7.4: the analyst workspace's Financial section -----------------
+
+
+class MoneyTotalsResponse(ApiModel):
+    """The three money figures, for a book or for any part of one.
+
+    **Nested rather than flattened onto every row that carries them**, and the
+    nesting is the contract rather than tidiness: these three describe *the same
+    claims*, and a shape that spread them across a group's other fields would let
+    a later reader add a fourth figure to one level and not the other. It is the
+    same argument `SlaStripResponse` makes for keeping four tiles in one object.
+
+    Every field is integer cents and says so in its name (the money convention).
+    `web/src/lib/money.ts` is the only place a hundred is divided by, and no
+    client adds any two of these together — `projectedCents` **is**
+    `paidCents + reserveCents` on today's data and is published rather than left
+    to be added, which is AD-1 at its most literal.
+
+    **What each one sums is not obvious and is stated on the card, not here.**
+    `paidCents` is the registered `total_paid` derivation over the static
+    `paid_*` columns — the same figure `/dashboard/summary` publishes as
+    `totalPaidCents` and 5.3's employer chart bars — which excludes bills and
+    expenses paid on open claims; `deferred-work.md` carries that finding, its
+    magnitude and its owner. `projectedCents` is `total_claim_projected` and is
+    deliberately **not** called "incurred": the case file already uses "Total
+    incurred" for the paid-only figure, and `services/derivations/claim_money.py`
+    records the discrepancy that this payload refuses to spread.
+    """
+
+    paid_cents: int
+    reserve_cents: int
+    projected_cents: int
+
+
+class BreakdownGroupResponse(ApiModel):
+    """One row of the breakdown: what it is, how many claims, and what they cost.
+
+    `key` is the **wire value the grouped dimension's own facet takes**, so a
+    row's drill target is `filter[<groupBy>]=<key>` with nothing composed in
+    between — the same string `appliedFilters` publishes and the same string the
+    client's label maps are keyed on. `label` is a human name **or null**,
+    `DimensionValueResponse`'s split restated on a row: only `employerId` carries
+    one, because an id is not a name and nothing in the browser can turn `3` into
+    "Boeing Everett" on a cold URL load.
+
+    `claimCount` rides beside the money for `InjuryTypeRateResponse`'s reason: a
+    spend figure is uninterpretable without the population behind it — one
+    settled claim can outspend twenty open ones — and the honest answer is to
+    publish the denominator rather than to invent a suppression rule.
+    """
+
+    key: str
+    label: str | None
+    claim_count: int
+    totals: MoneyTotalsResponse
+
+
+class FinancialBreakdownResponse(ApiModel):
+    """One dimension's groups, ranked by projected cost and cut.
+
+    `DistributionResponse`'s truncation contract over a series that distributes
+    three quantities: `groupCount` is how many groups the segment holds *before*
+    the cut, `truncated` is decided server-side rather than left to a client
+    comparing two fields, and `limit` is the cap that was applied — so the card's
+    caption reads "top 12 of 34" without any client restating the number.
+
+    **There is no `total` here, and the portfolio totals one level up are not
+    it.** Those are whole-segment figures that do not move when the tail is cut,
+    which is what lets a caption quote a cut beside a total that is still the
+    answer to "what does this segment cost". A `total` on this object would be a
+    second sum a reader could not tell from that one.
+
+    `dimension` echoes what was grouped by, `RateBreakdownResponse.sort`'s
+    reason: the `<select>` renders the server's answer rather than its own last
+    click, so a request that 422s or times out cannot leave a control claiming a
+    grouping the rows beside it are not in.
+    """
+
+    dimension: BreakdownDimension
+    items: list[BreakdownGroupResponse]
+    group_count: int
+    truncated: bool
+    limit: int
+
+
+class CostDriverCohortResponse(ApiModel):
+    """One side of a cost-driver comparison.
+
+    `key` is `"true"` or `"false"` — the wire form of the boolean facet this
+    cohort drills on, so a click opens `filter[surgery]=true` with no mapping and
+    the client's existing boolean label map answers "Yes"/"No" unchanged.
+
+    **`averageProjectedCents` is null, never 0, for an empty cohort** —
+    `TrendPointResponse.value`'s sentinel and its argument: a mean over an empty
+    set is not zero, and a cohort reporting `$0` would read as a cohort that costs
+    nothing rather than as one with no claims in it. It is floor division over
+    cents, computed once server-side, and no client divides `projectedCents` by
+    `claimCount` to check it (AD-1).
+
+    All three totals travel beside the average, and the seeded book is why: all
+    three litigated claims are open, so their `paidCents` is exactly zero and a
+    paid-only comparison would report that litigation costs nothing at all.
+    """
+
+    key: str
+    claim_count: int
+    totals: MoneyTotalsResponse
+    average_projected_cents: int | None
+
+
+class CostDriverPairResponse(ApiModel):
+    """A driver and its complement — the two cohorts that partition the segment.
+
+    A pair rather than two independent rows, and the pairing is the assertion:
+    the two `claimCount`s sum to `claimsInScope`, so neither cohort is a sample
+    of the other and a card cannot end up comparing a surgery cohort against a
+    portfolio total that contains it.
+
+    `facet` is the `filter[…]` name each side drills on, published rather than
+    inferred from the pair's position in the payload — `DimensionValuesResponse.key`'s
+    rule: a control's value and the parameter it writes are one string, and
+    nothing in the browser composes a parameter name.
+    """
+
+    facet: str
+    with_driver: CostDriverCohortResponse
+    without_driver: CostDriverCohortResponse
+
+
+class FinancialDecompositionResponse(ApiModel):
+    """Portfolio totals, one breakdown, and both cost-driver pairs.
+
+    Three answers on one payload because they are folded from **one traversal of
+    one scoped read** — `FraudPanelResponse`'s argument: separate requests would
+    let a breakdown describe a different book from the total above it, and the
+    identity a reader checks on this screen is precisely that the groups sum to
+    the heading.
+
+    `claimsInScope` counts the **segmented** book, which is what every analyst
+    payload's field of that name has counted since Story 7.3; the unfiltered
+    denominator is `claimsInScope` on `/dashboard/segmentation/values`.
+
+    `rulesVersion` names `derivation_thresholds`, the document whose two band
+    edges decided which claims a `severityBand` or `ageGroup` grouping put where.
+    As on every sibling payload it rides along unrendered: it is what makes a
+    stored or forwarded response self-describing. The *reserve* bands are a
+    different document and are published on the adequacy payload as
+    `bandsVersion`, because one field could only name one of them.
+    """
+
+    totals: MoneyTotalsResponse
+    claims_in_scope: int
+    breakdown: FinancialBreakdownResponse
+    surgery: CostDriverPairResponse
+    litigation: CostDriverPairResponse
+    rules_version: int
+
+
+class VerdictCountResponse(ApiModel):
+    """One bucket of the reserve-adequacy distribution.
+
+    `verdict` is the snake_case wire value of a `ReserveVerdict` member (the enum
+    convention — the UI owns "Reserve Light", and the case file's own
+    `RESERVE_VERDICT_LABEL` is the map that supplies it), and it is also the
+    value `filter[reserveVerdict]` takes, so a segment's drill target is the
+    segment's own key.
+    """
+
+    verdict: ReserveVerdict
+    count: int
+
+
+class ReserveAdequacyResponse(ApiModel):
+    """The portfolio's reserve verdicts, counted, with the bands behind them.
+
+    **Five items, always, in the enum's declaration order**, which is
+    `FraudPanelResponse.byBand`'s zero-fill rule on a second vocabulary and for
+    the same reason: a verdict is a *rule's* answer over a claim every book
+    contains, so all five members exist for every portfolio, and "no claim in
+    this segment is under-reserved" is the most valuable thing this chart can
+    say. A distribution missing an empty bucket cannot be told from a build that
+    forgot to draw it.
+
+    **Five and not three**, although the story's AC names Light/Adequate/Heavy.
+    `closed_final` and `indeterminate` are the two verdicts that are not band
+    answers — a settled claim has no exposure left to judge, and a claim whose
+    bills are not on file has not had a check rather than failed one — and on the
+    seeded portfolio `closed_final` alone holds 62 of 100 claims. Publishing
+    three buckets would have drawn a donut whose total was a third of
+    `claimsInScope` under a heading reading "portfolio".
+
+    `total` equals `claimsInScope` by construction: every claim in the segment
+    lands in exactly one bucket. Both are published rather than one implied,
+    because `DistributionDonut` decides emptiness on a *total* and never on a row
+    count — which the zero-fill makes necessary — and because a card that
+    reported one and implied the other would be asking a reader to trust an
+    identity rather than see it.
+
+    **The two band edges and `bandsVersion` travel with the figures**, for the
+    reason `FraudPanelResponse`'s four thresholds do: the card's footnote quotes
+    the ratios the buckets were produced at, so a client holding either number
+    would be a second copy of a rule it cannot see change. They are read off the
+    `ReserveBands` block the verdicts were computed with, and `bandsVersion`
+    names `reserve_bands` rather than `derivation_thresholds` — a different
+    document, so a different field.
+
+    **And `rulesVersion` beside it, naming `derivation_thresholds`**, because
+    this route reads that document too and the figures depend on it: the
+    segmentation is applied through the registered `risk` and `age_band`
+    computers, so `filter[severityBand]=high` narrows this distribution through
+    edges the payload would otherwise never name. A retune of those edges moves
+    every bucket here with nothing on the response to say which rules produced
+    it — the state every sibling analyst payload publishes `rulesVersion` to
+    prevent. Two documents decide these counts, so both are named; the earlier
+    reading that one field "could only name one of them" was an argument for a
+    second field, not for an omission.
+    """
+
+    items: list[VerdictCountResponse]
+    total: int
+    claims_in_scope: int
+    light_ratio_bp: int
+    heavy_ratio_bp: int
+    bands_version: int
+    rules_version: int
+
+
+def _money(totals: MoneyTotals) -> MoneyTotalsResponse:
+    """The three figures, field by field — `_categories`' reasoning."""
+    return MoneyTotalsResponse(
+        paid_cents=totals.paid_cents,
+        reserve_cents=totals.reserve_cents,
+        projected_cents=totals.projected_cents,
+    )
+
+
+def _breakdown(breakdown: FinancialBreakdown) -> FinancialBreakdownResponse:
+    """One breakdown, field by field — `_categories`' reasoning."""
+    return FinancialBreakdownResponse(
+        dimension=breakdown.dimension,
+        items=[
+            BreakdownGroupResponse(
+                key=group.key,
+                label=group.label,
+                claim_count=group.claim_count,
+                totals=_money(group.totals),
+            )
+            for group in breakdown.items
+        ],
+        group_count=breakdown.group_count,
+        truncated=breakdown.truncated,
+        limit=breakdown.limit,
+    )
+
+
+def _cost_driver(pair: CostDriverPair) -> CostDriverPairResponse:
+    """One driver's two cohorts, field by field — `_categories`' reasoning."""
+    return CostDriverPairResponse(
+        facet=pair.facet,
+        with_driver=CostDriverCohortResponse(
+            key=pair.with_driver.key,
+            claim_count=pair.with_driver.claim_count,
+            totals=_money(pair.with_driver.totals),
+            average_projected_cents=pair.with_driver.average_projected_cents,
+        ),
+        without_driver=CostDriverCohortResponse(
+            key=pair.without_driver.key,
+            claim_count=pair.without_driver.claim_count,
+            totals=_money(pair.without_driver.totals),
+            average_projected_cents=pair.without_driver.average_projected_cents,
+        ),
+    )
+
+
+@router.get(
+    "/dashboard/financials",
+    response_model=FinancialDecompositionResponse,
+    summary="Paid, reserve and projected totals with a breakdown, for the session's analyst",
+    responses={**UNAUTHENTICATED_RESPONSE, **FRAUD_ANALYTICS_FORBIDDEN_RESPONSE},
+)
+async def financials(
+    ctx: CallerContextDep,
+    db: DbDep,
+    response: Response,
+    segmentation: SegmentationDep,
+    group_by: Annotated[
+        BreakdownDimension,
+        Query(
+            alias="groupBy",
+            description=(
+                "Which of the ten segmentation dimensions the money is broken "
+                "down by. The members are the `filter[…]` facet names themselves, "
+                "so a group's key is what its own drill-through filters on."
+            ),
+        ),
+    ] = DEFAULT_BREAKDOWN,
+) -> FinancialDecompositionResponse:
+    """The Financial section's totals, breakdown and cost drivers.
+
+    ## Eleven parameters, and not one of them is a scope
+
+    The workspace's ten `filter[…]` dimensions as one injected `Segmentation`
+    (see `_segmentation`) and one control. The ten decide **which claims** are
+    folded and every one is a narrowing applied after `employer_scope(ctx)`, so
+    `filter[employerId]` intersects the caller's book and can never widen it; the
+    control decides **how the money is grouped** and changes no read at all.
+    There is nowhere in this signature to put an employer, a user or an "as"
+    (AD-7), and `?scopeAll=true` remains an unknown parameter FastAPI ignores.
+
+    `groupBy`'s **type is the check**: `groupBy=nonsense` is a 422 from FastAPI's
+    own coercion before this function runs, `FraudRateSort`'s arrangement, which
+    is why `BreakdownDimension` holds no vocabulary check and must not grow one.
+
+    ## Two routes rather than one, and this is the cheap half
+
+    The adequacy distribution is `/dashboard/financials/reserve-adequacy` and not
+    a field here, for two reasons that point the same way. It costs **three**
+    scoped reads and a second rule document where this costs one and one, so
+    folding it in would make every totals render pay for a chart the analyst may
+    not be looking at; and the two would then fail together, where
+    `FraudPage`'s four independent queries let one card's outage leave the rest
+    of a section standing (NFR-3).
+
+    ## This endpoint is gated, and the argument is `/dashboard/fraud`'s
+
+    It is the analyst *workspace* — the fourth section of the surface Epic 5's
+    analyst did not have — and the allowlist is `fraud.FRAUD_ANALYTICS_ROLES`,
+    reused rather than re-declared, because a fourth section carrying a fourth
+    spelling of one allowlist is how a future `UserRole` gets admitted by one of
+    them. A supervisor gets 403 here while continuing to read every Epic 5
+    dashboard route byte-identically.
+
+    ## One document, loaded here
+
+    `derivation_thresholds`, handed down, so the aggregate stays a composition of
+    scope and parameters — `portfolio_summary`'s rule. One rather than two
+    because everything this surface reaches is a registered derivation: the two
+    money computers, and the `risk` and `age_band` bands two of the ten groupings
+    go through. `reserve_bands` is the *other* route's document, and it is loaded
+    there.
+    """
+    # `/stats/topbar`'s reasoning: this response is specific to one persona's
+    # scope, so it must never be served to another from a cache upstream. First
+    # statement in the body, so neither the refusal below nor any early return can
+    # skip it.
+    response.headers["Cache-Control"] = "no-store"
+    # **Before the document load, not after it** — `fraud`'s note. Deliberately
+    # the *service's* function rather than a copy of the condition: two spellings
+    # of one allowlist is how a future `UserRole` gets admitted by one of them.
+    try:
+        require_fraud_analytics_access(ctx)
+    except FraudAnalyticsNotPermitted as exc:
+        raise _fraud_forbidden(exc) from exc
+    thresholds = await thresholds_for(db)
+    # Belt and braces — `fraud`'s note. Unreachable today: the call above already
+    # refused.
+    try:
+        computed = await financial_decomposition(
+            db, ctx, thresholds, segmentation, dimension=group_by
+        )
+    except FraudAnalyticsNotPermitted as exc:  # pragma: no cover - the gate answered first
+        raise _fraud_forbidden(exc) from exc
+
+    return FinancialDecompositionResponse(
+        totals=_money(computed.totals),
+        claims_in_scope=computed.claims_in_scope,
+        breakdown=_breakdown(computed.breakdown),
+        surgery=_cost_driver(computed.surgery),
+        litigation=_cost_driver(computed.litigation),
+        rules_version=thresholds.version,
+    )
+
+
+@router.get(
+    "/dashboard/financials/reserve-adequacy",
+    response_model=ReserveAdequacyResponse,
+    summary="The reserve adequacy verdict distribution for the session's analyst",
+    responses={**UNAUTHENTICATED_RESPONSE, **FRAUD_ANALYTICS_FORBIDDEN_RESPONSE},
+)
+async def financial_reserve_adequacy(
+    ctx: CallerContextDep,
+    db: DbDep,
+    response: Response,
+    segmentation: SegmentationDep,
+) -> ReserveAdequacyResponse:
+    """How the caller's book is reserved — Epic 3's verdict, counted (AC 2).
+
+    ## Ten parameters, and not one of them is a scope
+
+    The same ten `filter[…]` dimensions the other analyst routes take, from the
+    same `_segmentation` dependency, so the whole workspace reads one query
+    string. There is no control here: a distribution over a closed five-member
+    vocabulary has nothing to group by and nothing to sort.
+
+    ## The verdict is Epic 3's, reached by Epic 3's function
+
+    `services/worklist/decomposition.adequacy_of` **counts** verdicts and
+    computes none: they arrive from
+    `services/financials/reserve.reserve_checks_for_claims`, which folds each
+    claim's stored payment-schedule weeks and bills through
+    `reserve_check_from_rows` — the same function the case file's chip and the
+    Bills tab's summary reach the verdict through (AD-2, AD-10). A bucket on this
+    chart and a chip on a claim are therefore one computation with two callers,
+    which is what `filter[reserveVerdict]` then makes navigable.
+
+    **It does not materialize**, and that is the one behavioural difference from
+    the claim-level path, stated rather than hidden: `reserve_check_for_claim`
+    refreshes the schedule before reading it and a refresh is a write, which an
+    analyst route may not make. The residual gap is a claim whose week boundary
+    has passed since anyone last opened it; the card footnotes it.
+
+    ## Three scoped reads, and the number is published in the tests
+
+    The claims, then the weeks and the bills in bulk. `fraud/red-flags` records
+    the same shape for its two, and the reason the count is guarded is the
+    obvious wrong implementation on this path: a loop over
+    `reserve_check_for_claim` would be three reads *and* a schedule refresh per
+    claim on a `GET`.
+
+    ## This endpoint is gated, and the argument is `/dashboard/financials`'
+
+    Same workspace, same allowlist, reused rather than re-declared.
+
+    ## Two documents, loaded here
+
+    `derivation_thresholds` builds the segmentation's two band computers — the
+    filter can narrow on `severityBand` and `ageGroup`, which are registered
+    derivations — and `reserve_bands` decides the verdict. Both are loaded here
+    and handed down so the aggregate stays a composition of scope and parameters,
+    and both versions reach the client: `bandsVersion` on this payload names the
+    second, because it is the document that decided every bucket.
+    """
+    # `/stats/topbar`'s reasoning — `financials`' note. First statement in the
+    # body, so no early return can skip it.
+    response.headers["Cache-Control"] = "no-store"
+    # Before both document loads — `fraud`'s note.
+    try:
+        require_fraud_analytics_access(ctx)
+    except FraudAnalyticsNotPermitted as exc:
+        raise _fraud_forbidden(exc) from exc
+    thresholds = await thresholds_for(db)
+    bands = await reserve_bands_for(db)
+    # Belt and braces — `fraud`'s note. Unreachable today.
+    try:
+        adequacy = await reserve_adequacy(db, ctx, thresholds, bands, segmentation)
+    except FraudAnalyticsNotPermitted as exc:  # pragma: no cover - the gate answered first
+        raise _fraud_forbidden(exc) from exc
+
+    return ReserveAdequacyResponse(
+        items=[
+            VerdictCountResponse(verdict=item.verdict, count=item.count) for item in adequacy.items
+        ],
+        total=adequacy.total,
+        claims_in_scope=adequacy.claims_in_scope,
+        light_ratio_bp=adequacy.light_ratio_bp,
+        heavy_ratio_bp=adequacy.heavy_ratio_bp,
+        bands_version=adequacy.bands_version,
         rules_version=thresholds.version,
     )

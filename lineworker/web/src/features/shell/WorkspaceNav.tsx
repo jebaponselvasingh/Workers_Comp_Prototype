@@ -34,16 +34,19 @@
  * identical to what Epic 5 shipped" is an acceptance criterion this component
  * would break by rendering anything.
  *
- * **Three destinations, and Story 7.3 deliberately did not add a fourth.**
- * Segmentation is not a *place*: it is a filter over the two sections that
+ * **Four destinations since Story 7.4, and Story 7.3 deliberately did not add
+ * one.** Segmentation is not a *place*: it is a filter over the sections that
  * exist, so it lands as a bar mounted on those routes rather than as an entry
  * beside them — `SegmentationSection` below, which reuses this file's own
  * partition so "which routes are sections" is one list with two readers.
- * Financial decomposition (7.4) is still unbuilt and its slot is still left
- * *unbuilt rather than stubbed-broken*: a disabled entry would be a promise the
- * build cannot keep, and a reader would have no way to tell it from one that is
- * merely failing to load. It lands the same way Trends did: a line in
- * `DESTINATIONS`, and its route added to `SECTION_ROUTES`.
+ * Financial decomposition landed exactly the way this docstring predicted Trends
+ * had and this one would: **one line in `DESTINATIONS` and one in
+ * `SECTION_ROUTES`**, which is the two-edit rule two paragraphs up, and nothing
+ * else — the bar came with the second edit, because that list is also its mount
+ * predicate. The slot had been left *unbuilt rather than stubbed-broken* until
+ * there was something behind it, for the reason it is worth keeping written
+ * down: a disabled entry is a promise the build cannot keep, and a reader has no
+ * way to tell one from an entry that is merely failing to load.
  *
  * **The role comes from the server**, through `useMe` and therefore from
  * `app_user`, exactly as `RequireSession`'s does. This component decides which
@@ -59,7 +62,7 @@ import { hrefWithFilters } from "@/features/dashboard/drill/filters";
 import { SegmentationBar } from "@/features/dashboard/segmentation/SegmentationBar";
 import { useSegmentation } from "@/features/dashboard/segmentation/useSegmentation";
 
-import { DASHBOARD_ROUTE, FRAUD_ROUTE, TRENDS_ROUTE } from "./routes";
+import { DASHBOARD_ROUTE, FINANCIAL_ROUTE, FRAUD_ROUTE, TRENDS_ROUTE } from "./routes";
 
 /**
  * The section routes Portfolio's catch-all has to subtract, declared once.
@@ -73,7 +76,7 @@ import { DASHBOARD_ROUTE, FRAUD_ROUTE, TRENDS_ROUTE } from "./routes";
  * `DESTINATIONS` list is asserted against this one by `App.test.tsx`'s
  * one-current-entry test on every route.
  */
-const SECTION_ROUTES: readonly string[] = [FRAUD_ROUTE, TRENDS_ROUTE];
+const SECTION_ROUTES: readonly string[] = [FRAUD_ROUTE, TRENDS_ROUTE, FINANCIAL_ROUTE];
 
 /**
  * Whether a path belongs to one particular section.
@@ -148,6 +151,12 @@ const DESTINATIONS: readonly NavSpec[] = [
     label: "Trends",
     testId: "nav-trends",
     owns: inSection(TRENDS_ROUTE),
+  },
+  {
+    to: FINANCIAL_ROUTE,
+    label: "Financial",
+    testId: "nav-financial",
+    owns: inSection(FINANCIAL_ROUTE),
   },
 ];
 

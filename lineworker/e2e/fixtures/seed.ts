@@ -4320,3 +4320,288 @@ export function workspaceUrl(path: string, filters: Segmentation = {}): string {
   const query = params.toString();
   return query === "" ? path : `${path}?${query}`;
 }
+
+// --- Story 7.4: the financial decomposition, restated independently -------
+//
+// **Money is where an oracle that agrees with the implementation does the most
+// damage**, so this block restates *what each figure sums* rather than reaching
+// for a helper that already sums something similar. Two blocks above hold a paid
+// figure of some kind — `expectedPortfolioSummaryFor` sums the three paid columns
+// for a KPI card and `expectedPortfolioChartsFor` sums them per employer for a
+// bar — and reusing either would have made this oracle unable to notice the day
+// the *basis* moved, which is the one change `deferred-work.md` records as
+// pending with an owner.
+//
+// What is reused rather than restated, and why each reuse is not a cut:
+//
+// - `claimsFor` — scope, one restatement, already here and reused by every block
+//   in this file.
+// - `matchesDimension` and `SEGMENTATION_ORDER` from the Story 7.3 block above —
+//   the segmentation vocabulary, restated once. A **second** restatement of the
+//   ten predicates here would be pretending there are two filters, which is the
+//   opposite of what 7.3's block was written to prove; the reason that block
+//   refuses to call `matchesFacet` is that the drill list and the workspace are
+//   two *vocabularies*, and this section narrows on the workspace's.
+// - `expectedReserveCheck` from the Story 3.2 block — the reserve verdict, one
+//   restatement, already an independent second implementation of the schedule
+//   projection and the band arithmetic in TypeScript. Restating it a second time
+//   here would not be more independent; it would be two oracles for one rule,
+//   free to disagree with each other and prove nothing.
+//
+// What is written fresh is every money rule and both cohort predicates.
+//
+//     PAID       = paid_indemnity + paid_medical + paid_expense   (the columns)
+//     RESERVE    = reserve                                        (the column)
+//     PROJECTED  = PAID + RESERVE
+//
+// `paidCentsOf` is written out here although `expectedPortfolioSummaryFor` adds
+// the same three columns, and the duplication is the point: that one is an
+// oracle for a **KPI card** and this is an oracle for a **decomposition**, and
+// the open product decision moves exactly one of them first. An oracle that
+// shared the expression could not fail on the day they diverged.
+
+/** The `total_paid` derivation, restated for this block — the three columns. */
+function paidCentsOf(claim: SeedClaim): number {
+  return claim.paid_indemnity + claim.paid_medical + claim.paid_expense;
+}
+
+/**
+ * `total_claim_projected`, restated — paid to date plus the reserve held.
+ *
+ * Named for what it adds up rather than "incurred", which is the discrepancy
+ * `services/derivations/claim_money.py` records and this console refuses to
+ * spread: the case file already labels the paid-only figure "Total incurred".
+ */
+function projectedCentsOf(claim: SeedClaim): number {
+  return paidCentsOf(claim) + claim.reserve;
+}
+
+/** The three figures, for a book or for any part of one. */
+export interface ExpectedMoney {
+  /** `formatCents`' rendering, because that is what is on screen. */
+  paid: string;
+  reserve: string;
+  projected: string;
+}
+
+/** One side of a cost-driver comparison, as the card renders it. */
+export interface ExpectedCohort {
+  claimCount: number;
+  /** `null` for an empty cohort — a mean over an empty set is not zero. */
+  average: string | null;
+  money: ExpectedMoney;
+  /** The claim ids behind it, so a drill can be asserted as a set. */
+  claimIds: string[];
+}
+
+export interface ExpectedFinancials {
+  money: ExpectedMoney;
+  claimsInScope: number;
+  surgery: { withDriver: ExpectedCohort; withoutDriver: ExpectedCohort };
+  litigation: { withDriver: ExpectedCohort; withoutDriver: ExpectedCohort };
+}
+
+/** The claims a segmentation leaves, restated through the 7.3 vocabulary. */
+function segmentedClaims(
+  persona: { name: string; role: string },
+  filters: Segmentation,
+): SeedClaim[] {
+  return claimsFor(persona.name, persona.role).filter((claim) =>
+    SEGMENTATION_ORDER.every((dimension) => {
+      const value = filters[dimension];
+      return value === undefined || matchesDimension(claim, dimension, value);
+    }),
+  );
+}
+
+function moneyOf(claims: SeedClaim[]): ExpectedMoney {
+  let paid = 0;
+  let reserve = 0;
+  let projected = 0;
+  for (const claim of claims) {
+    paid += paidCentsOf(claim);
+    reserve += claim.reserve;
+    projected += projectedCentsOf(claim);
+  }
+  return {
+    paid: formatCents(paid),
+    reserve: formatCents(reserve),
+    projected: formatCents(projected),
+  };
+}
+
+function cohortOf(claims: SeedClaim[]): ExpectedCohort {
+  let projected = 0;
+  for (const claim of claims) projected += projectedCentsOf(claim);
+  return {
+    claimCount: claims.length,
+    // **Floor division, and `null` for an empty cohort** — a mean over an empty
+    // set is not zero, and a card reporting `$0` would say surgical claims cost
+    // nothing rather than that none matched. `Math.floor` rather than `Math.round`
+    // because the server floor-divides integer cents, and a half-cent rounded the
+    // other way would put the oracle and the card a dollar apart on a large book.
+    average:
+      claims.length === 0 ? null : formatCents(Math.floor(projected / claims.length)),
+    money: moneyOf(claims),
+    claimIds: claims.map((claim) => claim.claim_id),
+  };
+}
+
+/**
+ * What a persona's Financial section must show under one segmentation.
+ *
+ * **Rendered strings rather than integers**, which is this oracle's one
+ * departure from the money blocks above it: every assertion in the spec reads
+ * what is on screen, and comparing cents would pass against a card that printed
+ * cents as dollars — the single money defect a reader would not catch by eye.
+ * `formatCents` is restated in this file (`formatCents`, Story 3.1's block), so
+ * the comparison is still against a second implementation of the formatting.
+ *
+ * `claimIds` rides on each cohort so a drill can be asserted as **set identity**
+ * rather than as a count: two populations of the same size are exactly the
+ * failure a count cannot see, and on a cost-driver card they are one predicate
+ * apart (`surgery_required` and `osha_recordable` split this book at 39 and 41).
+ */
+export function expectedFinancialsFor(
+  persona: { name: string; role: string },
+  filters: Segmentation = {},
+): ExpectedFinancials {
+  const visible = segmentedClaims(persona, filters);
+  return {
+    money: moneyOf(visible),
+    claimsInScope: visible.length,
+    surgery: {
+      withDriver: cohortOf(visible.filter((claim) => claim.surgery_required)),
+      withoutDriver: cohortOf(visible.filter((claim) => !claim.surgery_required)),
+    },
+    litigation: {
+      withDriver: cohortOf(visible.filter((claim) => claim.litigation_flag)),
+      withoutDriver: cohortOf(visible.filter((claim) => !claim.litigation_flag)),
+    },
+  };
+}
+
+/** One bucket of the reserve-adequacy distribution, as the legend renders it. */
+export interface ExpectedVerdictBucket {
+  verdict: SeedVerdict;
+  /** The case file's label — `RESERVE_VERDICT_LABEL`, this file's own copy. */
+  label: string;
+  count: number;
+  /** The claim ids behind it, so a segment's drill is a set assertion. */
+  claimIds: string[];
+}
+
+export interface ExpectedAdequacy {
+  /** All five, in the vocabulary's order — a rule's answer is never partial. */
+  buckets: ExpectedVerdictBucket[];
+  total: number;
+}
+
+/**
+ * The verdict distribution over a persona's segmented book.
+ *
+ * **Folded from `expectedReserveCheck`, which is Story 3.2's own independent
+ * second implementation** of the schedule projection and the band arithmetic —
+ * and reusing it is the right call rather than a shortcut. The alternative is a
+ * second TypeScript restatement of one rule in one file, which would not be more
+ * independent of the *server*: it would be two oracles free to disagree with
+ * each other, and a spec that failed would not say which of the three was wrong.
+ * The rule has one restatement here, exactly as `riskBand` and `claimsFor` do.
+ *
+ * **All five buckets, always, including the empty ones.** A verdict is a rule's
+ * answer over a claim every book contains, so `heavy: 0` is an answer and an
+ * omitted bucket would be indistinguishable from a build that forgot to draw it.
+ * `indeterminate` is unreachable against this seed — every claim carries bills —
+ * and is published at zero rather than dropped, which is what the spec asserts.
+ *
+ * **One caveat, stated rather than hidden.** `expectedReserveCheck` computes the
+ * indemnity term from *today's* calendar, and the server reads stored
+ * `payment_schedule_week` rows that a migration materialized when the stack was
+ * built. The e2e stack is reset by `alembic upgrade head` per file
+ * (`fixtures/reset.ts`), so the two are the same day and the two agree — which
+ * is exactly the arrangement the Story 3.2 spec already relies on for the card
+ * it asserts. A spec running against a stack that had been up across a midnight
+ * would see them diverge on the claims whose week boundary had just passed, and
+ * that is a real property of the deployment rather than a defect in either.
+ */
+export function expectedAdequacyFor(
+  persona: { name: string; role: string },
+  filters: Segmentation = {},
+): ExpectedAdequacy {
+  const visible = segmentedClaims(persona, filters);
+  const order: SeedVerdict[] = [
+    "light",
+    "adequate",
+    "heavy",
+    "closed_final",
+    "indeterminate",
+  ];
+  const held = new Map<SeedVerdict, string[]>(order.map((verdict) => [verdict, []]));
+  for (const claim of visible) {
+    held.get(expectedReserveCheck(claim.claim_id).verdict)?.push(claim.claim_id);
+  }
+  return {
+    buckets: order.map((verdict) => ({
+      verdict,
+      label: RESERVE_VERDICT_LABEL[verdict],
+      count: held.get(verdict)?.length ?? 0,
+      claimIds: held.get(verdict) ?? [],
+    })),
+    total: visible.length,
+  };
+}
+
+/**
+ * The projected-cost breakdown by one dimension, ranked and cut.
+ *
+ * **Ranked by projected cents descending, then by key ascending**, and the pair
+ * is built first and sorted as a pair so the ordering is a property of the list
+ * rather than of a key expression spelled the same way on both sides —
+ * `expectedDimensionValuesFor`'s ruling one block up, which exists because the
+ * first version of that helper was the implementation's own sort key.
+ *
+ * Sorted with `byCodePoint` on the tie-break, never `localeCompare`: the server
+ * sorts Python `str`, which walks code points, and ICU collation folds case and
+ * puts `"a"` before `"B"` where Python puts `"B"` first. This file ships that
+ * ruling twice already.
+ *
+ * **Projected rather than paid**, which is a fact about this seed rather than a
+ * preference: the paid columns are zero on all 38 open claims, so a paid ranking
+ * would put the whole open book in one tie and the cut would land inside it.
+ */
+export function expectedBreakdownFor(
+  persona: { name: string; role: string },
+  dimension: SegmentationDimension,
+  limit: number,
+  filters: Segmentation = {},
+): { rows: { key: string; label: string; value: string }[]; groupCount: number } {
+  const visible = segmentedClaims(persona, filters);
+  const totals = new Map<string, { label: string; projected: number }>();
+
+  for (const claim of visible) {
+    // `valueOf` and `labelFor` are the Story 7.3 block's two — the wire value a
+    // group's drill target carries and the string a reader sees — reused rather
+    // than restated, for this block's stated reason: the segmentation vocabulary
+    // has one restatement in this file and a second would be pretending there
+    // are two of it.
+    const key = valueOf(claim, dimension);
+    const held = totals.get(key) ?? { label: labelFor(claim, dimension), projected: 0 };
+    held.projected += projectedCentsOf(claim);
+    totals.set(key, held);
+  }
+
+  const ranked = [...totals.entries()].sort((a, b) =>
+    a[1].projected === b[1].projected
+      ? byCodePoint(a[0], b[0])
+      : b[1].projected - a[1].projected,
+  );
+
+  return {
+    rows: ranked.slice(0, limit).map(([key, held]) => ({
+      key,
+      label: held.label,
+      value: formatCents(held.projected),
+    })),
+    groupCount: totals.size,
+  };
+}

@@ -95,6 +95,23 @@ export interface StubRoutes {
    * filter at all, which is exactly the difference under test.
    */
   segmentationValues?: StubRouteFor;
+  /**
+   * `GET /dashboard/financials` (Story 7.4) — totals, breakdown, cost drivers.
+   *
+   * A `StubRouteFor` for `trends`' reason: `groupBy` lives in the query string,
+   * and "changing the grouping refetches rather than regrouping a cached answer"
+   * (AD-1) is only observable if the stub can tell `groupBy=employerId` from
+   * `groupBy=icd10`.
+   */
+  financials?: StubRouteFor;
+  /**
+   * `GET /dashboard/financials/reserve-adequacy` (Story 7.4) — the distribution.
+   *
+   * A `StubRouteFor` although it has no control, and the reason is the *filter*:
+   * this is the surface where "every figure recomputes over the intersection"
+   * has to be observable, and the ten dimensions are in the query string.
+   */
+  reserveAdequacy?: StubRouteFor;
   claimsQueue?: StubRouteFor;
   /**
    * `GET /claims/{id}` (Story 2.2). A function so a test can answer
@@ -6453,6 +6470,257 @@ export const SEGMENTATION_VALUES_REFUSED = {
   },
 };
 
+
+/* --- Story 7.4: the Financial section ---------------------------------- */
+
+/**
+ * The Financial section's default answer — six claims, grouped by employer.
+ *
+ * **Every figure is internally consistent, and that is the fixture's job rather
+ * than a nicety.** The two groups' `projectedCents` sum to the portfolio's, each
+ * cohort pair's counts sum to `claimsInScope`, and each cohort's
+ * `averageProjectedCents` is its own floor-divided mean. A card that quietly
+ * recomputed any of the three would still render *something* against an
+ * inconsistent fixture; against this one the wrong number is visible.
+ *
+ * **Paid and reserve are deliberately not proportional to each other.** The
+ * seeded portfolio makes them mutually exclusive per claim — a settled claim
+ * carries paid and no reserve, an open one the reverse — so a fixture where the
+ * two moved together would let a component read either as a proxy for the other.
+ * Toyota's group carries most of the reserve and least of the paid.
+ *
+ * The litigation pair reproduces the seed's own awkward shape: its `withDriver`
+ * cohort has **zero paid** and a real reserve, because every litigated claim in
+ * the book is open. A card that compared paid alone would report that litigation
+ * costs nothing, which is the defect the average and the three totals exist to
+ * prevent.
+ */
+export const FINANCIALS = {
+  status: 200,
+  body: {
+    totals: { paidCents: 500_000, reserveCents: 300_000, projectedCents: 800_000 },
+    claimsInScope: 6,
+    breakdown: {
+      dimension: "employerId",
+      items: [
+        {
+          key: "2",
+          label: "Boeing",
+          claimCount: 4,
+          totals: { paidCents: 400_000, reserveCents: 100_000, projectedCents: 500_000 },
+        },
+        {
+          key: "5",
+          label: "Toyota",
+          claimCount: 2,
+          totals: { paidCents: 100_000, reserveCents: 200_000, projectedCents: 300_000 },
+        },
+      ],
+      groupCount: 2,
+      truncated: false,
+      limit: 12,
+    },
+    surgery: {
+      facet: "surgery",
+      withDriver: {
+        key: "true",
+        claimCount: 2,
+        totals: { paidCents: 300_000, reserveCents: 200_000, projectedCents: 500_000 },
+        averageProjectedCents: 250_000,
+      },
+      withoutDriver: {
+        key: "false",
+        claimCount: 4,
+        totals: { paidCents: 200_000, reserveCents: 100_000, projectedCents: 300_000 },
+        averageProjectedCents: 75_000,
+      },
+    },
+    litigation: {
+      facet: "litigation",
+      withDriver: {
+        key: "true",
+        claimCount: 1,
+        totals: { paidCents: 0, reserveCents: 250_000, projectedCents: 250_000 },
+        averageProjectedCents: 250_000,
+      },
+      withoutDriver: {
+        key: "false",
+        claimCount: 5,
+        totals: { paidCents: 500_000, reserveCents: 50_000, projectedCents: 550_000 },
+        averageProjectedCents: 110_000,
+      },
+    },
+    rulesVersion: 7,
+  },
+};
+
+/**
+ * The same book grouped by ICD-10 — a **different** breakdown and identical
+ * totals.
+ *
+ * The contrast fixture the "changing the grouping refetches" test rests on, and
+ * the invariant it encodes is the one a client-side regroup would break: the
+ * portfolio totals, `claimsInScope` and both cohort pairs are byte-identical to
+ * `FINANCIALS`, and only the breakdown moves. A component that regrouped a
+ * cached answer would draw employer labels under an ICD-10 heading; one that
+ * refetched draws these three groups.
+ *
+ * It is also **truncated**, which `FINANCIALS` is not, and the truncation is
+ * spelled the only way the server can actually spell it: `limit` is
+ * `BREAKDOWN_LIMIT`, so a truncated payload carries **twelve** rows and a
+ * `groupCount` above twelve. The earlier shape — three rows under `limit: 3`,
+ * summing to the whole portfolio while claiming six further groups existed —
+ * was a payload no route could emit, and it defeated its own purpose: the
+ * derivation this fixture exists to catch ("the rows do not add up, let me put
+ * the remainder in an Other bucket") computed a remainder of exactly zero
+ * against it. Here the twelve visible groups hold 24 of 40 claims and
+ * 2,940,000 of 4,000,000 projected cents, so a client inventing the remainder
+ * has somewhere wrong to put it.
+ */
+export const FINANCIALS_BY_ICD = {
+  status: 200,
+  body: {
+    ...FINANCIALS.body,
+    // Its own population and its own totals, because twelve visible groups
+    // cannot fit inside `FINANCIALS`' six claims. The cohorts above still come
+    // from the spread, which is what the regroup contrast rests on.
+    claimsInScope: 40,
+    totals: { paidCents: 2_400_000, reserveCents: 1_600_000, projectedCents: 4_000_000 },
+    breakdown: {
+      dimension: "icd10",
+      // Every one of the three figures spelled per row — nothing here is a
+      // percentage of anything, for the reason the module docstring gives.
+      items: [
+        ["S61.219A", 300_000, 200_000, 500_000],
+        ["W17.89XA", 270_000, 180_000, 450_000],
+        ["M54.5", 240_000, 160_000, 400_000],
+        ["S52.501A", 210_000, 140_000, 350_000],
+        ["S83.242A", 180_000, 120_000, 300_000],
+        ["T23.201A", 150_000, 100_000, 250_000],
+        ["S93.401A", 120_000, 80_000, 200_000],
+        ["M75.100", 90_000, 60_000, 150_000],
+        ["S61.401A", 60_000, 40_000, 100_000],
+        ["H16.001", 54_000, 36_000, 90_000],
+        ["S46.001A", 48_000, 32_000, 80_000],
+        ["M79.641", 42_000, 28_000, 70_000],
+      ].map(([key, paidCents, reserveCents, projectedCents]) => ({
+        key,
+        label: null,
+        claimCount: 2,
+        totals: { paidCents, reserveCents, projectedCents },
+      })),
+      groupCount: 20,
+      truncated: true,
+      limit: 12,
+    },
+  },
+};
+
+/**
+ * A segmentation no claim satisfies — the zero-result answer (AC 5).
+ *
+ * Three zero totals, **no groups**, and four cohorts that are present with
+ * `claimCount: 0` and `averageProjectedCents: null`. The last part is the one
+ * that matters: a mean over an empty set is not zero, and a cohort card
+ * rendering `$0` would say surgical claims cost nothing rather than that none
+ * matched.
+ */
+export const FINANCIALS_EMPTY = {
+  status: 200,
+  body: {
+    totals: { paidCents: 0, reserveCents: 0, projectedCents: 0 },
+    claimsInScope: 0,
+    breakdown: {
+      dimension: "employerId",
+      items: [],
+      groupCount: 0,
+      truncated: false,
+      limit: 12,
+    },
+    surgery: {
+      facet: "surgery",
+      withDriver: {
+        key: "true",
+        claimCount: 0,
+        totals: { paidCents: 0, reserveCents: 0, projectedCents: 0 },
+        averageProjectedCents: null,
+      },
+      withoutDriver: {
+        key: "false",
+        claimCount: 0,
+        totals: { paidCents: 0, reserveCents: 0, projectedCents: 0 },
+        averageProjectedCents: null,
+      },
+    },
+    litigation: {
+      facet: "litigation",
+      withDriver: {
+        key: "true",
+        claimCount: 0,
+        totals: { paidCents: 0, reserveCents: 0, projectedCents: 0 },
+        averageProjectedCents: null,
+      },
+      withoutDriver: {
+        key: "false",
+        claimCount: 0,
+        totals: { paidCents: 0, reserveCents: 0, projectedCents: 0 },
+        averageProjectedCents: null,
+      },
+    },
+    rulesVersion: 7,
+  },
+};
+
+/**
+ * The reserve-adequacy distribution — **five buckets, one of them empty**.
+ *
+ * The zero-filled `heavy` bucket is the substance: a rule's vocabulary is
+ * complete for every book, so "no claim in this segment is over-reserved" is an
+ * answer the donut has to draw rather than a category it may omit. A card that
+ * dropped it would render four segments a reader could not tell from a build
+ * that forgot the fifth.
+ *
+ * `total` equals `claimsInScope`, because every claim lands in exactly one
+ * bucket — the identity the card publishes both halves of rather than implying.
+ * The two ratios are `reserve_bands` v1's, so the footnote's "1.15×" and "0.60×"
+ * are assertable as *rendered strings* rather than as integers on a wire.
+ */
+export const RESERVE_ADEQUACY = {
+  status: 200,
+  body: {
+    items: [
+      { verdict: "light", count: 2 },
+      { verdict: "adequate", count: 1 },
+      { verdict: "heavy", count: 0 },
+      { verdict: "closed_final", count: 3 },
+      { verdict: "indeterminate", count: 0 },
+    ],
+    total: 6,
+    claimsInScope: 6,
+    lightRatioBp: 11_500,
+    heavyRatioBp: 6_000,
+    bandsVersion: 1,
+  },
+};
+
+/**
+ * The distribution over a segment no claim satisfies (AC 5).
+ *
+ * Five buckets, all zero, and `total: 0` — which is the *only* thing that can
+ * tell a donut it is empty here, because the zero-fill means the row count is
+ * five whatever the book holds. `DistributionDonut` decides emptiness on the
+ * total for exactly this reason.
+ */
+export const RESERVE_ADEQUACY_EMPTY = {
+  status: 200,
+  body: {
+    ...RESERVE_ADEQUACY.body,
+    items: RESERVE_ADEQUACY.body.items.map((item) => ({ ...item, count: 0 })),
+    total: 0,
+    claimsInScope: 0,
+  },
+};
+
 export function stubApi(routes: StubRoutes): void {
   // Story 6.4: each install starts a fresh recording, so a test never reads the
   // previous one's runs. `length = 0` rather than a reassignment, because the
@@ -6553,6 +6821,17 @@ export function stubApi(routes: StubRoutes): void {
         // query string and a stub has to be able to see them.
         if (url.includes("/api/dashboard/segmentation/values")) {
           return answerFor(routes.segmentationValues ?? SEGMENTATION_VALUES, url);
+        }
+        // Story 7.4's two, and **the order here is routing rather than
+        // readability**: `/api/dashboard/financials/reserve-adequacy` contains
+        // `/api/dashboard/financials`, so the two-segment path has to be tested
+        // first or the totals stub would answer the donut's request as well —
+        // the same relationship the three fraud routes have, and the same fix.
+        if (url.includes("/api/dashboard/financials/reserve-adequacy")) {
+          return answerFor(routes.reserveAdequacy ?? RESERVE_ADEQUACY, url);
+        }
+        if (url.includes("/api/dashboard/financials")) {
+          return answerFor(routes.financials ?? FINANCIALS, url);
         }
         if (url.includes("/api/dashboard/claims")) {
           return answerFor(routes.drillClaims ?? DRILL_CLAIMS, url);

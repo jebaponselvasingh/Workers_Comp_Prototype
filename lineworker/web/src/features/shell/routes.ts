@@ -30,16 +30,35 @@ export const FRAUD_ROUTE = "/dashboard/fraud";
 export const TRENDS_ROUTE = "/dashboard/trends";
 
 /**
+ * The analyst workspace's Financial section (Story 7.4).
+ *
+ * `FRAUD_ROUTE`'s and `TRENDS_ROUTE`'s sibling and their shape exactly — a
+ * **child of the dashboard route**, so the analyst keeps the portfolio overview
+ * and gains a third section beside it rather than a second shell. `homeRouteFor`
+ * below is again untouched, for the reason stated there: a section is a
+ * destination, not a home.
+ *
+ * The path is `/dashboard/financials` — plural, matching the API's own
+ * `/dashboard/financials` — rather than `/dashboard/financial`, so a reader
+ * moving between the address bar and the OpenAPI document sees one word. The
+ * *feature folder* is `features/dashboard/financial/` (singular), which is the
+ * console's noun for the section rather than for the resource; `claim-detail`
+ * and `claims` already differ the same way.
+ */
+export const FINANCIAL_ROUTE = "/dashboard/financials";
+
+/**
  * Where a persona lands after "Enter Console →" (FR-LOGIN-2), or `null`
  * when this build has no shell for the role.
  *
- * **Stories 7.1 and 7.2 give the analyst two sections the supervisor does not
- * have and deliberately do not change this function.** Landing an analyst on
- * `/dashboard/fraud` — or on `/dashboard/trends` — would have been the tempting
- * one-word change and is wrong twice over: the portfolio overview is still that persona's own dashboard (it
+ * **Stories 7.1, 7.2 and 7.4 give the analyst three sections the supervisor
+ * does not have and deliberately do not change this function.** Landing an
+ * analyst on `/dashboard/fraud` — or on `/dashboard/trends`, or on
+ * `/dashboard/financials` — would have been the tempting one-word change and is
+ * wrong twice over: the portfolio overview is still that persona's own dashboard (it
  * is scoped for them, not borrowed from the supervisor), and a role that landed
  * *inside* a section would have no obvious way back out of it in a console whose
- * navigation is three entries long. A section is a destination, not a home.
+ * navigation is four entries long. A section is a destination, not a home.
  *
  * The *routing* is client-side, but the input is not: `role` comes from
  * `/api/me`, resolved server-side from `app_user`. The SPA never decides

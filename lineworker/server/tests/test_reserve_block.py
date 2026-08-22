@@ -431,6 +431,28 @@ BAND_HOME = frozenset(
         # The migration that seeds the document, and the document itself is not
         # Python. Naming a key in an INSERT is not banding a reserve.
         "data/versions/20260814_0025_reserve_bands.py",
+        # Story 7.4's two, and both of them *publish* the two edges
+        # rather than comparing anything against them. That distinction is what
+        # this guard is about — the failure it prevents is a **second verdict**,
+        # not a second mention — and it is asserted rather than asserted-by-
+        # allowlist: `test_no_module_outside_the_classifier_compares_a_reserve_band`
+        # below applies to these two as well, and fires on the arithmetic a
+        # re-derivation would have to contain.
+        #
+        # Why they name the edges at all is `PortfolioCharts`' rule, which every
+        # rules-derived figure on this console follows: the card's footnote quotes
+        # the ratios its buckets were produced at ("Light above 1.15× of
+        # reserve"), so a client holding either number would be a second copy of a
+        # rule it cannot see change, and superseding `reserve_bands` has to move
+        # the segments *and* the caption together. `FraudPanel` publishes its four
+        # thresholds for the identical reason.
+        #
+        # The fold, which counts verdicts and computes none — it reads the two
+        # fields off the `ReserveBands` block the verdicts were computed with, so
+        # the published numbers are provably the ones the counts were produced at.
+        "services/worklist/decomposition.py",
+        # The route's response model and its field-by-field build.
+        "api/routers/dashboard.py",
     }
 )
 
@@ -472,6 +494,160 @@ def test_no_module_outside_the_classifier_reads_a_reserve_band() -> None:
     ]
 
     assert offenders == []
+
+
+#: A band *used in a comparison or in arithmetic* — the shape a second verdict
+#: has to take, whoever writes it.
+#:
+#: The narrower half of this section's guard, added by Story 7.4 when the
+#: allowlist above grew from three entries to five. `BAND_READ` asks "who names a
+#: band", which is the blunt question and the right one for a file that has no
+#: business seeing the document at all; this asks "who *bands* with one", and it
+#: is the question that stays meaningful now that three modules legitimately
+#: publish the edges for a caption.
+#:
+#: Every operator a comparison could be spelled with, on either side of the name,
+#: because `classify_reserve` cross-multiplies rather than divides — the second
+#: implementation would be `known * 10_000 > bands.light_ratio_bp * reserve`, and
+#: a guard that only looked for `/` would miss the one form the codebase's own
+#: rule takes. A publication is `light_ratio_bp=bands.light_ratio_bp`, which
+#: contains no operator at all and is what the three new entries above do.
+BAND_ARITHMETIC = re.compile(
+    r"(?:[<>*/+%-]\s*\w*\.?(?:light_ratio_bp|heavy_ratio_bp|lightRatioBp|heavyRatioBp))"
+    r"|(?:(?:light_ratio_bp|heavy_ratio_bp|lightRatioBp|heavyRatioBp)\s*[<>*/+%-])"
+)
+
+#: The two modules entitled to compare a band, and to what.
+#:
+#: `reserve.py` compares a band to a claim's *exposure*, which is the verdict.
+#: `parameters.py` compares the two bands **to each other** in `__post_init__`,
+#: which is the document refusing an inverted pair rather than judging a claim —
+#: the same carve-out `BAND_HOME` already makes for it one guard up.
+BAND_ARITHMETIC_HOME = frozenset({"services/financials/reserve.py", "rules/parameters.py"})
+
+
+#: A band edge *renamed into a local* — the one evasion of `BAND_ARITHMETIC`
+#: worth closing, because it is how a second verdict would actually be written.
+#:
+#: `light = bands.light_ratio_bp` puts a plain identifier next to every operator
+#: that follows, so the guard above sees a clean file. Publication is spared by
+#: the shape it already takes everywhere on this console: a keyword argument or a
+#: field assignment whose **left-hand name is the edge's own** —
+#: `light_ratio_bp=bands.light_ratio_bp`. A binding that renames the edge is
+#: keeping it for something, and the only something is a comparison.
+BAND_RENAME = re.compile(
+    r"(?P<target>\w+)\s*=\s*[\w.]*\.(?P<edge>light_ratio_bp|heavy_ratio_bp|lightRatioBp|heavyRatioBp)"
+)
+
+
+def _renames_a_band(source: str) -> bool:
+    """A band edge bound to a local under a different name — see `BAND_RENAME`."""
+    return any(
+        match.group("target") != match.group("edge") for match in BAND_RENAME.finditer(source)
+    )
+
+
+def test_no_module_outside_the_classifier_renames_a_reserve_band_into_a_local() -> None:
+    """The evasion `BAND_ARITHMETIC` cannot see, closed where it is cheap to close.
+
+    Mutation-proven rather than assumed: a complete second `classify_reserve`
+    written into `services/worklist/decomposition.py` as two local bindings and a
+    cross-multiplication passes the guard above and fails this one. The two homes
+    are the same two, for the same reasons.
+    """
+    offenders = [
+        name
+        for name, source in _python_sources()
+        if name not in BAND_ARITHMETIC_HOME and _renames_a_band(source)
+    ]
+
+    assert offenders == []
+
+
+def test_the_band_rename_guard_tells_a_binding_from_a_publication() -> None:
+    """The two shapes, written out — the smell test `BAND_ARITHMETIC` already has."""
+    for binding in (
+        "light = bands.light_ratio_bp",
+        "    edge = check.lightRatioBp",
+    ):
+        assert _renames_a_band(binding), binding
+
+    for publication in (
+        "light_ratio_bp=bands.light_ratio_bp,",
+        "lightRatioBp=adequacy.lightRatioBp,",
+    ):
+        assert not _renames_a_band(publication), publication
+
+
+def test_no_module_outside_the_classifier_compares_a_reserve_band() -> None:
+    """The sharper half: naming an edge is publication, comparing one is a verdict.
+
+    `BAND_HOME` grew by two in Story 7.4 — the financial decomposition's fold and
+    the route that publishes it both name the two ratios so the adequacy card's
+    footnote can quote them, which is the rule every rules-derived figure on this
+    console follows. An allowlist that only ever grows is an allowlist that
+    eventually means nothing, so this is what the two new entries are held to
+    instead: they may *carry* an edge and they may not *use* one.
+
+    Applies to every module including the five exempt above, minus the two that
+    genuinely compare — which is what makes it an extension of the guard rather
+    than a hole beside it.
+
+    **What it cannot catch, stated because a guard nobody has measured is worse
+    than no guard.** It is a regular expression over text: it sees an operator
+    beside an edge's *name*. A second verdict that binds the edge to a fresh
+    local first — `light = bands.light_ratio_bp` and then `scaled > light *
+    reserve_cents` — puts an unremarkable identifier next to every operator, and
+    `BAND_RENAME` below exists because that is not a hypothetical evasion but the
+    obvious way anybody would actually write it. Past those two, an edge handed
+    to a helper as a bare argument still escapes, and nothing here reads
+    TypeScript (`_python_sources` is Python-only; the client's own scan is
+    `web/src/features/queue/noDerivation.test.ts`). So this guard is what makes a
+    second verdict *awkward to write*, and AC 2's actual enforcement — that the
+    portfolio buckets are Epic 3's own answers — is
+    `test_the_bucket_a_claim_lands_in_is_its_own_case_files_verdict`, which
+    compares every claim against the claim-level path and against the restated
+    rule. This one narrows the ways a re-derivation can arrive unnoticed; that
+    one notices it whatever way it arrives.
+
+    It fires on **prose** as well as on code, which is a real cost and is the
+    right trade here rather than a nuisance: `services/worklist/__init__.py`'s
+    paragraph about this very temptation spelled the comparison out and had to be
+    reworded, exactly as `test_derivations.py` requires a module to "leave the
+    number out rather than weaken the allowlist, and say why". A guard that fired
+    on the sentence explaining it would be a guard somebody deletes; a guard whose
+    price is that the sentence has to describe the arithmetic rather than write it
+    is a guard that stays.
+    """
+    offenders = [
+        name
+        for name, source in _python_sources()
+        if name not in BAND_ARITHMETIC_HOME and BAND_ARITHMETIC.search(source)
+    ]
+
+    assert offenders == []
+
+
+def test_the_band_comparison_guard_would_notice_a_second_verdict() -> None:
+    """A guard that only ever reads clean files cannot tell clean from unchecked.
+
+    The three shapes a re-derivation takes — the cross-multiplication the
+    classifier itself uses, the division somebody would reach for instead, and a
+    ratio scaled into basis points — each written out, and each has to match.
+    Beside them, the two shapes that are *publication* and must not.
+    """
+    for banding in (
+        "light = known * 10_000 > bands.light_ratio_bp * reserve_cents",
+        "verdict = projected / reserve > check.lightRatioBp / 10_000",
+        "over = ratio_bp - data.heavyRatioBp",
+    ):
+        assert BAND_ARITHMETIC.search(banding), banding
+
+    for publication in (
+        "light_ratio_bp=bands.light_ratio_bp,",
+        "assert payload['lightRatioBp'] == bands.light_ratio_bp",
+    ):
+        assert not BAND_ARITHMETIC.search(publication), publication
 
 
 def test_the_verdict_vocabulary_is_snake_case_tokens_not_labels() -> None:
