@@ -3,6 +3,7 @@ title: 'Story 8.1 — PHI Purge Cascade & Retention'
 type: 'feature'
 created: '2026-08-22'
 baseline_revision: 'c9d9158a2e97032e3757704db6bea77aac0ca546'
+final_revision: '9b5c56e16eaffb712d4f42fb83c3f7481644f937'
 status: 'done'
 review_loop_iteration: 0
 followup_review_recommended: true # seventeen findings were patched and five of them changed behaviour rather than prose: the redaction predicate was silently missing every financial and document audit row that names a claim under a child entity, the cascade could not be re-run after a post-commit failure, a single blob error aborted redaction, and the e2e spec's post-purge assertions were vacuous. What a follow-up should read is whether the widened `entity_id == business_id` route now over-matches anything it should not, whether `_resume_claim_purge`'s discrimination by the surviving `purge` event holds under a partial first run that never got as far as recording one, and whether the batched redaction UPDATE and the guarded checkpoint sweep leave any store half-swept in ways the new tests do not enumerate
