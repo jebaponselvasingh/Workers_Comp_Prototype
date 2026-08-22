@@ -19,12 +19,24 @@
  * spans generations, so the shell is handed the models joined, and the range is
  * captioned separately below.
  *
- * **Rows are not clickable, and that is a decision rather than an omission.**
- * Every other segment on this dashboard opens the claims behind it. A clause
- * cannot: "which claims does this phrase name" is a question only the fold's own
- * normalisation can answer, and turning that into a claim population would be the
- * browser asserting a classification nobody versioned (AD-2). The card says so in
- * its own caption rather than leaving a reader to wonder why the rows are inert.
+ * **Rows are not clickable, and Story 7.3 is where that stopped being invisible.**
+ * Every other segment in the analyst workspace opens the claims behind it, and
+ * that story made it a *rule*: "every KPI, chart segment and table row" reaches
+ * its constituent claims, so an inert row here now reads as the bug that AC
+ * forbids rather than as a surface nobody got to. It is neither. A clause cannot
+ * drill, because "which claims does this phrase name" is a question only the
+ * fold's own normalisation can answer, and turning a normalised free-text clause
+ * from the `ai_insight` cache into a claim population would make cached AI
+ * narrative a query dimension over claim data — which AD-10 forbids and which
+ * Story 7.1's Design Note 3 already refused as a product decision rather than a
+ * fold. The alternative is worse than an inert row: a facet over model prose
+ * would be a filter nobody could version, review or explain to the analyst
+ * reading it.
+ *
+ * So the card **says so on screen** (`fraud-red-flag-no-drill`) rather than
+ * offering a click it cannot honour, and it says it in the sentence a reader
+ * meets *before* trying: the coverage caption explains what the ranking is and
+ * the line beneath it explains why it goes nowhere.
  *
  * **The caption admits what the ranking is.** Exact-text grouping over
  * model-authored prose, so a count of one is the ordinary case. Clustering would
@@ -128,7 +140,7 @@ function claimTally(claims: number): string {
  * `InsightShell`'s reason (a provenance line over an empty list is a card
  * claiming to have said something); only what they say differs.
  */
-function emptyMessageFor(data: FraudRedFlags): string {
+function emptyMessageFor(data: FraudRedFlags, segmented: boolean): string {
   // Named in both branches rather than only where a ranking exists: a row this
   // build could not read is a fact about the cache, and an empty card that
   // quietly excluded one would be the state most likely to be *mistaken* for
@@ -137,19 +149,38 @@ function emptyMessageFor(data: FraudRedFlags): string {
     data.unreadable === 0
       ? ""
       : ` ${String(data.unreadable)} cached narratives could not be read and are excluded.`;
+  // …and **which book** is being described, since Story 7.3. `claimsInScope` is
+  // the segmented population now, so "of the claims in this portfolio" over a
+  // nine-dimension subset blames a cold AI cache for what the filter did — the
+  // one wrong conclusion this card can lead an analyst to, because the fix for a
+  // thin cache (wait, or refresh a claim) and the fix for a narrow filter
+  // (clear a chip) are nothing alike.
+  const population = segmented ? "claims matching these filters" : "claims in this portfolio";
   if (data.claimsWithInsight === 0) {
-    return `No fraud narratives are cached for this portfolio yet. Indicators appear here once claims have been analysed — this view reads the cache and never generates it.${degraded}`;
+    return `No fraud narratives are cached for ${segmented ? "the claims matching these filters" : "this portfolio"} yet. Indicators appear here once claims have been analysed — this view reads the cache and never generates it.${degraded}`;
   }
-  return `${String(data.claimsWithInsight)} of ${String(data.claimsInScope)} claims in this portfolio have a cached fraud narrative, and none of them raised a red flag.${degraded}`;
+  return `${String(data.claimsWithInsight)} of ${String(data.claimsInScope)} ${population} have a cached fraud narrative, and none of them raised a red flag.${degraded}`;
 }
 
 export function RedFlagFrequencyCard({
   data,
+  segmented,
   isPending,
   isError,
 }: {
   /** The server's ranking, or `undefined` while it is unknown. */
   data: FraudRedFlags | undefined;
+  /**
+   * Whether a segmentation is narrowing the book these figures are over.
+   *
+   * Passed in rather than read here, `DashboardPage`'s composition rule and the
+   * shape every other section on this page takes — but it is a `boolean` rather
+   * than the `DrillFilters` its three siblings receive, because this is the one
+   * surface with **no drill target** (see the module docstring). Handing it the
+   * filter set would put a merge-able filter on a card that has nothing to merge
+   * it into, which is an invitation to add the click this card exists to refuse.
+   */
+  segmented: boolean;
   isPending: boolean;
   isError: boolean;
 }) {
@@ -249,7 +280,7 @@ export function RedFlagFrequencyCard({
         // facts an empty ranking can be. Passed in rather than defaulted, because
         // the shell's own line names a Refresh button this page does not have and
         // speaks about "this claim" on a card describing a hundred.
-        emptyMessage={data === undefined ? undefined : emptyMessageFor(data)}
+        emptyMessage={data === undefined ? undefined : emptyMessageFor(data, segmented)}
       >
         {data !== undefined && (
           <>
@@ -258,8 +289,11 @@ export function RedFlagFrequencyCard({
               testId="fraud-red-flag-clause"
             />
             <p data-testid="fraud-red-flag-coverage" className="mt-[10px] text-[10px] text-faint">
-              {data.claimsWithInsight} of {data.claimsInScope} claims in this
-              portfolio have a cached fraud narrative
+              {data.claimsWithInsight} of {data.claimsInScope}{" "}
+              {/* The denominator is the *segmented* book since Story 7.3, so
+                  the noun after it has to be too — see `emptyMessageFor`. */}
+              {segmented ? "claims matching these filters" : "claims in this portfolio"} have a
+              cached fraud narrative
               {range === null ? "" : `, generated ${range}`}. Clauses are grouped
               on their exact text, so a count of one is ordinary — this is a
               reading aid over what the model wrote, not a classification.
@@ -273,6 +307,18 @@ export function RedFlagFrequencyCard({
               {data.unreadable === 0
                 ? ""
                 : ` ${String(data.unreadable)} cached narratives could not be read and are excluded.`}
+            </p>
+            {/* Story 7.3's rule is that every aggregate on this workspace is a
+                route to the claims behind it, and this is the one surface that
+                is not — so the exception is stated where a reader would
+                otherwise try the click. Beside the coverage caption rather than
+                in it, because the two say different things: that one is about
+                how much of the book the cache covers, this one is about what a
+                clause *is*. See the module docstring for the argument. */}
+            <p data-testid="fraud-red-flag-no-drill" className="mt-[6px] text-[10px] text-faint">
+              These rows do not open a claim list: a clause is text the model
+              wrote, not a field on a claim, so there is no population behind it
+              the console could show you.
             </p>
           </>
         )}

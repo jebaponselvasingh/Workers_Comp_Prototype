@@ -79,7 +79,58 @@ export const FILTER_KEYS = [
   "doiTo",
   "disability",
   "sector",
+  // Story 7.3's four, appended for exactly the reason 7.1's two and 7.2's six
+  // were, and the order within them is the server's `DrillFilters` field order
+  // rather than anything read off a screen. They are not this list's own click
+  // targets: they are the tail of the *segmentation* vocabulary the analyst
+  // workspace narrows by (`SEGMENTATION_KEYS` below), and they live here because
+  // a workspace filter and a drill filter are the same words — which is what
+  // makes an active segmentation survive a click as a merge rather than a
+  // translation.
+  "region",
+  "icd10",
+  "ageGroup",
+  "gender",
 ] as const;
+
+/**
+ * The ten facets the analyst workspace's segmentation control owns.
+ *
+ * A **subset of `FILTER_KEYS`, in its order**, exactly as the server's
+ * `segmentation.SEGMENTATION_KEYS` is a subset of its `FILTER_KEYS`. The chips
+ * this control draws and the chips the drill list draws are then one row in one
+ * order: an analyst who narrows by sector and gender and clicks a chart sees the
+ * same two chips in the same two positions on the list that opens.
+ *
+ * Written out rather than filtered off `FILTER_KEYS`, and the cost is paid by a
+ * test rather than by a comment: a `.filter()` would return `FilterKey[]` and
+ * erase the literal union, so `SegmentationKey` would stop being narrower than
+ * `FilterKey` and a picker could be built for a facet this control does not own.
+ * `SegmentationBar.test.tsx` asserts this tuple is the subsequence, which is the
+ * property the order claim actually rests on.
+ *
+ * Fourteen of the twenty-four are absent on purpose. `stage`, the five booleans,
+ * `recoveryStatus`, `fraudBand`, `siuReview` and the four date bounds are
+ * *click targets* — a card, a segment or a bucket published them — and a
+ * workspace-wide picker over "OSHA recordable: yes" would be a second control
+ * doing a job the cards already do. `handlerId` is absent for a different
+ * reason: a handler is a desk rather than a dimension of a claim, and the drill
+ * list still offers it.
+ */
+export const SEGMENTATION_KEYS = [
+  "severityBand",
+  "injuryType",
+  "state",
+  "employerId",
+  "disability",
+  "sector",
+  "region",
+  "icd10",
+  "ageGroup",
+  "gender",
+] as const;
+
+export type SegmentationKey = (typeof SEGMENTATION_KEYS)[number];
 
 export type FilterKey = (typeof FILTER_KEYS)[number];
 
@@ -166,12 +217,16 @@ export function toSearchParams(filters: DrillFilters): URLSearchParams {
  * The query object `GET /dashboard/claims` publishes, straight from the
  * generated document — never a hand-written restatement of it.
  */
-type DrillQuery = NonNullable<paths["/dashboard/claims"]["get"]["parameters"]["query"]>;
+type DrillQuery = NonNullable<
+  paths["/dashboard/claims"]["get"]["parameters"]["query"]
+>;
 
 export function toQueryParams(filters: DrillFilters): DrillQuery {
   return {
     "filter[stage]": enumValue(filters.stage) as DrillQuery["filter[stage]"],
-    "filter[severityBand]": enumValue(filters.severityBand) as DrillQuery["filter[severityBand]"],
+    "filter[severityBand]": enumValue(
+      filters.severityBand,
+    ) as DrillQuery["filter[severityBand]"],
     "filter[fraudFlagged]": boolValue(filters.fraudFlagged),
     "filter[litigation]": boolValue(filters.litigation),
     "filter[surgery]": boolValue(filters.surgery),
@@ -184,7 +239,9 @@ export function toQueryParams(filters: DrillFilters): DrillQuery {
     "filter[employerId]": idValue(filters.employerId),
     "filter[handlerId]": idValue(filters.handlerId),
     "filter[priority]": boolValue(filters.priority),
-    "filter[fraudBand]": enumValue(filters.fraudBand) as DrillQuery["filter[fraudBand]"],
+    "filter[fraudBand]": enumValue(
+      filters.fraudBand,
+    ) as DrillQuery["filter[fraudBand]"],
     "filter[siuReview]": boolValue(filters.siuReview),
     // Story 7.2's six. `dateValue` rather than a pass-through for the same
     // reason `enumValue` exists one line above: a hand-edited URL can hold any
@@ -196,9 +253,94 @@ export function toQueryParams(filters: DrillFilters): DrillQuery {
     "filter[fnolTo]": dateValue(filters.fnolTo),
     "filter[doiFrom]": dateValue(filters.doiFrom),
     "filter[doiTo]": dateValue(filters.doiTo),
-    "filter[disability]": enumValue(filters.disability) as DrillQuery["filter[disability]"],
+    "filter[disability]": enumValue(
+      filters.disability,
+    ) as DrillQuery["filter[disability]"],
     "filter[sector]": filters.sector,
+    // Story 7.3's four, spelled out individually rather than looped for this
+    // function's founding reason: each line is a line a rename breaks. Two are
+    // free text passed through as themselves, and two are enums whose vocabulary
+    // only the server can check — `ageGroup` is the registered `age_band`'s wire
+    // form, which is ordinal words rather than a range precisely so that no
+    // client ever has to know where the edges are.
+    "filter[region]": filters.region,
+    "filter[icd10]": filters.icd10,
+    "filter[ageGroup]": enumValue(
+      filters.ageGroup,
+    ) as DrillQuery["filter[ageGroup]"],
+    "filter[gender]": enumValue(filters.gender) as DrillQuery["filter[gender]"],
   };
+}
+
+/**
+ * The query object the four analyst routes publish for the ten dimensions.
+ *
+ * Read off the generated document — `/dashboard/segmentation/values` declares
+ * exactly the ten and nothing else, which makes it the honest source for this
+ * shape — and never a hand-written restatement. The other three analyst routes
+ * declare the same ten beside their own controls, so this object spreads into
+ * each of their query objects and a dimension renamed on the server is a compile
+ * error at one call site per route rather than a silently ignored parameter.
+ */
+type SegmentationQuery = NonNullable<
+  paths["/dashboard/segmentation/values"]["get"]["parameters"]["query"]
+>;
+
+/**
+ * A segmentation as the analyst routes' query object.
+ *
+ * `toQueryParams`' twin over the ten, and spelled out key by key for that
+ * function's founding reason: the annotation is the generated shape, so each
+ * line is a line a rename breaks — which is the half that was missing the first
+ * time `toQueryParams` was written and is why a renamed facet used to typecheck
+ * and then silently open the unfiltered book.
+ *
+ * It takes a whole `DrillFilters` rather than a narrower type, because that is
+ * what the URL hands over and because the extra fourteen keys are simply not
+ * read: a workspace URL carrying `filter[stage]=settled` is carrying a parameter
+ * the analyst routes do not declare, and forwarding it would be the SPA sending
+ * a narrowing the server would ignore while a chip row said otherwise.
+ */
+export function toSegmentationParams(filters: DrillFilters): SegmentationQuery {
+  return {
+    "filter[severityBand]": enumValue(
+      filters.severityBand,
+    ) as SegmentationQuery["filter[severityBand]"],
+    "filter[injuryType]": filters.injuryType,
+    "filter[state]": filters.state,
+    "filter[employerId]": idValue(filters.employerId),
+    "filter[disability]": enumValue(
+      filters.disability,
+    ) as SegmentationQuery["filter[disability]"],
+    "filter[sector]": filters.sector,
+    "filter[region]": filters.region,
+    "filter[icd10]": filters.icd10,
+    "filter[ageGroup]": enumValue(filters.ageGroup) as SegmentationQuery["filter[ageGroup]"],
+    "filter[gender]": enumValue(filters.gender) as SegmentationQuery["filter[gender]"],
+  };
+}
+
+/**
+ * The active segmentation merged with the slice a click published.
+ *
+ * The one helper every drill target on the analyst workspace goes through, so
+ * "the list carries the workspace's filter as well as the thing I clicked" is a
+ * function with one implementation rather than a spread repeated at eight call
+ * sites — which is the shape that gets one of them forgotten.
+ *
+ * **The slice wins where both name one facet**, and the case is narrower than it
+ * looks: with `severityBand=high` active the server folded only high-band
+ * claims, so a `med` cohort line was never drawn and the collision is
+ * unreachable through the UI. Where it is reachable — a hand-built link — the
+ * gesture is the more specific of the two and is the one the reader just made.
+ * Neither choice can widen anything: scope re-resolves server-side on the
+ * request the merge produces (AD-7).
+ */
+export function withSegmentation(
+  segmentation: DrillFilters,
+  slice: DrillFilters = {},
+): DrillFilters {
+  return { ...segmentation, ...slice };
 }
 
 /**
@@ -275,9 +417,49 @@ function dateValue(raw: string | undefined): string | undefined {
  */
 export function appliedFromFilters(filters: DrillFilters): AppliedFilter[] {
   return FILTER_KEYS.flatMap((key) =>
-    filters[key] === undefined ? [] : [{ key, value: String(filters[key]), display: null }],
+    filters[key] === undefined
+      ? []
+      : [{ key, value: String(filters[key]), display: null }],
   );
 }
+
+/**
+ * Does this filter set narrow anything at all?
+ *
+ * One predicate, because Story 7.3 gave eleven surfaces the same question and
+ * the answer decides a *sentence* on each of them: with a segmentation applied
+ * every card, chart and table on the analyst workspace describes an
+ * intersection, so its empty state must say "these filters" rather than "this
+ * portfolio". Written once here rather than as `Object.keys(...).length !== 0`
+ * eleven times, which is the shape that gets one of them written the other way
+ * round.
+ *
+ * It reads the **URL's** filter set rather than a payload's `appliedFilters`,
+ * and the difference matters in the one state where they disagree: a failed or
+ * in-flight request has no echo to read, and that is precisely when a surface
+ * must not claim to be describing the whole book.
+ */
+export function isFiltered(filters: DrillFilters): boolean {
+  return Object.keys(filters).length !== 0;
+}
+
+/**
+ * What a surface says when a segmentation has left its population empty.
+ *
+ * The story's own words, and one constant rather than eleven, because the state
+ * has to be recognisable as one state: an analyst who has narrowed to nothing
+ * sees the same sentence under the donut, under the two pipelines, under all
+ * three rate tables, under the flagged list and under all five trend charts, and
+ * therefore reads them as one answer rather than as eleven surfaces each
+ * possibly broken in its own way.
+ *
+ * **It replaces a sentence about "this portfolio", which was false rather than
+ * merely vague.** "No claim in this portfolio is under SIU review" on a screen
+ * whose entire subject is a nine-dimension subset of the portfolio is a
+ * statement about the book that the book does not support — and it is the
+ * statement an analyst would act on.
+ */
+export const NO_MATCHING_CLAIMS = "No claims match these filters.";
 
 /**
  * A stable string identifying one filter set, for a TanStack Query key.
@@ -297,8 +479,26 @@ export const DRILL_LIST_PATH = "/dashboard/claims";
 
 /** A `to` for the list under one filter set — `""` search for no filters. */
 export function drillHref(filters: DrillFilters): string {
+  return hrefWithFilters(DRILL_LIST_PATH, filters);
+}
+
+/**
+ * Any route, carrying one filter set in the query string.
+ *
+ * `drillHref` generalised by Story 7.3, because the drill list stopped being the
+ * only destination a filter travels to: the analyst workspace's navigation has
+ * to carry the active segmentation from the Fraud section to the Trends section,
+ * or moving between two views of one filtered book silently widens it back to
+ * the whole portfolio. One builder rather than two, so the workspace's links and
+ * the drill's cannot come to spell a facet differently.
+ *
+ * Ordered by `FILTER_KEYS` through `toSearchParams`, which is what keeps two
+ * links naming the same facets one string — and therefore one entry in the
+ * router's history and one TanStack key.
+ */
+export function hrefWithFilters(path: string, filters: DrillFilters): string {
   const query = toSearchParams(filters).toString();
-  return query === "" ? DRILL_LIST_PATH : `${DRILL_LIST_PATH}?${query}`;
+  return query === "" ? path : `${path}?${query}`;
 }
 
 /**
@@ -375,6 +575,17 @@ export const FILTER_LABEL: Record<FilterKey, string> = {
   doiTo: "Injury to",
   disability: "Disability",
   sector: "Sector",
+  // Story 7.3's four, named for the *dimension* rather than for the column.
+  // "Region" sits beside "State" above and the pair is deliberately not
+  // collapsed: a state is the jurisdiction a benefit is calculated under and a
+  // region is where the plant is, and the chips are the one place a reader sees
+  // both at once. "ICD-10" names the coding system because the bare code is
+  // unreadable without it, and "Age group" names the dimension rather than the
+  // band computer behind it.
+  region: "Region",
+  icd10: "ICD-10",
+  ageGroup: "Age group",
+  gender: "Gender",
 };
 
 /** The fraud-score bands' copy, without the edges the legend quotes. */
@@ -431,6 +642,21 @@ export const RECOVERY_LABEL_BY_STATUS: Record<ReturnStatus, string> = {
   returned_and_under_therapy: "Under Therapy",
 };
 
+/**
+ * The injured worker's gender, as the seed's three stored values read.
+ *
+ * The Enums convention: the wire carries a snake_case token and the browser owns
+ * what a human reads. "Other" rather than a longer phrase because it is the
+ * dataset's own third value and this control is a picker rather than a form —
+ * expanding it here would be the console deciding copy for a column it does not
+ * own.
+ */
+const GENDER_VALUE_LABEL: Record<string, string> = {
+  female: "Female",
+  male: "Male",
+  other: "Other",
+};
+
 /** A boolean facet reads as its own name — "Fraud flags: Yes". */
 const BOOLEAN_VALUE_LABEL: Record<string, string> = {
   true: "Yes",
@@ -472,20 +698,64 @@ const VALUE_LABEL: Partial<Record<FilterKey, Record<string, string>>> = {
   // as sent (the server's own ruling on `AppliedFilterResponse.display`), and
   // `sector` is free text where the stored value *is* the label.
   disability: DISABILITY_LABEL,
+  // Story 7.3's one labelled facet. The other three are absent on purpose:
+  // `region` and `icd10` are free text where the stored value *is* the label,
+  // and `ageGroup` is the one facet in the whole vocabulary whose label cannot
+  // live in a static map — its members are ordinal words and the range a reader
+  // wants ("35–44") is composed from edges the server publishes, so it arrives
+  // through `chipLabel`'s `composed` argument instead. See
+  // `features/dashboard/segmentation/ageBands.ts`.
+  gender: GENDER_VALUE_LABEL,
 };
 
 /**
- * One chip's text: `display ?? UI_LABEL[key][value] ?? value`.
+ * One chip's text: `display ?? composed ?? UI_LABEL[key][value] ?? value`.
  *
  * The order is the contract stated on `AppliedFilterResponse`: the server's
- * resolved name wins where it sent one (the two ids), this file's copy wins for
- * the enums and booleans, and free text falls through as itself because the
- * stored value *is* the label.
+ * resolved name wins where it sent one (the two ids), a **composed** label wins
+ * next, this file's copy wins for the enums and booleans, and free text falls
+ * through as itself because the stored value *is* the label.
+ *
+ * **`composed` is the one facet whose label is neither the server's nor a
+ * constant.** `ageGroup`'s members are ordinal words (`younger`, `older`)
+ * carrying no numbers at all — deliberately, so that moving an edge in
+ * `derivation_thresholds` cannot leave a wire value asserting the old one — and
+ * the range a reader wants is built from the three edges the segmentation values
+ * endpoint publishes. That map is therefore per-response rather than per-build,
+ * so it arrives as an argument. Optional, because the drill list draws its chips
+ * without ever fetching those edges: a chip reading "Age group: older" there is
+ * honest, and a second request for a caption is not worth making.
  */
-export function chipLabel(key: FilterKey, value: string, display: string | null): string {
-  const label = FILTER_LABEL[key];
-  const text = display ?? VALUE_LABEL[key]?.[value] ?? fallbackValueLabel(key, value);
-  return `${label}: ${text}`;
+export function chipLabel(
+  key: FilterKey,
+  value: string,
+  display: string | null,
+  composed?: Partial<Record<FilterKey, Record<string, string>>>,
+): string {
+  return `${FILTER_LABEL[key]}: ${valueLabel(key, value, display, composed)}`;
+}
+
+/**
+ * One facet *value*'s text, without the facet's name in front of it.
+ *
+ * Split out of `chipLabel` by Story 7.3, because a chip is no longer the only
+ * thing that renders one: the segmentation control's ten pickers draw the same
+ * values as `<option>` text, and a picker offering "high" beside a chip reading
+ * "Severity: High" would be two vocabularies for one value on one screen. One
+ * function, two callers, and the resolution order is stated once.
+ */
+export function valueLabel(
+  key: FilterKey,
+  value: string,
+  display: string | null,
+  composed?: Partial<Record<FilterKey, Record<string, string>>>,
+): string {
+  return (
+    display ??
+    composed?.[key]?.[value] ??
+    VALUE_LABEL[key]?.[value] ??
+    fallbackValueLabel(key, value)
+  );
 }
 
 /**

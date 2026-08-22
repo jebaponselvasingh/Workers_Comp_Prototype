@@ -7,13 +7,13 @@ it takes one of eight operational modes, covers four of the ten cards and none
 of the chart facets, and is the handler's list rather than the portfolio's.
 
 So: one more scoped aggregate. It reads the caller's book once, narrows it by a
-whitelist of twenty facets, ranks what survives with the queue's own scorer, and
+whitelist of twenty-four facets, ranks what survives with the queue's own scorer, and
 pages it with a cursor. Every row it emits is the **queue card's field set,
 field for field**, so the list a supervisor opens from a donut slice looks like
 the list a handler works from — and `test_the_drill_row_is_the_queue_card_field_
 for_field` is what keeps the two from drifting.
 
-## Twenty facets, a whitelist, and each one is the clicked surface's own rule
+## Twenty-four facets, a whitelist, and each one is its own surface's rule
 
 The filter set is closed and typed rather than free-form (`?where=severity>60`),
 and that is the whole architectural move. A free-form filter language would put
@@ -21,7 +21,7 @@ a second query planner in this codebase and would let a caller ask a question no
 dashboard surface asks — while the *only* requirement this endpoint actually has
 is that the list it opens **reconciles with the number that opened it**.
 
-That requirement is not satisfied by writing twenty plausible predicates. It is
+That requirement is not satisfied by writing twenty-four plausible predicates. It is
 satisfied by each predicate being the same symbol the counting surface used, and
 this project has already recorded three near-misses where a plausible predicate
 would have opened a plausible list containing the wrong claims:
@@ -53,7 +53,7 @@ union. A restated `stage == treatment or fraud or litigation` would agree on the
 seeded book and would disagree the first time either arm moved — which is the
 two bullets above, again, in one expression.
 
-The predicates are one table (`_PREDICATES`) rather than twenty branches, in
+The predicates are one table (`_PREDICATES`) rather than twenty-four branches, in
 `priority._PREDICATES`' shape, so "each facet reads its own owner" is a list a
 reviewer checks in one screen instead of a property spread over a function.
 
@@ -78,7 +78,7 @@ everywhere else (AD-7). `filter[employerId]` and `filter[handlerId]` are
 narrowings applied *after* it, over rows the caller was already entitled to
 read — so a scoped supervisor naming an employer outside her book gets an empty
 page, never a row and never a 403. There is no signature here, at any layer,
-with room for a scope: not the route's twenty-one parameters, not `DrillFilters`,
+with room for a scope: not the route's twenty-five parameters, not `DrillFilters`,
 not this module's entry point. That is what makes
 `test_query_parameters_cannot_widen_or_change_the_scope` a property of the shape
 rather than of a validator.
@@ -115,11 +115,13 @@ from typing import Any, Final
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from data.context import CallerContext
-from data.models.enums import ClaimStatus, Disability, ReturnStatus, Stage
+from data.models.enums import ClaimStatus, Disability, Gender, ReturnStatus, Stage
 from data.repositories import claims as claim_repo
 from rules.parameters import DerivationThresholds, PriorityWeights
 from services import derivations
 from services.derivations import (
+    AgeBand,
+    AgeBandDerivation,
     FraudBand,
     FraudBandDerivation,
     FraudFlaggedDerivation,
@@ -210,6 +212,27 @@ class DrillClaim:
     doi: date
     disability: Disability
     sector: str
+    # Story 7.3's four, appended for the reason every group above is appended.
+    # They are the columns the segmentation vocabulary reads and no other facet
+    # ever has: `region` and `icd` are real columns of `claim` that nothing in
+    # this codebase read until this story, and `age`/`gender` come from the
+    # `employee` join `select_drill_rows` has carried since Story 5.5 for the
+    # worker's name.
+    #
+    # **`icd` is the column and `icd10` is the facet**, and the two spellings are
+    # deliberate rather than an oversight: the stored column is `claim.icd` and a
+    # projection field named for anything else would be a rename with no owner,
+    # while the *facet* has to say which coding system the value is in — an
+    # analyst reading `filter[icd]=W17.89XA` cannot tell an ICD-10 code from an
+    # ICD-9 one, and this dataset is entirely the former.
+    #
+    # `age` is the raw stored integer, not a band, for `froi_date`'s reason one
+    # group up: the band is a *derived* value with one computer (`age_band`) and
+    # arrives through `DrillFlags`, while the column is what that computer reads.
+    region: str
+    icd: str
+    age: int
+    gender: Gender
 
 
 @dataclass(frozen=True)
@@ -248,11 +271,18 @@ class DrillFlags:
     payment_due: bool
     fraud_flagged: bool
     fraud_band: FraudBand
+    # Story 7.3's one. `age_group` is the second *segmentation* dimension whose
+    # value is a rule's answer rather than a column's — `severity_band` is the
+    # first, and it is already here for the scorer — which is precisely why the
+    # whole segmentation filter is applied in `services/` over rows a scoped read
+    # returned rather than pushed into SQL: half of one filter in `data/` and
+    # half in `services/` is the split `claims.py` refuses in writing, twice.
+    age_group: AgeBand
 
 
 @dataclass(frozen=True)
 class DrillFilters:
-    """The twenty facets, each optional, each `None` when the caller omitted it.
+    """The twenty-four facets, each optional, each `None` when the caller omitted it.
 
     One field per facet rather than a `Mapping[str, str]`, and the **type of
     each field is the refusal**: `filter[stage]=banana` cannot reach this class,
@@ -321,6 +351,28 @@ class DrillFilters:
     is a well-formed question whose answer is "none". The *window* refusal on
     `/dashboard/trends` is a different thing, and lives there, because a window
     decides which buckets exist rather than which claims survive.
+
+    **Story 7.3 adds four and changes none**, on the identical contract — and
+    this time the four are not this surface's own click targets at all. They are
+    the tail of the *segmentation* vocabulary: `services/worklist/segmentation.py`
+    declares ten dimensions as a **subset of this dataclass's field names and
+    wire spellings**, asserted at import, so a workspace filter and a
+    drill-through filter are the same words and a drill URL is a merge rather
+    than a translation. Six of its ten were already here (`severity_band`,
+    `injury_type`, `state`, `employer_id`, `disability`, `sector`); these four
+    are the rest, and they are declared *here* rather than there because this
+    dataclass's field order is load-bearing for every drill URL ever generated,
+    so the import direction has to run one way and the shipped block stays put.
+
+    Three narrow stored columns and one derived band. `region` and `icd10` are
+    `claim` columns nothing in this codebase read before, compared as stored for
+    `injury_type`'s and `state`'s recorded reason; `gender` is the employee's own
+    enum column; and `age_group` is the registered `age_band` derivation over
+    `employee.age`, which is the second facet here whose value is a rule's answer
+    rather than a column's. A raw `filter[age]=41` is deliberately **not**
+    offered: the seeded workforce spans thirty-eight distinct ages, so a per-year
+    facet would open a list of two or three claims under a card that counted a
+    hundred, and the band is what makes the dimension a dimension.
     """
 
     stage: Stage | None = None
@@ -343,11 +395,15 @@ class DrillFilters:
     doi_to: date | None = None
     disability: Disability | None = None
     sector: str | None = None
+    region: str | None = None
+    icd10: str | None = None
+    age_group: AgeBand | None = None
+    gender: Gender | None = None
 
 
 #: The facet names, in the order a chip row draws them, declared once.
 #:
-#: Read off `DrillFilters`' own fields rather than written out, so a twenty-first
+#: Read off `DrillFilters`' own fields rather than written out, so a twenty-fifth
 #: facet cannot be added to that dataclass and forgotten here — which would
 #: publish a filter that narrowed the list and never appeared in
 #: `appliedFilters`, i.e. a chip the caller cannot see and therefore cannot
@@ -390,6 +446,16 @@ WIRE_KEYS: Final[Mapping[str, str]] = {
     "doi_to": "doiTo",
     "disability": "disability",
     "sector": "sector",
+    # Story 7.3's four. `icd10` names the coding system rather than the column
+    # (`claim.icd`) because an analyst reading the URL cannot tell an ICD-10 code
+    # from an ICD-9 one, and `ageGroup` names the *dimension* rather than the
+    # derivation that answers it (`age_band`) because a chip reads "Age group:
+    # group: mid-career" and a caller filtering by it is not thinking about a
+    # band computer.
+    "region": "region",
+    "icd10": "icd10",
+    "age_group": "ageGroup",
+    "gender": "gender",
 }
 
 assert set(WIRE_KEYS) == set(FILTER_KEYS), (
@@ -405,15 +471,28 @@ class AppliedFilter:
     (`settled`, `high`, `true`, `Boeing Everett`, `3`), and `display` is a
     human label **or `None`**.
 
-    **`display` is server-resolved for exactly two of the twenty, and the split
-    is the point.** Eighteen of the facets carry a value the UI already has copy
-    for: `stage`, `severityBand`, `recoveryStatus`, `fraudBand` and
-    `disability` are enums whose labels the SPA owns (the Enums convention — a
-    server that shipped "Settled & Closed" would be deciding copy over a
-    contract), the booleans are the cards' own names, `injuryType`, `state` and
-    `sector` are free text where the stored value *is* the label, and the four
-    date bounds are ISO dates a browser formats to its own locale. Resolving any
-    of those here would be this module writing the UI's words.
+    **`display` is server-resolved for exactly two of the twenty-four, and the
+    split is the point.** Twenty-two of the facets carry a value the UI already
+    has copy for: `stage`, `severityBand`, `recoveryStatus`, `fraudBand`,
+    `disability` and `gender` are enums whose labels the SPA owns (the Enums
+    convention — a server that shipped "Settled & Closed" would be deciding copy
+    over a contract), the booleans are the cards' own names, `injuryType`,
+    `state`, `sector`, `region` and `icd10` are free text where the stored value
+    *is* the label, and the four date bounds are ISO dates a browser formats to
+    its own locale. Resolving any of those here would be this module writing the
+    UI's words.
+
+    **`ageGroup` is the one that had to be argued rather than sorted**, and it
+    lands with the twenty-two: its wire values are ordinal words (`younger`,
+    `older`) that a reader wants to see as a range of years, so a label is
+    genuinely
+    needed and this looks like the third case for a server-resolved `display`.
+    It is not, because the label is not a fact about the *chip* — it is composed
+    from the band's published edges, which the segmentation values endpoint
+    already sends the browser, and a `display` written here would be a second
+    copy of a string derived from a rule document, free to disagree with the
+    picker one component over the first time an edge moved. The band's members
+    carry no numbers precisely so the label has exactly one source.
 
     The other two are ids, and an id is not a label. Nothing in the browser can
     turn `handlerId=4` into "Marcus Chen" on a cold URL load — the dashboard
@@ -421,7 +500,7 @@ class AppliedFilter:
     "Handler: 4" or would need a second request. Both are worse than a string
     resolved off a row this aggregate already read.
 
-    So: two resolved, eighteen `None`, and the client's rule is
+    So: two resolved, twenty-two `None`, and the client's rule is
     `display ?? UI_LABEL[key][value] ?? value`.
     """
 
@@ -530,7 +609,7 @@ def _matches_priority(claim: DrillClaim, flags: DrillFlags, value: object) -> bo
 #: `FILTER_KEYS`, and checkable as such (the assertion below runs at import).
 #:
 #: `priority._PREDICATES`' shape and its reason: a `match` statement would read
-#: the same and pass mypy, and nothing would notice a twenty-first facet added to
+#: the same and pass mypy, and nothing would notice a twenty-fifth facet added to
 #: `DrillFilters` without a branch. Here it fails at import.
 #:
 #: Each entry names the owner of the rule the clicked surface counted with —
@@ -579,6 +658,24 @@ _PREDICATES: Final[Mapping[str, Callable[[DrillClaim, DrillFlags, Any], bool]]] 
     # filter that did it would return a set no cohort ever counted.
     "disability": lambda claim, _flags, value: claim.disability == value,
     "sector": lambda claim, _flags, value: claim.sector == value,
+    # Story 7.3's four — the tail of the segmentation vocabulary, and three of
+    # them are ordinary column equalities. `region` and `icd10` compare the exact
+    # stored string for `injury_type`'s and `state`'s recorded reason:
+    # canonicalizing free text is a data-quality decision with an owner, and a
+    # filter that did it would return a set no surface ever counted. `icd10`
+    # reads `claim.icd`, which is the column; the facet says which coding system
+    # the value is in.
+    #
+    # `age_group` is the exception and is the second facet in this table matched
+    # through a registered derivation rather than against a column —
+    # `severity_band` is the first. It bands `employee.age` through `age_band`,
+    # the same computer the segmentation values endpoint folds its vocabulary
+    # with, so a picker's age range and this list's `filter[ageGroup]=younger`
+    # are one rule called twice rather than two readings of one integer.
+    "region": lambda claim, _flags, value: claim.region == value,
+    "icd10": lambda claim, _flags, value: claim.icd == value,
+    "age_group": lambda _claim, flags, value: flags.age_group == value,
+    "gender": lambda claim, _flags, value: claim.gender == value,
 }
 
 # Every facet has a predicate, and every predicate names a facet. A filter
@@ -622,7 +719,9 @@ def _wire_value(value: object) -> str | int | bool:
     nor round-trippable through `bool(...)`, and an id is an integer on the
     wire everywhere else in this console.
     """
-    if isinstance(value, Stage | RiskBand | ReturnStatus | FraudBand | Disability):
+    if isinstance(
+        value, Stage | RiskBand | ReturnStatus | FraudBand | Disability | AgeBand | Gender
+    ):
         return value.value
     # Before the `int`/`str` branch, because a `date` is neither and would
     # otherwise fall through to the `TypeError`. ISO 8601, which is what the
@@ -843,7 +942,7 @@ def _as_str(raw: object) -> str:
 #: How each facet's cursor-borne value becomes the field's own type.
 #:
 #: A table beside `_PREDICATES` rather than a chain of `isinstance` checks
-#: inside `_filters_of`, for that table's reason: a twenty-first facet needs an
+#: inside `_filters_of`, for that table's reason: a twenty-fifth facet needs an
 #: entry here, and the assertion below is where a reader finds that out.
 _COERCE: Final[Mapping[str, Callable[[Any], object]]] = {
     "stage": lambda raw: Stage(_as_str(raw)),
@@ -871,6 +970,10 @@ _COERCE: Final[Mapping[str, Callable[[Any], object]]] = {
     "doi_to": lambda raw: date.fromisoformat(_as_str(raw)),
     "disability": lambda raw: Disability(_as_str(raw)),
     "sector": _as_str,
+    "region": _as_str,
+    "icd10": _as_str,
+    "age_group": lambda raw: AgeBand(_as_str(raw)),
+    "gender": lambda raw: Gender(_as_str(raw)),
 }
 
 assert set(_COERCE) == set(FILTER_KEYS), (
@@ -883,7 +986,7 @@ assert set(_COERCE) == set(FILTER_KEYS), (
 
 @dataclass(frozen=True)
 class _Computers:
-    """The six registered computers this module folds with, built once.
+    """The seven registered computers this module folds with, built once.
 
     A bundle rather than five parameters, for `priority_claims._Computers`'
     reason: `_flags_of` is called once per claim in `select`'s loop, and a
@@ -897,10 +1000,11 @@ class _Computers:
     payment_due: PaymentDueDerivation
     fraud_flagged: FraudFlaggedDerivation
     fraud_band: FraudBandDerivation
+    age_band: AgeBandDerivation
 
     @classmethod
     def of(cls, thresholds: DerivationThresholds) -> "_Computers":
-        """Build all six from one parameter block — the registry's whole point."""
+        """Build all seven from one parameter block — the registry's whole point."""
         return cls(
             risk=derivations.risk.for_thresholds(thresholds),
             siu_review=derivations.siu_review.for_thresholds(thresholds),
@@ -908,11 +1012,12 @@ class _Computers:
             payment_due=derivations.payment_due.for_thresholds(thresholds),
             fraud_flagged=derivations.fraud_flagged.for_thresholds(thresholds),
             fraud_band=derivations.fraud_band.for_thresholds(thresholds),
+            age_band=derivations.age_band.for_thresholds(thresholds),
         )
 
 
 def _flags_of(claim: DrillClaim, computers: _Computers) -> DrillFlags:
-    """One claim's six derived values, every one of them asked of the registry.
+    """One claim's seven derived values, every one of them asked of the registry.
 
     Takes the built computers rather than the threshold block, which is the
     difference between one build and one per claim — `queue._rows_to_cards`'
@@ -935,6 +1040,12 @@ def _flags_of(claim: DrillClaim, computers: _Computers) -> DrillFlags:
             fraud_flag=claim.fraud_flag, fraud_score=claim.fraud_score
         ),
         fraud_band=computers.fraud_band.of(fraud_score=claim.fraud_score),
+        # Keyword, like the two fraud calls above it and for the same reason: the
+        # projection carries `severity_score`, `fraud_score` and `age` as three
+        # adjacent integers, and a positional call would band any of them as any
+        # other — type-checking the whole way and producing a plausible
+        # distribution of the wrong column.
+        age_group=computers.age_band.of(age=claim.age),
     )
 
 
@@ -1107,15 +1218,22 @@ def _applied(filters: DrillFilters, caseload: Sequence[DrillClaim]) -> tuple[App
                 (claim.handler_name for claim in caseload if claim.handler_id == value),
                 None,
             )
-        applied.append(AppliedFilter(key=WIRE_KEYS[key], value=_chip_value(value), display=display))
+        applied.append(AppliedFilter(key=WIRE_KEYS[key], value=chip_value(value), display=display))
     return tuple(applied)
 
 
-def _chip_value(value: object) -> str:
+def chip_value(value: object) -> str:
     """A facet's value as the URL spells it — the string a chip's label keys on.
 
     `true`/`false` rather than `True`/`False`, because the client's label map is
     keyed on what the query string carries and a Python repr is not that.
+
+    **Public since Story 7.3**, and the underscore it lost is the point rather
+    than an accident of reuse: `services/worklist/segmentation.py` publishes
+    chips over a subset of this module's vocabulary, and a chip whose *value*
+    was spelled by a second function would be a second spelling of the string
+    the client's label map is keyed on — `true` here and `True` there, on two
+    chip rows the analyst sees one after the other.
     """
     wire = _wire_value(value)
     if isinstance(wire, bool):
@@ -1224,6 +1342,10 @@ async def drill_through_claims(
             doi=row.doi,
             disability=row.disability,
             sector=row.sector,
+            region=row.region,
+            icd=row.icd,
+            age=row.age,
+            gender=row.gender,
         )
         for row in rows
     ]
@@ -1286,6 +1408,7 @@ __all__ = [
     "DrillRow",
     "InvalidCursor",
     "RankedClaim",
+    "chip_value",
     "decode_cursor",
     "drill_through_claims",
     "encode_cursor",

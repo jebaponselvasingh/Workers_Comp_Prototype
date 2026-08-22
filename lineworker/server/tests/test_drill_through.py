@@ -44,6 +44,7 @@ from data.models import AppUser, AuditEvent
 from data.models.enums import (
     ClaimStatus,
     Disability,
+    Gender,
     RecoveryWindow,
     ReturnStatus,
     Stage,
@@ -105,8 +106,21 @@ ROW_KEYS = {
     "priorityMarker",
 }
 
-#: The thirteen parameters the route may declare, and no others.
+#: The twenty-five parameters the route may declare, and no others.
+#:
+#: Derived from `WIRE_KEYS` rather than written out, which makes it an allowlist
+#: about *shape* — what may appear beside the facets — rather than about the
+#: vocabulary. The vocabulary is pinned separately and by name in
+#: `test_fraud_analytics.py::test_the_two_new_facets_join_the_vocabulary_and_
+#: change_no_other`, which spells all twenty-four out, and the **count** is
+#: asserted below so a facet cannot be added to `DrillFilters` and reach the
+#: route without a number in a test moving.
 PARAMETER_NAMES = {f"filter[{wire}]" for wire in WIRE_KEYS.values()} | {"cursor"}
+
+#: How many facets the route publishes. Its own literal, so "twenty-four facets
+#: and a cursor" is a sentence a reader can check rather than a set comparison
+#: that would pass at any size.
+FACET_COUNT = 24
 
 TODAY = date(2026, 8, 18)
 
@@ -140,7 +154,7 @@ SEEDED_WEIGHTS = PriorityWeights(
 )
 
 SEEDED_THRESHOLDS = DerivationThresholds(
-    version=6,
+    version=7,
     risk_high_min=65,
     risk_med_min=35,
     siu_fraud_score_min=60,
@@ -163,6 +177,16 @@ SEEDED_THRESHOLDS = DerivationThresholds(
     # why the oracle restates it separately rather than reusing the name.
     fraud_band_high_min=55,
     fraud_band_med_min=35,
+    # Story 7.3's three, added in version 7 — the edges of the AGE band the
+    # analyst workspace segments by. Restated separately from every number above
+    # them although two of the three coincide: `age_younger_min` is 35 like
+    # `risk_med_min` and `fraud_band_med_min`, and `age_oldest_min` is 55 like
+    # `fraud_flag_score_min` and `fraud_band_high_min`. Three columns, three
+    # rules, one integer twice — and an oracle that shared a name between any of
+    # them could not notice the day a document moved one.
+    age_younger_min=35,
+    age_older_min=45,
+    age_oldest_min=55,
 )
 
 
@@ -190,6 +214,10 @@ def drill_claim(
     doi: date = QUIET_DAY,
     disability: Disability = Disability.temporary,
     sector: str = "Aerospace",
+    region: str = "Midwest",
+    icd: str = "S61.219A",
+    age: int = 30,
+    gender: Gender = Gender.male,
 ) -> DrillClaim:
     """One synthetic projection row, with every field defaulted to *quiet*.
 
@@ -206,6 +234,12 @@ def drill_claim(
     rather than turning a flag on. The two categorical ones default to the
     commonest seeded value, so a test that narrows to the *other* one is
     narrowing rather than confirming.
+
+    Story 7.3's four follow the same rule, and `age` is the one with a
+    deliberate value: 30 is below `age_younger_min`, so the baseline claim is in
+    the `youngest` band and a case that names any other band is narrowing away
+    from it. `region` and `icd` take the commonest seeded values and `gender` the
+    commonest enum member, for 7.2's reason.
     """
     return DrillClaim(
         claim_id=claim_id,
@@ -230,6 +264,10 @@ def drill_claim(
         doi=doi,
         disability=disability,
         sector=sector,
+        region=region,
+        icd=icd,
+        age=age,
+        gender=gender,
     )
 
 
@@ -471,6 +509,7 @@ def test_every_facet_has_a_predicate_and_every_predicate_has_a_facet() -> None:
     """
     assert set(FILTER_KEYS) == {field.name for field in fields(DrillFilters)}
     assert set(WIRE_KEYS) == set(FILTER_KEYS)
+    assert len(FILTER_KEYS) == FACET_COUNT
     for key in FILTER_KEYS:
         assert selected_ids([], **{key: None}) == []
 
@@ -1196,6 +1235,13 @@ async def test_the_response_is_camel_case_and_carries_nothing_else(
         "appliedFilters",
         "rulesVersion",
         "thresholdsVersion",
+        # Story 7.3's three, and they are the one thing on this payload that is
+        # neither a row, a count nor a version: the edges an `ageGroup` chip's
+        # range label is composed from. See `DrillClaimsResponse` for why a
+        # composed `display` string was refused in their place.
+        "ageYoungerMin",
+        "ageOlderMin",
+        "ageOldestMin",
     }
     assert set(payload["items"][0]) == ROW_KEYS
     # Business ids on the wire, never surrogates (the ID convention).
@@ -1247,6 +1293,12 @@ async def test_the_published_rule_versions_are_the_documents_effective_today(
 
     assert payload["rulesVersion"] == (await weights_for(db)).version
     assert payload["thresholdsVersion"] == (await thresholds_for(db)).version
+    # …and the three age edges come from that same document rather than from a
+    # constant here, so a retune moves the chip's label and the version together.
+    thresholds = await thresholds_for(db)
+    assert payload["ageYoungerMin"] == thresholds.age_younger_min
+    assert payload["ageOlderMin"] == thresholds.age_older_min
+    assert payload["ageOldestMin"] == thresholds.age_oldest_min
 
 
 @requires_db
@@ -1271,13 +1323,17 @@ async def test_the_marker_describes_the_top_of_the_filtered_list(
 
 
 @requires_db
-async def test_the_route_declares_exactly_thirteen_parameters(seeded_db_url: str) -> None:
+async def test_the_route_declares_exactly_twenty_five_parameters(seeded_db_url: str) -> None:
     """AD-7 structurally, as an allowlist rather than as an assertion of emptiness.
 
-    Twelve facets and a cursor, and it is an **allowlist** because what matters
-    is what else could appear beside them: a `limit` would be the page size
-    becoming a caller's choice, a `sort` would make every outstanding cursor
+    Twenty-four facets and a cursor, and it is an **allowlist** because what
+    matters is what else could appear beside them: a `limit` would be the page
+    size becoming a caller's choice, a `sort` would make every outstanding cursor
     ambiguous, and an `employerScope` of any spelling would be a scope.
+
+    Thirteen when Story 5.5 wrote this; 7.1 appended two, 7.2 six and 7.3 four.
+    The count is asserted as well as the set, so a facet cannot join the
+    vocabulary without a number in a test moving — see `FACET_COUNT`.
 
     Asserted against the published OpenAPI document rather than the function
     signature, because the contract is what a client (and a reviewer) reads —
@@ -1288,6 +1344,7 @@ async def test_the_route_declares_exactly_thirteen_parameters(seeded_db_url: str
     operation = schema["paths"][DRILL]["get"]
 
     assert {parameter["name"] for parameter in operation["parameters"]} == PARAMETER_NAMES
+    assert len(operation["parameters"]) == FACET_COUNT + 1
     assert all(parameter["in"] == "query" for parameter in operation["parameters"])
     assert "requestBody" not in operation
 

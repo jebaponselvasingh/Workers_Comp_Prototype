@@ -17,6 +17,7 @@ import { keepPreviousData, useInfiniteQuery, useQuery } from "@tanstack/react-qu
 import {
   toFilterKey,
   toQueryParams,
+  toSegmentationParams,
   type DrillFilters,
 } from "@/features/dashboard/drill/filters";
 
@@ -330,11 +331,14 @@ export type FraudBand = NonNullable<
  * The same `staleTime` as its five siblings, so the dashboard and the workspace
  * go stale on one schedule. Nothing polls.
  */
-export function useFraudPanel() {
+export function useFraudPanel(segmentation: DrillFilters) {
   return useQuery({
-    queryKey: queryKeys.dashboard.fraud,
+    queryKey: queryKeys.dashboard.fraud(toFilterKey(segmentation)),
+    placeholderData: keepPreviousData,
     queryFn: async (): Promise<FraudPanel> => {
-      const { data } = await api.GET("/dashboard/fraud");
+      const { data } = await api.GET("/dashboard/fraud", {
+        params: { query: toSegmentationParams(segmentation) },
+      });
       return data!;
     },
     staleTime: 30_000,
@@ -433,9 +437,12 @@ export function toFraudRateSortKey(sorts: FraudRateSorts): string {
  *
  * The same `staleTime` as its siblings. Nothing polls.
  */
-export function useFraudRates(sorts: FraudRateSorts) {
+export function useFraudRates(sorts: FraudRateSorts, segmentation: DrillFilters) {
   return useQuery({
-    queryKey: queryKeys.dashboard.fraudRates(toFraudRateSortKey(sorts)),
+    queryKey: queryKeys.dashboard.fraudRates(
+      toFraudRateSortKey(sorts),
+      toFilterKey(segmentation),
+    ),
     placeholderData: keepPreviousData,
     queryFn: async (): Promise<FraudRates> => {
       const { data } = await api.GET("/dashboard/fraud/rates", {
@@ -444,6 +451,7 @@ export function useFraudRates(sorts: FraudRateSorts) {
             "sort[injuryType]": sorts.injuryType,
             "sort[employer]": sorts.employer,
             "sort[handler]": sorts.handler,
+            ...toSegmentationParams(segmentation),
           },
         },
       });
@@ -473,11 +481,14 @@ export type FraudRedFlags = components["schemas"]["FraudRedFlagsResponse"];
  * thirty seconds old is a dated answer rendered with its own timestamp, which is
  * the whole of AD-10's contract.
  */
-export function useFraudRedFlags() {
+export function useFraudRedFlags(segmentation: DrillFilters) {
   return useQuery({
-    queryKey: queryKeys.dashboard.fraudRedFlags,
+    queryKey: queryKeys.dashboard.fraudRedFlags(toFilterKey(segmentation)),
+    placeholderData: keepPreviousData,
     queryFn: async (): Promise<FraudRedFlags> => {
-      const { data } = await api.GET("/dashboard/fraud/red-flags");
+      const { data } = await api.GET("/dashboard/fraud/red-flags", {
+        params: { query: toSegmentationParams(segmentation) },
+      });
       return data!;
     },
     staleTime: 30_000,
@@ -504,6 +515,14 @@ export type TrendMetric = components["schemas"]["TrendMetric"];
 export type TrendSeries = PortfolioTrends["series"][number];
 /** One bucket of one series — `value` is `null`, never `0`, when absent. */
 export type TrendPoint = TrendSeries["points"][number];
+/**
+ * One period on the x-axis, from the window's own vocabulary.
+ *
+ * Published beside the series rather than only inside them (Story 7.3), so a
+ * period control stays live when a filter or a cohort split empties the fold —
+ * see `TrendBucketResponse` on the server for the defect that closes.
+ */
+export type TrendBucket = PortfolioTrends["buckets"][number];
 
 /**
  * The three selectors the Trends header sets.
@@ -590,9 +609,9 @@ export function toTrendParamsKey(params: TrendParams): string {
  * The same `staleTime` as its six siblings, so the dashboard and the workspace
  * go stale on one schedule. Nothing polls.
  */
-export function useTrends(params: TrendParams) {
+export function useTrends(params: TrendParams, segmentation: DrillFilters) {
   return useQuery({
-    queryKey: queryKeys.dashboard.trends(toTrendParamsKey(params)),
+    queryKey: queryKeys.dashboard.trends(toTrendParamsKey(params), toFilterKey(segmentation)),
     placeholderData: keepPreviousData,
     queryFn: async (): Promise<PortfolioTrends> => {
       const { data } = await api.GET("/dashboard/trends", {
@@ -601,8 +620,80 @@ export function useTrends(params: TrendParams) {
             grain: params.grain,
             anchor: params.anchor,
             cohort: params.cohort,
+            ...toSegmentationParams(segmentation),
           },
         },
+      });
+      return data!;
+    },
+    staleTime: 30_000,
+  });
+}
+
+export type SegmentationValues = components["schemas"]["SegmentationValuesResponse"];
+/** One dimension's options — `key` is the `filter[…]` name a picker writes. */
+export type DimensionValues = SegmentationValues["dimensions"][number];
+/** One option: the wire value, and a label for the single id-valued dimension. */
+export type DimensionValue = DimensionValues["values"][number];
+/** The four ordinal age bands — a closed server enum; the UI composes the range. */
+export type AgeBand = NonNullable<
+  NonNullable<paths["/dashboard/fraud"]["get"]["parameters"]["query"]>["filter[ageGroup]"]
+>;
+
+/**
+ * The three age cut-offs a band label is composed from.
+ *
+ * A structural slice of the values payload rather than the payload itself, so
+ * `ageBandLabels` takes exactly what it reads — and so a test can hand it three
+ * integers without building a response.
+ *
+ * **Two payloads satisfy it, and that is the point since Story 7.3.**
+ * `/dashboard/claims` publishes the same three integers from the same document,
+ * so the drill list can compose the same "45–54" the workspace bar composes —
+ * through the same function, over the same edges, rather than through a second
+ * label decided server-side. A structural type is what lets one composer take
+ * either response without either of them knowing about the other.
+ */
+export type SegmentationEdges = Pick<
+  SegmentationValues,
+  "ageYoungerMin" | "ageOlderMin" | "ageOldestMin"
+>;
+
+/**
+ * Server state for the segmentation control (FR-AN-4, Story 7.3).
+ *
+ * `useFraudPanel`'s shape and its emptiness: the options each picker offers, the
+ * chips the bar draws, the two counts a zero-result state is decided on and the
+ * three age edges a band label is composed from are all decided by
+ * `services/worklist` over the caller's scope, and this hook exists to fetch them
+ * and nothing else.
+ *
+ * **No `select`**, deliberately, and this payload is a real invitation to one:
+ * the browser is handed every value in the caller's book *and* the filter that
+ * is active, so "just narrow the options to what is still reachable" is one line
+ * — and it is precisely the behaviour the server refuses, because a picker cut
+ * by its own filter cannot be used to widen it.
+ *
+ * **The filter is in the key and in the request, from one source.** Two of the
+ * three things on this payload move with it (the chips and `claimsMatching`), so
+ * a cached response keyed only on the options would put a stale chip row beside
+ * fresh figures.
+ *
+ * **`placeholderData: keepPreviousData`**, `useFraudRates`' second option and for
+ * its reason: this hook feeds a control that is on screen while its own filter
+ * changes, so dropping `data` to `undefined` would empty every picker at the
+ * moment the analyst is using one.
+ *
+ * The same `staleTime` as its siblings, so the workspace goes stale on one
+ * schedule. Nothing polls.
+ */
+export function useSegmentationValues(segmentation: DrillFilters) {
+  return useQuery({
+    queryKey: queryKeys.dashboard.segmentationValues(toFilterKey(segmentation)),
+    placeholderData: keepPreviousData,
+    queryFn: async (): Promise<SegmentationValues> => {
+      const { data } = await api.GET("/dashboard/segmentation/values", {
+        params: { query: toSegmentationParams(segmentation) },
       });
       return data!;
     },

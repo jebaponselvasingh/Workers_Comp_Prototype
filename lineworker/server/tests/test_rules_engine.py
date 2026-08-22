@@ -73,7 +73,7 @@ DOCUMENTS_DIR = Path(__file__).resolve().parents[1] / "rules" / "documents"
 # reads the unversioned name at migration time and editing it would rewrite
 # v1's content on a fresh database.
 EFFECTIVE_DOCUMENTS: tuple[tuple[str, int, str], ...] = (
-    (DERIVATION_THRESHOLDS_KEY, 6, "derivation_thresholds.v6.jdm.json"),
+    (DERIVATION_THRESHOLDS_KEY, 7, "derivation_thresholds.v7.jdm.json"),
     (PRIORITY_WEIGHTS_KEY, 1, "priority_weights.jdm.json"),
     (INTAKE_REQUIRED_DOCUMENTS_KEY, 1, "intake_required_documents.jdm.json"),
     # Story 2.4's, missing from this tuple until Story 2.6's review pass found
@@ -116,6 +116,7 @@ SEEDED_DOCUMENTS: tuple[tuple[str, int, str], ...] = (
     (DERIVATION_THRESHOLDS_KEY, 3, "derivation_thresholds.v3.jdm.json"),
     (DERIVATION_THRESHOLDS_KEY, 4, "derivation_thresholds.v4.jdm.json"),
     (DERIVATION_THRESHOLDS_KEY, 5, "derivation_thresholds.v5.jdm.json"),
+    (DERIVATION_THRESHOLDS_KEY, 6, "derivation_thresholds.v6.jdm.json"),
     # Story 3.5's v1, superseded by Story 5.4's v2 above and still committed:
     # 0031 reads the unversioned filename at migration time, so this row exists
     # on every fresh database and is still a file that can silently disagree
@@ -159,15 +160,31 @@ EXPECTED_THRESHOLDS: dict[str, Any] = {
     # review population is retuned.
     "fraudBandHighMin": 55,
     "fraudBandMedMin": 35,
+    # Story 7.3's three, added in version 7. They parameterise `age_band`, which
+    # bands `employee.age` — a fourth column, and the first one that is not a
+    # score. Two of the three carry integers this dict already holds twice over:
+    # `ageYoungerMin` is 35 like `riskMedMin` and `fraudBandMedMin`, and
+    # `ageOldestMin` is 55 like `fraudFlagScoreMin` and `fraudBandHighMin`. The
+    # document is where those coincidences are visible, and where it is legible
+    # that they are three rules over three columns rather than one number reused:
+    # widening the fraud review threshold must not re-band the workforce.
+    "ageYoungerMin": 35,
+    "ageOlderMin": 45,
+    "ageOldestMin": 55,
 }
 
 #: The parameters *added after* v3 and after v2, so the supersession assertion
 #: below reads as "this version is the one before it plus what its story added"
 #: rather than as a growing tuple of exclusions repeated three times. Written out
 #: here because each name is a story's addition and the set is the record of
-#: which: `ptdSeverityThreshold` is 3.1's, `fraudFlagScoreMin` 5.1's, and the two
-#: band edges 7.1's.
-_AFTER_V3: frozenset[str] = frozenset({"fraudFlagScoreMin", "fraudBandHighMin", "fraudBandMedMin"})
+#: which: `ptdSeverityThreshold` is 3.1's, `fraudFlagScoreMin` 5.1's, the two
+#: fraud band edges 7.1's and the three age edges 7.3's.
+_AFTER_V6: frozenset[str] = frozenset({"ageYoungerMin", "ageOlderMin", "ageOldestMin"})
+_AFTER_V3: frozenset[str] = _AFTER_V6 | {
+    "fraudFlagScoreMin",
+    "fraudBandHighMin",
+    "fraudBandMedMin",
+}
 _AFTER_V2: frozenset[str] = _AFTER_V3 | {"ptdSeverityThreshold"}
 
 # Story 3.1's document, restated. Rates are BASIS POINTS: 6667 is 66.67%.
@@ -357,8 +374,12 @@ async def test_every_superseded_version_is_still_exactly_what_it_was(
         5: {
             key: value
             for key, value in EXPECTED_THRESHOLDS.items()
-            if key not in ("fraudBandHighMin", "fraudBandMedMin")
+            if key not in ({"fraudBandHighMin", "fraudBandMedMin"} | _AFTER_V6)
         },
+        # v6 is v5 plus Story 7.1's fraud band pair, and *without* Story 7.3's
+        # three age edges — the same assertion one story later, against the
+        # version the analyst's fraud distribution is still explained by.
+        6: {key: value for key, value in EXPECTED_THRESHOLDS.items() if key not in _AFTER_V6},
     }
 
     for version, expected in superseded.items():
@@ -503,7 +524,7 @@ async def test_the_typed_blocks_carry_the_evaluated_values(db: AsyncSession) -> 
     requirements = await intake_requirements_for(db)
 
     assert thresholds == DerivationThresholds(
-        version=6,
+        version=7,
         risk_high_min=EXPECTED_THRESHOLDS["riskHighMin"],
         risk_med_min=EXPECTED_THRESHOLDS["riskMedMin"],
         siu_fraud_score_min=EXPECTED_THRESHOLDS["siuFraudScoreMin"],
@@ -522,6 +543,9 @@ async def test_the_typed_blocks_carry_the_evaluated_values(db: AsyncSession) -> 
         fraud_flag_score_min=EXPECTED_THRESHOLDS["fraudFlagScoreMin"],
         fraud_band_high_min=EXPECTED_THRESHOLDS["fraudBandHighMin"],
         fraud_band_med_min=EXPECTED_THRESHOLDS["fraudBandMedMin"],
+        age_younger_min=EXPECTED_THRESHOLDS["ageYoungerMin"],
+        age_older_min=EXPECTED_THRESHOLDS["ageOlderMin"],
+        age_oldest_min=EXPECTED_THRESHOLDS["ageOldestMin"],
     )
     assert await benefit_params_for(db) == BenefitParams(
         version=1,

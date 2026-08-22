@@ -553,7 +553,38 @@ const DERIVED_FIELDS =
   //   the server published. `bucketFrom` is deliberately absent — one end of the
   //   pair is enough to catch the shape, and a guard grows an entry per token it
   //   cannot justify at exactly the rate people stop reading it.
-  "\\.paletteSlot|\\.lowConfidence|\\.bucketLabel|\\.partial|\\.bucketTo";
+  "\\.paletteSlot|\\.lowConfidence|\\.bucketLabel|\\.partial|\\.bucketTo|" +
+  // Story 7.3's one, and the alternation above was read before adding it —
+  // 5.4's review caught exactly the mistake of appending tokens that were
+  // already alternatives. `total`, `count`, `claimsInScope`, `appliedFilters`,
+  // `severityBand` and `handlerId` are all already here; a segmentation payload
+  // adds one name and nothing else.
+  //
+  // - `claimsMatching` is how much of the caller's book survives the filter, and
+  //   it is the number every zero-result state on the workspace is decided on.
+  //   It is published beside `claimsInScope` precisely so the browser does not
+  //   subtract, divide or compare them — "N of M match" is two figures stated,
+  //   and `claimsInScope - claimsMatching` would be the browser deciding how much
+  //   of a scope it cannot see was filtered out. Guarded as a bare word rather
+  //   than as a property because, unlike `.limit` or `.partial`, it is specific
+  //   enough that no ordinary local could carry the name.
+  //
+  // **`ageYoungerMin`, `ageOlderMin` and `ageOldestMin` are deliberately absent**,
+  // which is the one entry on this list that had to be argued for its *omission*
+  // — `bucketFrom`'s reason, inverted. Every other published rule value here
+  // (`highRiskSeverityMin`, `medRiskSeverityMin`, `fraudFlagScoreMin`,
+  // `fraudBandHighMin`, `fraudBandMedMin`) is guarded because the payload it
+  // rides on *also* carries the per-claim column it bands, so the browser holds
+  // every ingredient of a second opinion. These three do not: no payload in this
+  // console carries `employee.age` at all, so there is nothing here to re-band
+  // and the only thing a component can do with them is what they are published
+  // for — compose the range label an ordinal band name deliberately does not
+  // carry (`features/dashboard/segmentation/ageBands.ts`). Guarding them would
+  // fail the build on that composition, and the fix would be to move the label
+  // to the server, which is the AD-8 violation the ordinal names exist to
+  // prevent. A guard that forced the rule into two tiers would be worse than the
+  // gap it closed.
+  "claimsMatching";
 
 const FLAGS = "siuReview|rtwBlocked|paymentDue|fraudFlag|litigationFlag|surgeryRequired";
 
@@ -858,6 +889,27 @@ test("the scan reaches the files it claims to", () => {
   for (const file of ["TrendsPage.tsx", "TrendChartCard.tsx", "trendColors.ts"]) {
     expect(scanned).toContain(path.join("features", "dashboard", "trends", file));
   }
+  // Story 7.3's three, in a third Epic 7 folder `DashboardPage.tsx` being
+  // scanned says nothing about — and the folder with the strongest pull on the
+  // page since 7.2's, because it is the first surface where the browser holds a
+  // *filter and the vocabulary it draws from* at once.
+  //
+  // `SegmentationBar.tsx` holds every value in the caller's book beside the
+  // filter that is active and the two counts that decide the zero-result state,
+  // so narrowing the options to what is still reachable, turning the pair into a
+  // percentage and deciding emptiness from `dimensions.length` are each one line
+  // — and the first of them is the behaviour the server explicitly refuses,
+  // because a picker cut by its own filter cannot widen one.
+  // `useSegmentation.ts` is the file that would hold a client-side vocabulary
+  // check if anybody wrote one: it parses ten enum-valued dimensions out of a URL
+  // and deliberately validates none of them, which looks like an omission until
+  // you read why. `ageBands.ts` is where the one genuine arithmetic in this
+  // feature lives, and it is arithmetic on *published rule values* — exactly the
+  // shape this guard exists to refuse — so it is named here and argued at length
+  // in the `DERIVED_FIELDS` note that leaves those three fields off the list.
+  for (const file of ["SegmentationBar.tsx", "useSegmentation.ts", "ageBands.ts"]) {
+    expect(scanned).toContain(path.join("features", "dashboard", "segmentation", file));
+  }
   // Story 7.1's navigation, in `features/shell` — which is scanned, but by a
   // root added for the *queue* payload five stories ago. Named because it is the
   // first component in that folder that branches on a value from `/api/me`, and
@@ -1013,6 +1065,14 @@ test("the guard would notice a derivation if one were added", () => {
     // payload carries for other reasons.
     "const running = point.bucketTo > data.asOf;",
     "const shown = points.filter((p) => p.partial).length;",
+    // Story 7.3's three, and they are the three the segmentation control is most
+    // tempted by. Turning the two published counts into a percentage; deciding
+    // how much of a scope was filtered out by subtracting them; and partitioning
+    // the options by the count that survives — the last of which is exactly the
+    // picker-narrowed-by-its-own-filter the server refuses to do.
+    "const pct = (data.claimsMatching / data.claimsInScope) * 100;",
+    "const hidden = data.claimsInScope - data.claimsMatching;",
+    "const reachable = options.filter((o) => o.claimsMatching);",
   ];
 
   for (const smell of smells) {
@@ -1102,6 +1162,14 @@ test("the guard does not fire on rendering the server's answers", () => {
     'data-low-confidence={point.lowConfidence ? "true" : "false"}',
     "const colour = CATEGORICAL_FILLS.at(line.paletteSlot) ?? PALETTE_OVERFLOW_FILL;",
     "return cohortFill(cohort, line.cohortKey, line.paletteSlot);",
+    // Story 7.3's two: stating the two published counts side by side, and
+    // composing an age band's range label from the edges the server sent. The
+    // second is the one that had to be argued — it is arithmetic on a published
+    // rule value, which is the shape this guard refuses everywhere else, and it
+    // is legal here only because the three age edges are deliberately off
+    // `DERIVED_FIELDS`. See the note there.
+    "<p>{data.claimsMatching} of {data.claimsInScope} claims match</p>",
+    "const label = `${edges.ageOlderMin}-${edges.ageOldestMin - 1}`;",
   ];
 
   for (const line of innocent) {

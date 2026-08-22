@@ -1,0 +1,147 @@
+{
+  "contentType": "application/vnd.gorules.decision",
+  "name": "derivation_thresholds",
+  "description": "Version 7 (Story 7.3): version 6's sixteen parameters unchanged, plus the three edges of the age band the analyst workspace segments by. Superseding is a new document, never an edit \u2014 v1 through v6 stay exactly what Stories 2.1, 2.2, 2.5, 3.1, 5.1 and 7.1 shipped, so an ordering, a banner, a forms card, a benefit figure, a dashboard count or a fraud distribution produced under any of them is still explainable. ageYoungerMin, ageOlderMin and ageOldestMin band employee.age into four ordinal groups: youngest below 35, younger from 35, older from 45, oldest from 55. THE BAND NAMES CARRY NO NUMBERS, and that is the whole point of them being words: a member spelled age_35_44 would put this document's cut-off in the Python tier as well, so moving an edge here would leave a member name asserting the old one. The payload publishes these three edges and the UI composes \"35\u201344\" from them. They live in THIS document rather than in one of their own because age_band is a registered derivation (AD-10) and DerivationThresholds is the single argument every registered derivation is built from \u2014 the same argument v3 made for the path parameters, v4 for the PTD cut-off, v5 for the review threshold and v6 for the fraud band. trend_periods went the other way and is not the precedent: a window is not a derivation cut-off, and an age band is nothing else. ageYoungerMin reads the same 35 as riskMedMin and fraudBandMedMin, and ageOldestMin the same 55 as fraudFlagScoreMin and fraudBandHighMin \u2014 three coincidences of integer across three unrelated columns (a severity score, a fraud score and a person's age), and exactly the reason they are separate parameters: collapsing any pair would tie a worker's age band to a fraud threshold, so retuning the review cut-off tomorrow would silently re-band the workforce.",
+  "nodes": [
+    {
+      "id": "request",
+      "type": "inputNode",
+      "name": "request",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "thresholds",
+      "type": "expressionNode",
+      "name": "thresholds",
+      "position": {
+        "x": 240,
+        "y": 0
+      },
+      "content": {
+        "expressions": [
+          {
+            "id": "riskHighMin",
+            "key": "riskHighMin",
+            "value": "65"
+          },
+          {
+            "id": "riskMedMin",
+            "key": "riskMedMin",
+            "value": "35"
+          },
+          {
+            "id": "siuFraudScoreMin",
+            "key": "siuFraudScoreMin",
+            "value": "60"
+          },
+          {
+            "id": "rtwBlockedHashModulus",
+            "key": "rtwBlockedHashModulus",
+            "value": "5"
+          },
+          {
+            "id": "paymentDueHashModulus",
+            "key": "paymentDueHashModulus",
+            "value": "3"
+          },
+          {
+            "id": "treatmentEarlyMaxRatio",
+            "key": "treatmentEarlyMaxRatio",
+            "value": "0.3"
+          },
+          {
+            "id": "treatmentActiveMaxRatio",
+            "key": "treatmentActiveMaxRatio",
+            "value": "0.7"
+          },
+          {
+            "id": "recoveryYearExpectedDays",
+            "key": "recoveryYearExpectedDays",
+            "value": "180"
+          },
+          {
+            "id": "recoveryDefaultExpectedDays",
+            "key": "recoveryDefaultExpectedDays",
+            "value": "42"
+          },
+          {
+            "id": "pathMinorSeverityMax",
+            "key": "pathMinorSeverityMax",
+            "value": "35"
+          },
+          {
+            "id": "pathMinorRecoveryWindows",
+            "key": "pathMinorRecoveryWindows",
+            "value": "['weeks_0_2']"
+          },
+          {
+            "id": "pathFatalitySeverityMin",
+            "key": "pathFatalitySeverityMin",
+            "value": "100"
+          },
+          {
+            "id": "ptdSeverityThreshold",
+            "key": "ptdSeverityThreshold",
+            "value": "85"
+          },
+          {
+            "id": "fraudFlagScoreMin",
+            "key": "fraudFlagScoreMin",
+            "value": "55"
+          },
+          {
+            "id": "fraudBandHighMin",
+            "key": "fraudBandHighMin",
+            "value": "55"
+          },
+          {
+            "id": "fraudBandMedMin",
+            "key": "fraudBandMedMin",
+            "value": "35"
+          },
+          {
+            "id": "ageYoungerMin",
+            "key": "ageYoungerMin",
+            "value": "35"
+          },
+          {
+            "id": "ageOlderMin",
+            "key": "ageOlderMin",
+            "value": "45"
+          },
+          {
+            "id": "ageOldestMin",
+            "key": "ageOldestMin",
+            "value": "55"
+          }
+        ]
+      }
+    },
+    {
+      "id": "response",
+      "type": "outputNode",
+      "name": "response",
+      "position": {
+        "x": 480,
+        "y": 0
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "request-thresholds",
+      "type": "edge",
+      "sourceId": "request",
+      "targetId": "thresholds"
+    },
+    {
+      "id": "thresholds-response",
+      "type": "edge",
+      "sourceId": "thresholds",
+      "targetId": "response"
+    }
+  ]
+}

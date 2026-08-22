@@ -6,6 +6,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 
 import { createQueryClient } from "@/api/queryClient";
+import { SegmentationBar } from "@/features/dashboard/segmentation/SegmentationBar";
 import {
   DRILL_CLAIMS,
   DRILL_CLAIMS_EMPTY,
@@ -13,6 +14,7 @@ import {
   FRAUD_PANEL_EMPTY,
   FRAUD_PANEL_SCOPED,
   FRAUD_RATES,
+  FRAUD_RATES_EMPTY,
   FRAUD_RATES_SORTED,
   FRAUD_RED_FLAGS,
   FRAUD_RED_FLAGS_ALL_CLEAR,
@@ -51,10 +53,10 @@ import { FraudPage } from "./FraudPage";
  * not be assertable at all.
  */
 
-function renderPage(routes: Parameters<typeof stubApi>[0]) {
+function renderPage(routes: Parameters<typeof stubApi>[0], initial = "/dashboard/fraud") {
   stubApi(routes);
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[initial]}>
       <QueryClientProvider client={createQueryClient()}>
         <FraudPage />
         {/* Every segment and every table row is a click target, and what a click
@@ -665,4 +667,156 @@ test("a failed panel shows an alert per surface and no figures at all", async ()
   // an alert is two states on one screen saying opposite things, and it would
   // keep saying "loading" for as long as the reader stayed.
   expect(screen.queryByTestId("kpi-skeleton")).not.toBeInTheDocument();
+});
+
+
+// --- Story 7.3: what a narrowed section says when it is empty (AC 4) -----
+
+/** A workspace URL carrying one dimension, in the drill list's own spelling. */
+const NARROWED = "/dashboard/fraud?filter%5Bsector%5D=Aerospace";
+
+test("every surface on a narrowed section says 'these filters' rather than 'this portfolio'", async () => {
+  renderPage(
+    {
+      fraudPanel: FRAUD_PANEL_EMPTY,
+      fraudRates: FRAUD_RATES_EMPTY,
+      fraudRedFlags: FRAUD_RED_FLAGS_EMPTY,
+      drillClaims: DRILL_CLAIMS_EMPTY,
+    },
+    NARROWED,
+  );
+
+  // AC 4's per-surface zero-result state, and it is a *sentence* rather than a
+  // count because the sentence is the part that was wrong: every one of these
+  // said "in this portfolio" while describing a nine-dimension subset of it.
+  // "No claim in this portfolio is under SIU review" is a statement about the
+  // book that the book does not support, on a screen whose whole subject is a
+  // slice of it — and it is the statement an analyst would repeat.
+  await waitFor(() =>
+    expect(screen.getByTestId("fraud-band-distribution-empty")).toHaveTextContent(
+      "No claims match these filters.",
+    ),
+  );
+  expect(screen.getByTestId("siu-pipeline-stage-empty")).toHaveTextContent(
+    "No claims match these filters.",
+  );
+  expect(screen.getByTestId("siu-pipeline-handler-empty")).toHaveTextContent(
+    "No claims match these filters.",
+  );
+  for (const table of ["injury", "employer", "handler"]) {
+    expect(screen.getByTestId(`fraud-rate-${table}-empty`)).toHaveTextContent(
+      "No claims match these filters.",
+    );
+  }
+  expect(screen.getByTestId("fraud-flagged-empty")).toHaveTextContent(
+    "No claims match these filters.",
+  );
+  // …and the red-flag card, which is the one that misattributes rather than
+  // merely overstates: "N of M claims in this portfolio have a cached fraud
+  // narrative" blames a cold AI cache for what the filter did, and the two have
+  // nothing in common as fixes.
+  expect(screen.getByTestId("fraud-red-flag-card-empty")).toHaveTextContent(
+    "matching these filters",
+  );
+  expect(screen.getByTestId("fraud-red-flag-card-empty")).not.toHaveTextContent("this portfolio");
+});
+
+test("the same surfaces still describe the portfolio when nothing is filtered", async () => {
+  // The other half of the property, and the reason the copy is conditional
+  // rather than simply reworded: with no filter applied an empty book *is* the
+  // portfolio, and telling that analyst her filters match nothing would send her
+  // looking for a filter she never set.
+  renderPage({
+    fraudPanel: FRAUD_PANEL_EMPTY,
+    fraudRates: FRAUD_RATES_EMPTY,
+    fraudRedFlags: FRAUD_RED_FLAGS_EMPTY,
+    drillClaims: DRILL_CLAIMS_EMPTY,
+  });
+
+  await waitFor(() =>
+    expect(screen.getByTestId("fraud-band-distribution-empty")).toHaveTextContent(
+      "No claims in this portfolio yet.",
+    ),
+  );
+  expect(screen.getByTestId("siu-pipeline-stage-empty")).toHaveTextContent(
+    "No claim in this portfolio is under SIU review.",
+  );
+  expect(screen.getByTestId("fraud-flagged-empty")).toHaveTextContent(
+    "No claim in this portfolio is flagged for fraud review.",
+  );
+  expect(screen.getByTestId("fraud-red-flag-card-empty")).toHaveTextContent("this portfolio");
+});
+
+test("the coverage caption names the segmented population it counted over", async () => {
+  renderPage({}, NARROWED);
+
+  // `claimsInScope` on this payload became the *segmented* book in this story,
+  // so the noun after it has to move with it: "N of M claims in this portfolio
+  // have a cached fraud narrative" under a filter is a coverage figure quoting
+  // the wrong denominator's name.
+  await waitFor(() =>
+    expect(screen.getByTestId("fraud-red-flag-coverage")).toHaveTextContent(
+      "claims matching these filters have a cached fraud narrative",
+    ),
+  );
+});
+
+test("a filter change stops one table claiming to be busy while two swap silently", async () => {
+  // The state the flag describes is "which control did the analyst just use",
+  // and a segmentation change is not one of them — it is a question about all
+  // three tables at once, every row of which moves. Left standing from the last
+  // sort, it marked exactly one table busy while the other two changed under the
+  // reader, which is the announcement inverted.
+  //
+  // **The bar is mounted beside the page**, which is what `DashboardShell` does:
+  // the filter is not this section's control, it is the workspace's, and the
+  // only honest way to change it is through the control that owns it.
+  //
+  // The stub holds every `label_asc` request open, so the in-flight state is a
+  // fact rather than a race: the sort click enters it and the filter change
+  // stays in it, which is exactly the window the flag is read in.
+  stubApi({
+    fraudRates: (url) =>
+      url.includes("sort[injuryType]=label_asc") ? "pending" : FRAUD_RATES,
+  });
+  render(
+    <MemoryRouter initialEntries={[NARROWED]}>
+      <QueryClientProvider client={createQueryClient()}>
+        <SegmentationBar />
+        <FraudPage />
+        <LocationProbe />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  );
+
+  await waitFor(() =>
+    expect(screen.getAllByTestId("fraud-rate-injury-row").length).toBeGreaterThan(0),
+  );
+  await userEvent.selectOptions(screen.getByTestId("fraud-rate-injury-sort"), "label_asc");
+
+  // The flag is armed — one table busy, two untouched. Story 7.1's property,
+  // asserted here so what follows cannot pass by the flag never being set.
+  await waitFor(() =>
+    expect(screen.getByTestId("fraud-rate-injury")).toHaveAttribute("aria-busy", "true"),
+  );
+  expect(screen.getByTestId("fraud-rate-employer")).toHaveAttribute("aria-busy", "false");
+
+  // …now change the filter through the bar. The request is still outstanding, so
+  // the busy window is still open — and the question it is answering is no
+  // longer "how should the injury table be sorted".
+  await userEvent.selectOptions(screen.getByTestId("segmentation-picker-sector"), "");
+  await waitFor(() =>
+    expect(screen.getByTestId("location")).not.toHaveTextContent("filter%5Bsector%5D"),
+  );
+
+  await waitFor(() => {
+    const busy = ["injury", "employer", "handler"].map((table) =>
+      screen.getByTestId(`fraud-rate-${table}`).getAttribute("aria-busy"),
+    );
+    // All three agree, and they agree on "not busy": `keepPreviousData` leaves
+    // every table's rows on screen, which is the same answer the two untouched
+    // tables give during a sort. What must not happen is one of them singling
+    // itself out because it was sorted a minute ago.
+    expect(busy).toEqual(["false", "false", "false"]);
+  });
 });

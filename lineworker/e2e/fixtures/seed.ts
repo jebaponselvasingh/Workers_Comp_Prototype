@@ -86,6 +86,16 @@ interface SeedClaim {
   // `select_priority_rows` makes and the only thing this file needs the
   // `employees` array for.
   employee_id: string;
+  /**
+   * Story 7.3's two claim columns. `region` is where the plant sits and is a
+   * different column from `state`, which is the jurisdiction a benefit is
+   * calculated under — the segmentation offers both and the two are not a
+   * rollup of one another. `icd` is the stored ICD-10 code; the *facet* is
+   * spelled `icd10` because a bare code says nothing about which coding system
+   * it belongs to.
+   */
+  region: string;
+  icd: string;
   sla_pick_days: number | null;
   sla_approve_days: number | null;
   settlement_days: number | null;
@@ -121,6 +131,17 @@ interface SeedEmployer {
 interface SeedEmployee {
   employee_id: string;
   name: string;
+  /**
+   * Story 7.3's two. The segmentation's ninth and tenth dimensions are the
+   * injured worker's, not the claim's — which is why the server needed a fourth
+   * projection-family read to see them, and why this oracle has to join the two
+   * arrays rather than reading a claim row.
+   *
+   * `age` is a stored integer and the *dimension* is a band of it: four ordinal
+   * groups from three edges, restated below.
+   */
+  age: number;
+  gender: string;
 }
 
 interface Seed {
@@ -3901,4 +3922,401 @@ export function expectedTrendsFor(
       return { ...filters, [facet]: cohortKey };
     },
   };
+}
+
+// --- Story 7.3: segmentation, restated independently ----------------------
+//
+// **This block shares no predicate with `matchesFacet` above and nothing at all
+// with the server.** Story 7.1's review found an oracle carrying the
+// implementation's own cut and therefore agreeing with it, and 7.2's found the
+// same shape twice more; a *filter* is a cut by definition, so the hazard is the
+// whole subject rather than a corner of it. The ten predicates below are
+// written from each dimension's own definition — which column, which rule — and
+// the spec asserts **which claims survive** as a set rather than how many,
+// because a count is satisfiable by the wrong population.
+//
+// Concretely, what is written fresh and what is reused:
+//
+// - **Fresh:** every predicate, the age band, and the employee join. The drill
+//   oracle's `matchesFacet` covers six of these ten dimensions and is
+//   deliberately not called: an oracle that routed both surfaces through one
+//   restatement could not notice the day the two vocabularies came apart, which
+//   is precisely the property this story claims.
+// - **Reused:** `claimsFor` (scope, one restatement, already here and reused by
+//   every block in this file) and `riskBand` (the one registered `risk`
+//   derivation this console bands severity with everywhere — a second
+//   restatement of it here would be pretending there is a fourth rule).
+//   `employerIdOf` is reused too, and it is worth saying why that is not a cut:
+//   it restates a *migration* fact (identity columns are assigned in the seed
+//   file's order), not a rule about which claims match.
+//
+// **The three age edges are written out although two of them coincide with
+// numbers already in this file** — `AGE_YOUNGER_MIN` beside `MED_RISK_MIN` and
+// `FRAUD_BAND_MED_MIN`, `AGE_OLDEST_MIN` beside `FRAUD_FLAG_SCORE_MIN` and
+// `FRAUD_BAND_HIGH_MIN`. Three columns, three rules, one integer twice; sharing
+// a name would make this oracle unable to notice the day a document moved one of
+// them, and the failure it would hide is a fraud threshold silently re-banding a
+// workforce.
+
+const AGE_YOUNGER_MIN = 35;
+const AGE_OLDER_MIN = 45;
+const AGE_OLDEST_MIN = 55;
+
+/**
+ * `employee.age` banded — four ordinal groups from three edges.
+ *
+ * Written downward from the oldest edge, which is the only order under which
+ * three comparisons produce four non-overlapping groups, and the band is
+ * inclusive at its lower edge. The members carry no numbers: the range a reader
+ * sees is composed in the browser from the edges the server publishes, so this
+ * vocabulary survives a retune that would have falsified a member named for a
+ * range.
+ */
+function ageBand(age: number): string {
+  if (age >= AGE_OLDEST_MIN) return "oldest";
+  if (age >= AGE_OLDER_MIN) return "older";
+  if (age >= AGE_YOUNGER_MIN) return "younger";
+  return "youngest";
+}
+
+/** The ten dimensions a spec may segment by, spelled as the URL spells them. */
+export type SegmentationDimension =
+  | "severityBand"
+  | "injuryType"
+  | "state"
+  | "employerId"
+  | "disability"
+  | "sector"
+  | "region"
+  | "icd10"
+  | "ageGroup"
+  | "gender";
+
+export type Segmentation = Partial<Record<SegmentationDimension, string>>;
+
+/**
+ * The order the chips are drawn in — a subsequence of the drill list's.
+ *
+ * Restated rather than filtered out of `DRILL_FACET_ORDER`, for this block's
+ * standing reason: a derived order would agree with a re-ordered chip row. The
+ * consequence is visible on every workspace drill — a severity chip is drawn
+ * before a sector chip although a picker offered sector first — and the spec
+ * compares a list rather than a set, because a chip row that rendered the right
+ * two chips in the wrong order would satisfy a set comparison and is what a
+ * reader actually scans.
+ */
+const SEGMENTATION_ORDER: SegmentationDimension[] = [
+  "severityBand",
+  "injuryType",
+  "state",
+  "employerId",
+  "disability",
+  "sector",
+  "region",
+  "icd10",
+  "ageGroup",
+  "gender",
+];
+
+/** What a chip says the dimension is — the client's `FILTER_LABEL`, restated. */
+const SEGMENTATION_LABEL: Record<SegmentationDimension, string> = {
+  severityBand: "Severity",
+  injuryType: "Injury type",
+  state: "State",
+  employerId: "Employer",
+  disability: "Disability",
+  sector: "Sector",
+  // "Region" beside "State", and the pair is deliberately not collapsed: a state
+  // is the jurisdiction a benefit is calculated under and a region is where the
+  // plant is. "ICD-10" names the coding system because a bare code does not.
+  region: "Region",
+  icd10: "ICD-10",
+  ageGroup: "Age group",
+  gender: "Gender",
+};
+
+/** What a chip says the *value* is, for the dimensions the UI labels. */
+const SEGMENTATION_VALUE_LABEL: Partial<
+  Record<SegmentationDimension, Record<string, string>>
+> = {
+  severityBand: { high: "High", med: "Medium", low: "Low" },
+  disability: { temporary: "Temporary", permanent: "Permanent" },
+  gender: { female: "Female", male: "Male", other: "Other" },
+  // `ageGroup` is absent on purpose: its label is a *range* composed from the
+  // three edges the server publishes, so it is built below rather than looked
+  // up. `injuryType`, `state`, `sector`, `region` and `icd10` are absent because
+  // the stored value is the label, and `employerId` because the server resolves
+  // that one from a row it had already read.
+};
+
+/**
+ * The four age bands as the workspace composes them, from the edges above.
+ *
+ * "Under N" and "N and over" at the ends because those two bands are genuinely
+ * open, and an en dash between the bounds because it is a range. The upper bound
+ * of a closed band is the day before the next band opens — turning the
+ * document's half-open intervals into the closed ones a reader expects, which is
+ * a rendering rather than a rule.
+ */
+const AGE_BAND_LABEL: Record<string, string> = {
+  youngest: `Under ${String(AGE_YOUNGER_MIN)}`,
+  younger: `${String(AGE_YOUNGER_MIN)}–${String(AGE_OLDER_MIN - 1)}`,
+  older: `${String(AGE_OLDER_MIN)}–${String(AGE_OLDEST_MIN - 1)}`,
+  oldest: `${String(AGE_OLDEST_MIN)} and over`,
+};
+
+/** The injured worker of a seeded claim — the join two dimensions need. */
+function workerOf(claim: SeedClaim): SeedEmployee {
+  const employee = seed.employees.find((row) => row.employee_id === claim.employee_id);
+  if (!employee) throw new Error(`no seeded employee ${claim.employee_id}`);
+  return employee;
+}
+
+/** One dimension, restated against the surface it has to reconcile with. */
+function matchesDimension(
+  claim: SeedClaim,
+  dimension: SegmentationDimension,
+  value: string,
+): boolean {
+  switch (dimension) {
+    // The one registered `risk` band — the High Risk card's, the severity
+    // donut's and the trend cohort's, so a segmentation by `high` and a slice of
+    // that donut are one band rather than two readings of one score.
+    case "severityBand":
+      return riskBand(claim.severity_score) === value;
+    // The exact stored strings, with no trim, case-fold or merge: canonicalizing
+    // free text is a data-quality decision with an owner, and a filter that did
+    // it would return a population no surface ever counted.
+    case "injuryType":
+      return claim.injury_type === value;
+    case "state":
+      return claim.state === value;
+    case "employerId":
+      return String(employerIdOf(claim.employer)) === value;
+    case "disability":
+      return claim.disability === value;
+    // The **employer's** attribute, reached through the join — not a column on
+    // the claim.
+    case "sector": {
+      const employer = seed.employers.find((row) => row.name === claim.employer);
+      if (!employer) throw new Error(`no seeded employer ${claim.employer}`);
+      return employer.sector === value;
+    }
+    case "region":
+      return claim.region === value;
+    // The column is `icd`; the facet names the coding system.
+    case "icd10":
+      return claim.icd === value;
+    // The **employee's** age, banded. The only dimension that is a number before
+    // it is a value, which is the whole reason it has a rule.
+    case "ageGroup":
+      return ageBand(workerOf(claim).age) === value;
+    case "gender":
+      return workerOf(claim).gender === value;
+  }
+}
+
+export interface ExpectedSegmentation {
+  /** Every claim id that survives the filter — the set the spec compares. */
+  claimIds: string[];
+  /** How many, as the bar's own sentence renders it. */
+  count: string;
+  /** The chips the bar must draw, in the server's order, as rendered text. */
+  chips: string[];
+}
+
+/**
+ * What a persona's workspace must describe under one segmentation.
+ *
+ * **Set identity, not a count.** `claimIds` is what a spec asserts the drill
+ * list against, because two populations of the same size are the failure this
+ * whole block is written to catch — and the count is published beside it only so
+ * the bar's own sentence can be compared as a *rendered string*, which is what
+ * catches a figure published on the wrong scale.
+ *
+ * Dimensions arrive spelled as the URL spells them and an unknown one is a type
+ * error rather than a silent no-op: an oracle that dropped a dimension would
+ * agree with an implementation that had dropped the same one.
+ */
+export function expectedSegmentedFor(
+  persona: { name: string; role: string },
+  filters: Segmentation = {},
+): ExpectedSegmentation {
+  const visible = claimsFor(persona.name, persona.role);
+  const matching = visible.filter((claim) =>
+    SEGMENTATION_ORDER.every((dimension) => {
+      const value = filters[dimension];
+      return value === undefined || matchesDimension(claim, dimension, value);
+    }),
+  );
+
+  const chips = SEGMENTATION_ORDER.flatMap((dimension) => {
+    const value = filters[dimension];
+    if (value === undefined) return [];
+    if (dimension === "employerId") {
+      const employer = seed.employers.find(
+        (row) => String(employerIdOf(row.name)) === value,
+      );
+      return [`${SEGMENTATION_LABEL[dimension]}: ${employer?.short_name ?? `#${value}`}`];
+    }
+    if (dimension === "ageGroup") {
+      return [`${SEGMENTATION_LABEL[dimension]}: ${AGE_BAND_LABEL[value] ?? value}`];
+    }
+    return [
+      `${SEGMENTATION_LABEL[dimension]}: ${
+        SEGMENTATION_VALUE_LABEL[dimension]?.[value] ?? value
+      }`,
+    ];
+  });
+
+  return {
+    claimIds: matching.map((claim) => claim.claim_id),
+    count: `${String(matching.length)} of ${String(visible.length)} claims match`,
+    chips,
+  };
+}
+
+/**
+ * The values one dimension carries inside a persona's book, in the picker's order.
+ *
+ * The endpoint's contract as a spec can check it: a control cannot offer a value
+ * with no claims behind it, and cannot name anything outside the caller's book.
+ * The two orders are the server's — a vocabulary keeps its declaration order
+ * because "High, Low, Medium" is a severity picker nobody can scan, and
+ * everything else sorts ascending by what is on screen, with the **value** behind
+ * it as the tie-break.
+ *
+ * **Keyed by the wire value, never by the rendered label**, and that is the half
+ * this oracle first got wrong. The server sorts `(label or value, value)` and
+ * `_ordered_values`' docstring says the tie-break exists because *two employers
+ * may share a `short_name`* — so a book holding two such employers yields two
+ * options from the server and, from a `Set` of labels, one from the oracle. The
+ * oracle would then report a **missing** option as correct, which is the exact
+ * shape of failure this whole block is written against: it cannot see the thing
+ * it agrees with. Keying by value makes the two options two entries and lets the
+ * tie-break be checked rather than merely be present.
+ *
+ * **Compared with `byCodePoint`, never `localeCompare`.** The server sorts
+ * Python `str`, which walks code points; ICU collation folds case and diacritics
+ * and puts `"a"` before `"B"` where Python puts `"B"` first. This file already
+ * ships that ruling and argues it at `byCodePoint` and at
+ * `expectedHandlerBenchmarksFor`; using a locale here was the same divergence in
+ * a second place, invisible until the first mixed-case, spaced or accented
+ * sector, region or ICD-10 value arrives.
+ */
+export function expectedDimensionValuesFor(
+  persona: { name: string; role: string },
+  dimension: SegmentationDimension,
+): string[] {
+  const declared: Partial<Record<SegmentationDimension, string[]>> = {
+    severityBand: ["high", "med", "low"],
+    ageGroup: ["youngest", "younger", "older", "oldest"],
+    disability: ["temporary", "permanent"],
+    gender: ["female", "male", "other"],
+  };
+
+  // `{wire value → what the picker renders}`, one entry per distinct value.
+  const options = new Map<string, string>();
+  for (const claim of claimsFor(persona.name, persona.role)) {
+    options.set(valueOf(claim, dimension), labelFor(claim, dimension));
+  }
+
+  const order = declared[dimension];
+  if (order !== undefined) return order.filter((value) => options.has(value)).map(
+    (value) => options.get(value) ?? value,
+  );
+  // Ascending by the string on screen, then by the value behind it — the pair,
+  // because the second key is the one that decides two employers sharing a name.
+  return [...options.entries()]
+    .sort(([valueA, shownA], [valueB, shownB]) =>
+      shownA === shownB ? byCodePoint(valueA, valueB) : byCodePoint(shownA, shownB),
+    )
+    .map(([, shown]) => shown);
+}
+
+/**
+ * One claim's **wire value** on one dimension — what the URL would carry.
+ *
+ * The twin of `labelFor` below, and they are two functions rather than one
+ * because for eight of the ten they return different strings: the picker renders
+ * "High" for the value `high` and "Boeing" for the value `2`. Keying an oracle
+ * by the label collapses distinct values that happen to read alike, which is the
+ * failure `expectedDimensionValuesFor` records.
+ */
+function valueOf(claim: SeedClaim, dimension: SegmentationDimension): string {
+  switch (dimension) {
+    case "severityBand":
+      return riskBand(claim.severity_score);
+    case "ageGroup":
+      return ageBand(workerOf(claim).age);
+    case "gender":
+      return workerOf(claim).gender;
+    case "disability":
+      return claim.disability;
+    case "injuryType":
+      return claim.injury_type;
+    case "state":
+      return claim.state;
+    case "region":
+      return claim.region;
+    case "icd10":
+      return claim.icd;
+    case "sector":
+      return employerRowOf(claim).sector;
+    case "employerId":
+      return String(employerIdOf(employerRowOf(claim).name));
+  }
+}
+
+/** The employer row behind a claim — the join three dimensions need. */
+function employerRowOf(claim: SeedClaim): (typeof seed.employers)[number] {
+  const employer = seed.employers.find((row) => row.name === claim.employer);
+  if (!employer) throw new Error(`no seeded employer ${claim.employer}`);
+  return employer;
+}
+
+/** One claim's value on one dimension, as the picker renders it. */
+function labelFor(claim: SeedClaim, dimension: SegmentationDimension): string {
+  switch (dimension) {
+    case "severityBand":
+      return SEGMENTATION_VALUE_LABEL.severityBand?.[riskBand(claim.severity_score)] ?? "";
+    case "ageGroup":
+      return AGE_BAND_LABEL[ageBand(workerOf(claim).age)];
+    case "gender":
+      return SEGMENTATION_VALUE_LABEL.gender?.[workerOf(claim).gender] ?? "";
+    case "disability":
+      return SEGMENTATION_VALUE_LABEL.disability?.[claim.disability] ?? "";
+    case "injuryType":
+      return claim.injury_type;
+    case "state":
+      return claim.state;
+    case "region":
+      return claim.region;
+    case "icd10":
+      return claim.icd;
+    case "sector":
+      return employerRowOf(claim).sector;
+    // The one dimension whose label is neither the stored value nor this file's
+    // copy: the server resolves it from the joined row, because an id is not a
+    // name and nothing in a browser can turn `2` into "Boeing" on a cold load.
+    case "employerId":
+      return employerRowOf(claim).short_name;
+  }
+}
+
+/**
+ * The workspace URL for one section under one segmentation.
+ *
+ * Built with `URLSearchParams` in the chip row's order, so a spec's link and the
+ * app's own are one string — and the `filter[…]` spelling is the drill list's,
+ * which is what makes the segmentation survive a click into it.
+ */
+export function workspaceUrl(path: string, filters: Segmentation = {}): string {
+  const params = new URLSearchParams();
+  for (const dimension of SEGMENTATION_ORDER) {
+    const value = filters[dimension];
+    if (value !== undefined) params.set(`filter[${dimension}]`, value);
+  }
+  const query = params.toString();
+  return query === "" ? path : `${path}?${query}`;
 }

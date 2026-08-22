@@ -27,6 +27,21 @@
  * the frame: a shell that knew which personas get a nav would be the place the
  * *next* section's visibility rule went too.
  *
+ * **Story 7.3 mounts the segmentation bar, and only inside the analyst's
+ * sections.** `SegmentationSection` renders `SegmentationBar` on the routes
+ * `WorkspaceNav` calls sections and `null` everywhere else, so a supervisor's
+ * shell is still the element tree Epic 5 shipped with nothing inserted into it,
+ * and the analyst's *portfolio* view — which is Epic 5's dashboard, scoped for
+ * them — is untouched as well. The decision lives beside the nav's rather than
+ * in this file for `WorkspaceNav`'s recorded reason: a shell that knew which
+ * routes get a filter bar would be the place the *next* section's visibility rule
+ * went too.
+ *
+ * It sits **inside `<main>` and above the `<Outlet/>`**, which is where a filter
+ * for the content below it belongs: outside the landmark it would be a control
+ * announced before the region it controls, and below the outlet it would be a
+ * bar the reader meets after the figures it decided.
+ *
  * **`h-screen` plus `min-h-0`, exactly as `WorkspaceShell` has it.** The pair
  * is what makes `overflow-y-auto` on `<main>` mean anything: with `min-h-screen`
  * on the frame and no `min-h-0` on the flex child, `main` has no height to
@@ -38,7 +53,7 @@
 import { Outlet } from "react-router";
 
 import { TopBar } from "./TopBar";
-import { WorkspaceNav } from "./WorkspaceNav";
+import { SegmentationSection, WorkspaceNav } from "./WorkspaceNav";
 
 export function DashboardShell() {
   return (
@@ -46,6 +61,7 @@ export function DashboardShell() {
       <TopBar />
       <WorkspaceNav />
       <main className="min-h-0 flex-1 overflow-y-auto px-[18px] pt-4 pb-10">
+        <SegmentationSection />
         <Outlet />
       </main>
     </div>

@@ -190,6 +190,14 @@ async def select_claim_columns_with_employer(
     the third member of the projection family: same scope predicate, same
     `claim_id` ordering, one labelled column added.
 
+    **It stays a two-table read**, and Story 7.3 is where that became a decision
+    rather than a fact: the Trends section needed the worker's age and gender for
+    the segmentation filter, and adding an `employee` join *here* would have
+    changed the statement `charts.portfolio_charts` runs for the benefit of a
+    caller that shares nothing with it. So there is a fourth member —
+    `select_claim_columns_with_employer_and_employee` — and this one is
+    untouched.
+
     **Un-aliased, and that is the difference from
     `select_claim_columns_with_handler` rather than an oversight.** That
     function aliases because `AppUser` is reachable from `claim` by more than
@@ -214,6 +222,57 @@ async def select_claim_columns_with_employer(
     rows = await db.execute(
         sa.select(*columns, Employer.short_name.label("employer_short_name"))
         .select_from(Claim)
+        .join(Employer, Claim.employer_id == Employer.id)
+        .where(employer_scope(ctx))
+        .order_by(Claim.claim_id)
+    )
+    return rows.all()
+
+
+async def select_claim_columns_with_employer_and_employee(
+    db: AsyncSession,
+    ctx: CallerContext,
+    columns: Sequence[InstrumentedAttribute[Any]],
+) -> Sequence[sa.Row[Any]]:
+    """`select_claim_columns_with_employer`, plus the injured worker's row.
+
+    Story 7.3's segmentation is workspace-wide: every analyst aggregate narrows
+    on the same ten dimensions, two of which — the worker's age band and their
+    gender — are columns of `employee`. The Trends section folds from
+    `select_claim_columns_with_employer`, which joins the employer and nothing
+    else, so it could not see either.
+
+    **A fourth member of the projection family rather than a second join added to
+    the third**, and that is the whole reason this function exists.
+    `select_claim_columns_with_employer` is shared with
+    `charts.portfolio_charts`, and giving it an `employee` join in place would
+    change the query shape of a Story 5.3 aggregate that has no use for the
+    columns — a wider plan on the supervisor dashboard to serve a filter on the
+    analyst's. `select_priority_rows`' docstring argues the same division for the
+    queue's projection: a sibling read, not a parameter on a shipped one, and no
+    existing caller's statement moves.
+
+    An **inner** join to each, for the two siblings' reason: `Claim.employee_id`
+    and `Claim.employer_id` are both non-nullable foreign keys, so an outer join
+    would only add a `None` branch that cannot happen and every consumer would
+    then have to reason about it.
+
+    `Employee` and `Employer` are both joined **un-aliased**, which is
+    `select_claim_columns_with_employer`'s ruling and `select_queue_rows`'
+    precedent: each is reachable from `claim` by exactly one foreign key, so
+    there is no second join for an un-aliased condition to widen silently.
+    `AppUser` is the table that needs an alias, and this read does not touch it.
+
+    `columns` is still the service's business and the scope predicate is still
+    this module's — the two joins add labelled columns, never rows. Which is what
+    keeps a segmentation over `employee.gender` derived from *claims in scope*
+    rather than from the workforce: there is no way to ask this function for an
+    employee with no claim in the caller's book.
+    """
+    rows = await db.execute(
+        sa.select(*columns, Employer.short_name.label("employer_short_name"))
+        .select_from(Claim)
+        .join(Employee, Claim.employee_id == Employee.id)
         .join(Employer, Claim.employer_id == Employer.id)
         .where(employer_scope(ctx))
         .order_by(Claim.claim_id)
@@ -355,19 +414,28 @@ async def select_drill_rows(
     db: AsyncSession,
     ctx: CallerContext,
 ) -> Sequence[sa.Row[Any]]:
-    """`select_queue_rows`, plus the seven columns the drill filters read.
+    """`select_queue_rows`, plus the eleven columns the drill filters read.
 
     Story 5.5's dashboard drill-through renders the *queue card* — the same
     thirteen columns, so a card opened from a KPI number looks like the card
     opened from a handler's queue — and narrows the caller's book by a whitelist
     of facets, several of which name columns no queue card shows:
     `Claim.employer_id`, `Claim.handler_id`, `Claim.state` and
-    `Claim.osha_recordable` from that story, and `Claim.doi`,
-    `Claim.disability` and `Employer.sector` from Story 7.2's trend drills.
-    Those seven and nothing else — `Claim.froi_date` is already in
-    `QUEUE_ROW_COLUMNS`, because a queue card shows the claim's age, and
-    `filter[fnolFrom]` reads the same column the age is derived from rather
-    than asking for a second copy of it.
+    `Claim.osha_recordable` from that story, `Claim.doi`, `Claim.disability`
+    and `Employer.sector` from Story 7.2's trend drills, and `Claim.region`,
+    `Claim.icd`, `Employee.age` and `Employee.gender` from Story 7.3's
+    segmentation vocabulary. Those eleven and nothing else — `Claim.froi_date`
+    is already in `QUEUE_ROW_COLUMNS`, because a queue card shows the claim's
+    age, and `filter[fnolFrom]` reads the same column the age is derived from
+    rather than asking for a second copy of it.
+
+    **Story 7.3's four ride joins that are already here**, exactly as
+    `Employer.sector` does: `region` and `icd` are columns of `claim` that
+    nothing in this codebase had read, and `age` and `gender` come from the
+    `employee` join every queue card already makes for the worker's name. Four
+    more columns in one SELECT, no extra query, no extra join, and no widening
+    of `employer_scope` — a segmentation naming a region no claim in the
+    caller's book carries returns an empty page, never a row.
 
     **`Employer.sector` rides the join that is already here**, which is the
     difference between a facet and a read: the employer is joined for its short
@@ -392,14 +460,18 @@ async def select_drill_rows(
     would put back the seam `select_queue_rows` refuses.
 
     **No `predicate` parameter either, and here the argument is sharper than it
-    is there.** Five of the twenty facets read *derived* values —
+    is there.** Six of the twenty-four facets read *derived* values —
     `severityBand` is `derivations.risk`, `fraudFlagged` and `fraudBand` are the
     registered fraud rule and its bands, `siuReview` and `priority` are the
-    worklist's own predicates — and the ordering is Python arithmetic over a JDM
-    parameter block. (Twelve when Story 5.5 wrote this paragraph; 7.1 appended
-    two and 7.2 six, and the ratio moved because every one of those eight
-    narrows on a stored column. The argument did not: one derived facet is
-    enough to split the filter set across two tiers.) A SQL narrowing
+    worklist's own predicates, and `ageGroup` is `derivations.age_band` over
+    `employee.age` — and the ordering is Python arithmetic over a JDM parameter
+    block. (Twelve facets when Story 5.5 wrote this paragraph; 7.1 appended two,
+    7.2 six and 7.3 four, and the ratio moved because eleven of those twelve
+    narrow on a stored column. The argument did not: one derived facet is enough
+    to split the filter set across two tiers, and Story 7.3's workspace-wide
+    segmentation is the case that made it concrete — it reuses this vocabulary
+    whole, two of its ten dimensions are derived, and it is applied in
+    `services/worklist/segmentation.py` for exactly this reason.) A SQL narrowing
     would therefore put some of the filter set here and the rest in
     `services/worklist`, which is the split AD-10 exists to prevent, and which
     would make "the list reconciles with the number that opened it" a property
@@ -441,6 +513,10 @@ async def select_drill_rows(
             Claim.doi,
             Claim.disability,
             Employer.sector,
+            Claim.region,
+            Claim.icd,
+            Employee.age,
+            Employee.gender,
         )
         .select_from(Claim)
         .join(Employee, Claim.employee_id == Employee.id)

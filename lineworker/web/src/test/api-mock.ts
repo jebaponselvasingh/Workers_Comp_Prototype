@@ -85,6 +85,16 @@ export interface StubRoutes {
    * the function form can see.
    */
   trends?: StubRouteFor;
+  /**
+   * `GET /dashboard/segmentation/values` (Story 7.3) — the control's options.
+   *
+   * A `StubRouteFor` for `trends`' reason, sharpened: the whole claim of that
+   * story is that changing a picker changes the *request* rather than
+   * re-filtering something cached, and the ten dimensions all live in the query
+   * string. A `StubRoute` could not tell `filter[sector]=Aerospace` from no
+   * filter at all, which is exactly the difference under test.
+   */
+  segmentationValues?: StubRouteFor;
   claimsQueue?: StubRouteFor;
   /**
    * `GET /claims/{id}` (Story 2.2). A function so a test can answer
@@ -1719,6 +1729,13 @@ export const DRILL_CLAIMS = {
     appliedFilters: [{ key: "severityBand", value: "high", display: null }],
     rulesVersion: 1,
     thresholdsVersion: 5,
+    // Story 7.3's three. The list publishes the same age edges the segmentation
+    // values endpoint does, from the same document, because an `ageGroup` chip's
+    // range label is composed in the browser and this is the other surface that
+    // draws one — see `DRILL_CLAIMS_AGE_BAND`.
+    ageYoungerMin: 35,
+    ageOlderMin: 45,
+    ageOldestMin: 55,
   },
 };
 
@@ -1836,6 +1853,25 @@ export const DRILL_CLAIMS_FILTERED = {
       { key: "severityBand", value: "high", display: null },
       { key: "employerId", value: "2", display: "Boeing" },
     ],
+  },
+};
+
+/**
+ * The one chip whose label is composed rather than looked up (Story 7.3).
+ *
+ * `filter[ageGroup]=older` alongside the edges the same payload publishes. It
+ * exists because the label a reader sees — "45–54" — is built in the browser
+ * from `ageOlderMin` and `ageOldestMin`, so a fixture carrying the chip without
+ * the edges, or the edges without the chip, could not tell a list composing the
+ * label from one printing the ordinal word. The values are the same three the
+ * segmentation fixture carries, so the workspace's chip and this list's chip are
+ * assertably one string.
+ */
+export const DRILL_CLAIMS_AGE_BAND = {
+  status: 200,
+  body: {
+    ...DRILL_CLAIMS.body,
+    appliedFilters: [{ key: "ageGroup", value: "older", display: null }],
   },
 };
 
@@ -4846,6 +4882,36 @@ export const FRAUD_RED_FLAGS_EMPTY = {
 };
 
 /**
+ * Three rate tables over a population with nothing in it.
+ *
+ * The zero-result state of the section's widest surface, and it is `total: 0`
+ * with `items: []` on all three rather than an absent breakdown: a rate table's
+ * emptiness is a fact about the population it was folded from, so the shape is
+ * the same shape and only the contents are gone. `FRAUD_PANEL_EMPTY`'s
+ * companion, and the two are used together — a segmentation that matches nothing
+ * empties every surface on the section at once, which is the state whose copy
+ * Story 7.3's AC 4 is about.
+ */
+export const FRAUD_RATES_EMPTY = {
+  status: 200,
+  body: {
+    byInjuryType: {
+      items: [],
+      totalCategories: 0,
+      truncated: false,
+      limit: 8,
+      sort: "rate_desc",
+    },
+    byEmployer: { items: [], totalCategories: 0, truncated: false, limit: null, sort: "rate_desc" },
+    byHandler: { items: [], totalCategories: 0, truncated: false, limit: null, sort: "rate_desc" },
+    claimsInScope: 0,
+    flaggedClaims: 0,
+    fraudFlagScoreMin: 55,
+    rulesVersion: 6,
+  },
+};
+
+/**
  * The **other** empty: a fully analysed book that raised nothing.
  *
  * The contrast fixture `FRAUD_RED_FLAGS_EMPTY` cannot provide, and the reason
@@ -4924,6 +4990,12 @@ export const TRENDS = {
     bucketCount: 4,
     claimsInScope: 100,
     claimsInWindow: 23,
+    buckets: [
+      { bucketKey: "2026-01", bucketLabel: "Jan 2026", bucketFrom: "2026-01-01", bucketTo: "2026-01-31" },
+      { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28" },
+      { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31" },
+      { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30" },
+    ],
     series: [
       {
         metric: "volume",
@@ -5049,6 +5121,12 @@ export const TRENDS_BY_SEVERITY = {
     bucketCount: 4,
     claimsInScope: 100,
     claimsInWindow: 23,
+    buckets: [
+      { bucketKey: "2026-01", bucketLabel: "Jan 2026", bucketFrom: "2026-01-01", bucketTo: "2026-01-31" },
+      { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28" },
+      { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31" },
+      { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30" },
+    ],
     series: [
       {
         metric: "volume",
@@ -5328,6 +5406,11 @@ export const TRENDS_CONTRAST = {
     bucketCount: 3,
     claimsInScope: 27,
     claimsInWindow: 24,
+    buckets: [
+      { bucketKey: "2026-Q1", bucketLabel: "Q1 2026", bucketFrom: "2026-01-01", bucketTo: "2026-03-31" },
+      { bucketKey: "2026-Q2", bucketLabel: "Q2 2026", bucketFrom: "2026-04-01", bucketTo: "2026-06-30" },
+      { bucketKey: "2026-Q3", bucketLabel: "Q3 2026", bucketFrom: "2026-07-01", bucketTo: "2026-09-30" },
+    ],
     series: [
       {
         metric: "volume",
@@ -5503,6 +5586,11 @@ export const TRENDS_BY_SECTOR = {
     bucketCount: 3,
     claimsInScope: 100,
     claimsInWindow: 23,
+    buckets: [
+      { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28" },
+      { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31" },
+      { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30" },
+    ],
     series: [
       {
         metric: "volume",
@@ -5753,6 +5841,11 @@ export const TRENDS_BY_SECTOR_RERANKED = {
     bucketCount: 3,
     claimsInScope: 100,
     claimsInWindow: 31,
+    buckets: [
+      { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28" },
+      { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31" },
+      { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30" },
+    ],
     series: [
       {
         metric: "volume",
@@ -6002,6 +6095,12 @@ export const TRENDS_EMPTY = {
     bucketCount: 4,
     claimsInScope: 0,
     claimsInWindow: 0,
+    buckets: [
+      { bucketKey: "2026-01", bucketLabel: "Jan 2026", bucketFrom: "2026-01-01", bucketTo: "2026-01-31" },
+      { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28" },
+      { bucketKey: "2026-03", bucketLabel: "Mar 2026", bucketFrom: "2026-03-01", bucketTo: "2026-03-31" },
+      { bucketKey: "2026-04", bucketLabel: "Apr 2026", bucketFrom: "2026-04-01", bucketTo: "2026-04-30" },
+    ],
     series: [
       {
         metric: "volume",
@@ -6121,6 +6220,10 @@ export const TRENDS_NONE_SETTLED = {
     bucketCount: 2,
     claimsInScope: 100,
     claimsInWindow: 23,
+    buckets: [
+      { bucketKey: "2026-01", bucketLabel: "Jan 2026", bucketFrom: "2026-01-01", bucketTo: "2026-01-31" },
+      { bucketKey: "2026-02", bucketLabel: "Feb 2026", bucketFrom: "2026-02-01", bucketTo: "2026-02-28" },
+    ],
     series: [
       {
         metric: "volume",
@@ -6200,6 +6303,155 @@ export const TRENDS_NONE_SETTLED = {
   },
 };
 
+
+/**
+ * `GET /dashboard/segmentation/values` — ten dimensions over a small book.
+ *
+ * Deliberately *not* the seeded portfolio's vocabulary: three sectors, two
+ * regions, two bands and two age groups is enough to assert an order, a chip and
+ * an empty option list, and small enough that a reader can check the fixture
+ * against an assertion by eye. The two derived dimensions carry only the members
+ * some claim is in — `severityBand` has no `low` and `ageGroup` no `oldest` —
+ * which is the endpoint's own rule and the thing a hardcoded vocabulary would
+ * get wrong.
+ *
+ * `employerId` is the one dimension whose options carry labels, and its two are
+ * out of id order on purpose: the server sorts them by the label a reader sees,
+ * so a fixture in id order would pass against a component that re-sorted.
+ */
+export const SEGMENTATION_VALUES = {
+  status: 200,
+  body: {
+    dimensions: [
+      {
+        key: "severityBand",
+        values: [
+          { value: "high", label: null },
+          { value: "med", label: null },
+        ],
+      },
+      { key: "injuryType", values: [{ value: "Fracture", label: null }] },
+      { key: "state", values: [{ value: "MI", label: null }] },
+      {
+        key: "employerId",
+        values: [
+          { value: "4", label: "Boeing" },
+          { value: "1", label: "Caterpillar" },
+        ],
+      },
+      { key: "disability", values: [{ value: "temporary", label: null }] },
+      {
+        key: "sector",
+        values: [
+          { value: "Aerospace", label: null },
+          { value: "Automotive", label: null },
+          { value: "Heavy Equipment", label: null },
+        ],
+      },
+      {
+        key: "region",
+        values: [
+          { value: "Midwest", label: null },
+          { value: "Northwest", label: null },
+        ],
+      },
+      { key: "icd10", values: [{ value: "W24.0XXA", label: null }] },
+      {
+        key: "ageGroup",
+        values: [
+          { value: "younger", label: null },
+          { value: "older", label: null },
+        ],
+      },
+      { key: "gender", values: [{ value: "female", label: null }] },
+    ],
+    appliedFilters: [],
+    claimsInScope: 100,
+    claimsMatching: 100,
+    ageYoungerMin: 35,
+    ageOlderMin: 45,
+    ageOldestMin: 55,
+    rulesVersion: 7,
+  },
+};
+
+/**
+ * The same book, narrowed by two dimensions — one column and one derived band.
+ *
+ * The **options are unchanged** and only the chips and the count move, which is
+ * the endpoint's central asymmetry: a picker cut by its own filter could not be
+ * used to widen one. A fixture that also shrank the options would let a
+ * component that narrowed them locally pass.
+ */
+export const SEGMENTATION_VALUES_FILTERED = {
+  status: 200,
+  body: {
+    ...SEGMENTATION_VALUES.body,
+    appliedFilters: [
+      { key: "severityBand", value: "high", display: null },
+      { key: "sector", value: "Aerospace", display: null },
+    ],
+    claimsMatching: 6,
+  },
+};
+
+/** A filter no claim satisfies — the zero-result state, with its chips intact. */
+export const SEGMENTATION_VALUES_EMPTY = {
+  status: 200,
+  body: {
+    ...SEGMENTATION_VALUES.body,
+    appliedFilters: [
+      { key: "state", value: "MI", display: null },
+      { key: "sector", value: "Aerospace", display: null },
+    ],
+    claimsMatching: 0,
+  },
+};
+
+/**
+ * A dimension whose value no claim in the book carries.
+ *
+ * `?filter[sector]=Nonexistent` — a hand-edited URL, or a link written while an
+ * employer still had an open claim. The server read it, narrowed by it and
+ * published the chip, so `claimsMatching` is zero and `appliedFilters` names it;
+ * what the **options** do not contain is that value, because they are folded
+ * from rows and no row carries it.
+ *
+ * That combination is the whole fixture: it is the one state where the chip row
+ * and the picker for the same dimension can disagree, and a `<select>` whose
+ * value is not one of its options renders as no selection at all — so a bar
+ * without the transient option shows "Any" for a filter every figure beside it
+ * is narrowed by.
+ */
+export const SEGMENTATION_VALUES_OUT_OF_BOOK = {
+  status: 200,
+  body: {
+    ...SEGMENTATION_VALUES.body,
+    appliedFilters: [{ key: "sector", value: "Nonexistent", display: null }],
+    claimsMatching: 0,
+  },
+};
+
+/**
+ * The 422 a stale link earns, naming the parameter the server refused.
+ *
+ * `errors[].loc` is FastAPI's own shape and is what the bar reads to clear one
+ * dimension: the browser holds no vocabulary for these enums, deliberately, so
+ * the server naming the parameter is the only thing that can decide which filter
+ * did not survive.
+ */
+export const SEGMENTATION_VALUES_REFUSED = {
+  status: 422,
+  body: {
+    type: "/problems/validation-error",
+    title: "Unprocessable Content",
+    status: 422,
+    detail: "The request body or parameters failed validation.",
+    errors: [
+      { loc: ["query", "filter[gender]"], msg: "Input should be 'female', 'male' or 'other'" },
+    ],
+  },
+};
 
 export function stubApi(routes: StubRoutes): void {
   // Story 6.4: each install starts a fresh recording, so a test never reads the
@@ -6294,6 +6546,13 @@ export function stubApi(routes: StubRoutes): void {
         // asked, which is what every test that does not change a control wants.
         if (url.includes("/api/dashboard/trends")) {
           return answerFor(routes.trends ?? TRENDS, url);
+        }
+        // Story 7.3's. Disjoint from every path above and from
+        // `/api/dashboard/claims` below, so the position is readability rather
+        // than routing — and `answerFor` because the ten dimensions are in the
+        // query string and a stub has to be able to see them.
+        if (url.includes("/api/dashboard/segmentation/values")) {
+          return answerFor(routes.segmentationValues ?? SEGMENTATION_VALUES, url);
         }
         if (url.includes("/api/dashboard/claims")) {
           return answerFor(routes.drillClaims ?? DRILL_CLAIMS, url);

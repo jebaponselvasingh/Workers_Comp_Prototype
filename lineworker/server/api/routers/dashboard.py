@@ -78,7 +78,7 @@ from collections.abc import Mapping
 from datetime import date, datetime
 from typing import Annotated, Final
 
-from fastapi import APIRouter, Query, Response, status
+from fastapi import APIRouter, Depends, Query, Response, status
 
 from agents.schemas import read_fraud_clauses
 from api.deps import CallerContextDep, DbDep, SettingsDep
@@ -86,7 +86,7 @@ from api.errors import PROBLEM_CONTENT_TYPE, ProblemDocument, ProblemException
 from api.routers.auth import UNAUTHENTICATED_RESPONSE
 from api.routers.stats import SlaMetricResponse, SlaStripResponse
 from api.schemas import ApiModel
-from data.models.enums import Disability, ReturnStatus, Stage
+from data.models.enums import Disability, Gender, ReturnStatus, Stage
 from rules.parameters import (
     handler_performance_for,
     thresholds_for,
@@ -94,7 +94,7 @@ from rules.parameters import (
     weights_for,
     worklist_actions_for,
 )
-from services.derivations import ComplexityBand, CycleStatus, FraudBand, RiskBand
+from services.derivations import AgeBand, ComplexityBand, CycleStatus, FraudBand, RiskBand
 from services.worklist import (
     BenchmarksNotPermitted,
     DrillFilters,
@@ -107,6 +107,7 @@ from services.worklist import (
     InvalidCursor,
     PortfolioTrends,
     RateBreakdown,
+    Segmentation,
     TrendAnchor,
     TrendCohort,
     TrendGrain,
@@ -124,9 +125,11 @@ from services.worklist import (
     priority_claims,
     require_benchmarks_access,
     require_fraud_analytics_access,
+    segmentation_values,
 )
 from services.worklist.charts import CategoryCount, Distribution, EmployerPaid, LabelCount
 from services.worklist.fraud import HandlerCount
+from services.worklist.segmentation import DimensionValues
 from services.worklist.sla import SlaMetric, SlaMetricKey
 
 router = APIRouter(tags=["dashboard"])
@@ -1143,12 +1146,34 @@ class DrillClaimsResponse(ApiModel):
     the four sibling payloads they ride along unrendered; what would be wrong is
     claiming the screen states them.
 
-    **No thresholds on this payload**, unlike its four siblings, and the absence
-    is deliberate: nothing here quotes one. The severity band arrives banded per
-    row, the fraud flag arrives decided, and a caption saying "Severity ≥ N"
-    belongs to the card that was clicked rather than to the list it opened.
-    Publishing them anyway would be putting every ingredient of a re-banding on
-    an object whose rows are already banded.
+    **No thresholds a figure was produced at**, unlike its four siblings, and the
+    absence is deliberate: nothing here quotes one. The severity band arrives
+    banded per row, the fraud flag arrives decided, and a caption saying
+    "Severity ≥ N" belongs to the card that was clicked rather than to the list it
+    opened. Publishing them anyway would be putting every ingredient of a
+    re-banding on an object whose rows are already banded.
+
+    **The three age edges are the one exception, and they are on this payload for
+    a chip rather than for a figure (Story 7.3).** `AgeBand`'s members are ordinal
+    words carrying no numbers at all — deliberately, so that moving an edge in
+    `derivation_thresholds` cannot leave a member name asserting the old one — so
+    the *range of years* a chip shows can only ever be composed in the browser
+    from the document's own cut-offs. That chip is drawn from `appliedFilters`
+    *here*, on a list an analyst reaches by clicking a chart with
+    `filter[ageGroup]` active, and without the edges it read "Age group: older"
+    one click after reading that range on the workspace's own bar — one value
+    under two names, which is precisely what Story 7.3's "one vocabulary" claim
+    denies.
+
+    The alternative was a resolved `display` string decided server-side, and it
+    is refused for `DimensionValueResponse`'s recorded reason: a label composed
+    in Python would be a *second* copy of a value derived from a rule document,
+    free to disagree with the one the workspace's own bar composes. Three
+    integers from the document this route already loads, composed once in
+    `segmentation/ageBands.ts`, is one rule with one renderer. They are
+    unconditional rather than sent only when `filter[ageGroup]` is set, because a
+    field that appears and disappears is a shape a client has to branch on for a
+    caption.
 
     `nextCursor` is null exactly when the list is finished — never "null because
     this page came back short", which would strand a tail `total` has already
@@ -1161,6 +1186,9 @@ class DrillClaimsResponse(ApiModel):
     applied_filters: list[AppliedFilterResponse]
     rules_version: int
     thresholds_version: int
+    age_younger_min: int
+    age_older_min: int
+    age_oldest_min: int
 
 
 @router.get(
@@ -1330,6 +1358,42 @@ async def drill_claims(  # noqa: PLR0913 - one parameter per published facet; se
             ),
         ),
     ] = None,
+    region: Annotated[
+        str | None,
+        Query(
+            alias="filter[region]",
+            description=(
+                "The operating region the claim's plant sits in, matched as the "
+                "exact stored string — a different column from `filter[state]`, "
+                "which is the jurisdiction a benefit is calculated under."
+            ),
+        ),
+    ] = None,
+    icd10: Annotated[
+        str | None,
+        Query(
+            alias="filter[icd10]",
+            description=(
+                "The claim's ICD-10 code, matched as the exact stored string. The "
+                "column is `claim.icd`; the facet names the coding system."
+            ),
+        ),
+    ] = None,
+    age_group: Annotated[
+        AgeBand | None,
+        Query(
+            alias="filter[ageGroup]",
+            description=(
+                "The registered `age_band` of the injured worker's age. Ordinal "
+                "words rather than ranges: the edges live in `derivation_thresholds` "
+                "and are published on `/dashboard/segmentation/values`."
+            ),
+        ),
+    ] = None,
+    gender: Annotated[
+        Gender | None,
+        Query(alias="filter[gender]", description="The injured worker's gender."),
+    ] = None,
     cursor: Annotated[
         str | None,
         Query(description="An opaque `nextCursor` from a previous response."),
@@ -1337,9 +1401,9 @@ async def drill_claims(  # noqa: PLR0913 - one parameter per published facet; se
 ) -> DrillClaimsResponse:
     """The claims behind a KPI card, a chart segment, a handler row or a worklist.
 
-    ## Twenty-one parameters, and not one of them is a scope
+    ## Twenty-five parameters, and not one of them is a scope
 
-    Twenty facets and a cursor. Every facet is a *narrowing* applied after
+    Twenty-four facets and a cursor. Every facet is a *narrowing* applied after
     `employer_scope(ctx)` has already decided which rows exist, so
     `filter[employerId]` and `filter[handlerId]` intersect the caller's book and
     can never widen it: a scoped supervisor naming an employer outside hers gets
@@ -1368,8 +1432,35 @@ async def drill_claims(  # noqa: PLR0913 - one parameter per published facet; se
     This route intersects **independent facets**: a supervisor drills into High
     Risk, then narrows to one employer, then to litigated claims, and each is a
     separate dimension of the same set. That is what the architecture's list
-    convention spells with brackets, and it is why the twenty arrive as twenty
-    parameters rather than as one enum.
+    convention spells with brackets, and it is why the twenty-four arrive as
+    twenty-four parameters rather than as one enum.
+
+    ## Story 7.3 adds four facets and changes none
+
+    `filter[region]`, `filter[icd10]`, `filter[ageGroup]` and `filter[gender]`,
+    **appended** for the reason 7.1's two and 7.2's six were: `appliedFilters` is
+    the chip row's order and it is read off `DrillFilters`' field order, so
+    inserting `filter[gender]` beside `filter[state]` — where it reads more
+    naturally — would silently re-order the chips on every drill-through URL
+    anybody has already shared.
+
+    They are not this surface's own click targets. They are the tail of the
+    *segmentation* vocabulary the analyst workspace narrows by, and the whole
+    point of them arriving here is that the workspace and this list say the same
+    words: an analyst filtering by sector and gender clicks a chart segment and
+    lands on this route with those two parameters intact plus the slice's own, as
+    three independently clearable chips. `services/worklist/segmentation.py`
+    asserts the subset relationship at import so the two vocabularies cannot come
+    apart.
+
+    The route stays **ungated** with the four additions, and that is worth
+    checking rather than assuming: none of them publishes a figure about a named
+    person, and the `filter[handlerId]` gate below is unchanged. `filter[gender]`
+    is the one to look twice at — it narrows on an attribute of the *injured
+    worker* — and it is not a figure about a colleague: the rows it returns are
+    claims this session can already open one at a time, and the payload names
+    nobody. It is a segmentation dimension the story's AC lists by name, over a
+    column the caller's own case files already show.
 
     ## Story 7.2 adds six facets and changes none
 
@@ -1493,6 +1584,10 @@ async def drill_claims(  # noqa: PLR0913 - one parameter per published facet; se
         doi_to=doi_to,
         disability=disability,
         sector=sector,
+        region=region,
+        icd10=icd10,
+        age_group=age_group,
+        gender=gender,
     )
     try:
         page = await drill_through_claims(db, ctx, thresholds, weights, filters, cursor=cursor)
@@ -1545,6 +1640,14 @@ async def drill_claims(  # noqa: PLR0913 - one parameter per published facet; se
         ],
         rules_version=page.rules_version,
         thresholds_version=page.thresholds_version,
+        # Read off the block this route already loaded, and off nothing else —
+        # `segmentation_values` makes the same read for the same reason and
+        # records it: these three are not a rule any figure here was produced at,
+        # they are the material an `ageGroup` chip's range label is composed
+        # from. See `DrillClaimsResponse`.
+        age_younger_min=thresholds.age_younger_min,
+        age_older_min=thresholds.age_older_min,
+        age_oldest_min=thresholds.age_oldest_min,
     )
 
 
@@ -1595,6 +1698,165 @@ def _fraud_forbidden(exc: FraudAnalyticsNotPermitted) -> ProblemException:
         type_="/problems/fraud-analytics-not-permitted",
         headers={"Cache-Control": "no-store"},
     )
+
+
+# --- Story 7.3: the analyst workspace's segmentation ---------------------
+#
+# **Declared here, above the sections that take it, and that is the only reason
+# it is not at the bottom of the file with the rest of Story 7.3.** Every other
+# story's block sits after the ones before it, so a reader scrolls through the
+# router in the order the console was built. A FastAPI dependency is evaluated
+# when the decorated function is *defined*, so this one has to precede
+# `/dashboard/fraud`, which is Story 7.1's. The values endpoint it also serves is
+# at the end of the file, where 7.3's own section belongs.
+
+
+async def _segmentation(  # noqa: PLR0913 - one parameter per published dimension; see below
+    severity_band: Annotated[
+        RiskBand | None,
+        Query(
+            alias="filter[severityBand]",
+            description="The registered `risk` band — the same one the High Risk card counts.",
+        ),
+    ] = None,
+    injury_type: Annotated[
+        str | None,
+        Query(
+            alias="filter[injuryType]",
+            description=(
+                "The claim's injury type, matched as the exact stored string — no "
+                "trimming, case-folding or merging."
+            ),
+        ),
+    ] = None,
+    state: Annotated[
+        str | None,
+        Query(
+            alias="filter[state]",
+            description="The claim's jurisdiction, matched exactly. Not the employer's region.",
+        ),
+    ] = None,
+    employer_id: Annotated[
+        int | None,
+        Query(
+            alias="filter[employerId]",
+            description=(
+                "An employer's id. Intersects the caller's scope and can never widen it — "
+                "naming one outside the book empties every aggregate."
+            ),
+        ),
+    ] = None,
+    disability: Annotated[
+        Disability | None,
+        Query(alias="filter[disability]", description="The claim's disability type."),
+    ] = None,
+    sector: Annotated[
+        str | None,
+        Query(
+            alias="filter[sector]",
+            description=(
+                "The employer's sector, matched as the exact stored string. An employer "
+                "attribute, not an industry rollup."
+            ),
+        ),
+    ] = None,
+    region: Annotated[
+        str | None,
+        Query(
+            alias="filter[region]",
+            description=(
+                "The operating region the claim's plant sits in, matched exactly — a "
+                "different column from `filter[state]`, which is the jurisdiction."
+            ),
+        ),
+    ] = None,
+    icd10: Annotated[
+        str | None,
+        Query(
+            alias="filter[icd10]",
+            description="The claim's ICD-10 code, matched as the exact stored string.",
+        ),
+    ] = None,
+    age_group: Annotated[
+        AgeBand | None,
+        Query(
+            alias="filter[ageGroup]",
+            description=(
+                "The registered `age_band` of the injured worker's age. Ordinal words "
+                "rather than ranges: the edges are published on "
+                "`/dashboard/segmentation/values` and the label is composed from them."
+            ),
+        ),
+    ] = None,
+    gender: Annotated[
+        Gender | None,
+        Query(alias="filter[gender]", description="The injured worker's gender."),
+    ] = None,
+) -> Segmentation:
+    """The ten `filter[…]` dimensions, declared **once** for four routes.
+
+    A FastAPI dependency rather than ten parameters written out on each of
+    `/dashboard/fraud`, `/dashboard/fraud/rates`, `/dashboard/fraud/red-flags`,
+    `/dashboard/trends` and `/dashboard/segmentation/values`: ten parameters
+    spelled five times is five places to drift, and the drift would be silent in
+    the direction that matters — a section that spelled one alias differently
+    would ignore the workspace's filter and quietly describe the whole book under
+    a chip row saying otherwise.
+
+    **The aliases are `DrillFilters`' own**, character for character, and that is
+    the story's central claim rather than a convenience:
+    `services/worklist/segmentation.py` asserts its keys and wire spellings are a
+    subset of the drill list's at import, so the same query string narrows a
+    workspace section and the list a click into it opens. `filter[employerId]`
+    here and `filter[employerId]` on `/dashboard/claims` are one parameter with
+    two readers.
+
+    **Not one of the ten is a scope.** `filter[employerId]` is a *narrowing*
+    applied after `employer_scope(ctx)` has already decided which rows exist, so
+    a caller naming an employer outside their book gets empty aggregates, never a
+    row and never a 403 — `drill_claims`' ruling, on four more routes. There is
+    still nowhere in any of these signatures to put a user or an "as", and
+    `?scopeAll=true` remains an unknown parameter FastAPI ignores.
+
+    The **type of each parameter is the refusal**: `filter[gender]=nonsense` is a
+    422 from FastAPI's own coercion before any service runs, which is why
+    `Segmentation` holds no vocabulary check and must not grow one.
+
+    Built field by field, like every response model in this file and for the same
+    reason: the mapping from these ten parameters to the service's ten fields is
+    the place a renamed dimension should fail to compile, and a
+    `**locals()`-shaped shortcut is the place it silently would not.
+
+    **`async def`, although nothing here awaits, and that is the point.** Starlette
+    runs a *sync* dependency in a threadpool, so a plain `def` would put a thread
+    hop in front of all five analyst routes on every request — to build a frozen
+    dataclass out of ten arguments FastAPI has already coerced. Declaring it
+    `async` keeps it on the event loop, where the work it does actually belongs.
+    The rule this follows is the one the codebase already applies to its reads: a
+    dependency that touches nothing blocking is a coroutine, and a dependency that
+    blocks is what the threadpool is for.
+    """
+    return Segmentation(
+        severity_band=severity_band,
+        injury_type=injury_type,
+        state=state,
+        employer_id=employer_id,
+        disability=disability,
+        sector=sector,
+        region=region,
+        icd10=icd10,
+        age_group=age_group,
+        gender=gender,
+    )
+
+
+#: The ten dimensions as one injected argument.
+#:
+#: Named rather than spelled `Annotated[Segmentation, Depends(_segmentation)]` at
+#: five call sites, `CallerContextDep`'s idiom in `api/deps.py`: a dependency
+#: written out per route is a dependency one route can be given a different
+#: version of.
+SegmentationDep = Annotated[Segmentation, Depends(_segmentation)]
 
 
 class HandlerCountResponse(ApiModel):
@@ -1695,13 +1957,23 @@ async def fraud(
     ctx: CallerContextDep,
     db: DbDep,
     response: Response,
+    segmentation: SegmentationDep,
 ) -> FraudPanelResponse:
     """The Fraud section's headline surfaces, for whoever holds the session cookie.
 
-    `summary`'s signature exactly: no parameters at all, so there is nowhere to
-    put an employer, a user or an "as" (AD-7). The role gate below decides whether
-    this endpoint answers; the scope predicate inside the repository decides what
-    it answers, and no code on this path branches on role to widen it.
+    **Ten parameters since Story 7.3, and not one of them is a scope.** They
+    arrive as one injected `Segmentation` — see `_segmentation`, which declares
+    them once for this route and its four siblings — and every one is a
+    *narrowing* applied inside the service over rows `employer_scope(ctx)` had
+    already decided existed. The role gate below decides whether this endpoint
+    answers; the scope predicate inside the repository decides what it answers;
+    the filter decides how much of that it describes. No code on this path
+    branches on role to widen anything.
+
+    An impossible combination is a **200 with empty aggregates**, never an error:
+    the band distribution is zero-filled (a rule's vocabulary is always complete),
+    the pipeline is empty, and the three counters are zero. `DrillFilters`'
+    ruling, on a surface where a nine-dimension AND makes emptiness ordinary.
 
     ## This endpoint is gated, and the argument is not the file's usual one
 
@@ -1747,7 +2019,7 @@ async def fraud(
     # caller appears. Unreachable today — the call above already refused — which
     # is why it delegates to the same translator rather than restating it.
     try:
-        panel = await fraud_panel(db, ctx, thresholds)
+        panel = await fraud_panel(db, ctx, thresholds, segmentation)
     except FraudAnalyticsNotPermitted as exc:  # pragma: no cover - the gate answered first
         raise _fraud_forbidden(exc) from exc
 
@@ -1956,6 +2228,7 @@ async def fraud_rate_breakdowns(
     ctx: CallerContextDep,
     db: DbDep,
     response: Response,
+    segmentation: SegmentationDep,
     injury_type_sort: Annotated[
         FraudRateSort,
         Query(
@@ -1974,7 +2247,16 @@ async def fraud_rate_breakdowns(
 ) -> FraudRatesResponse:
     """Flagged-over-total by three dimensions, each independently ordered.
 
-    ## Three parameters, and not one of them is a scope
+    ## Thirteen parameters, and not one of them is a scope
+
+    Three sorts and the workspace's ten segmentation dimensions, the latter as
+    one injected `Segmentation` — see `_segmentation`. The two kinds are
+    different in what they may change: a sort re-orders rows the fold already
+    produced, and a filter decides which rows are folded at all. Both are applied
+    after the one scoped read, so neither costs a query and neither can widen the
+    caller's book.
+
+    ## The three sorts
 
     One `sort` per table, aliased in `filter[…]`'s style so the wire name and the
     parameter name are one string — the property `drill/filters.ts` rests on. Each
@@ -2021,7 +2303,7 @@ async def fraud_rate_breakdowns(
         handler=handler_sort,
     )
     try:
-        rates = await fraud_rates(db, ctx, thresholds, sorts)
+        rates = await fraud_rates(db, ctx, thresholds, sorts, segmentation)
     except FraudAnalyticsNotPermitted as exc:  # pragma: no cover - the gate answered first
         raise _fraud_forbidden(exc) from exc
 
@@ -2095,11 +2377,16 @@ class FraudRedFlagsResponse(ApiModel):
     honest answer over a set is the set. Empty when nothing was readable — which
     is when the card has no provenance line to draw and renders its empty state.
 
-    **No `rulesVersion`**, unlike every sibling payload on this dashboard, and the
-    absence is deliberate: this view reaches no rule. There is no threshold, no
-    band and no cut-off in it, so the route loads no document and there is no
-    version to name. Publishing one anyway would be claiming a provenance the
-    figures do not have.
+    **`rulesVersion` names the document that decided the *population*, not one
+    that decided a figure**, and until Story 7.3 this payload deliberately had no
+    such field — this view reaches no threshold, so publishing one would have been
+    claiming a provenance the figures did not have. That is still true of every
+    number on it. What changed is which claims those numbers are over: the
+    workspace's segmentation narrows this view like every other, and two of its
+    ten dimensions are registered derivations over `derivation_thresholds`. So the
+    version is here on that footing and the distinction is worth keeping in mind
+    when reading it beside `FraudPanelResponse`'s, which does name the document
+    four published edges came from.
     """
 
     items: list[RedFlagClauseResponse]
@@ -2112,6 +2399,7 @@ class FraudRedFlagsResponse(ApiModel):
     generated_from: datetime | None
     generated_to: datetime | None
     models: list[str]
+    rules_version: int
 
 
 @router.get(
@@ -2124,12 +2412,13 @@ async def fraud_red_flag_frequency(
     ctx: CallerContextDep,
     db: DbDep,
     response: Response,
+    segmentation: SegmentationDep,
 ) -> FraudRedFlagsResponse:
     """The red-flag frequency view, for whoever holds the session cookie.
 
-    `fraud`'s signature: no parameters at all, so there is nowhere to put a scope
-    (AD-7). Gated for that route's reason — this is the analyst workspace, and the
-    gate runs before any read.
+    `fraud`'s signature: the ten segmentation dimensions and nothing else, so
+    there is nowhere to put a scope (AD-7). Gated for that route's reason — this
+    is the analyst workspace, and the gate runs before any read.
 
     **The one thing this route hands the aggregate is a reader**, not a parameter
     block: `agents.schemas.read_fraud_clauses`, which knows what a stored fraud
@@ -2138,10 +2427,14 @@ async def fraud_red_flag_frequency(
     takes an injected `InsightGenerator` for exactly this reason. `api/` sits
     above both, which is why the injection happens here.
 
-    **No rule document is loaded here, and that is the only route in this file
-    where that sentence is true.** This view groups prose and counts claims; it
-    reaches no threshold, so there is nothing to load and nothing to publish. The
-    absence is stated because every neighbour loads one and a reader will wonder.
+    **A rule document *is* loaded here since Story 7.3, and the sentence that used
+    to sit in this paragraph was that it was not.** This view still groups prose
+    and counts claims — no figure on it is produced at a threshold — but *which*
+    claims it describes is now the segmentation's answer, and two of the ten
+    dimensions are registered derivations over `derivation_thresholds`. So the
+    block is loaded for the population rather than for a figure, and
+    `rulesVersion` is published on that footing: it names the document that
+    decided which claims were counted, not one that decided a number.
 
     **Read-only over `services/rag`'s table (AD-12).** Nothing on this path writes,
     and nothing on it triggers a refresh: a cold cache answers 200 with an empty
@@ -2156,9 +2449,17 @@ async def fraud_red_flag_frequency(
         require_fraud_analytics_access(ctx)
     except FraudAnalyticsNotPermitted as exc:
         raise _fraud_forbidden(exc) from exc
+    # **A rule document is read on this route, and until Story 7.3 none was.**
+    # Not for a figure — nothing this view publishes was produced at a threshold —
+    # but for the *population*: two of the ten segmentation dimensions are
+    # registered derivations over `derivation_thresholds`, so which claims the
+    # ranking describes is now this document's answer. Loaded here and handed
+    # down, `portfolio_summary`'s rule, and after the gate so no read precedes a
+    # refusal.
+    thresholds = await thresholds_for(db)
     # Belt and braces — `fraud`'s note. Unreachable today.
     try:
-        ranked = await fraud_red_flags(db, ctx, read_fraud_clauses)
+        ranked = await fraud_red_flags(db, ctx, read_fraud_clauses, thresholds, segmentation)
     except FraudAnalyticsNotPermitted as exc:  # pragma: no cover - the gate answered first
         raise _fraud_forbidden(exc) from exc
 
@@ -2173,6 +2474,7 @@ async def fraud_red_flag_frequency(
         generated_from=ranked.generated_from,
         generated_to=ranked.generated_to,
         models=list(ranked.models),
+        rules_version=thresholds.version,
     )
 
 
@@ -2290,6 +2592,36 @@ class TrendPointResponse(ApiModel):
     partial: bool
 
 
+class TrendBucketResponse(ApiModel):
+    """One period on the x-axis: how to key it, how to name it, what it covers.
+
+    **The window's vocabulary, published independently of the series**, and it
+    exists because the series could not carry it reliably: an empty window under a
+    cohort split publishes *no series at all*, so a client reading the periods off
+    a series' points found none, and the drill period `<select>` and its "View
+    claims" button both went dead — while the same empty window under
+    `cohort=none` left them live, because zero-filled points still exist. The
+    availability of the keyboard's only drill path depended on an unrelated
+    selector, which was tolerable while an empty result was rare and is not now
+    that a nine-dimension AND makes one ordinary.
+
+    The four fields are `TrendPointResponse`'s first four, and they are the same
+    four values — a point still carries them, because a drill is *per point* and
+    looking a boundary up in a parallel array is one index slip away from opening
+    the claims behind the month next door. This list is what a **control** reads;
+    a point is what a **click** reads.
+
+    `bucketFrom` and `bucketTo` are **inclusive** bounds and are what
+    `filter[fnolFrom]`/`filter[fnolTo]` are filled from, so a bucket's drill
+    returns exactly the claims its point was folded from.
+    """
+
+    bucket_key: str
+    bucket_label: str
+    bucket_from: date
+    bucket_to: date
+
+
 class TrendSeriesResponse(ApiModel):
     """One line on one chart: which metric, which cohort, and what a caption needs.
 
@@ -2366,10 +2698,25 @@ class PortfolioTrendsResponse(ApiModel):
     request is made.
 
     **`claimsInScope` and `claimsInWindow` are two different facts**, and the
-    difference belongs on screen: the first is the caller's whole book, the second
-    is how much of it the chosen window covers. A window describing eleven of a
-    hundred claims is not wrong, but a reader who thinks it describes a hundred
-    is.
+    difference belongs on screen: the first is the population these figures
+    describe, the second is how much of it the chosen window covers. A window
+    describing eleven of a hundred claims is not wrong, but a reader who thinks
+    it describes a hundred is.
+
+    **Since Story 7.3 `claimsInScope` is the *segmented* book**, not the caller's
+    whole one: with a filter applied every figure here describes the
+    intersection, so a denominator quoting the unfiltered portfolio would put "11
+    of 100" under charts folded from twenty. `FraudPanelResponse.claimsInScope`
+    means the same thing for the same reason, and the unfiltered count is
+    `claimsInScope` on `GET /dashboard/segmentation/values`, published there
+    beside `claimsMatching` so the workspace can state both.
+
+    **`buckets` is the window's vocabulary, and it is on this payload rather
+    than only inside the series.** See `TrendBucketResponse`: a client that read
+    the periods off a series' points found none at all when an empty window met a
+    cohort split, and the drill period control went dead — a control whose
+    availability depended on an unrelated selector. The list is always the full
+    window, whatever the fold found in it.
 
     **Two rule documents, named separately.** `rulesVersion` is
     `derivation_thresholds` — where the severity cohort's band edges come from —
@@ -2395,6 +2742,7 @@ class PortfolioTrendsResponse(ApiModel):
     bucket_count: int
     claims_in_scope: int
     claims_in_window: int
+    buckets: list[TrendBucketResponse]
     series: list[TrendSeriesResponse]
     default_buckets: int
     max_buckets: int
@@ -2455,11 +2803,12 @@ def _trend_series(trends: PortfolioTrends) -> list[TrendSeriesResponse]:
         **TREND_RANGE_RESPONSE,
     },
 )
-async def trends(
+async def trends(  # noqa: PLR0913 - a window, a split and the workspace's filter
     ctx: CallerContextDep,
     db: DbDep,
     response: Response,
     settings: SettingsDep,
+    segmentation: SegmentationDep,
     grain: Annotated[
         TrendGrain,
         Query(description="How wide one bucket is."),
@@ -2506,9 +2855,17 @@ async def trends(
 ) -> PortfolioTrendsResponse:
     """Five server-computed series over the caller's book, for whoever holds the cookie.
 
-    ## Five parameters, and not one of them is a scope
+    ## Fifteen parameters, and not one of them is a scope
 
-    A grain, an anchor, a cohort dimension and two dates. Three of the five are
+    A grain, an anchor, a cohort dimension, two dates — and the workspace's ten
+    segmentation dimensions as one injected `Segmentation` (see `_segmentation`).
+    The five decide what is *drawn*: which periods exist, which date puts a claim
+    in one, and how the lines are split. The ten decide which claims are folded
+    into them at all, and every one is a narrowing applied after
+    `employer_scope(ctx)` — `filter[employerId]` intersects the caller's book and
+    can never widen it.
+
+    Three of the five are
     closed enums, so `grain=fortnight` is a 422 from FastAPI's own coercion before
     this function runs — the **type is the check**, `FraudRateSort`'s arrangement,
     and a vocabulary restated in the body would be the enum spelled twice. The two
@@ -2577,6 +2934,7 @@ async def trends(
             thresholds,
             periods,
             settings,
+            segmentation,
             grain=grain,
             anchor=anchor,
             cohort=cohort,
@@ -2603,6 +2961,15 @@ async def trends(
         bucket_count=computed.bucket_count,
         claims_in_scope=computed.claims_in_scope,
         claims_in_window=computed.claims_in_window,
+        buckets=[
+            TrendBucketResponse(
+                bucket_key=bucket.key,
+                bucket_label=bucket.label,
+                bucket_from=bucket.start,
+                bucket_to=bucket.end,
+            )
+            for bucket in computed.buckets
+        ],
         series=_trend_series(computed),
         default_buckets=computed.default_buckets,
         max_buckets=computed.max_buckets,
@@ -2613,4 +2980,206 @@ async def trends(
         med_risk_severity_min=computed.med_risk_severity_min,
         rules_version=thresholds.version,
         periods_version=periods.version,
+    )
+
+
+# --- Story 7.3: what the workspace can be segmented by -------------------
+
+
+class DimensionValueResponse(ApiModel):
+    """One value a picker may offer, and what it reads as.
+
+    `value` is the wire form the `filter[…]` parameter carries (`high`, `female`,
+    `Aerospace`, `3`) and `label` is a human name **or null** —
+    `AppliedFilterResponse.display`'s split, restated on a control so the client's
+    rule is one rule in both places: `label ?? UI_LABEL[key][value] ?? value`.
+
+    **Exactly one of the ten dimensions carries a label**, and it is
+    `employerId`, for that model's recorded reason: an id is not a name and
+    nothing in the browser can turn `3` into "Boeing Everett" on a cold URL load.
+    The two enums and the two bands are snake_case tokens whose copy the SPA owns
+    (the Enums convention), and the five free-text dimensions are columns where
+    the stored value *is* the label — shipping any of those from here would be
+    the server deciding copy over a contract.
+
+    `ageGroup` is the one that had to be argued rather than sorted, and it lands
+    with the nine: its members are ordinal words a reader wants to see as a
+    range of years, but that string is composed from the three age edges
+    published beside these dimensions, so a `label` here would be a second copy
+    of a value derived from a rule document — free to disagree with the chip one
+    component over the first time an edge moved.
+    """
+
+    value: str
+    label: str | None
+
+
+class DimensionValuesResponse(ApiModel):
+    """Every value one dimension carries **inside the caller's own book**.
+
+    `key` is the facet name as `filter[…]` spells it, so a picker's `<select>`
+    and the parameter it writes are one string and no translation table stands
+    between them.
+
+    **The values are folded from the caller's scoped rows**, which is the whole
+    reason this endpoint exists rather than a client-side scan (AD-1) or a
+    hardcoded vocabulary: a control cannot offer a sector, a region or an
+    employer with no claims behind it, cannot enumerate anything outside the
+    book, and therefore cannot lead an analyst into a zero-result page that was
+    unreachable from the data. It is also what keeps `AppliedFilter.display`'s
+    two null cases (`deferred-work.md`) out of reach through the control.
+
+    The order is the server's and no client sorts it (AD-1): the two bands and
+    the two enums come in their **declaration** order, because a vocabulary has
+    one and "High, Low, Medium" is a severity picker nobody can scan; the other
+    six sort ascending by what is on screen, which is the only order a reader can
+    verify from the control itself.
+    """
+
+    key: str
+    values: list[DimensionValueResponse]
+
+
+class SegmentationValuesResponse(ApiModel):
+    """What the workspace may be segmented by, what it currently is, and the age edges.
+
+    One payload for the whole control, because it is one screen's worth of state
+    folded from one scoped read.
+
+    **`dimensions` is over the unfiltered book and `claimsMatching` is over the
+    filtered one**, and that asymmetry is the design rather than an oversight: a
+    picker whose options had been cut by the active filter could not be used to
+    *widen* one, which would make every narrowing a one-way door. So the options
+    describe what the caller could ask, and the two counts describe what they
+    have asked.
+
+    **`appliedFilters` is the server's reading of the URL**, in the same chip
+    order the drill list publishes, and it is what the workspace's chip row draws
+    — never a second parse of the query string in the browser. A URL carrying an
+    unknown parameter name produces no chip, because the server narrowed nothing
+    by it; a URL carrying `filter[sector]=Aerospace` produces exactly one. That
+    is what makes "the chips, the request and the result agree" a property rather
+    than a hope, and it is why the chips on this bar and the chips on the list a
+    click into it opens are drawn from the same model with the same rule.
+
+    **`claimsInScope` and `claimsMatching` are the pair every zero-result state
+    is decided on.** Emptiness is a *total*, never a row count
+    (`DistributionDonut`'s rule), and a nine-dimension AND makes it a normal
+    outcome of a normal gesture rather than an edge case — so the figure that
+    says "nothing matches" is published rather than inferred from an empty array.
+    `claimsInScope` is also the unfiltered denominator the sections' own
+    `claimsInScope` stopped being when they started describing the intersection.
+
+    **The three age edges are here and nowhere else.** `AgeBand`'s members carry
+    no numbers at all — deliberately, so that moving an edge in
+    `derivation_thresholds` cannot leave a member name asserting the old one — and
+    the range of years an analyst reads is composed in the browser from these
+    three integers. One source, quoted once.
+
+    `rulesVersion` names the document all three edges and both bands came from.
+    """
+
+    dimensions: list[DimensionValuesResponse]
+    applied_filters: list[AppliedFilterResponse]
+    claims_in_scope: int
+    claims_matching: int
+    age_younger_min: int
+    age_older_min: int
+    age_oldest_min: int
+    rules_version: int
+
+
+def _dimension_values(dimension: DimensionValues) -> DimensionValuesResponse:
+    """One dimension's options, field by field — `_categories`' reasoning."""
+    return DimensionValuesResponse(
+        key=dimension.key,
+        values=[
+            DimensionValueResponse(value=option.value, label=option.label)
+            for option in dimension.values
+        ],
+    )
+
+
+@router.get(
+    "/dashboard/segmentation/values",
+    response_model=SegmentationValuesResponse,
+    summary="The dimension values the session's analyst may segment by",
+    responses={**UNAUTHENTICATED_RESPONSE, **FRAUD_ANALYTICS_FORBIDDEN_RESPONSE},
+)
+async def segmentation_dimension_values(
+    ctx: CallerContextDep,
+    db: DbDep,
+    response: Response,
+    segmentation: SegmentationDep,
+) -> SegmentationValuesResponse:
+    """What this caller's book can be sliced by — the segmentation control's read.
+
+    ## Ten parameters, and not one of them is a scope
+
+    The same ten `filter[…]` dimensions the four aggregate routes take, from the
+    same `_segmentation` dependency, so the control and the sections it filters
+    read one query string. They are used here for two things and neither is the
+    options list: `claimsMatching` counts what survives, and `appliedFilters` is
+    the server's reading of the URL that the chip row draws. The options
+    themselves are folded over the **unfiltered** book — see
+    `SegmentationValuesResponse` on why a picker narrowed by its own filter would
+    be a one-way door.
+
+    ## The path is `/dashboard/segmentation/values` and not `/dashboard/values`
+
+    It is a *sub-resource of the segmentation control*, and naming it that way
+    leaves room for the thing 7.5's export will want — a description of the
+    current filter, at `/dashboard/segmentation/…` — without either endpoint
+    having to be renamed. `/dashboard/values` would be a name that says nothing
+    about which values.
+
+    ## This endpoint is gated, and the argument is `/dashboard/fraud`'s
+
+    It is the analyst workspace, and the gate is
+    `fraud.FRAUD_ANALYTICS_ROLES` — reused rather than re-declared, because a
+    third section of one workspace carrying a third spelling of one allowlist is
+    how a future `UserRole` gets admitted by one of them. It buys slightly more
+    here than on the sections it serves: this payload *enumerates* the employers,
+    sectors, regions and ICD-10 codes a caller's book carries, which is the most
+    directly enumerable thing the workspace publishes — and it enumerates them
+    from claims in scope, so a caller learns nothing about a book that is not
+    theirs.
+
+    ## One document, loaded here
+
+    `derivation_thresholds`, handed down, so the aggregate stays a composition of
+    scope and parameters — `portfolio_summary`'s rule. One rather than two
+    because everything this surface reaches is a registered derivation and its
+    three published edges: the severity band, the age band, and the three
+    cut-offs the second is built from.
+    """
+    # `/stats/topbar`'s reasoning: this response is specific to one persona's
+    # scope, so it must never be served to another from a cache upstream. First
+    # statement in the body, so neither the refusal below nor any early return can
+    # skip it.
+    response.headers["Cache-Control"] = "no-store"
+    # Before the document load — `fraud`'s note.
+    try:
+        require_fraud_analytics_access(ctx)
+    except FraudAnalyticsNotPermitted as exc:
+        raise _fraud_forbidden(exc) from exc
+    thresholds = await thresholds_for(db)
+    # Belt and braces — `fraud`'s note. Unreachable today.
+    try:
+        values = await segmentation_values(db, ctx, thresholds, segmentation)
+    except FraudAnalyticsNotPermitted as exc:  # pragma: no cover - the gate answered first
+        raise _fraud_forbidden(exc) from exc
+
+    return SegmentationValuesResponse(
+        dimensions=[_dimension_values(dimension) for dimension in values.dimensions],
+        applied_filters=[
+            AppliedFilterResponse(key=item.key, value=item.value, display=item.display)
+            for item in values.applied_filters
+        ],
+        claims_in_scope=values.claims_in_scope,
+        claims_matching=values.claims_matching,
+        age_younger_min=values.age_younger_min,
+        age_older_min=values.age_older_min,
+        age_oldest_min=values.age_oldest_min,
+        rules_version=thresholds.version,
     )

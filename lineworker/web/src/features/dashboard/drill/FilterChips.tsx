@@ -35,13 +35,15 @@ import type { AppliedFilter } from "@/api/dashboard";
  */
 function Chip({
   filter,
+  composed,
   onRemove,
 }: {
   filter: AppliedFilter;
+  composed: ChipLabels | undefined;
   onRemove: (key: FilterKey) => void;
 }) {
   const key = filter.key as FilterKey;
-  const label = chipLabel(key, filter.value, filter.display);
+  const label = chipLabel(key, filter.value, filter.display, composed);
   return (
     <span
       data-testid="drill-chip"
@@ -63,13 +65,33 @@ function Chip({
   );
 }
 
+/**
+ * Per-response labels for facet values whose copy is not a constant.
+ *
+ * Exactly one facet needs it today — `ageGroup`, whose members are ordinal words
+ * and whose range label is composed from edges the server publishes — and the
+ * type is the general shape rather than that one key, because "a value label
+ * that depends on the response" is the category rather than the instance.
+ */
+export type ChipLabels = Partial<Record<FilterKey, Record<string, string>>>;
+
 export function FilterChips({
   applied,
+  composed,
   onRemove,
   onClearAll,
 }: {
   /** The server's reading of the request, in its own order. */
   applied: readonly AppliedFilter[];
+  /**
+   * Labels this response decided, which win over this build's constants.
+   *
+   * Optional, and the drill list passes nothing: a chip reading "Age group:
+   * older" there is honest, and fetching the segmentation edges to caption one
+   * chip would be a second request for a word. The workspace's own bar passes
+   * them because it has already fetched them for its pickers.
+   */
+  composed?: ChipLabels;
   onRemove: (key: FilterKey) => void;
   onClearAll: () => void;
 }) {
@@ -88,7 +110,7 @@ export function FilterChips({
       className="mb-2 flex flex-wrap items-center gap-[6px]"
     >
       {applied.map((filter) => (
-        <Chip key={filter.key} filter={filter} onRemove={onRemove} />
+        <Chip key={filter.key} filter={filter} composed={composed} onRemove={onRemove} />
       ))}
       {/* Offered only when there is more than one to clear: with a single chip
           its own ✕ already is "clear all", and two controls doing one thing is

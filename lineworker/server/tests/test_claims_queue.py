@@ -652,7 +652,7 @@ async def test_both_rule_document_versions_that_ranked_the_queue_are_reported(
     # today's values, and the cursor still refuses a page cut under v5: the
     # version records which document decided the ordering, not whether the
     # ordering changed.)
-    assert payload["thresholdsVersion"] == 6
+    assert payload["thresholdsVersion"] == 7
 
 
 async def test_both_totals_are_published_so_the_client_adds_nothing_up(
@@ -734,7 +734,7 @@ async def test_a_second_priority_weights_version_reranks_the_queue(seeded_db_url
         after = await queue_for(seeded_db_url, *KAYA)
 
     assert after["rulesVersion"] == 2
-    assert after["thresholdsVersion"] == 6, "only one document was superseded"
+    assert after["thresholdsVersion"] == 7, "only one document was superseded"
     assert ids(after["groups"]["treatment"]) == expected
     # The marker rule is data too: with the categorical weights gone, no
     # claim clears a threshold of 30 and no card carries a 🔺.

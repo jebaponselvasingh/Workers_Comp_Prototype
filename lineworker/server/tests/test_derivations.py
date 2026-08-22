@@ -44,7 +44,7 @@ SERVER_ROOT = Path(__file__).resolve().parents[1]
 # with that code however wrong both were. `tests/test_rules_engine.py` is
 # what ties these values back to the committed document.
 SEEDED_THRESHOLDS = DerivationThresholds(
-    version=6,
+    version=7,
     risk_high_min=65,
     risk_med_min=35,
     siu_fraud_score_min=60,
@@ -76,6 +76,16 @@ SEEDED_THRESHOLDS = DerivationThresholds(
     # why the oracle restates it separately rather than reusing the name.
     fraud_band_high_min=55,
     fraud_band_med_min=35,
+    # Story 7.3's three, added in version 7 — the edges of the AGE band the
+    # analyst workspace segments by. Restated separately from every number above
+    # them although two of the three coincide: `age_younger_min` is 35 like
+    # `risk_med_min` and `fraud_band_med_min`, and `age_oldest_min` is 55 like
+    # `fraud_flag_score_min` and `fraud_band_high_min`. Three columns, three
+    # rules, one integer twice — and an oracle that shared a name between any of
+    # them could not notice the day a document moved one.
+    age_younger_min=35,
+    age_older_min=45,
+    age_oldest_min=55,
 )
 
 
@@ -564,6 +574,16 @@ def test_no_module_outside_the_registry_hardcodes_the_band() -> None:
     an operator retunes either. Adding it costs nothing today: every occurrence
     of a bare 55 in this tree is already inside the allowlist.
 
+    **Story 7.3 adds 45 and, again, does not add the number it cannot.** The age
+    band's three edges are 35, 45 and 55; the outer two are already in the set,
+    and 45 joins it because every bare 45 in this tree is already inside the
+    allowlist. That is the cheap half. The expensive half is the same one 7.1
+    reported: the age edges coincide with a risk edge and a fraud edge, so a
+    story that moved `ageOlderMin` to a number this regex does not carry would
+    lose the guard for it — the check is a *grep for known integers*, not a
+    check that no rule value is inlined, and it cannot become the second thing
+    without reading the parameter block it is meant to be independent of.
+
     60 is the SIU referral threshold and belongs in this set on the same
     argument, and it is out of it because the argument is not what the check
     measures. Six files outside the allowlist carry a bare 60 and **not one of
@@ -585,7 +605,7 @@ def test_no_module_outside_the_registry_hardcodes_the_band() -> None:
         *(SERVER_ROOT / "data" / "seed").rglob("*.py"),  # the dataset itself
         *(SERVER_ROOT / "data" / "versions").rglob("*.py"),  # frozen migrations
     }
-    threshold = re.compile(r"(?<![\w.])(65|55|35)(?![\w.])")
+    threshold = re.compile(r"(?<![\w.])(65|55|45|35)(?![\w.])")
 
     offenders = [
         path.relative_to(SERVER_ROOT)
@@ -597,7 +617,7 @@ def test_no_module_outside_the_registry_hardcodes_the_band() -> None:
         and threshold.search(path.read_text())
     ]
     assert not offenders, (
-        f"{offenders} name a risk-band or fraud threshold directly — call "
-        "services.derivations.risk, .fraud_flagged or .fraud_band instead, "
+        f"{offenders} name a risk-band, fraud or age-band threshold directly — call "
+        "services.derivations.risk, .fraud_flagged, .fraud_band or .age_band instead, "
         "or justify an allowlist entry"
     )

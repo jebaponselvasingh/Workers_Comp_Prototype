@@ -36,7 +36,7 @@ from rules.parameters import (
 )
 from services.financials import COMP_RATE_MAX_BP, COMP_RATE_MIN_BP
 
-THRESHOLDS_DOC = LoadedDocument(key="derivation_thresholds", version=6, content={})
+THRESHOLDS_DOC = LoadedDocument(key="derivation_thresholds", version=7, content={})
 WEIGHTS_DOC = LoadedDocument(key="priority_weights", version=7, content={})
 REQUIREMENTS_DOC = LoadedDocument(key="intake_required_documents", version=3, content={})
 BENEFIT_DOC = LoadedDocument(key="benefit_params", version=2, content={})
@@ -69,6 +69,15 @@ VALID_THRESHOLDS = {
     # `fraudFlagScoreMin` and is a separate key for that exact reason.
     "fraudBandHighMin": 55,
     "fraudBandMedMin": 35,
+    # Story 7.3's three, which arrived with version 7 — the edges of the AGE
+    # band, over a fourth column and the first one that is not a score. Two of
+    # the three carry integers this dict already holds: `ageYoungerMin` is 35
+    # like `riskMedMin` and `fraudBandMedMin`, `ageOldestMin` is 55 like
+    # `fraudFlagScoreMin` and `fraudBandHighMin`. Separate keys for that exact
+    # reason — a fraud threshold must not be able to re-band a workforce.
+    "ageYoungerMin": 35,
+    "ageOlderMin": 45,
+    "ageOldestMin": 55,
 }
 
 VALID_BENEFIT_PARAMS = {
@@ -155,7 +164,7 @@ def requirements(**changes: object) -> IntakeRequirements:
 def test_the_valid_blocks_are_valid() -> None:
     """Every negative case below changes exactly one key of these, so the
     delta *is* the thing under test."""
-    assert thresholds().version == 6
+    assert thresholds().version == 7
     assert weights().version == 7
     assert requirements().version == 3
     assert benefit().version == 2

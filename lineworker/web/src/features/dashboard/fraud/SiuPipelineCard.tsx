@@ -45,7 +45,13 @@ import type { FraudPanel } from "@/api/dashboard";
 
 import { CATEGORICAL_FILLS, STAGE_FILL } from "../charts/chartTheme";
 import { DistributionBars } from "../charts/DistributionBars";
-import { drillHref } from "../drill/filters";
+import {
+  drillHref,
+  isFiltered,
+  NO_MATCHING_CLAIMS,
+  withSegmentation,
+  type DrillFilters,
+} from "../drill/filters";
 
 /**
  * The stage bars' copy — the settlement donut's words, restated here.
@@ -72,16 +78,30 @@ function asCount(magnitude: number): string {
 
 export function SiuPipelineCard({
   data,
+  segmentation,
   isPending,
   isError,
 }: {
   /** The server's panel, or `undefined` while it is unknown. */
   data: FraudPanel | undefined;
+  /**
+   * The workspace's active filter, merged into every drill target below.
+   *
+   * Passed in rather than read here, `DashboardPage`'s composition rule: the page
+   * owns the URL and the sections receive what it decided, so a section cannot
+   * come to disagree with the page about which filter it is describing.
+   */
+  segmentation: DrillFilters;
   isPending: boolean;
   isError: boolean;
 }) {
   const navigate = useNavigate();
   const state = { isPending, isError };
+  // The workspace's filter as a fact about the *sentence* these two charts show
+  // when they are empty — see `NO_MATCHING_CLAIMS`. Read off the filter the page
+  // handed down, so the copy and the drill targets below cannot describe two
+  // different narrowings.
+  const segmented = isFiltered(segmentation);
 
   return (
     <>
@@ -103,10 +123,15 @@ export function SiuPipelineCard({
         // empty string rather than a sentence nobody sees is what the recovery
         // chart already does.
         truncationCaption={() => ""}
-        emptyMessage="No claim in this portfolio is under SIU review."
+        // "No claim *in this portfolio* is under SIU review" is a statement
+        // about the book, and with a filter applied this chart is not about the
+        // book — it is about an intersection of it. See `NO_MATCHING_CLAIMS`.
+        emptyMessage={
+          segmented ? NO_MATCHING_CLAIMS : "No claim in this portfolio is under SIU review."
+        }
         errorMessage="⚠ The SIU pipeline by stage could not be loaded."
         onSelect={(stage) =>
-          void navigate(drillHref({ siuReview: "true", stage }))
+          void navigate(drillHref(withSegmentation(segmentation, { siuReview: "true", stage })))
         }
         {...state}
       />
@@ -125,10 +150,14 @@ export function SiuPipelineCard({
         fills={CATEGORICAL_FILLS}
         formatValue={asCount}
         truncationCaption={() => ""}
-        emptyMessage="No handler in this portfolio carries an SIU review."
+        emptyMessage={
+          segmented ? NO_MATCHING_CLAIMS : "No handler in this portfolio carries an SIU review."
+        }
         errorMessage="⚠ The SIU pipeline by handler could not be loaded."
         onSelect={(handlerId) =>
-          void navigate(drillHref({ siuReview: "true", handlerId }))
+          void navigate(
+            drillHref(withSegmentation(segmentation, { siuReview: "true", handlerId })),
+          )
         }
         {...state}
       />

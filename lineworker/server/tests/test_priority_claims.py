@@ -144,7 +144,7 @@ SEEDED_WEIGHTS = PriorityWeights(
 )
 
 SEEDED_THRESHOLDS = DerivationThresholds(
-    version=6,
+    version=7,
     risk_high_min=65,
     risk_med_min=35,
     siu_fraud_score_min=60,
@@ -167,6 +167,16 @@ SEEDED_THRESHOLDS = DerivationThresholds(
     # why the oracle restates it separately rather than reusing the name.
     fraud_band_high_min=55,
     fraud_band_med_min=35,
+    # Story 7.3's three, added in version 7 — the edges of the AGE band the
+    # analyst workspace segments by. Restated separately from every number above
+    # them although two of the three coincide: `age_younger_min` is 35 like
+    # `risk_med_min` and `fraud_band_med_min`, and `age_oldest_min` is 55 like
+    # `fraud_flag_score_min` and `fraud_band_high_min`. Three columns, three
+    # rules, one integer twice — and an oracle that shared a name between any of
+    # them could not notice the day a document moved one.
+    age_younger_min=35,
+    age_older_min=45,
+    age_oldest_min=55,
 )
 
 

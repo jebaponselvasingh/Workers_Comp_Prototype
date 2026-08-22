@@ -199,7 +199,7 @@ export const queryKeys = {
      * kind of thing found after the invalidation, not before. `["dashboard",
      * "fraud"]` is now a prefix nothing owns, which is what a *group* is.
      */
-    fraud: ["dashboard", "fraud", "panel"] as const,
+    fraud: (filterKey: string) => ["dashboard", "fraud", "panel", filterKey] as const,
     /**
      * One reading of the three fraud-rate breakdowns, keyed by **the sort set
      * that produced it**.
@@ -215,8 +215,17 @@ export const queryKeys = {
      * It takes the *serialised* sort set rather than the object, `drillClaims`'
      * ruling: a TanStack key is compared structurally and a fresh object literal
      * per render would be a fresh key per render.
+     *
+     * **Two serialised strings since Story 7.3, and they are separate segments
+     * rather than one concatenation.** A sort and a filter are different kinds of
+     * question — one re-orders rows the fold produced, the other decides which
+     * rows are folded — and keeping them apart leaves `[…, "rates", sortKey]` a
+     * prefix a later invalidation could use to reach every filter of one order.
+     * The sort comes first because it is the narrower of the two on this screen:
+     * three tables share one sort set and every section shares one filter.
      */
-    fraudRates: (sortKey: string) => ["dashboard", "fraud", "rates", sortKey] as const,
+    fraudRates: (sortKey: string, filterKey: string) =>
+      ["dashboard", "fraud", "rates", sortKey, filterKey] as const,
     /**
      * The ranked red-flag clauses across the caller's book.
      *
@@ -226,9 +235,14 @@ export const queryKeys = {
      * reaches a claim, not when a claim does — so folding it into the panel
      * would tie a cache entry over model output to one over claim columns.
      *
+     * **The segmentation is in the key since Story 7.3**, `fraud`'s ruling: the
+     * clauses are ranked over the claims the filter left, and the coverage pair
+     * is a fraction of them, so a filtered ranking is a different answer.
+     *
      * No persona and no scope segment, for the group's recorded reason.
      */
-    fraudRedFlags: ["dashboard", "fraud", "red-flags"] as const,
+    fraudRedFlags: (filterKey: string) =>
+      ["dashboard", "fraud", "red-flags", filterKey] as const,
     /**
      * One reading of the Trends section's five series, keyed by **the
      * selector set that produced it** (Story 7.2).
@@ -269,7 +283,31 @@ export const queryKeys = {
      * the group's recorded reason: a 403 is the absence of an answer rather than
      * a different answer, and switching personas clears the whole cache.
      */
-    trends: (paramsKey: string) => ["dashboard", "trends", "series", paramsKey] as const,
+    trends: (paramsKey: string, filterKey: string) =>
+      ["dashboard", "trends", "series", paramsKey, filterKey] as const,
+    /**
+     * What the analyst workspace may be segmented by (Story 7.3).
+     *
+     * A seventh sibling in this group rather than a group of its own, for
+     * `fraud`'s recorded reason: the analyst workspace extends the supervisor
+     * dashboard, so its reads are `/dashboard/*` answers and belong on the
+     * `dashboard` prefix.
+     *
+     * **The filter is in the key although the *options* do not depend on it**,
+     * and that is worth stating because it looks redundant. The payload carries
+     * three things: the pickers' options (folded over the unfiltered book), the
+     * chips (the server's reading of the URL), and `claimsMatching` (a count of
+     * what survives). Two of the three move with the filter, so the response as a
+     * whole is a different resource per filter set — keying only on the options
+     * would serve a stale chip row and a stale count beside fresh figures.
+     *
+     * **The leaf segment is `values`, and `["dashboard","segmentation"]` is left
+     * an unowned prefix** — the blast-radius lesson this group learned from
+     * `fraud`, applied before the mistake rather than after it. Story 7.5's
+     * export hangs off the same section.
+     */
+    segmentationValues: (filterKey: string) =>
+      ["dashboard", "segmentation", "values", filterKey] as const,
   },
   claims: {
     /**

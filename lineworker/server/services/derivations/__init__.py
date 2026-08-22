@@ -64,6 +64,19 @@ Three rules, three names, three parameters, one column pair; see
 `fraud_score_band.py` on why the coincidence is exactly the reason they must not
 be collapsed.
 
+Story 7.3 adds `age_band`, and it is the first entry that bands a **person**
+rather than a claim, a handler's book or a date. The reason it exists is the
+reason every entry above does — the analyst workspace segments by nine
+dimensions and `employee.age` is the only one that is a number, so without a
+registered banding the picker would offer thirty-eight values and the first
+component to want four groups would write its own edges. What is new about it
+is the *shape of the vocabulary*: its members are ordinal words (`youngest`,
+`younger`, `older`, `oldest`) and carry no numbers at all, because a member
+spelled `age_35_44` would put the cut-off in this tier as well as in the
+document and would go on asserting the old edge after the document moved. The
+edges ride on the payload and the UI composes the range label from them; see
+`worker_age_band.py`.
+
 **Naming rule for the modules below** (code review, 2026-08-10): a module
 is named after the *rule* (`risk_band`, `open_duration`, `queue_flags`),
 never after the derived value it exports (`risk`, `days_open`).
@@ -167,8 +180,15 @@ from services.derivations.treatment_progress import (
     TreatmentPhaseResult,
     treatment_phase,
 )
+from services.derivations.worker_age_band import (
+    AgeBand,
+    AgeBandDerivation,
+    age_band,
+)
 
 __all__ = [
+    "AgeBand",
+    "AgeBandDerivation",
     "BillsOnFileDerivation",
     "ClaimPathDerivation",
     "ComplexityBand",
@@ -211,6 +231,7 @@ __all__ = [
     "TreatmentPhase",
     "TreatmentPhaseDerivation",
     "TreatmentPhaseResult",
+    "age_band",
     "bills_on_file",
     "claim_path",
     "coordination_status",

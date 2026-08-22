@@ -1104,9 +1104,9 @@ export interface paths {
          * The claims behind a dashboard figure, filtered, ranked and paged
          * @description The claims behind a KPI card, a chart segment, a handler row or a worklist.
          *
-         *     ## Twenty-one parameters, and not one of them is a scope
+         *     ## Twenty-five parameters, and not one of them is a scope
          *
-         *     Twenty facets and a cursor. Every facet is a *narrowing* applied after
+         *     Twenty-four facets and a cursor. Every facet is a *narrowing* applied after
          *     `employer_scope(ctx)` has already decided which rows exist, so
          *     `filter[employerId]` and `filter[handlerId]` intersect the caller's book and
          *     can never widen it: a scoped supervisor naming an employer outside hers gets
@@ -1135,8 +1135,35 @@ export interface paths {
          *     This route intersects **independent facets**: a supervisor drills into High
          *     Risk, then narrows to one employer, then to litigated claims, and each is a
          *     separate dimension of the same set. That is what the architecture's list
-         *     convention spells with brackets, and it is why the twenty arrive as twenty
-         *     parameters rather than as one enum.
+         *     convention spells with brackets, and it is why the twenty-four arrive as
+         *     twenty-four parameters rather than as one enum.
+         *
+         *     ## Story 7.3 adds four facets and changes none
+         *
+         *     `filter[region]`, `filter[icd10]`, `filter[ageGroup]` and `filter[gender]`,
+         *     **appended** for the reason 7.1's two and 7.2's six were: `appliedFilters` is
+         *     the chip row's order and it is read off `DrillFilters`' field order, so
+         *     inserting `filter[gender]` beside `filter[state]` — where it reads more
+         *     naturally — would silently re-order the chips on every drill-through URL
+         *     anybody has already shared.
+         *
+         *     They are not this surface's own click targets. They are the tail of the
+         *     *segmentation* vocabulary the analyst workspace narrows by, and the whole
+         *     point of them arriving here is that the workspace and this list say the same
+         *     words: an analyst filtering by sector and gender clicks a chart segment and
+         *     lands on this route with those two parameters intact plus the slice's own, as
+         *     three independently clearable chips. `services/worklist/segmentation.py`
+         *     asserts the subset relationship at import so the two vocabularies cannot come
+         *     apart.
+         *
+         *     The route stays **ungated** with the four additions, and that is worth
+         *     checking rather than assuming: none of them publishes a figure about a named
+         *     person, and the `filter[handlerId]` gate below is unchanged. `filter[gender]`
+         *     is the one to look twice at — it narrows on an attribute of the *injured
+         *     worker* — and it is not a figure about a colleague: the rows it returns are
+         *     claims this session can already open one at a time, and the payload names
+         *     nobody. It is a segmentation dimension the story's AC lists by name, over a
+         *     column the caller's own case files already show.
          *
          *     ## Story 7.2 adds six facets and changes none
          *
@@ -1238,10 +1265,19 @@ export interface paths {
          * Fraud-score distribution and SIU pipeline for the session's analyst
          * @description The Fraud section's headline surfaces, for whoever holds the session cookie.
          *
-         *     `summary`'s signature exactly: no parameters at all, so there is nowhere to
-         *     put an employer, a user or an "as" (AD-7). The role gate below decides whether
-         *     this endpoint answers; the scope predicate inside the repository decides what
-         *     it answers, and no code on this path branches on role to widen it.
+         *     **Ten parameters since Story 7.3, and not one of them is a scope.** They
+         *     arrive as one injected `Segmentation` — see `_segmentation`, which declares
+         *     them once for this route and its four siblings — and every one is a
+         *     *narrowing* applied inside the service over rows `employer_scope(ctx)` had
+         *     already decided existed. The role gate below decides whether this endpoint
+         *     answers; the scope predicate inside the repository decides what it answers;
+         *     the filter decides how much of that it describes. No code on this path
+         *     branches on role to widen anything.
+         *
+         *     An impossible combination is a **200 with empty aggregates**, never an error:
+         *     the band distribution is zero-filled (a rule's vocabulary is always complete),
+         *     the pipeline is empty, and the three counters are zero. `DrillFilters`'
+         *     ruling, on a surface where a nine-dimension AND makes emptiness ordinary.
          *
          *     ## This endpoint is gated, and the argument is not the file's usual one
          *
@@ -1285,7 +1321,16 @@ export interface paths {
          * Flagged-claim rates by injury type, employer and handler
          * @description Flagged-over-total by three dimensions, each independently ordered.
          *
-         *     ## Three parameters, and not one of them is a scope
+         *     ## Thirteen parameters, and not one of them is a scope
+         *
+         *     Three sorts and the workspace's ten segmentation dimensions, the latter as
+         *     one injected `Segmentation` — see `_segmentation`. The two kinds are
+         *     different in what they may change: a sort re-orders rows the fold already
+         *     produced, and a filter decides which rows are folded at all. Both are applied
+         *     after the one scoped read, so neither costs a query and neither can widen the
+         *     caller's book.
+         *
+         *     ## The three sorts
          *
          *     One `sort` per table, aliased in `filter[…]`'s style so the wire name and the
          *     parameter name are one string — the property `drill/filters.ts` rests on. Each
@@ -1335,9 +1380,9 @@ export interface paths {
          * Ranked red-flag clauses from the cached fraud narratives
          * @description The red-flag frequency view, for whoever holds the session cookie.
          *
-         *     `fraud`'s signature: no parameters at all, so there is nowhere to put a scope
-         *     (AD-7). Gated for that route's reason — this is the analyst workspace, and the
-         *     gate runs before any read.
+         *     `fraud`'s signature: the ten segmentation dimensions and nothing else, so
+         *     there is nowhere to put a scope (AD-7). Gated for that route's reason — this
+         *     is the analyst workspace, and the gate runs before any read.
          *
          *     **The one thing this route hands the aggregate is a reader**, not a parameter
          *     block: `agents.schemas.read_fraud_clauses`, which knows what a stored fraud
@@ -1346,10 +1391,14 @@ export interface paths {
          *     takes an injected `InsightGenerator` for exactly this reason. `api/` sits
          *     above both, which is why the injection happens here.
          *
-         *     **No rule document is loaded here, and that is the only route in this file
-         *     where that sentence is true.** This view groups prose and counts claims; it
-         *     reaches no threshold, so there is nothing to load and nothing to publish. The
-         *     absence is stated because every neighbour loads one and a reader will wonder.
+         *     **A rule document *is* loaded here since Story 7.3, and the sentence that used
+         *     to sit in this paragraph was that it was not.** This view still groups prose
+         *     and counts claims — no figure on it is produced at a threshold — but *which*
+         *     claims it describes is now the segmentation's answer, and two of the ten
+         *     dimensions are registered derivations over `derivation_thresholds`. So the
+         *     block is loaded for the population rather than for a figure, and
+         *     `rulesVersion` is published on that footing: it names the document that
+         *     decided which claims were counted, not one that decided a number.
          *
          *     **Read-only over `services/rag`'s table (AD-12).** Nothing on this path writes,
          *     and nothing on it triggers a refresh: a cold cache answers 200 with an empty
@@ -1474,6 +1523,65 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/dashboard/segmentation/values": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The dimension values the session's analyst may segment by
+         * @description What this caller's book can be sliced by — the segmentation control's read.
+         *
+         *     ## Ten parameters, and not one of them is a scope
+         *
+         *     The same ten `filter[…]` dimensions the four aggregate routes take, from the
+         *     same `_segmentation` dependency, so the control and the sections it filters
+         *     read one query string. They are used here for two things and neither is the
+         *     options list: `claimsMatching` counts what survives, and `appliedFilters` is
+         *     the server's reading of the URL that the chip row draws. The options
+         *     themselves are folded over the **unfiltered** book — see
+         *     `SegmentationValuesResponse` on why a picker narrowed by its own filter would
+         *     be a one-way door.
+         *
+         *     ## The path is `/dashboard/segmentation/values` and not `/dashboard/values`
+         *
+         *     It is a *sub-resource of the segmentation control*, and naming it that way
+         *     leaves room for the thing 7.5's export will want — a description of the
+         *     current filter, at `/dashboard/segmentation/…` — without either endpoint
+         *     having to be renamed. `/dashboard/values` would be a name that says nothing
+         *     about which values.
+         *
+         *     ## This endpoint is gated, and the argument is `/dashboard/fraud`'s
+         *
+         *     It is the analyst workspace, and the gate is
+         *     `fraud.FRAUD_ANALYTICS_ROLES` — reused rather than re-declared, because a
+         *     third section of one workspace carrying a third spelling of one allowlist is
+         *     how a future `UserRole` gets admitted by one of them. It buys slightly more
+         *     here than on the sections it serves: this payload *enumerates* the employers,
+         *     sectors, regions and ICD-10 codes a caller's book carries, which is the most
+         *     directly enumerable thing the workspace publishes — and it enumerates them
+         *     from claims in scope, so a caller learns nothing about a book that is not
+         *     theirs.
+         *
+         *     ## One document, loaded here
+         *
+         *     `derivation_thresholds`, handed down, so the aggregate stays a composition of
+         *     scope and parameters — `portfolio_summary`'s rule. One rather than two
+         *     because everything this surface reaches is a registered derivation and its
+         *     three published edges: the severity band, the age band, and the three
+         *     cut-offs the second is built from.
+         */
+        get: operations["segmentation_dimension_values_dashboard_segmentation_values_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/dashboard/summary": {
         parameters: {
             query?: never;
@@ -1510,9 +1618,17 @@ export interface paths {
          * Five time series over a bucketed window for the session's analyst
          * @description Five server-computed series over the caller's book, for whoever holds the cookie.
          *
-         *     ## Five parameters, and not one of them is a scope
+         *     ## Fifteen parameters, and not one of them is a scope
          *
-         *     A grain, an anchor, a cohort dimension and two dates. Three of the five are
+         *     A grain, an anchor, a cohort dimension, two dates — and the workspace's ten
+         *     segmentation dimensions as one injected `Segmentation` (see `_segmentation`).
+         *     The five decide what is *drawn*: which periods exist, which date puts a claim
+         *     in one, and how the lines are split. The ten decide which claims are folded
+         *     into them at all, and every one is a narrowing applied after
+         *     `employer_scope(ctx)` — `filter[employerId]` intersects the caller's book and
+         *     can never widen it.
+         *
+         *     Three of the five are
          *     closed enums, so `grain=fortnight` is a 422 from FastAPI's own coercion before
          *     this function runs — the **type is the check**, `FraudRateSort`'s arrangement,
          *     and a vocabulary restated in the body would be the enum spelled twice. The two
@@ -1860,6 +1976,22 @@ export interface components {
          * @enum {string}
          */
         ActionUrgency: "high" | "medium" | "low";
+        /**
+         * AgeBand
+         * @description Snake/lowercase ordinal words — the UI owns labels, and composes them.
+         *
+         *     **Declared youngest → oldest**, which is a scale's reading order and matches
+         *     `FraudBand`'s low → high rather than `RiskBand`'s high → med → low. A reader
+         *     scans an age segmentation the way they scan a histogram, from the youngest
+         *     cohort rightwards, and the picker draws the members in this order.
+         *
+         *     **Not one member carries a number**, which is the rule this enum exists to
+         *     keep. The label an analyst reads ("35–44") is composed in the browser from
+         *     the edges the payload publishes, so the vocabulary here can outlive any
+         *     particular set of cut-offs — see the module docstring.
+         * @enum {string}
+         */
+        AgeBand: "youngest" | "younger" | "older" | "oldest";
         /**
          * AppliedFilterResponse
          * @description One narrowing the server applied, as a clearable chip draws it.
@@ -2587,6 +2719,64 @@ export interface components {
             notedAt: string;
         };
         /**
+         * DimensionValueResponse
+         * @description One value a picker may offer, and what it reads as.
+         *
+         *     `value` is the wire form the `filter[…]` parameter carries (`high`, `female`,
+         *     `Aerospace`, `3`) and `label` is a human name **or null** —
+         *     `AppliedFilterResponse.display`'s split, restated on a control so the client's
+         *     rule is one rule in both places: `label ?? UI_LABEL[key][value] ?? value`.
+         *
+         *     **Exactly one of the ten dimensions carries a label**, and it is
+         *     `employerId`, for that model's recorded reason: an id is not a name and
+         *     nothing in the browser can turn `3` into "Boeing Everett" on a cold URL load.
+         *     The two enums and the two bands are snake_case tokens whose copy the SPA owns
+         *     (the Enums convention), and the five free-text dimensions are columns where
+         *     the stored value *is* the label — shipping any of those from here would be
+         *     the server deciding copy over a contract.
+         *
+         *     `ageGroup` is the one that had to be argued rather than sorted, and it lands
+         *     with the nine: its members are ordinal words a reader wants to see as a
+         *     range of years, but that string is composed from the three age edges
+         *     published beside these dimensions, so a `label` here would be a second copy
+         *     of a value derived from a rule document — free to disagree with the chip one
+         *     component over the first time an edge moved.
+         */
+        DimensionValueResponse: {
+            /** Label */
+            label: string | null;
+            /** Value */
+            value: string;
+        };
+        /**
+         * DimensionValuesResponse
+         * @description Every value one dimension carries **inside the caller's own book**.
+         *
+         *     `key` is the facet name as `filter[…]` spells it, so a picker's `<select>`
+         *     and the parameter it writes are one string and no translation table stands
+         *     between them.
+         *
+         *     **The values are folded from the caller's scoped rows**, which is the whole
+         *     reason this endpoint exists rather than a client-side scan (AD-1) or a
+         *     hardcoded vocabulary: a control cannot offer a sector, a region or an
+         *     employer with no claims behind it, cannot enumerate anything outside the
+         *     book, and therefore cannot lead an analyst into a zero-result page that was
+         *     unreachable from the data. It is also what keeps `AppliedFilter.display`'s
+         *     two null cases (`deferred-work.md`) out of reach through the control.
+         *
+         *     The order is the server's and no client sorts it (AD-1): the two bands and
+         *     the two enums come in their **declaration** order, because a vocabulary has
+         *     one and "High, Low, Medium" is a severity picker nobody can scan; the other
+         *     six sort ascending by what is on screen, which is the only order a reader can
+         *     verify from the control itself.
+         */
+        DimensionValuesResponse: {
+            /** Key */
+            key: string;
+            /** Values */
+            values: components["schemas"]["DimensionValueResponse"][];
+        };
+        /**
          * Disability
          * @enum {string}
          */
@@ -2852,18 +3042,46 @@ export interface components {
          *     the four sibling payloads they ride along unrendered; what would be wrong is
          *     claiming the screen states them.
          *
-         *     **No thresholds on this payload**, unlike its four siblings, and the absence
-         *     is deliberate: nothing here quotes one. The severity band arrives banded per
-         *     row, the fraud flag arrives decided, and a caption saying "Severity ≥ N"
-         *     belongs to the card that was clicked rather than to the list it opened.
-         *     Publishing them anyway would be putting every ingredient of a re-banding on
-         *     an object whose rows are already banded.
+         *     **No thresholds a figure was produced at**, unlike its four siblings, and the
+         *     absence is deliberate: nothing here quotes one. The severity band arrives
+         *     banded per row, the fraud flag arrives decided, and a caption saying
+         *     "Severity ≥ N" belongs to the card that was clicked rather than to the list it
+         *     opened. Publishing them anyway would be putting every ingredient of a
+         *     re-banding on an object whose rows are already banded.
+         *
+         *     **The three age edges are the one exception, and they are on this payload for
+         *     a chip rather than for a figure (Story 7.3).** `AgeBand`'s members are ordinal
+         *     words carrying no numbers at all — deliberately, so that moving an edge in
+         *     `derivation_thresholds` cannot leave a member name asserting the old one — so
+         *     the *range of years* a chip shows can only ever be composed in the browser
+         *     from the document's own cut-offs. That chip is drawn from `appliedFilters`
+         *     *here*, on a list an analyst reaches by clicking a chart with
+         *     `filter[ageGroup]` active, and without the edges it read "Age group: older"
+         *     one click after reading that range on the workspace's own bar — one value
+         *     under two names, which is precisely what Story 7.3's "one vocabulary" claim
+         *     denies.
+         *
+         *     The alternative was a resolved `display` string decided server-side, and it
+         *     is refused for `DimensionValueResponse`'s recorded reason: a label composed
+         *     in Python would be a *second* copy of a value derived from a rule document,
+         *     free to disagree with the one the workspace's own bar composes. Three
+         *     integers from the document this route already loads, composed once in
+         *     `segmentation/ageBands.ts`, is one rule with one renderer. They are
+         *     unconditional rather than sent only when `filter[ageGroup]` is set, because a
+         *     field that appears and disappears is a shape a client has to branch on for a
+         *     caption.
          *
          *     `nextCursor` is null exactly when the list is finished — never "null because
          *     this page came back short", which would strand a tail `total` has already
          *     told the reader is there.
          */
         DrillClaimsResponse: {
+            /** Ageoldermin */
+            ageOlderMin: number;
+            /** Ageoldestmin */
+            ageOldestMin: number;
+            /** Ageyoungermin */
+            ageYoungerMin: number;
             /** Appliedfilters */
             appliedFilters: components["schemas"]["AppliedFilterResponse"][];
             /** Items */
@@ -3473,11 +3691,16 @@ export interface components {
          *     honest answer over a set is the set. Empty when nothing was readable — which
          *     is when the card has no provenance line to draw and renders its empty state.
          *
-         *     **No `rulesVersion`**, unlike every sibling payload on this dashboard, and the
-         *     absence is deliberate: this view reaches no rule. There is no threshold, no
-         *     band and no cut-off in it, so the route loads no document and there is no
-         *     version to name. Publishing one anyway would be claiming a provenance the
-         *     figures do not have.
+         *     **`rulesVersion` names the document that decided the *population*, not one
+         *     that decided a figure**, and until Story 7.3 this payload deliberately had no
+         *     such field — this view reaches no threshold, so publishing one would have been
+         *     claiming a provenance the figures did not have. That is still true of every
+         *     number on it. What changed is which claims those numbers are over: the
+         *     workspace's segmentation narrows this view like every other, and two of its
+         *     ten dimensions are registered derivations over `derivation_thresholds`. So the
+         *     version is here on that footing and the distinction is worth keeping in mind
+         *     when reading it beside `FraudPanelResponse`'s, which does name the document
+         *     four published edges came from.
          */
         FraudRedFlagsResponse: {
             /** Claimsinscope */
@@ -3494,6 +3717,8 @@ export interface components {
             limit: number;
             /** Models */
             models: string[];
+            /** Rulesversion */
+            rulesVersion: number;
             /** Totalclauses */
             totalClauses: number;
             /** Truncated */
@@ -3557,6 +3782,11 @@ export interface components {
             /** Thresholdsversion */
             thresholdsVersion: number;
         };
+        /**
+         * Gender
+         * @enum {string}
+         */
+        Gender: "female" | "male" | "other";
         /**
          * GlossaryList
          * @description The `{items, nextCursor, total}` envelope (Lists convention).
@@ -4837,10 +5067,25 @@ export interface components {
          *     request is made.
          *
          *     **`claimsInScope` and `claimsInWindow` are two different facts**, and the
-         *     difference belongs on screen: the first is the caller's whole book, the second
-         *     is how much of it the chosen window covers. A window describing eleven of a
-         *     hundred claims is not wrong, but a reader who thinks it describes a hundred
-         *     is.
+         *     difference belongs on screen: the first is the population these figures
+         *     describe, the second is how much of it the chosen window covers. A window
+         *     describing eleven of a hundred claims is not wrong, but a reader who thinks
+         *     it describes a hundred is.
+         *
+         *     **Since Story 7.3 `claimsInScope` is the *segmented* book**, not the caller's
+         *     whole one: with a filter applied every figure here describes the
+         *     intersection, so a denominator quoting the unfiltered portfolio would put "11
+         *     of 100" under charts folded from twenty. `FraudPanelResponse.claimsInScope`
+         *     means the same thing for the same reason, and the unfiltered count is
+         *     `claimsInScope` on `GET /dashboard/segmentation/values`, published there
+         *     beside `claimsMatching` so the workspace can state both.
+         *
+         *     **`buckets` is the window's vocabulary, and it is on this payload rather
+         *     than only inside the series.** See `TrendBucketResponse`: a client that read
+         *     the periods off a series' points found none at all when an empty window met a
+         *     cohort split, and the drill period control went dead — a control whose
+         *     availability depended on an unrelated selector. The list is always the full
+         *     window, whatever the fold found in it.
          *
          *     **Two rule documents, named separately.** `rulesVersion` is
          *     `derivation_thresholds` — where the severity cohort's band edges come from —
@@ -4865,6 +5110,8 @@ export interface components {
             asOf: string;
             /** Bucketcount */
             bucketCount: number;
+            /** Buckets */
+            buckets: components["schemas"]["TrendBucketResponse"][];
             /** Claimsinscope */
             claimsInScope: number;
             /** Claimsinwindow */
@@ -5601,6 +5848,63 @@ export interface components {
          */
         ScheduleWeekStatus: "pending_approval" | "due_this_week" | "upcoming" | "payment_scheduled" | "paid";
         /**
+         * SegmentationValuesResponse
+         * @description What the workspace may be segmented by, what it currently is, and the age edges.
+         *
+         *     One payload for the whole control, because it is one screen's worth of state
+         *     folded from one scoped read.
+         *
+         *     **`dimensions` is over the unfiltered book and `claimsMatching` is over the
+         *     filtered one**, and that asymmetry is the design rather than an oversight: a
+         *     picker whose options had been cut by the active filter could not be used to
+         *     *widen* one, which would make every narrowing a one-way door. So the options
+         *     describe what the caller could ask, and the two counts describe what they
+         *     have asked.
+         *
+         *     **`appliedFilters` is the server's reading of the URL**, in the same chip
+         *     order the drill list publishes, and it is what the workspace's chip row draws
+         *     — never a second parse of the query string in the browser. A URL carrying an
+         *     unknown parameter name produces no chip, because the server narrowed nothing
+         *     by it; a URL carrying `filter[sector]=Aerospace` produces exactly one. That
+         *     is what makes "the chips, the request and the result agree" a property rather
+         *     than a hope, and it is why the chips on this bar and the chips on the list a
+         *     click into it opens are drawn from the same model with the same rule.
+         *
+         *     **`claimsInScope` and `claimsMatching` are the pair every zero-result state
+         *     is decided on.** Emptiness is a *total*, never a row count
+         *     (`DistributionDonut`'s rule), and a nine-dimension AND makes it a normal
+         *     outcome of a normal gesture rather than an edge case — so the figure that
+         *     says "nothing matches" is published rather than inferred from an empty array.
+         *     `claimsInScope` is also the unfiltered denominator the sections' own
+         *     `claimsInScope` stopped being when they started describing the intersection.
+         *
+         *     **The three age edges are here and nowhere else.** `AgeBand`'s members carry
+         *     no numbers at all — deliberately, so that moving an edge in
+         *     `derivation_thresholds` cannot leave a member name asserting the old one — and
+         *     the range of years an analyst reads is composed in the browser from these
+         *     three integers. One source, quoted once.
+         *
+         *     `rulesVersion` names the document all three edges and both bands came from.
+         */
+        SegmentationValuesResponse: {
+            /** Ageoldermin */
+            ageOlderMin: number;
+            /** Ageoldestmin */
+            ageOldestMin: number;
+            /** Ageyoungermin */
+            ageYoungerMin: number;
+            /** Appliedfilters */
+            appliedFilters: components["schemas"]["AppliedFilterResponse"][];
+            /** Claimsinscope */
+            claimsInScope: number;
+            /** Claimsmatching */
+            claimsMatching: number;
+            /** Dimensions */
+            dimensions: components["schemas"]["DimensionValuesResponse"][];
+            /** Rulesversion */
+            rulesVersion: number;
+        };
+        /**
          * SettledOverviewResponse
          * @description The settled variant: banner, payout breakdown, outcome, action summary.
          *
@@ -6187,6 +6491,46 @@ export interface components {
          * @enum {string}
          */
         TrendAnchor: "fnol" | "doi";
+        /**
+         * TrendBucketResponse
+         * @description One period on the x-axis: how to key it, how to name it, what it covers.
+         *
+         *     **The window's vocabulary, published independently of the series**, and it
+         *     exists because the series could not carry it reliably: an empty window under a
+         *     cohort split publishes *no series at all*, so a client reading the periods off
+         *     a series' points found none, and the drill period `<select>` and its "View
+         *     claims" button both went dead — while the same empty window under
+         *     `cohort=none` left them live, because zero-filled points still exist. The
+         *     availability of the keyboard's only drill path depended on an unrelated
+         *     selector, which was tolerable while an empty result was rare and is not now
+         *     that a nine-dimension AND makes one ordinary.
+         *
+         *     The four fields are `TrendPointResponse`'s first four, and they are the same
+         *     four values — a point still carries them, because a drill is *per point* and
+         *     looking a boundary up in a parallel array is one index slip away from opening
+         *     the claims behind the month next door. This list is what a **control** reads;
+         *     a point is what a **click** reads.
+         *
+         *     `bucketFrom` and `bucketTo` are **inclusive** bounds and are what
+         *     `filter[fnolFrom]`/`filter[fnolTo]` are filled from, so a bucket's drill
+         *     returns exactly the claims its point was folded from.
+         */
+        TrendBucketResponse: {
+            /**
+             * Bucketfrom
+             * Format: date
+             */
+            bucketFrom: string;
+            /** Bucketkey */
+            bucketKey: string;
+            /** Bucketlabel */
+            bucketLabel: string;
+            /**
+             * Bucketto
+             * Format: date
+             */
+            bucketTo: string;
+        };
         /**
          * TrendCohort
          * @description The dimension a series may be split by — one at a time, per the AC.
@@ -9739,6 +10083,14 @@ export interface operations {
                 "filter[disability]"?: components["schemas"]["Disability"] | null;
                 /** @description The employer's sector, matched as the exact stored string — no trimming, case-folding or merging. An employer attribute, not an industry rollup. */
                 "filter[sector]"?: string | null;
+                /** @description The operating region the claim's plant sits in, matched as the exact stored string — a different column from `filter[state]`, which is the jurisdiction a benefit is calculated under. */
+                "filter[region]"?: string | null;
+                /** @description The claim's ICD-10 code, matched as the exact stored string. The column is `claim.icd`; the facet names the coding system. */
+                "filter[icd10]"?: string | null;
+                /** @description The registered `age_band` of the injured worker's age. Ordinal words rather than ranges: the edges live in `derivation_thresholds` and are published on `/dashboard/segmentation/values`. */
+                "filter[ageGroup]"?: components["schemas"]["AgeBand"] | null;
+                /** @description The injured worker's gender. */
+                "filter[gender]"?: components["schemas"]["Gender"] | null;
                 /** @description An opaque `nextCursor` from a previous response. */
                 cursor?: string | null;
             };
@@ -9824,7 +10176,28 @@ export interface operations {
     };
     fraud_dashboard_fraud_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The registered `risk` band — the same one the High Risk card counts. */
+                "filter[severityBand]"?: components["schemas"]["RiskBand"] | null;
+                /** @description The claim's injury type, matched as the exact stored string — no trimming, case-folding or merging. */
+                "filter[injuryType]"?: string | null;
+                /** @description The claim's jurisdiction, matched exactly. Not the employer's region. */
+                "filter[state]"?: string | null;
+                /** @description An employer's id. Intersects the caller's scope and can never widen it — naming one outside the book empties every aggregate. */
+                "filter[employerId]"?: number | null;
+                /** @description The claim's disability type. */
+                "filter[disability]"?: components["schemas"]["Disability"] | null;
+                /** @description The employer's sector, matched as the exact stored string. An employer attribute, not an industry rollup. */
+                "filter[sector]"?: string | null;
+                /** @description The operating region the claim's plant sits in, matched exactly — a different column from `filter[state]`, which is the jurisdiction. */
+                "filter[region]"?: string | null;
+                /** @description The claim's ICD-10 code, matched as the exact stored string. */
+                "filter[icd10]"?: string | null;
+                /** @description The registered `age_band` of the injured worker's age. Ordinal words rather than ranges: the edges are published on `/dashboard/segmentation/values` and the label is composed from them. */
+                "filter[ageGroup]"?: components["schemas"]["AgeBand"] | null;
+                /** @description The injured worker's gender. */
+                "filter[gender]"?: components["schemas"]["Gender"] | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -9876,6 +10249,15 @@ export interface operations {
                     };
                 };
             };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
         };
     };
     fraud_rate_breakdowns_dashboard_fraud_rates_get: {
@@ -9887,6 +10269,26 @@ export interface operations {
                 "sort[employer]"?: components["schemas"]["FraudRateSort"];
                 /** @description The order the handler breakdown is served in. */
                 "sort[handler]"?: components["schemas"]["FraudRateSort"];
+                /** @description The registered `risk` band — the same one the High Risk card counts. */
+                "filter[severityBand]"?: components["schemas"]["RiskBand"] | null;
+                /** @description The claim's injury type, matched as the exact stored string — no trimming, case-folding or merging. */
+                "filter[injuryType]"?: string | null;
+                /** @description The claim's jurisdiction, matched exactly. Not the employer's region. */
+                "filter[state]"?: string | null;
+                /** @description An employer's id. Intersects the caller's scope and can never widen it — naming one outside the book empties every aggregate. */
+                "filter[employerId]"?: number | null;
+                /** @description The claim's disability type. */
+                "filter[disability]"?: components["schemas"]["Disability"] | null;
+                /** @description The employer's sector, matched as the exact stored string. An employer attribute, not an industry rollup. */
+                "filter[sector]"?: string | null;
+                /** @description The operating region the claim's plant sits in, matched exactly — a different column from `filter[state]`, which is the jurisdiction. */
+                "filter[region]"?: string | null;
+                /** @description The claim's ICD-10 code, matched as the exact stored string. */
+                "filter[icd10]"?: string | null;
+                /** @description The registered `age_band` of the injured worker's age. Ordinal words rather than ranges: the edges are published on `/dashboard/segmentation/values` and the label is composed from them. */
+                "filter[ageGroup]"?: components["schemas"]["AgeBand"] | null;
+                /** @description The injured worker's gender. */
+                "filter[gender]"?: components["schemas"]["Gender"] | null;
             };
             header?: never;
             path?: never;
@@ -9952,7 +10354,28 @@ export interface operations {
     };
     fraud_red_flag_frequency_dashboard_fraud_red_flags_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The registered `risk` band — the same one the High Risk card counts. */
+                "filter[severityBand]"?: components["schemas"]["RiskBand"] | null;
+                /** @description The claim's injury type, matched as the exact stored string — no trimming, case-folding or merging. */
+                "filter[injuryType]"?: string | null;
+                /** @description The claim's jurisdiction, matched exactly. Not the employer's region. */
+                "filter[state]"?: string | null;
+                /** @description An employer's id. Intersects the caller's scope and can never widen it — naming one outside the book empties every aggregate. */
+                "filter[employerId]"?: number | null;
+                /** @description The claim's disability type. */
+                "filter[disability]"?: components["schemas"]["Disability"] | null;
+                /** @description The employer's sector, matched as the exact stored string. An employer attribute, not an industry rollup. */
+                "filter[sector]"?: string | null;
+                /** @description The operating region the claim's plant sits in, matched exactly — a different column from `filter[state]`, which is the jurisdiction. */
+                "filter[region]"?: string | null;
+                /** @description The claim's ICD-10 code, matched as the exact stored string. */
+                "filter[icd10]"?: string | null;
+                /** @description The registered `age_band` of the injured worker's age. Ordinal words rather than ranges: the edges are published on `/dashboard/segmentation/values` and the label is composed from them. */
+                "filter[ageGroup]"?: components["schemas"]["AgeBand"] | null;
+                /** @description The injured worker's gender. */
+                "filter[gender]"?: components["schemas"]["Gender"] | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -10002,6 +10425,15 @@ export interface operations {
                         /** Type */
                         type: string;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -10130,6 +10562,92 @@ export interface operations {
             };
         };
     };
+    segmentation_dimension_values_dashboard_segmentation_values_get: {
+        parameters: {
+            query?: {
+                /** @description The registered `risk` band — the same one the High Risk card counts. */
+                "filter[severityBand]"?: components["schemas"]["RiskBand"] | null;
+                /** @description The claim's injury type, matched as the exact stored string — no trimming, case-folding or merging. */
+                "filter[injuryType]"?: string | null;
+                /** @description The claim's jurisdiction, matched exactly. Not the employer's region. */
+                "filter[state]"?: string | null;
+                /** @description An employer's id. Intersects the caller's scope and can never widen it — naming one outside the book empties every aggregate. */
+                "filter[employerId]"?: number | null;
+                /** @description The claim's disability type. */
+                "filter[disability]"?: components["schemas"]["Disability"] | null;
+                /** @description The employer's sector, matched as the exact stored string. An employer attribute, not an industry rollup. */
+                "filter[sector]"?: string | null;
+                /** @description The operating region the claim's plant sits in, matched exactly — a different column from `filter[state]`, which is the jurisdiction. */
+                "filter[region]"?: string | null;
+                /** @description The claim's ICD-10 code, matched as the exact stored string. */
+                "filter[icd10]"?: string | null;
+                /** @description The registered `age_band` of the injured worker's age. Ordinal words rather than ranges: the edges are published on `/dashboard/segmentation/values` and the label is composed from them. */
+                "filter[ageGroup]"?: components["schemas"]["AgeBand"] | null;
+                /** @description The injured worker's gender. */
+                "filter[gender]"?: components["schemas"]["Gender"] | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SegmentationValuesResponse"];
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The caller's role does not carry the analyst-workspace capability. Answered before any claim is read and before any rule document is loaded, so it says nothing about what is in the caller's scope (RFC 9457 problem document). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     summary_dashboard_summary_get: {
         parameters: {
             query?: never;
@@ -10181,6 +10699,26 @@ export interface operations {
                 from?: string | null;
                 /** @description The last day the window covers; its whole bucket is included. Omitted, the window ends in the bucket `asOf` falls in. */
                 to?: string | null;
+                /** @description The registered `risk` band — the same one the High Risk card counts. */
+                "filter[severityBand]"?: components["schemas"]["RiskBand"] | null;
+                /** @description The claim's injury type, matched as the exact stored string — no trimming, case-folding or merging. */
+                "filter[injuryType]"?: string | null;
+                /** @description The claim's jurisdiction, matched exactly. Not the employer's region. */
+                "filter[state]"?: string | null;
+                /** @description An employer's id. Intersects the caller's scope and can never widen it — naming one outside the book empties every aggregate. */
+                "filter[employerId]"?: number | null;
+                /** @description The claim's disability type. */
+                "filter[disability]"?: components["schemas"]["Disability"] | null;
+                /** @description The employer's sector, matched as the exact stored string. An employer attribute, not an industry rollup. */
+                "filter[sector]"?: string | null;
+                /** @description The operating region the claim's plant sits in, matched exactly — a different column from `filter[state]`, which is the jurisdiction. */
+                "filter[region]"?: string | null;
+                /** @description The claim's ICD-10 code, matched as the exact stored string. */
+                "filter[icd10]"?: string | null;
+                /** @description The registered `age_band` of the injured worker's age. Ordinal words rather than ranges: the edges are published on `/dashboard/segmentation/values` and the label is composed from them. */
+                "filter[ageGroup]"?: components["schemas"]["AgeBand"] | null;
+                /** @description The injured worker's gender. */
+                "filter[gender]"?: components["schemas"]["Gender"] | null;
             };
             header?: never;
             path?: never;

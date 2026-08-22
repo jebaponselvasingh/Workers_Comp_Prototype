@@ -1841,3 +1841,311 @@ def expected_trends(
         "highRiskSeverityMin": TREND_HIGH_RISK_MIN,
         "medRiskSeverityMin": TREND_MED_RISK_MIN,
     }
+
+
+# --- Story 7.3: segmentation, restated independently ----------------------
+#
+# **A filter is a cut, and 7.1's review found an oracle carrying the
+# implementation's own cut and therefore agreeing with it.** So the ten
+# predicates below are written from the *dimension's* definition — which column,
+# which rule — rather than from the shape of `services/worklist/segmentation.py`,
+# and the expectations they build assert **which claims survive** rather than how
+# many. A count is satisfiable by the wrong population; a set of claim ids is not.
+#
+# What is reused rather than restated is `claims_for` (scope, one restatement,
+# already here) and `risk_band` (the one registered `risk` derivation this whole
+# console bands severity with — a second restatement of it would be pretending
+# there is a fourth rule). What is written fresh is the age band, the employee
+# join, and every predicate.
+#
+# **The age edges are restated under their own names although two of them
+# coincide with numbers already in this file** — `AGE_YOUNGER_MIN` beside
+# `MED_RISK_MIN` and `FRAUD_BAND_MED_MIN`, `AGE_OLDEST_MIN` beside
+# `FRAUD_FLAG_SCORE_MIN` and `FRAUD_BAND_HIGH_MIN`. That is this file's standing
+# ruling (`:1229-1234`) applied to a third column: sharing a name would make the
+# oracle unable to notice the day the document moved one of them, and the failure
+# it would hide is the one nobody would look for — a fraud threshold silently
+# re-banding a workforce.
+#
+# **Every constant below is read into an answer.** `AGE_OLDER_MIN` decides a band
+# in `age_band`, the other two decide the bands either side of it, and all three
+# are returned by `expected_segmentation_values` because the payload publishes
+# them for the UI to compose a range label from. A constant nothing reads
+# protects nothing.
+
+AGE_YOUNGER_MIN = 35
+AGE_OLDER_MIN = 45
+AGE_OLDEST_MIN = 55
+
+#: The `AgeBand` declaration order — youngest to oldest, which is a scale's
+#: reading order and the order a picker draws. Deliberately not `RISK_BAND_ORDER`'s
+#: high-first legend order: an age segmentation is scanned like a histogram.
+AGE_BAND_ORDER = ("youngest", "younger", "older", "oldest")
+
+#: The ten dimensions, in the order the chip row draws them — which is
+#: `DrillFilters`' field order restricted to this vocabulary, restated here so an
+#: oracle that agreed with a re-ordered chip row would fail.
+SEGMENTATION_ORDER = (
+    "severityBand",
+    "injuryType",
+    "state",
+    "employerId",
+    "disability",
+    "sector",
+    "region",
+    "icd10",
+    "ageGroup",
+    "gender",
+)
+
+
+def age_band(age: int) -> str:
+    """`employee.age` banded — four ordinal groups from three edges.
+
+    Written downward from the oldest edge, which is the order the derivation
+    tests them in and the only order under which three comparisons produce four
+    bands. The members carry no numbers, deliberately: the label an analyst reads
+    is composed in the browser from the published edges, so this vocabulary
+    survives a retune that would have falsified a member named for a range.
+    """
+    if age >= AGE_OLDEST_MIN:
+        return "oldest"
+    if age >= AGE_OLDER_MIN:
+        return "older"
+    if age >= AGE_YOUNGER_MIN:
+        return "younger"
+    return "youngest"
+
+
+def _employees_by_id() -> dict[str, dict[str, Any]]:
+    """`{employee business id: row}` from the seed file — the two worker columns.
+
+    The claim carries `employee_id` and the two segmentation dimensions that are
+    *not* a claim's own facts — the worker's age and gender — are on `employee`.
+    Joined here rather than assumed, because the join is precisely what Story 7.3
+    added a fourth projection-family read for.
+    """
+    return {row["employee_id"]: row for row in seed()["employees"]}
+
+
+def _segment_matches(claim: dict[str, Any], key: str, value: str) -> bool:
+    """One dimension, restated against the surface it has to reconcile with.
+
+    A mapping rather than a chain of `if`s so the ten read as one table, the way
+    the service's `_PREDICATES` does — `_drill_matches`' discipline, and the
+    values are compared as the **wire** spells them (strings), because that is
+    what a URL carries and what a chip publishes.
+    """
+    employee = _employees_by_id()[claim["employee_id"]]
+    employer = next(row for row in seed()["employers"] if row["name"] == claim["employer"])
+    answers: dict[str, bool] = {
+        # The one registered `risk` band, reused — the High Risk card's, the
+        # severity donut's and the trend cohort's, so a segmentation by `high`
+        # and a slice of that donut are one band rather than two readings.
+        "severityBand": risk_band(claim["severity_score"]) == value,
+        # The exact stored string, with no trim, case-fold or merge — the ruling
+        # the injury-type and state bars are folded under.
+        "injuryType": claim["injury_type"] == value,
+        "state": claim["state"] == value,
+        "employerId": str(_employer_id(claim["employer"])) == value,
+        "disability": claim["disability"] == value,
+        # The **employer's** attribute, reached through the join.
+        "sector": employer["sector"] == value,
+        # A `claim` column nothing in this console read before Story 7.3, and a
+        # different column from `state`: a region is where a plant is, a state is
+        # the jurisdiction a benefit is calculated under.
+        "region": claim["region"] == value,
+        # The column is `icd`; the facet says which coding system its values are
+        # in. Compared as stored, like every free-text dimension here.
+        "icd10": claim["icd"] == value,
+        # The **employee's** age, banded — the only dimension that is a number
+        # before it is a value, which is the whole reason it has a rule.
+        "ageGroup": age_band(employee["age"]) == value,
+        "gender": employee["gender"] == value,
+    }
+    if key not in answers:
+        raise AssertionError(f"no seeded oracle for segmentation dimension {key!r}")
+    return answers[key]
+
+
+def expected_segmented_ids(persona_name: str, role: str, **filters: str) -> set[str]:
+    """**Which claims** survive one segmentation over one persona's book.
+
+    A set of claim ids rather than a count, which is this block's whole
+    discipline: a filtered aggregate's count is satisfiable by the wrong
+    population, and the reconciliation tests compare this set against the drill
+    list's own items.
+
+    Dimensions arrive as camelCase keyword arguments spelled the way the URL
+    spells them (`severityBand=...`, `ageGroup=...`), and an unknown one raises
+    rather than being ignored — an oracle that silently dropped a dimension would
+    agree with an implementation that had dropped the same one.
+    """
+    return {
+        claim["claim_id"]
+        for claim in claims_for(persona_name, role)
+        if all(_segment_matches(claim, key, value) for key, value in filters.items())
+    }
+
+
+def _expected_option_order(
+    options: dict[str, str | None], declared: tuple[str, ...] | None
+) -> list[str]:
+    """One dimension's values, put in the order the story says a picker draws them.
+
+    **Derived from the two rules in words, never from the fold that implements
+    them**, and this function exists because the first version of it was not: it
+    read `sorted(options, key=lambda value: (options[value] or value, value))`,
+    which is `_ordered_values`' expression character for character — the `or`
+    included, so an empty-string label would have been treated as absent by the
+    oracle for the same reason and in the same place as by the server. That is
+    the failure the last two reviews found twice: an oracle carrying the
+    implementation's own reading cannot notice it.
+
+    So the two rules are executed rather than transcribed.
+
+    **A vocabulary keeps its declaration order.** Walked forwards over the
+    declared members, keeping the ones some claim is in — no sort and no rank
+    table, because "the order the enum declares" is a traversal rather than a
+    comparison. Anything the vocabulary does not contain is kept and appended,
+    ordered among itself, which is the endpoint's stated tolerance: a value
+    dropped from a picker is a claim population the analyst cannot see they
+    cannot reach.
+
+    **Everything else sorts ascending by the string a reader sees, then by the
+    value behind it.** The pair is built first and sorted as a pair, so the
+    ordering is a property of the list rather than of a key function that
+    happens to be spelled the same way twice. The string a reader sees is the
+    label *when the payload carries one* — `is None`, not falsiness: a label
+    that is the empty string is a label the picker renders, and reading it as
+    "absent" is a judgement the server may make but an oracle must not inherit.
+    """
+    shown = [(value if label is None else label, value) for value, label in options.items()]
+    if declared is None:
+        return [value for _, value in sorted(shown)]
+    present = set(options)
+    ordered = [member for member in declared if member in present]
+    unknown = sorted(value for value in present if value not in set(declared))
+    return ordered + unknown
+
+
+def expected_segmentation_values(persona_name: str, role: str, **filters: str) -> dict[str, Any]:
+    """The values endpoint's options, chips and counts for one persona and one filter.
+
+    Payload-shaped and camelCase so a test compares whole objects rather than
+    picking figures out one at a time — `expected_fraud_panel`'s discipline.
+
+    **The options are over the unfiltered book and `claimsMatching` is over the
+    filtered one**, which is the asymmetry the endpoint exists for: a picker cut
+    by its own filter could not be used to widen one. An oracle that narrowed both
+    would agree with an implementation that had made every filter a one-way door.
+
+    The order is restated rather than sorted uniformly: the two bands and the two
+    enum columns come in their **declaration** order, because a vocabulary has one
+    and "High, Low, Medium" is a severity picker nobody can scan; the other six
+    sort ascending by the string on screen, with the value behind it for the one
+    dimension where two options may share a label. `_expected_option_order`
+    carries the argument for why that is executed here rather than transcribed
+    from the fold.
+
+    **`rulesVersion` is deliberately not returned, and the caller's name says
+    so.** Every other key here is a fact about the seed file, which is what this
+    module is an oracle for. The rules version is a fact about the *document
+    loaded into the database at the moment of the request* — a migration away
+    from anything in `seed.json` — so restating it here would be this file
+    asserting a number it has no independent source for. `test_fraud_analytics`
+    checks it against `thresholds_for(db)`, which is where a version belongs.
+    """
+    visible = claims_for(persona_name, role)
+    employees = _employees_by_id()
+    employers = {row["name"]: row for row in seed()["employers"]}
+
+    found: dict[str, dict[str, str | None]] = {key: {} for key in SEGMENTATION_ORDER}
+    for claim in visible:
+        employee = employees[claim["employee_id"]]
+        found["severityBand"][risk_band(claim["severity_score"])] = None
+        found["injuryType"][claim["injury_type"]] = None
+        found["state"][claim["state"]] = None
+        found["employerId"][str(_employer_id(claim["employer"]))] = employers[claim["employer"]][
+            "short_name"
+        ]
+        found["disability"][claim["disability"]] = None
+        found["sector"][employers[claim["employer"]]["sector"]] = None
+        found["region"][claim["region"]] = None
+        found["icd10"][claim["icd"]] = None
+        found["ageGroup"][age_band(employee["age"])] = None
+        found["gender"][employee["gender"]] = None
+
+    declared: dict[str, tuple[str, ...]] = {
+        "severityBand": RISK_BAND_ORDER,
+        "ageGroup": AGE_BAND_ORDER,
+        "disability": ("temporary", "permanent"),
+        "gender": ("female", "male", "other"),
+    }
+
+    dimensions = [
+        {
+            "key": key,
+            "values": [
+                {"value": value, "label": found[key][value]}
+                for value in _expected_option_order(found[key], declared.get(key))
+            ],
+        }
+        for key in SEGMENTATION_ORDER
+    ]
+
+    return {
+        "dimensions": dimensions,
+        "appliedFilters": expected_segmentation_chips(persona_name, role, **filters),
+        "claimsInScope": len(visible),
+        "claimsMatching": len(expected_segmented_ids(persona_name, role, **filters)),
+        "ageYoungerMin": AGE_YOUNGER_MIN,
+        "ageOlderMin": AGE_OLDER_MIN,
+        "ageOldestMin": AGE_OLDEST_MIN,
+    }
+
+
+def expected_segmentation_chips(
+    persona_name: str, role: str, **filters: str
+) -> list[dict[str, Any]]:
+    """The chip row the server must publish for one segmentation.
+
+    **In `SEGMENTATION_ORDER`, never in the caller's order**, which is the whole
+    property: a chip row built by walking the request's parameters would render
+    differently depending on which one FastAPI happened to bind first, and the
+    workspace's chips and the drill list's would stop being one sequence.
+
+    **One of the ten carries a `display` and nine do not.** An employer id is not
+    a name, so the server resolves it — and resolves it *from the caller's own
+    rows*, so an employer outside the book gets `null` rather than that
+    employer's name and the chip cannot become an oracle for the existence of
+    something the caller cannot see (AD-7). Every other dimension's stored value
+    is already what a reader reads, or is a token the browser owns copy for.
+
+    An unknown dimension raises rather than being skipped, `expected_segmented_
+    ids`' rule: an oracle that quietly dropped one would agree with an
+    implementation that had dropped the same one.
+    """
+    visible = claims_for(persona_name, role)
+    employers = {row["name"]: row for row in seed()["employers"]}
+    for key in filters:
+        if key not in SEGMENTATION_ORDER:
+            raise AssertionError(f"no seeded oracle for segmentation dimension {key!r}")
+
+    chips: list[dict[str, Any]] = []
+    for key in SEGMENTATION_ORDER:
+        if key not in filters:
+            continue
+        value = filters[key]
+        display: str | None = None
+        if key == "employerId":
+            display = next(
+                (
+                    employers[claim["employer"]]["short_name"]
+                    for claim in visible
+                    if str(_employer_id(claim["employer"])) == value
+                ),
+                None,
+            )
+        chips.append({"key": key, "value": value, "display": display})
+    return chips

@@ -17,13 +17,13 @@
  * together — which is why `keepPreviousData` is on the hook and why the busy
  * flag below is one flag rather than five.
  *
- * **The selectors are local React state and deliberately not the URL.** Story
- * 7.1 deferred its own sort state for the same reason and recorded it: three
- * selector parameters would triple the surface area of a shareable link for a
- * preference that carries no data, and Story 7.3's segmentation is the story
- * that owns what belongs in this workspace's address bar. What *is* in the URL
- * is the drill-through — a period and a cohort are a claim population, and
- * `drill/filters.ts` already owns that vocabulary.
+ * **The selectors are in the URL since Story 7.3, and so is the filter.** This
+ * section deferred its own selector state to that story and recorded why:
+ * deciding what belongs in the workspace's address bar once for filters and once
+ * for selectors is how two schemes end up in one URL. The decision is
+ * `useSegmentation`'s — `filter[…]` for the ten dimensions, bare `grain`,
+ * `anchor` and `cohort` under the route's own names — so a window is now as
+ * shareable as the drill-through it opens.
  *
  * **The controls render the server's echo, not their own last click.** `grain`,
  * `anchor` and `cohort` come back on the payload precisely so a request that
@@ -52,11 +52,11 @@ import {
   useTrends,
   type PortfolioTrends,
   type TrendAnchor,
+  type TrendBucket,
   type TrendCohort,
   type TrendGrain,
   type TrendMetric,
   type TrendParams,
-  type TrendPoint,
   type TrendSeries,
 } from "@/api/dashboard";
 import { DISABILITY_LABEL } from "@/features/claim-detail/labels";
@@ -65,10 +65,13 @@ import { formatBasisPoints } from "@/lib/rate";
 
 import {
   drillHref,
+  isFiltered,
   RISK_LABEL_BY_BAND,
+  withSegmentation,
   type DrillFilters,
   type FilterKey,
 } from "../drill/filters";
+import { pickOption, useSegmentation } from "../segmentation/useSegmentation";
 
 import { TrendChartCard } from "./TrendChartCard";
 import { cohortFill } from "./trendColors";
@@ -154,9 +157,37 @@ const WHOLE_BOOK_LABEL = "All claims";
  */
 const SETTLED_STAGE = "settled";
 
+/**
+ * One card's empty sentence, in both readings of "empty" (Story 7.3).
+ *
+ * Two strings rather than one, because an empty series means two different
+ * things with two different fixes: under no filter it is a fact about the
+ * *window* the analyst chose and the fix is a wider period; under a segmentation
+ * it is a fact about the *filter* and the fix is clearing a chip. "No claims fall
+ * in this window" over a nine-dimension intersection sends the reader to the
+ * wrong control, on the section where the control is right beside it.
+ *
+ * Both readings keep the metric's own subject rather than collapsing to
+ * `NO_MATCHING_CLAIMS`, which is what `MetricSpec.emptyMessage` exists for: a
+ * busy quarter in which nothing settled empties two cards and no others, and one
+ * sentence across all five would put that distinction back where it was.
+ */
+interface EmptyCopy {
+  /** What the card says when no segmentation is applied. */
+  whole: string;
+  /** …and what it says when one is. */
+  segmented: string;
+}
+
 /** The two empty sentences: one about the window, one about what is in it. */
-const NO_CLAIMS = "No claims fall in this window.";
-const NOTHING_SETTLED = "No claims in this window have settled.";
+const NO_CLAIMS: EmptyCopy = {
+  whole: "No claims fall in this window.",
+  segmented: "No claims match these filters in this window.",
+};
+const NOTHING_SETTLED: EmptyCopy = {
+  whole: "No claims in this window have settled.",
+  segmented: "No claims matching these filters have settled in this window.",
+};
 
 /** `String`, named, so a count chart's formatter reads as a decision. */
 function asCount(magnitude: number): string {
@@ -215,7 +246,7 @@ interface MetricSpec {
    * this window" under a settlement chart of a hundred-claim quarter would be a
    * true sentence about the wrong population and would read as a broken page.
    */
-  emptyMessage: string;
+  emptyMessage: EmptyCopy;
 }
 
 /**
@@ -321,18 +352,35 @@ interface TrendPlan {
   byMetric: Map<TrendMetric, TrendSeries[]>;
   /** One series per cohort value, in the server's palette-slot order. */
   cohorts: TrendSeries[];
-  /** Every bucket in the window, by key — the drill-through's date bounds. */
-  buckets: Map<string, TrendPoint>;
+  /**
+   * Every bucket in the window, by key — the drill-through's date bounds.
+   *
+   * **Read off `data.buckets` since Story 7.3, not off a series' points.** The
+   * payload now publishes the window's vocabulary independently of the fold, and
+   * the reason is a defect this section had: an empty window under a cohort split
+   * published *no series at all*, so this map came back empty, the period
+   * `<select>` had nothing to offer and "View claims" went dead — while the same
+   * empty window under `cohort=none` left both live because zero-filled points
+   * still exist. The availability of the keyboard's only drill path depended on
+   * an unrelated selector, which was tolerable while an empty result was rare and
+   * is not now that a ten-dimension AND makes one ordinary.
+   */
+  buckets: Map<string, TrendBucket>;
   /** The same buckets in the window's order, for the period control. */
-  periods: TrendPoint[];
+  periods: TrendBucket[];
 }
 
 function planOf(data: PortfolioTrends | undefined): TrendPlan {
   const byMetric = new Map<TrendMetric, TrendSeries[]>();
   const cohorts: TrendSeries[] = [];
   const seenCohorts = new Set<string>();
-  const buckets = new Map<string, TrendPoint>();
-  const periods: TrendPoint[] = [];
+  const buckets = new Map<string, TrendBucket>();
+  const periods: TrendBucket[] = [];
+
+  for (const bucket of data?.buckets ?? []) {
+    buckets.set(bucket.bucketKey, bucket);
+    periods.push(bucket);
+  }
 
   for (const line of data?.series ?? []) {
     const held = byMetric.get(line.metric);
@@ -342,12 +390,6 @@ function planOf(data: PortfolioTrends | undefined): TrendPlan {
     if (line.cohortKey !== null && !seenCohorts.has(line.cohortKey)) {
       seenCohorts.add(line.cohortKey);
       cohorts.push(line);
-    }
-
-    for (const point of line.points) {
-      if (buckets.has(point.bucketKey)) continue;
-      buckets.set(point.bucketKey, point);
-      periods.push(point);
     }
   }
 
@@ -364,14 +406,25 @@ export function TrendsPage() {
   const navigate = useNavigate();
 
   /**
-   * Which window the analyst is asking about — local UI state, AD-9's split.
+   * Which window the analyst is asking about, and over which claims — the URL.
    *
-   * Server state is TanStack Query's and nothing else; "which of three grains is
-   * this analyst looking at" is neither a server fact nor part of any claim's
-   * identity. See the module docstring on why it is not in the URL.
+   * Held to each control's own option list rather than sent as found,
+   * `pickOption`'s recorded reason: a `<select>` whose value is not one of its
+   * options renders as *no selection at all*, so a hand-edited `?grain=fortnight`
+   * would leave a control the analyst cannot read. The server would refuse the
+   * value anyway; this is about the control rather than about the request.
    */
-  const [params, setParams] = useState<TrendParams>(DEFAULT_TREND_PARAMS);
-  const trends = useTrends(params);
+  const { segmentation, control, setControl } = useSegmentation();
+  // Whether the five cards below are describing the caller's book or an
+  // intersection of it — which decides one sentence per card and nothing else.
+  // See `EmptyCopy`.
+  const segmented = isFiltered(segmentation);
+  const params: TrendParams = {
+    grain: pickOption(control("grain"), GRAIN_ORDER, DEFAULT_TREND_PARAMS.grain),
+    anchor: pickOption(control("anchor"), ANCHOR_ORDER, DEFAULT_TREND_PARAMS.anchor),
+    cohort: pickOption(control("cohort"), COHORT_ORDER, DEFAULT_TREND_PARAMS.cohort),
+  };
+  const trends = useTrends(params, segmentation);
   /**
    * A new selector set is outstanding and the previous charts are on screen.
    *
@@ -409,7 +462,7 @@ export function TrendsPage() {
   const selectedPeriod = plan.buckets.has(period) ? period : lastPeriod;
 
   function select<K extends keyof TrendParams>(key: K, value: TrendParams[K]): void {
-    setParams((current) => ({ ...current, [key]: value }));
+    setControl(key, value);
   }
 
   /**
@@ -440,10 +493,21 @@ export function TrendsPage() {
   ): DrillFilters | null {
     const point = plan.buckets.get(bucketKey);
     if (point === undefined || data === undefined) return null;
+    // The workspace's filter first, then the metric's population, then the
+    // bucket's own bounds — `withSegmentation`'s merge, with the *gesture* last
+    // for that helper's recorded reason.
     const bounds: DrillFilters =
       data.anchor === "fnol"
-        ? { ...population, fnolFrom: point.bucketFrom, fnolTo: point.bucketTo }
-        : { ...population, doiFrom: point.bucketFrom, doiTo: point.bucketTo };
+        ? withSegmentation(segmentation, {
+            ...population,
+            fnolFrom: point.bucketFrom,
+            fnolTo: point.bucketTo,
+          })
+        : withSegmentation(segmentation, {
+            ...population,
+            doiFrom: point.bucketFrom,
+            doiTo: point.bucketTo,
+          });
     const facet = COHORT_FACET[data.cohort];
     if (cohortKey === null || facet === null) return bounds;
     return { ...bounds, [facet]: cohortKey };
@@ -556,9 +620,9 @@ export function TrendsPage() {
             }}
             className="rounded border border-border bg-surface px-[6px] py-[2px] text-[11px] text-text focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none"
           >
-            {plan.periods.map((point) => (
-              <option key={point.bucketKey} value={point.bucketKey}>
-                {point.bucketLabel}
+            {plan.periods.map((bucket) => (
+              <option key={bucket.bucketKey} value={bucket.bucketKey}>
+                {bucket.bucketLabel}
               </option>
             ))}
           </select>
@@ -645,7 +709,7 @@ export function TrendsPage() {
             formatValue={spec.format}
             note={data === undefined ? undefined : spec.note?.(data)}
             target={data === undefined ? undefined : spec.target?.(data)}
-            emptyMessage={spec.emptyMessage}
+            emptyMessage={spec.emptyMessage[segmented ? "segmented" : "whole"]}
             errorMessage={`⚠ ${spec.subject} could not be loaded. Try again in a moment.`}
             isPending={trends.isPending}
             isError={trends.isError}

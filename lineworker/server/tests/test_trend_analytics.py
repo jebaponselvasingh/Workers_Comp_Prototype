@@ -52,7 +52,7 @@ from api import create_app
 from config import Settings
 from data.context import ALL_EMPLOYERS, CallerContext
 from data.models import AppUser, AuditEvent
-from data.models.enums import Disability, RecoveryWindow, UserRole
+from data.models.enums import Disability, Gender, RecoveryWindow, UserRole
 from data.repositories import claims as claim_repo
 from data.repositories.identity import employer_ids_for
 from rules import parameters as rule_parameters
@@ -67,6 +67,7 @@ from services.worklist import fraud as fraud_service
 from services.worklist import sla
 from services.worklist import trends as trend_service
 from services.worklist.drill_through import FILTER_KEYS, WIRE_KEYS
+from services.worklist.segmentation import Segmentation
 from services.worklist.trends import (
     PortfolioTrends,
     TrendAnchor,
@@ -124,6 +125,14 @@ LOW_CONFIDENCE_CLAIM_MAX = 3
 RISK_HIGH_MIN = 65
 RISK_MED_MIN = 35
 
+#: Story 7.3's three age edges, required by `DerivationThresholds` and read by no
+#: fold in this file. Restated separately although two of them coincide with the
+#: severity edges above — this file's standing rule, and the reason a case that
+#: moved one is testing one change rather than two.
+AGE_YOUNGER_MIN = 35
+AGE_OLDER_MIN = 45
+AGE_OLDEST_MIN = 55
+
 
 # --- the pure half: synthetic caseloads ----------------------------------
 
@@ -139,6 +148,13 @@ def trend_claim(
     settled: bool = False,
     settle_duration: int | None = None,
     fully_recovered: bool = False,
+    injury_type: str = "Fracture",
+    state: str = "WA",
+    employer_id: int = 1,
+    region: str = "Midwest",
+    icd: str = "S61.219A",
+    age: int = 30,
+    gender: Gender = Gender.male,
 ) -> TrendClaim:
     """One projection row, with every field this story does not vary defaulted.
 
@@ -156,6 +172,11 @@ def trend_claim(
     SLA aggregation owns that column's name and its meaning (AD-2): what this
     factory builds is an `SlaSample`, which is the only shape a caller of
     `sla.strip_of` is ever supposed to hold.
+
+    Story 7.3's seven are defaulted quiet too and none of them is read by a fold
+    in this file: they exist because `TrendClaim` now satisfies
+    `segmentation.SegmentedClaim` structurally, and the segmentation cases live in
+    `test_segmentation.py`.
     """
     return TrendClaim(
         froi_date=froi_date,
@@ -173,6 +194,13 @@ def trend_claim(
             is_settled=settled,
             fully_recovered=fully_recovered,
         ),
+        injury_type=injury_type,
+        state=state,
+        employer_id=employer_id,
+        region=region,
+        icd=icd,
+        age=age,
+        gender=gender,
     )
 
 
@@ -201,7 +229,7 @@ def _thresholds(**changes: int) -> DerivationThresholds:
     case can move a band edge without publishing a rule document.
     """
     values: dict[str, Any] = {
-        "version": 6,
+        "version": 7,
         "risk_high_min": RISK_HIGH_MIN,
         "risk_med_min": RISK_MED_MIN,
         "siu_fraud_score_min": 60,
@@ -218,6 +246,11 @@ def _thresholds(**changes: int) -> DerivationThresholds:
         "fraud_flag_score_min": 55,
         "fraud_band_high_min": 55,
         "fraud_band_med_min": 35,
+        # Story 7.3's three. Required by the block and read by no fold in this
+        # file — the segmentation cases live in `test_segmentation.py`.
+        "age_younger_min": AGE_YOUNGER_MIN,
+        "age_older_min": AGE_OLDER_MIN,
+        "age_oldest_min": AGE_OLDEST_MIN,
     }
     values.update(changes)
     return DerivationThresholds(**values)
@@ -1202,6 +1235,7 @@ async def test_every_role_outside_the_allowlist_is_refused(role: UserRole) -> No
             _thresholds(),
             _periods(),
             SETTINGS,
+            Segmentation(),
         )
 
 
@@ -1219,6 +1253,7 @@ async def test_the_refusal_precedes_the_window_and_the_read() -> None:
             _thresholds(),
             _periods(),
             SETTINGS,
+            Segmentation(),
             from_date=date(2026, 9, 1),
             to_date=date(2026, 1, 1),
         )
@@ -1234,9 +1269,16 @@ def test_the_six_new_facets_are_appended_in_this_order_and_nothing_moved() -> No
     silently re-order the chips on every drill-through URL anybody has already
     shared. The head of the tuple is asserted too, because "appended" is a claim
     about both ends.
+
+    **Story 7.3 appended four more, so this story's six are no longer the tail**,
+    and the slice moved rather than the assertion weakening: the six still sit
+    where they were sent, immediately after Story 7.1's two and immediately
+    before the segmentation vocabulary's remainder.
+    `test_segmentation.py::test_the_four_new_facets_are_appended_after_this_
+    storys_six` asserts the other end.
     """
     assert FILTER_KEYS[:3] == ("stage", "severity_band", "fraud_flagged")
-    assert FILTER_KEYS[-6:] == (
+    assert FILTER_KEYS[-10:-4] == (
         "fnol_from",
         "fnol_to",
         "doi_from",
@@ -1244,7 +1286,7 @@ def test_the_six_new_facets_are_appended_in_this_order_and_nothing_moved() -> No
         "disability",
         "sector",
     )
-    assert [WIRE_KEYS[key] for key in FILTER_KEYS[-6:]] == [
+    assert [WIRE_KEYS[key] for key in FILTER_KEYS[-10:-4]] == [
         "fnolFrom",
         "fnolTo",
         "doiFrom",
@@ -1357,12 +1399,17 @@ async def test_the_refusal_happens_before_any_claim_is_read(
     async def forbidden(*_args: object, **_kwargs: object) -> Sequence[sa.Row[Any]]:
         raise AssertionError("a scoped read ran before the role gate")
 
-    monkeypatch.setattr(claim_repo, "select_claim_columns_with_employer", forbidden)
+    monkeypatch.setattr(claim_repo, "select_claim_columns_with_employer_and_employee", forbidden)
     ctx = CallerContext(user_id=1, role=role, employer_ids=frozenset({1}))
 
     with pytest.raises(fraud_service.FraudAnalyticsNotPermitted):
         await portfolio_trends(
-            db, ctx, await thresholds_for(db), await trend_periods_for(db), SETTINGS
+            db,
+            ctx,
+            await thresholds_for(db),
+            await trend_periods_for(db),
+            SETTINGS,
+            Segmentation(),
         )
 
 
@@ -1435,7 +1482,9 @@ async def test_the_trends_aggregate_takes_exactly_one_scoped_read(
 
     db.execute = counting  # type: ignore[method-assign]
     try:
-        await portfolio_trends(db, ctx, thresholds, periods, SETTINGS, grain=grain, cohort=cohort)
+        await portfolio_trends(
+            db, ctx, thresholds, periods, SETTINGS, Segmentation(), grain=grain, cohort=cohort
+        )
     finally:
         db.execute = original  # type: ignore[method-assign]
 
@@ -1773,6 +1822,7 @@ async def test_every_claim_behind_a_scoped_analysts_series_is_inside_that_book(
         await thresholds_for(db),
         await trend_periods_for(db),
         SETTINGS,
+        Segmentation(),
         from_date=date(2026, 1, 1),
         to_date=date(2026, 12, 31),
     )
@@ -1809,6 +1859,7 @@ async def test_a_scoped_analysts_sector_cohorts_are_only_her_employers(
         await thresholds_for(db),
         await trend_periods_for(db),
         SETTINGS,
+        Segmentation(),
         cohort=TrendCohort.sector,
         from_date=date(2026, 1, 1),
         to_date=date(2026, 12, 31),
@@ -1832,7 +1883,9 @@ async def test_an_analyst_with_no_employers_reads_an_empty_book_not_the_portfoli
     ctx = CallerContext(user_id=0, role=UserRole.analyst, employer_ids=frozenset())
     periods = await trend_periods_for(db)
 
-    trends = await portfolio_trends(db, ctx, await thresholds_for(db), periods, SETTINGS)
+    trends = await portfolio_trends(
+        db, ctx, await thresholds_for(db), periods, SETTINGS, Segmentation()
+    )
 
     assert trends.claims_in_scope == 0
     assert trends.claims_in_window == 0
@@ -1862,6 +1915,7 @@ async def test_an_empty_book_with_a_cohort_split_publishes_no_series_and_says_so
         await thresholds_for(db),
         await trend_periods_for(db),
         SETTINGS,
+        Segmentation(),
         cohort=TrendCohort.sector,
     )
 
@@ -1874,15 +1928,23 @@ async def test_an_empty_book_with_a_cohort_split_publishes_no_series_and_says_so
 
 
 @requires_db
-async def test_the_route_declares_exactly_five_parameters_and_none_is_a_scope(
+async def test_the_route_declares_exactly_fifteen_parameters_and_none_is_a_scope(
     seeded_db_url: str,
 ) -> None:
-    """An allowlist of exactly five names rather than an assertion of emptiness.
+    """An allowlist of exactly fifteen names rather than an assertion of emptiness.
 
-    A test called "no parameters at all" that passes on a route with five is a
-    sentence a reader would have to disbelieve. Three of the five are closed
-    enums and two are dates, so there is still nowhere to put an employer, a user
-    or an "as".
+    A test called "no parameters at all" that passes on a route with fifteen is a
+    sentence a reader would have to disbelieve. Five decide what is *drawn* —
+    three closed enums and two dates — and Story 7.3's ten decide which claims are
+    folded into it. There is still nowhere to put a user or an "as", and
+    `filter[employerId]` narrows the caller's book over rows a scope-predicated
+    read already returned: it can never widen it.
+
+    The ten are written out rather than read off `segmentation.SEGMENTATION_WIRE_
+    KEYS`, for `seed_fixture.HIGH_RISK_MIN`'s reason — a contract test that
+    derived its expectation from the module under test would agree with it
+    however either was respelled, and the whole claim is that these are the same
+    strings `/dashboard/claims` accepts.
     """
     async with make_client(seeded_db_url) as client:
         schema = (await client.get("/openapi.json")).json()
@@ -1894,6 +1956,16 @@ async def test_the_route_declares_exactly_five_parameters_and_none_is_a_scope(
         "cohort",
         "from",
         "to",
+        "filter[severityBand]",
+        "filter[injuryType]",
+        "filter[state]",
+        "filter[employerId]",
+        "filter[disability]",
+        "filter[sector]",
+        "filter[region]",
+        "filter[icd10]",
+        "filter[ageGroup]",
+        "filter[gender]",
     }
     assert "requestBody" not in operation
 
@@ -2023,6 +2095,10 @@ async def test_the_response_is_camel_case_and_carries_nothing_else(seeded_db_url
         "bucketCount",
         "claimsInScope",
         "claimsInWindow",
+        # Story 7.3's one. The window's own vocabulary, published independently
+        # of the series so a period control stays live when a filter or a cohort
+        # split empties the fold — see `TrendBucketResponse`.
+        "buckets",
         "series",
         "defaultBuckets",
         "maxBuckets",
@@ -2034,6 +2110,19 @@ async def test_the_response_is_camel_case_and_carries_nothing_else(seeded_db_url
         "rulesVersion",
         "periodsVersion",
     }
+    assert set(payload["buckets"][0]) == {
+        "bucketKey",
+        "bucketLabel",
+        "bucketFrom",
+        "bucketTo",
+    }
+    # …and it is the *whole* window, not the buckets that happened to hold a
+    # claim: the payload's own `bucketCount` is what a client checks a point
+    # count against, and the control reads this list.
+    assert len(payload["buckets"]) == payload["bucketCount"]
+    assert [bucket["bucketKey"] for bucket in payload["buckets"]] == [
+        point["bucketKey"] for point in payload["series"][0]["points"]
+    ]
     assert set(payload["series"][0]) == {
         "metric",
         "cohortKey",

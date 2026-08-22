@@ -7,6 +7,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { createQueryClient } from "@/api/queryClient";
 import {
   DRILL_CLAIMS,
+  DRILL_CLAIMS_AGE_BAND,
   DRILL_CLAIMS_EMPTY,
   DRILL_CLAIMS_FILTERED,
   DRILL_CLAIMS_PAGE_TWO,
@@ -190,6 +191,56 @@ test("an id-valued chip reads the name the server resolved", async () => {
   // the chart that published the id may never have been rendered — so the
   // server resolves it off rows it had already read.
   expect(chips[1]).toHaveTextContent("Employer: Boeing");
+});
+
+test("an age-band chip reads the same range here as on the workspace it came from", async () => {
+  renderList(
+    { drillClaims: DRILL_CLAIMS_AGE_BAND },
+    "/dashboard/claims?filter%5BageGroup%5D=older",
+  );
+
+  // AC 2 is that the segmentation survives the click as a clearable chip, and a
+  // chip that renames itself in transit barely survives: this read "Age group:
+  // older" one click after reading "Age group: 45–54" on the bar that produced
+  // it. One value, two names, on two screens of one workspace.
+  //
+  // The fix is not a label decided server-side — that would be a second copy of
+  // a value derived from a rule document, free to disagree with the workspace's
+  // the first time an edge moved. It is the three **edges**, published on this
+  // payload from the document this route already loads, composed through the
+  // same `ageBandLabels` the bar calls.
+  const chips = await screen.findAllByTestId("drill-chip");
+  expect(chips[0]).toHaveTextContent("Age group: 45–54");
+  // …and the wire value is untouched: it is what the URL carries and what the
+  // ✕ removes.
+  expect(chips[0]).toHaveAttribute("data-filter-key", "ageGroup");
+  // The empty state names the same filter by the same words, rather than by the
+  // ordinal word underneath it.
+  expect(screen.queryByTestId("drill-empty")).toBeNull();
+});
+
+test("an age-band chip falls back to the ordinal word when there are no edges to compose from", async () => {
+  // A 422 has no payload to publish edges on, and the chips are drawn from the
+  // URL instead (`appliedFromFilters`). "Age group: older" is honest there — the
+  // alternative is a second request for a caption on a screen whose only useful
+  // control is a ✕.
+  renderList(
+    {
+      drillClaims: {
+        status: 422,
+        body: {
+          type: "/problems/validation-error",
+          title: "Unprocessable Content",
+          status: 422,
+          detail: "no",
+        },
+      },
+    },
+    "/dashboard/claims?filter%5BageGroup%5D=older",
+  );
+
+  const chips = await screen.findAllByTestId("drill-chip");
+  expect(chips[0]).toHaveTextContent("Age group: older");
 });
 
 test("a chip's ✕ removes exactly one key from the URL", async () => {

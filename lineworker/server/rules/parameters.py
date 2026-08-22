@@ -175,6 +175,49 @@ def _recovery_window_set(
     return frozenset(windows)
 
 
+#: The range an age *cut-off* is checked against — a working life, not a lifespan.
+#:
+#: Not a rule and deliberately not in a rule document: it is the *domain* of
+#: `employee.age` as a thing a band edge can honestly sit on, the way 0–100 is
+#: the domain of `severity_score` and `fraud_score` in the three checks that
+#: quote those literals inline below.
+#:
+#: **The first spelling of this bound was `0 <= edge <= 120`, and it closed one
+#: end of one failure.** 120 is the domain of a human *age*, which is the wrong
+#: domain for a *cut-off*: `ageOldestMin: 119` is inside it and files the whole
+#: workforce as `youngest`, which is verbatim the failure the check exists to
+#: refuse. And `0` is no floor at all — `ageYoungerMin: 0` deletes the
+#: `youngest` band outright and composes the label "Under 0" on every picker.
+#: The honest domain is the one a *workforce* occupies: 14 is the youngest a
+#: person may be employed in non-agricultural work under the FLSA, and nobody
+#: bands a claims book on a cut-off past 80.
+#:
+#: Named constants rather than bare numbers because these are the only bounds in
+#: this block that are not a column constraint anybody can look up, so the names
+#: are where the reasoning goes.
+MIN_WORKING_AGE: Final[int] = 14
+MAX_WORKING_AGE: Final[int] = 80
+
+#: The narrowest the three age edges may span, first to last.
+#:
+#: The bound above refuses each edge on its own and the strict ordering below
+#: refuses a *pair* that collapses; neither sees `(14, 15, 16)`, which passes
+#: both and still leaves three of the four bands describing a population no
+#: workforce contains — a 22-year-old bands as `oldest`, every picker renders,
+#: and nothing raises. A spread is the only thing that catches it, and ten years
+#: is the smallest one under which the two interior bands are cohorts rather
+#: than rounding: the shipped document's own first-to-last span is twice this.
+#: (The three edges are not quoted here — `test_no_module_outside_the_registry_
+#: hardcodes_the_band` greps this tree for them, comments included, and a
+#: docstring naming them would be the inlining it exists to refuse.)
+#:
+#: This is a bound on a *scale*, not a policy about where the edges belong —
+#: `fraudFlagScoreMin` against `siuFraudScoreMin` is the refusal deliberately
+#: withheld below, and the difference is that those are two independent rules
+#: over one column while these three are one rule's own cut-points.
+MIN_AGE_BAND_SPAN: Final[int] = 10
+
+
 @dataclass(frozen=True)
 class DerivationThresholds:
     """Every parameter the AD-10 derivation registry reads.
@@ -243,6 +286,28 @@ class DerivationThresholds:
     # See `services/derivations/fraud_score_band.py`.
     fraud_band_high_min: int
     fraud_band_med_min: int
+    # Story 7.3's three (document v7). The edges of the age band the analyst
+    # workspace segments by — three cut-offs, four ordinal groups. They belong
+    # in this block rather than in a document of their own because `age_band` is
+    # a registered derivation and `registry.Derivation.build` takes *this* type
+    # and nothing else: a computer whose parameters lived elsewhere could not be
+    # registered without changing the registry's shape for every derivation that
+    # already works. `TrendPeriods` went the other way and is deliberately not
+    # the precedent — a window is not a derivation cut-off, and an age band is
+    # nothing else.
+    #
+    # Two of the three read the *same integers* as fields already in this block:
+    # `age_younger_min` coincides with `risk_med_min` and `fraud_band_med_min`,
+    # and `age_oldest_min` with `fraud_flag_score_min` and
+    # `fraud_band_high_min`. Coincidences across three unrelated columns — a
+    # severity score, a fraud score and a person's age — and exactly the reason
+    # they are separate fields:
+    # collapsing any pair would tie a worker's age band to a fraud threshold, so
+    # retuning the review cut-off tomorrow would silently re-band the workforce.
+    # See `services/derivations/worker_age_band.py`.
+    age_younger_min: int
+    age_older_min: int
+    age_oldest_min: int
 
     def __post_init__(self) -> None:
         # Story 1.4's `Field(ge=0, le=100)`, in its new home. `severity_score`
@@ -318,6 +383,63 @@ class DerivationThresholds:
                 f"fraudBandHighMin ({self.fraud_band_high_min}) — equal cut-points make "
                 "the medium band unreachable rather than re-tuning it"
             )
+        # The age edges' own domain check, and the domain is a *workforce* rather
+        # than a 0-100 score column: `employee.age` is a stored integer with no
+        # database constraint, so the range this tier can honestly refuse is the
+        # one no cut-off on a claims book belongs outside. `ageOldestMin: 500`
+        # files the whole workforce as `youngest` and the segmentation control
+        # offers three groups that match nothing — silently, with every picker
+        # still rendering.
+        #
+        # **Both ends, and the first spelling closed only one.** `0 <= edge` is
+        # not a floor: `ageYoungerMin: 0` deletes the `youngest` band and
+        # composes "Under 0" on every picker, which is the same silent failure
+        # read from the other direction. `MIN_WORKING_AGE` carries the argument
+        # for where the floor is.
+        for name, edge in (
+            ("ageYoungerMin", self.age_younger_min),
+            ("ageOlderMin", self.age_older_min),
+            ("ageOldestMin", self.age_oldest_min),
+        ):
+            if not MIN_WORKING_AGE <= edge <= MAX_WORKING_AGE:
+                raise RuleParameterError(
+                    f"{name} must be between {MIN_WORKING_AGE} and {MAX_WORKING_AGE} "
+                    f"(a working age), got {edge}"
+                )
+        # …and the three together must still span a workforce. Each edge inside
+        # the range and strictly ordered still admits `(14, 15, 16)`, under which
+        # a 22-year-old bands as `oldest` and three of the four bands describe
+        # nobody — the domain check's own failure, assembled out of values that
+        # each pass it. `MIN_AGE_BAND_SPAN` carries the argument for the width.
+        span = self.age_oldest_min - self.age_younger_min
+        if span < MIN_AGE_BAND_SPAN:
+            raise RuleParameterError(
+                f"ageYoungerMin ({self.age_younger_min}) to ageOldestMin "
+                f"({self.age_oldest_min}) spans {span} years, which is below the "
+                f"{MIN_AGE_BAND_SPAN} a four-band workforce scale needs — edges this "
+                "close leave three of the four bands describing nobody"
+            )
+        # **A band scale, so the ordering is checked — and equality is refused
+        # with `>=` rather than `>`.** That is the difference from `riskMedMin`
+        # against `riskHighMin` twenty lines below, which permits an equal pair
+        # and thereby permits a collapsed `med` band: `deferred-work.md` records
+        # that hole and records that tightening a *shipped* block's validation
+        # is its own change, because a document that loads today would stop
+        # loading. Every parameter added since Story 5.2's review refuses
+        # equality, and these three are added now, so they refuse it. An equal
+        # pair does not invert the scale, it deletes the band between them —
+        # `age_band` tests the edges downward from `oldest`, so an
+        # `ageOlderMin == ageOldestMin` makes `older` unreachable and every
+        # worker in it reads as `oldest`, with no exception and no failing test.
+        for lower_name, lower, upper_name, upper in (
+            ("ageYoungerMin", self.age_younger_min, "ageOlderMin", self.age_older_min),
+            ("ageOlderMin", self.age_older_min, "ageOldestMin", self.age_oldest_min),
+        ):
+            if lower >= upper:
+                raise RuleParameterError(
+                    f"{lower_name} ({lower}) must be below {upper_name} ({upper}) — equal "
+                    "cut-points make the band between them unreachable rather than re-tuning it"
+                )
         # Story 1.4's `_bands_must_not_overlap`, in its new home. An
         # inverted pair puts scores in two bands at once and the derivation
         # reads them in order, so it would silently answer "high" for
@@ -422,6 +544,9 @@ class DerivationThresholds:
             fraud_flag_score_min=_integer(document, result, "fraudFlagScoreMin"),
             fraud_band_high_min=_integer(document, result, "fraudBandHighMin"),
             fraud_band_med_min=_integer(document, result, "fraudBandMedMin"),
+            age_younger_min=_integer(document, result, "ageYoungerMin"),
+            age_older_min=_integer(document, result, "ageOlderMin"),
+            age_oldest_min=_integer(document, result, "ageOldestMin"),
         )
 
 

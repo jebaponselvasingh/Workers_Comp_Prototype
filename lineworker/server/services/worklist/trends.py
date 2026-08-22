@@ -141,17 +141,26 @@ every `days_open` call and into the window's own arithmetic. Two claims in one
 request can never be scored against different days, and a request straddling
 midnight cannot bucket half its book into one month and half into the next.
 
-The read is one `select_claim_columns_with_employer` — `charts.portfolio_charts`'
-call, widened — and every one of the five metrics folds from that one projection.
-There is deliberately **no `GROUP BY` push-down**, and the reason is that it
-would only move one of five metrics: `date_trunc` is not a rule value so
-bucketing pushes down cleanly, but `avg_days_open` folds a registered derivation,
-`paid_cents` folds another, and the two SLA figures fold `sla.strip_of` — all
-Python-tier by AD-2 and AD-10. Pushing the bucket into SQL would leave four
-metrics needing the rows anyway, turning one scoped read into two read shapes and
-splitting one aggregate across two tiers to save a count. The trigger to revisit
-is stated rather than left implicit: a single scope past roughly ten thousand
-claims, or Story 7.3 multiplying grain × cohort × segmentation onto one request.
+The read is one `select_claim_columns_with_employer_and_employee` — the
+projection family's fourth member, which Story 7.3 added because two segmentation
+dimensions are columns of `employee` — and every one of the five metrics folds
+from that one projection. There is deliberately **no `GROUP BY` push-down**, and
+the reason is that it would only move one of five metrics: `date_trunc` is not a
+rule value so bucketing pushes down cleanly, but `avg_days_open` folds a
+registered derivation, `paid_cents` folds another, and the two SLA figures fold
+`sla.strip_of` — all Python-tier by AD-2 and AD-10. Pushing the bucket into SQL
+would leave four metrics needing the rows anyway, turning one scoped read into
+two read shapes and splitting one aggregate across two tiers to save a count.
+
+**The revisit condition is now scope size alone.** Story 7.2 stated it as "a
+single scope past roughly ten thousand claims, **or** Story 7.3 multiplying grain
+× cohort × segmentation onto one request", and the second half is answered rather
+than pending: a segmentation *narrows the fold*. It adds no read and multiplies
+nothing — grain × cohort already multiplied and is bounded by `maxBuckets`, and
+the filter only ever removes claims from the loop. Two of its ten dimensions are
+derived, so pushing it into SQL would put part of one filter in `data/` and the
+rest here, which is the split `data/repositories/claims.py` refuses in writing.
+So the multiplication clause is retired and the size clause stands.
 
 ## Role gates capability, scope gates visibility (AD-7)
 
@@ -176,14 +185,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import Settings
 from data.context import CallerContext
-from data.models import Claim, Employer
-from data.models.enums import Disability
+from data.models import Claim, Employee, Employer
+from data.models.enums import Disability, Gender
 from data.repositories import claims as claim_repo
 from rules.parameters import DerivationThresholds, TrendPeriods
 from services import derivations
 from services.derivations import OpenDurationDerivation, RiskDerivation, TotalPaidDerivation
 from services.worklist import sla
 from services.worklist.fraud import require_fraud_analytics_access
+from services.worklist.segmentation import Computers as SegmentationComputers
+from services.worklist.segmentation import Segmentation
+from services.worklist.segmentation import narrowed as segmentation_narrowed
 
 # --- the vocabulary ------------------------------------------------------
 
@@ -573,7 +585,8 @@ def _off_the_calendar(grain: TrendGrain) -> str:
 
 @dataclass(frozen=True)
 class TrendClaim:
-    """One claim, reduced to the nine facts the five series are folded from.
+    """One claim: the nine facts the five series fold, plus the seven the
+    segmentation filter narrows on.
 
     A projection rather than the ORM entity, for `ChartClaim`'s two reasons: it
     keeps `trends_of` pure and generatable, and it puts every input to the five
@@ -594,6 +607,24 @@ class TrendClaim:
     `sample` is an `SlaSample` rather than loose columns because the SLA
     aggregation owns those facts and their meaning (AD-2). Nothing here unpacks
     it; it is handed straight back to `sla.strip_of`, one bucket at a time.
+
+    **Story 7.3 widens it by seven and re-uses three.** `severity_score`,
+    `disability` and `sector` were already here as *cohort* keys — the three
+    dimensions a series may be split by — and the workspace's segmentation
+    narrows on all three plus seven more. Nothing in this file reads the seven:
+    they are handed to `segmentation.matches`, which is what makes this class
+    satisfy `segmentation.SegmentedClaim` **structurally**, by shape, without
+    this module importing that protocol's other consumers or the ORM.
+
+    A cohort and a filter over the same column are still different things, and
+    `TrendCohort`'s docstring says so: a split *partitions* the population and a
+    filter *narrows* it, so the cohort series over one metric sum back to the
+    unsplit one whatever the filter is.
+
+    The seven arrive from `select_claim_columns_with_employer_and_employee`,
+    which is the fourth member of the projection family and exists because two of
+    them are columns of `employee` — see that function on why the employer-only
+    sibling `charts.portfolio_charts` shares was not given a second join instead.
     """
 
     froi_date: date
@@ -605,6 +636,15 @@ class TrendClaim:
     paid_medical: int
     paid_expense: int
     sample: sla.SlaSample
+    # Story 7.3's seven — the segmentation vocabulary's remaining columns, read
+    # by nothing in this module and by `services/worklist/segmentation.py` alone.
+    injury_type: str
+    state: str
+    employer_id: int
+    region: str
+    icd: str
+    age: int
+    gender: Gender
 
 
 @dataclass(frozen=True)
@@ -767,10 +807,31 @@ class PortfolioTrends:
     the fold used.
 
     `claims_in_scope` and `claims_in_window` are two different facts and the
-    difference is worth stating on screen: the first is the caller's whole book,
-    the second is how much of it the chosen window actually covers. A window that
-    describes eleven of a hundred claims is not wrong, but a reader who thinks it
-    describes a hundred is.
+    difference is worth stating on screen: the first is the population these
+    figures describe, the second is how much of it the chosen window actually
+    covers. A window that describes eleven of a hundred claims is not wrong, but
+    a reader who thinks it describes a hundred is.
+
+    **Since Story 7.3 `claims_in_scope` is the *segmented* book rather than the
+    caller's whole one**, and the change is deliberate: with a filter applied,
+    every figure on this payload describes the intersection, so a denominator
+    quoting the unfiltered portfolio would put "11 of 100" under charts folded
+    from twenty. `fraud.FraudPanel.claims_in_scope` means the same thing for the
+    same reason. The unfiltered count has not gone anywhere — it is
+    `claimsInScope` on `GET /dashboard/segmentation/values`, published beside
+    `claimsMatching` precisely so the workspace can state both.
+
+    **`buckets` is the window's vocabulary, published independently of the
+    series**, and it closes a defect rather than adding a convenience. Until this
+    story the only place a client could learn which periods the window covered
+    was by walking a series' points — so an empty window under a cohort split
+    published *no series at all*, and the period `<select>` and its "View claims"
+    button both went dead, while the same empty window under `cohort=none` left
+    them live because zero-filled points still exist. The availability of the
+    keyboard's only drill path depended on an unrelated selector. A nine-dimension
+    AND makes an empty result routine rather than rare, so the vocabulary is now a
+    fact about the *window* — which is what it always was — and is on the payload
+    whatever the fold found. `deferred-work.md` records the entry this closes.
     """
 
     as_of: date
@@ -782,6 +843,7 @@ class PortfolioTrends:
     bucket_count: int
     claims_in_scope: int
     claims_in_window: int
+    buckets: tuple[TrendBucket, ...]
     series: tuple[TrendSeries, ...]
     default_buckets: int
     max_buckets: int
@@ -1153,6 +1215,11 @@ def trends_of(
         bucket_count=len(window.buckets),
         claims_in_scope=len(caseload),
         claims_in_window=in_window,
+        # The window's own buckets, whatever the fold found in them — see
+        # `PortfolioTrends`. Passed through rather than rebuilt: `window_for`
+        # computed them before the read, and a second construction here would be
+        # a second calendar for one axis.
+        buckets=window.buckets,
         series=tuple(series),
         default_buckets=periods.default_buckets,
         max_buckets=periods.max_buckets,
@@ -1227,6 +1294,7 @@ async def portfolio_trends(
     thresholds: DerivationThresholds,
     periods: TrendPeriods,
     settings: Settings,
+    filters: Segmentation,
     *,
     grain: TrendGrain = TrendGrain.month,
     anchor: TrendAnchor = TrendAnchor.fnol,
@@ -1244,20 +1312,39 @@ async def portfolio_trends(
     `settings` arrives because the SLA targets are deployment configuration and
     `sla.targets_for` is the one place they become targets.
 
-    **Five keyword-only parameters, and not one of them is a scope.** A grain, an
-    anchor, a cohort dimension and two dates: there is nowhere in this signature
-    to put an employer, a user or an "as", which is what keeps
+    **Five keyword-only parameters and one filter block, and not one of them is a
+    scope.** A grain, an anchor, a cohort dimension and two dates decide what is
+    *drawn*; the `Segmentation` decides which claims are folded into it. There is
+    nowhere in either to put an employer, a user or an "as" — `Segmentation`
+    carries `employer_id`, which **narrows** the caller's book over rows a
+    scope-predicated read already returned and can never widen it, exactly as
+    `filter[employerId]` does on the drill list. That is what keeps
     `test_query_parameters_cannot_widen_or_change_the_scope` a property of the
-    shape rather than of a validator (AD-7). Keyword-only because `from_date` and
-    `to_date` are two adjacent optional dates and a transposed pair would
-    type-check and silently invert a window.
+    shape rather than of a validator (AD-7). The five stay keyword-only because
+    `from_date` and `to_date` are two adjacent optional dates and a transposed
+    pair would type-check and silently invert a window.
 
     One scoped read, one pure fold — and literally so: there is no other `await`
     in this body. `test_the_trends_aggregate_takes_exactly_one_scoped_read`
-    counts the statements. The projection is `sla.SAMPLE_COLUMNS` widened with
-    the seven columns the five metrics and three cohorts need beyond the cycle
-    time, and the employer's sector comes from the repository's existing join
-    rather than from a second query per row.
+    counts the statements, and it stays at one **with a filter applied**, because
+    segmentation narrows the fold rather than adding a read.
+
+    The projection is `sla.SAMPLE_COLUMNS` widened with the columns the five
+    metrics, the three cohorts and the ten segmentation dimensions need beyond
+    the cycle time, and it comes from
+    `select_claim_columns_with_employer_and_employee` rather than from
+    `charts.portfolio_charts`' employer-only sibling. That is a **fourth**
+    projection-family read rather than a second join on the third, and the reason
+    is written down at the repository: two segmentation dimensions are columns of
+    `employee`, and giving the shared function an `employee` join in place would
+    change the statement a Story 5.3 aggregate runs for the benefit of a filter it
+    has no use for.
+
+    **The window is cut before the filter, and both before the fold.** A window
+    that holds no claim at all still publishes its buckets, so an impossible
+    segmentation empties the series and leaves the period control and its drill
+    button live — the defect `deferred-work.md` records against Story 7.2, and the
+    reason `PortfolioTrends.buckets` exists.
 
     **The clock is resolved here, once**, and threaded into the window and into
     every `days_open` call below it. Two claims in one request may never be
@@ -1279,7 +1366,7 @@ async def portfolio_trends(
     today = as_of or derivations.utc_today()
     window = window_for(grain, periods, today, from_date, to_date)
     computers = _Computers.of(thresholds)
-    rows = await claim_repo.select_claim_columns_with_employer(
+    rows = await claim_repo.select_claim_columns_with_employer_and_employee(
         db,
         ctx,
         [
@@ -1292,6 +1379,16 @@ async def portfolio_trends(
             Claim.paid_medical,
             Claim.paid_expense,
             Employer.sector,
+            # Story 7.3's seven, for the segmentation filter and for nothing this
+            # module reads. `Employee.age` and `Employee.gender` are why the read
+            # is the four-table sibling rather than the three-table one.
+            Claim.injury_type,
+            Claim.state,
+            Claim.employer_id,
+            Claim.region,
+            Claim.icd,
+            Employee.age,
+            Employee.gender,
         ],
     )
     # Named rather than positional (`TrendClaim(*row)`), which would work and
@@ -1310,11 +1407,23 @@ async def portfolio_trends(
             paid_medical=row.paid_medical,
             paid_expense=row.paid_expense,
             sample=sla.sample_of(row),
+            injury_type=row.injury_type,
+            state=row.state,
+            employer_id=row.employer_id,
+            region=row.region,
+            icd=row.icd,
+            age=row.age,
+            gender=row.gender,
         )
         for row in rows
     ]
     return trends_of(
-        caseload,
+        # Narrowed before the fold, so `claims_in_scope`, `claims_in_window`,
+        # every cohort's vocabulary and every point describe one population.
+        # Filtering inside `trends_of` instead would put the filter in the same
+        # loop as the bucketing, where a cohort key computed before the predicate
+        # would publish a legend entry for a line nobody drew.
+        segmentation_narrowed(caseload, filters, SegmentationComputers.of(thresholds)),
         window,
         anchor,
         cohort,

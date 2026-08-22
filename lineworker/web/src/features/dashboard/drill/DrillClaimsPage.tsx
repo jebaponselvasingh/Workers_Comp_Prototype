@@ -40,6 +40,8 @@ import { queryKeys } from "@/api/queryKeys";
 import { ClaimCard } from "@/features/queue/ClaimCard";
 import { DASHBOARD_ROUTE } from "@/features/shell/routes";
 
+import { ageBandLabels } from "../segmentation/ageBands";
+
 import { FilterChips } from "./FilterChips";
 import {
   appliedFromFilters,
@@ -130,9 +132,27 @@ export function DrillClaimsPage() {
   // already on its way.
   const applied =
     list.data?.appliedFilters ?? (isValidationError(list.error) ? appliedFromFilters(filters) : []);
+  /**
+   * The one facet whose label is neither the server's nor a constant (Story 7.3).
+   *
+   * `ageGroup`'s wire values are ordinal words carrying no numbers at all, so
+   * "Age group: 45–54" can only be composed from the document's own edges — and
+   * this payload publishes them precisely so that it can be composed *here*
+   * too. Before that it could not, and the consequence was one value under two
+   * names one click apart: an analyst filtering by age on the workspace read
+   * "45–54" on the bar and "older" on the list the chart click opened, which is
+   * the thing AC 2's "survives the click as a clearable chip" is about.
+   *
+   * The same `ageBandLabels` the workspace bar calls, over the same three
+   * integers from the same document — one composer, so the two chips cannot
+   * come to disagree. Absent while the request is in flight or after a refusal,
+   * where the chip falls back to the ordinal word: honest, and the alternative
+   * would be a second request for a caption.
+   */
+  const composed = list.data === undefined ? undefined : { ageGroup: ageBandLabels(list.data) };
   /** What an empty state names: the filters the server says it applied. */
   const appliedText = applied
-    .map((item) => chipLabel(item.key as FilterKey, item.value, item.display))
+    .map((item) => chipLabel(item.key as FilterKey, item.value, item.display, composed))
     .join(" · ");
 
   /**
@@ -205,6 +225,7 @@ export function DrillClaimsPage() {
 
       <FilterChips
         applied={applied}
+        composed={composed}
         onRemove={removeFilter}
         onClearAll={() => moveTo(new URLSearchParams())}
       />

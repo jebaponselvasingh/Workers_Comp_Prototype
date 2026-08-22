@@ -41,7 +41,13 @@ import type { FraudPanel } from "@/api/dashboard";
 
 import { FRAUD_BAND_FILL } from "../charts/chartTheme";
 import { DistributionDonut } from "../charts/DistributionDonut";
-import { drillHref } from "../drill/filters";
+import {
+  drillHref,
+  isFiltered,
+  NO_MATCHING_CLAIMS,
+  withSegmentation,
+  type DrillFilters,
+} from "../drill/filters";
 
 /** The unknown-value glyph, `HandlerBenchmarkTable`'s. */
 const EM_DASH = "—";
@@ -74,15 +80,28 @@ function bandLabels(
 
 export function FraudDistributionCard({
   data,
+  segmentation,
   isPending,
   isError,
 }: {
   /** The server's panel, or `undefined` while it is unknown. */
   data: FraudPanel | undefined;
+  /**
+   * The workspace's active filter, merged into every drill target below.
+   *
+   * Passed in rather than read here, `DashboardPage`'s composition rule: the page
+   * owns the URL and the sections receive what it decided, so a section cannot
+   * come to disagree with the page about which filter it is describing.
+   */
+  segmentation: DrillFilters;
   isPending: boolean;
   isError: boolean;
 }) {
   const navigate = useNavigate();
+  // Read from the filter this card was handed rather than passed in beside it:
+  // the page owns the URL and this section receives what it decided, so the
+  // caption and the drill target cannot come to describe two different filters.
+  const segmented = isFiltered(segmentation);
 
   return (
     <DistributionDonut
@@ -91,17 +110,27 @@ export function FraudDistributionCard({
       series={data?.byBand}
       label={bandLabels(data?.fraudBandHighMin, data?.fraudBandMedMin)}
       fill={FRAUD_BAND_FILL}
-      centreCaption="Claims in this portfolio"
+      // The population the centre figure counts, named rather than assumed. With
+      // a segmentation applied it is the intersection, and a caption reading
+      // "in this portfolio" over a nine-dimension subset is the one number on
+      // this card an analyst would quote at somebody.
+      centreCaption={segmented ? "Claims matching these filters" : "Claims in this portfolio"}
       // Reached for a scope with no claims at all — and only reachable because
       // `DistributionDonut` tests the series *total* rather than its row count.
       // The zero-fill means an empty book still arrives as three segments, so a
       // row-count test never fired here and the analyst got a donut with no arcs
       // over three "0" legend rows instead of this sentence.
-      emptyMessage="No claims in this portfolio yet."
+      //
+      // Two sentences since Story 7.3, for the reason `NO_MATCHING_CLAIMS`
+      // records: the same zero means "your book is empty" under no filter and
+      // "your filter is empty" under one, and only the second has a way out.
+      emptyMessage={segmented ? NO_MATCHING_CLAIMS : "No claims in this portfolio yet."}
       errorMessage="⚠ The fraud score distribution could not be loaded."
       isPending={isPending}
       isError={isError}
-      onSelect={(band) => void navigate(drillHref({ fraudBand: band }))}
+      onSelect={(band) =>
+        void navigate(drillHref(withSegmentation(segmentation, { fraudBand: band })))
+      }
     />
   );
 }

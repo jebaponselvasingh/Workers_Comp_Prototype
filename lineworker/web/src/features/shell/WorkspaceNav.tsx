@@ -34,13 +34,16 @@
  * identical to what Epic 5 shipped" is an acceptance criterion this component
  * would break by rendering anything.
  *
- * **Three destinations, and the other two Epic 7 sections are not here.**
- * Segmentation (7.3) and financial decomposition (7.4) are unbuilt, and the
- * standing instruction is to leave their slots *unbuilt rather than
- * stubbed-broken*. A disabled entry would be a promise the build cannot keep,
- * and a reader would have no way to tell it from one that is merely failing to
- * load. Each lands the same way Trends just did: a line in `DESTINATIONS`, and
- * its route added to `SECTION_ROUTES`.
+ * **Three destinations, and Story 7.3 deliberately did not add a fourth.**
+ * Segmentation is not a *place*: it is a filter over the two sections that
+ * exist, so it lands as a bar mounted on those routes rather than as an entry
+ * beside them — `SegmentationSection` below, which reuses this file's own
+ * partition so "which routes are sections" is one list with two readers.
+ * Financial decomposition (7.4) is still unbuilt and its slot is still left
+ * *unbuilt rather than stubbed-broken*: a disabled entry would be a promise the
+ * build cannot keep, and a reader would have no way to tell it from one that is
+ * merely failing to load. It lands the same way Trends did: a line in
+ * `DESTINATIONS`, and its route added to `SECTION_ROUTES`.
  *
  * **The role comes from the server**, through `useMe` and therefore from
  * `app_user`, exactly as `RequireSession`'s does. This component decides which
@@ -52,6 +55,9 @@
 import { Link, useLocation } from "react-router";
 
 import { useMe } from "@/api/auth";
+import { hrefWithFilters } from "@/features/dashboard/drill/filters";
+import { SegmentationBar } from "@/features/dashboard/segmentation/SegmentationBar";
+import { useSegmentation } from "@/features/dashboard/segmentation/useSegmentation";
 
 import { DASHBOARD_ROUTE, FRAUD_ROUTE, TRENDS_ROUTE } from "./routes";
 
@@ -145,6 +151,37 @@ const DESTINATIONS: readonly NavSpec[] = [
   },
 ];
 
+/**
+ * The segmentation bar, on the analyst's sections and nowhere else (Story 7.3).
+ *
+ * **Here rather than in `DashboardShell` for that file's own reason**, and the
+ * reason is sharper than it was for the nav: the *route* half of this rule is
+ * `SECTION_ROUTES`, which already exists in this file because the nav's
+ * "current" marking is a partition over it. Deciding it in the shell would mean
+ * a second reading of the same list, free to disagree the first time a fourth
+ * section landed in one of them and not the other — and the symptom would be a
+ * section whose filter bar is missing while its nav entry is marked current.
+ *
+ * The **role** half is `WorkspaceNav`'s too: a supervisor sees no bar, not a
+ * disabled one, because the sections it filters are not theirs to reach.
+ *
+ * **Not on the portfolio route.** That view is Epic 5's dashboard — scoped for
+ * the analyst rather than borrowed from the supervisor — and its endpoints take
+ * no segmentation at all, so a bar there would be a control that narrowed
+ * nothing and said so only by leaving every figure unchanged.
+ *
+ * A component rather than a conditional in the shell's JSX, so the two rules are
+ * one function a test can render on its own.
+ */
+export function SegmentationSection() {
+  const { data: me } = useMe();
+  const { pathname } = useLocation();
+
+  if (me?.role !== "analyst") return null;
+  if (!inAnySection(pathname)) return null;
+  return <SegmentationBar />;
+}
+
 /** The current destination's tokens, and every other one's. */
 const CURRENT = "border-brand text-text";
 const RESTING = "border-transparent text-muted-text hover:text-text";
@@ -152,6 +189,25 @@ const RESTING = "border-transparent text-muted-text hover:text-text";
 export function WorkspaceNav() {
   const { data: me } = useMe();
   const { pathname } = useLocation();
+  /**
+   * The active segmentation, carried between the sections it applies to.
+   *
+   * **A plain `to={FRAUD_ROUTE}` drops the query string**, which is a filter
+   * silently widening back to the whole portfolio the moment an analyst moves
+   * from one section of one filtered book to another — and it looks like a
+   * correct page, because every figure on it is right for a filter nobody
+   * cancelled.
+   *
+   * Carried on the **sections only**. Portfolio is Epic 5's dashboard, scoped
+   * for the analyst rather than borrowed from the supervisor, and its endpoints
+   * take no segmentation at all — so a filter in that address bar would be a
+   * narrowing with no control to see it by and no figure moved by it, which is
+   * worse than dropping it. The section controls (`grain`, `anchor`, `cohort`,
+   * the three sorts) are dropped by construction: they belong to one section,
+   * and this builds from the ten dimensions rather than from the whole query
+   * string.
+   */
+  const { segmentation } = useSegmentation();
 
   // Not `me?.role === "analyst"` inline at the call site, because the call site
   // is a layout: a shell that decided who sees a nav would put a role branch in
@@ -176,7 +232,11 @@ export function WorkspaceNav() {
         return (
           <Link
             key={destination.testId}
-            to={destination.to}
+            to={
+              destination.to === DASHBOARD_ROUTE
+                ? destination.to
+                : hrefWithFilters(destination.to, segmentation)
+            }
             aria-current={current ? "page" : undefined}
             data-testid={destination.testId}
             className={`-mb-px border-b-2 py-[7px] font-display text-[11px] font-bold tracking-[0.3px] uppercase focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none ${

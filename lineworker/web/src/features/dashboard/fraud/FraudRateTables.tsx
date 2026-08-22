@@ -70,7 +70,7 @@ import { formatBasisPoints } from "@/lib/rate";
 
 import type { DrillFilters } from "../drill/filters";
 
-import { drillHref } from "../drill/filters";
+import { drillHref, isFiltered, NO_MATCHING_CLAIMS, withSegmentation } from "../drill/filters";
 
 /** How many placeholder rows are held open while a request is in flight. */
 const SKELETON_ROWS = 6;
@@ -92,8 +92,16 @@ const SORT_LABEL: Record<FraudRateSort, string> = {
   label_asc: "Name (A–Z)",
 };
 
-/** The order the options are offered in — the enum's, declared once. */
-const SORT_ORDER: readonly FraudRateSort[] = [
+/**
+ * The order the options are offered in — the enum's, declared once.
+ *
+ * Exported since Story 7.3, `RISK_LABEL_BY_BAND`'s reason one folder over: the
+ * three sorts moved out of component state and into the workspace's query
+ * string, and `useSegmentation.pickOption` has to hold a URL value to *this*
+ * vocabulary or a `<select>` would render with a value none of its options has.
+ * One list, two readers, and this file is still the one that owns it.
+ */
+export const SORT_ORDER: readonly FraudRateSort[] = [
   "rate_desc",
   "rate_asc",
   "flagged_desc",
@@ -170,7 +178,19 @@ function SubjectLink({
   );
 }
 
-const INJURY_COLUMNS: readonly ColumnSpec<InjuryTypeRate>[] = [
+/**
+ * The three subject columns, as **factories over the active segmentation**.
+ *
+ * Module constants until Story 7.3, and the change is forced rather than
+ * stylistic: a subject link now opens the workspace's filter *plus* its own row,
+ * so the link's `to` depends on a value that arrives per render. Written as three
+ * functions rather than by threading a filter into `ColumnSpec.cell`'s signature,
+ * because the merge belongs to the *link* and not to the table: a `cell` that
+ * took a second argument would make every figure column carry a parameter none
+ * of them reads.
+ */
+function injuryColumns(segmentation: DrillFilters): readonly ColumnSpec<InjuryTypeRate>[] {
+  return [
   {
     key: "subject",
     header: "Injury type",
@@ -183,14 +203,16 @@ const INJURY_COLUMNS: readonly ColumnSpec<InjuryTypeRate>[] = [
       <SubjectLink
         testId="fraud-rate-link"
         label={row.injuryType}
-        filters={{ injuryType: row.injuryType }}
+        filters={withSegmentation(segmentation, { injuryType: row.injuryType })}
       />
     ),
   },
   ...figureColumns<InjuryTypeRate>(),
-];
+  ];
+}
 
-const EMPLOYER_COLUMNS: readonly ColumnSpec<EmployerRate>[] = [
+function employerColumns(segmentation: DrillFilters): readonly ColumnSpec<EmployerRate>[] {
+  return [
   {
     key: "subject",
     header: "Employer",
@@ -200,14 +222,16 @@ const EMPLOYER_COLUMNS: readonly ColumnSpec<EmployerRate>[] = [
       <SubjectLink
         testId="fraud-rate-link"
         label={row.label}
-        filters={{ employerId: String(row.employerId) }}
+        filters={withSegmentation(segmentation, { employerId: String(row.employerId) })}
       />
     ),
   },
   ...figureColumns<EmployerRate>(),
-];
+  ];
+}
 
-const HANDLER_COLUMNS: readonly ColumnSpec<HandlerRate>[] = [
+function handlerColumns(segmentation: DrillFilters): readonly ColumnSpec<HandlerRate>[] {
+  return [
   {
     key: "subject",
     header: "Handler",
@@ -216,12 +240,13 @@ const HANDLER_COLUMNS: readonly ColumnSpec<HandlerRate>[] = [
       <SubjectLink
         testId="fraud-rate-link"
         label={row.handlerName}
-        filters={{ handlerId: String(row.handlerId) }}
+        filters={withSegmentation(segmentation, { handlerId: String(row.handlerId) })}
       />
     ),
   },
   ...figureColumns<HandlerRate>(),
-];
+  ];
+}
 
 function SkeletonRows({ columns }: { columns: number }) {
   return (
@@ -422,6 +447,7 @@ function RateTable<RowT>({
 
 export function FraudRateTables({
   data,
+  segmentation,
   sorts,
   onSort,
   pendingSort,
@@ -430,6 +456,14 @@ export function FraudRateTables({
 }: {
   /** The server's three breakdowns, or `undefined` while they are unknown. */
   data: FraudRates | undefined;
+  /**
+   * The workspace's active filter, merged into every subject link.
+   *
+   * Passed in rather than read here, `DashboardPage`'s composition rule: the page
+   * owns the URL and the sections receive what it decided, so a section cannot
+   * come to disagree with the page about which filter it is describing.
+   */
+  segmentation: DrillFilters;
   sorts: FraudRateSorts;
   /** Set one table's order. The page owns the state; the request follows it. */
   onSort: (table: keyof FraudRateSorts, next: FraudRateSort) => void;
@@ -446,6 +480,10 @@ export function FraudRateTables({
   isError: boolean;
 }) {
   const state = { isPending, isError };
+  // All three tables are folded from one narrowed population, so all three say
+  // the same thing when it is empty — see `NO_MATCHING_CLAIMS` for why that
+  // sentence is not "in this portfolio yet".
+  const segmented = isFiltered(segmentation);
 
   return (
     <section
@@ -465,7 +503,7 @@ export function FraudRateTables({
           testId="fraud-rate-injury"
           title="By injury type"
           errorSubject="The flagged-claim rates by injury type"
-          columns={INJURY_COLUMNS}
+          columns={injuryColumns(segmentation)}
           breakdown={data?.byInjuryType}
           sort={sorts.injuryType}
           isRefreshing={pendingSort === "injuryType"}
@@ -473,7 +511,7 @@ export function FraudRateTables({
           truncationCaption={(shown, total) =>
             `Showing ${String(shown)} of ${String(total)} injury types.`
           }
-          emptyMessage="No claims in this portfolio yet."
+          emptyMessage={segmented ? NO_MATCHING_CLAIMS : "No claims in this portfolio yet."}
           rowKey={(row) => row.injuryType}
           {...state}
         />
@@ -482,7 +520,7 @@ export function FraudRateTables({
           testId="fraud-rate-employer"
           title="By employer"
           errorSubject="The flagged-claim rates by employer"
-          columns={EMPLOYER_COLUMNS}
+          columns={employerColumns(segmentation)}
           breakdown={data?.byEmployer}
           sort={sorts.employer}
           isRefreshing={pendingSort === "employer"}
@@ -493,7 +531,7 @@ export function FraudRateTables({
           truncationCaption={(shown, total) =>
             `Showing ${String(shown)} of ${String(total)} employers.`
           }
-          emptyMessage="No claims in this portfolio yet."
+          emptyMessage={segmented ? NO_MATCHING_CLAIMS : "No claims in this portfolio yet."}
           rowKey={(row) => String(row.employerId)}
           {...state}
         />
@@ -502,7 +540,7 @@ export function FraudRateTables({
           testId="fraud-rate-handler"
           title="By handler"
           errorSubject="The flagged-claim rates by handler"
-          columns={HANDLER_COLUMNS}
+          columns={handlerColumns(segmentation)}
           breakdown={data?.byHandler}
           sort={sorts.handler}
           isRefreshing={pendingSort === "handler"}
@@ -510,7 +548,9 @@ export function FraudRateTables({
           truncationCaption={(shown, total) =>
             `Showing ${String(shown)} of ${String(total)} handlers.`
           }
-          emptyMessage="No handler carries a claim in this portfolio yet."
+          emptyMessage={
+            segmented ? NO_MATCHING_CLAIMS : "No handler carries a claim in this portfolio yet."
+          }
           rowKey={(row) => String(row.handlerId)}
           {...state}
         />

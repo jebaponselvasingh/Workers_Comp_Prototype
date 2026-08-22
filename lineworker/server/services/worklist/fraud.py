@@ -94,7 +94,7 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from data.context import CallerContext
-from data.models.enums import Stage, UserRole
+from data.models.enums import Disability, Gender, Stage, UserRole
 from data.repositories import claims as claim_repo
 from data.repositories import insights as insight_repo
 from rules.parameters import DerivationThresholds
@@ -106,6 +106,10 @@ from services.derivations import (
     SiuReviewDerivation,
 )
 from services.worklist.charts import CategoryCount, Distribution
+from services.worklist.segmentation import Computers as SegmentationComputers
+from services.worklist.segmentation import Segmentation, SegmentationValues
+from services.worklist.segmentation import narrowed as segmentation_narrowed
+from services.worklist.segmentation import values_of as segmentation_values_of
 
 log = structlog.get_logger()
 
@@ -220,7 +224,8 @@ def require_fraud_analytics_access(ctx: CallerContext) -> None:
 
 @dataclass(frozen=True)
 class FraudClaim:
-    """One claim, reduced to the nine facts the three aggregates are folded from.
+    """One claim: the nine facts the three aggregates fold, plus the eight the
+    segmentation filter narrows on.
 
     A projection rather than the ORM entity, for `ChartClaim`'s two reasons: it
     keeps the folds pure and generatable, and it puts every input to the three
@@ -237,6 +242,21 @@ class FraudClaim:
     a display name and merging them would be one row averaging two books. The name
     travels so a row can be labelled and a drill chip resolved without a second
     query.
+
+    **Story 7.3 widens it by five and re-uses three**, and the grouping of the
+    fields below is that split. `injury_type`, `employer_id` and `employer_label`
+    were already here as *breakdown keys*; `severity_score`, `state`,
+    `disability`, `sector`, `region`, `icd`, `age` and `gender` are here only
+    because the workspace's segmentation narrows on them, and they arrive from
+    columns `select_drill_rows` already returns. Nothing in this file reads any of
+    them: they are handed to `segmentation.matches`, which is what makes this
+    class satisfy `segmentation.LabelledClaim` **structurally** — a projection
+    joins that protocol by shape rather than by inheriting anything.
+
+    The two raw band inputs are worth naming as such: `severity_score` and `age`
+    are columns, and the dimensions the analyst picks are the registered `risk`
+    and `age_band` *bands* of them. A stored band would be the derived column
+    Story 1.2 banned and the second computer AD-10 forbids.
     """
 
     claim_id: str
@@ -248,6 +268,16 @@ class FraudClaim:
     employer_label: str
     handler_id: int
     handler_name: str
+    # Story 7.3's eight — the segmentation vocabulary's columns, read by nothing
+    # in this module and by `services/worklist/segmentation.py` alone.
+    severity_score: int
+    state: str
+    disability: Disability
+    sector: str
+    region: str
+    icd: str
+    age: int
+    gender: Gender
 
 
 @dataclass(frozen=True)
@@ -1178,9 +1208,9 @@ def red_flags_of(
 
     **The published coverage pair is reconciled here, and it has to be**, because
     its two halves come from two statements. The wrapper counts the claims with a
-    fraud narrative from the insight join and the claims in scope from a separate
-    `count_claims_matching`, both under READ COMMITTED, so a claim inserted
-    between them lands in the numerator and not in the denominator — and the card
+    fraud narrative from the insight join and the claims in the segment from a
+    separate scoped read of the claim rows, both under READ COMMITTED, so a claim
+    inserted between them lands in the numerator and not in the denominator — and the card
     then reads "5 of 4 claims in this portfolio have a cached fraud narrative",
     which is a coverage above 100% on the one surface whose whole subject is how
     much of the book has been analysed. Taking the larger of the two as the
@@ -1290,6 +1320,14 @@ def _projection(rows: Sequence[sa.Row[Any]]) -> list[FraudClaim]:
             employer_label=row.employer_short_name,
             handler_id=row.handler_id,
             handler_name=row.handler_name,
+            severity_score=row.severity_score,
+            state=row.state,
+            disability=row.disability,
+            sector=row.sector,
+            region=row.region,
+            icd=row.icd,
+            age=row.age,
+            gender=row.gender,
         )
         for row in rows
     ]
@@ -1299,6 +1337,7 @@ async def fraud_panel(
     db: AsyncSession,
     ctx: CallerContext,
     thresholds: DerivationThresholds,
+    filters: Segmentation,
 ) -> FraudPanel:
     """The band distribution and the SIU pipeline for the caller's book.
 
@@ -1316,10 +1355,26 @@ async def fraud_panel(
     first as well, so the refusal also precedes the rule-document read it makes on
     this function's behalf; the check here stays because capability belongs with
     the service that owns the rows and not with one caller.
+
+    **The segmentation narrows the fold and adds no read** (Story 7.3). It is
+    applied here, over the rows the one scoped read returned, rather than pushed
+    into the repository — two of its ten dimensions are registered derivations, so
+    a SQL narrowing would split one filter across two tiers, which
+    `data/repositories/claims.py` refuses in writing twice.
+    `test_the_panel_takes_exactly_one_scoped_read` stays green *with* a filter
+    applied, which is the property that makes the sentence above checkable.
+
+    A filter that no claim satisfies produces an empty caseload and therefore a
+    zero-filled band distribution, an empty pipeline and three zero counters —
+    a 200 with nothing in it, which is `_banded`'s whole argument arriving as the
+    ordinary case rather than as an edge one.
     """
     require_fraud_analytics_access(ctx)
     rows = await claim_repo.select_drill_rows(db, ctx)
-    return panel_of(_projection(rows), _Computers.of(thresholds))
+    caseload = segmentation_narrowed(
+        _projection(rows), filters, SegmentationComputers.of(thresholds)
+    )
+    return panel_of(caseload, _Computers.of(thresholds))
 
 
 async def fraud_rates(
@@ -1327,47 +1382,81 @@ async def fraud_rates(
     ctx: CallerContext,
     thresholds: DerivationThresholds,
     sorts: FraudRateSorts,
+    filters: Segmentation,
 ) -> FraudRates:
     """The three flagged-rate breakdowns for the caller's book.
 
-    `fraud_panel`'s signature with the sort block added, and the sort block is
-    the only thing a caller may send: there is nowhere in it to put an employer, a
-    user or an "as", which is what keeps
+    `fraud_panel`'s signature with the sort block and the segmentation added, and
+    those two are the only things a caller may send: there is nowhere in either to
+    put an employer, a user or an "as" — `Segmentation` carries `employer_id`,
+    which **narrows** the caller's book and can never widen it, exactly as
+    `filter[employerId]` does on the drill list. That is what keeps
     `test_query_parameters_cannot_widen_or_change_the_scope` a property of the
     shape rather than of a validator (AD-7).
 
     One scoped read, one pure fold. The ordering is a total order over an uncapped
-    list computed after the read, so a different sort is the same read.
+    list computed after the read, so a different sort is the same read — and so is
+    a different filter.
+
+    **The cut runs before the tallies, not after the ordering**, which matters on
+    this surface more than on the panel: `_breakdown` cuts the injury-type table
+    at the eight types with the most *claims*, and the segmentation decides which
+    claims those are. Narrowing after the tally would rank the whole book's eight
+    and then report rates over a subset of it.
     """
     require_fraud_analytics_access(ctx)
     rows = await claim_repo.select_drill_rows(db, ctx)
-    return rates_of(_projection(rows), _Computers.of(thresholds), sorts)
+    caseload = segmentation_narrowed(
+        _projection(rows), filters, SegmentationComputers.of(thresholds)
+    )
+    return rates_of(caseload, _Computers.of(thresholds), sorts)
 
 
 async def fraud_red_flags(
-    db: AsyncSession, ctx: CallerContext, read_clauses: FraudClauseReader
+    db: AsyncSession,
+    ctx: CallerContext,
+    read_clauses: FraudClauseReader,
+    thresholds: DerivationThresholds,
+    filters: Segmentation,
 ) -> FraudRedFlags:
     """The ranked red-flag clauses across the caller's book — read-only (AD-12).
 
-    **Takes no parameter block, because this view reaches no rule.** It groups
-    prose and counts claims; there is no threshold, no band and no cut-off in it,
-    so the route loads no document on its behalf and the response publishes none.
-    That is stated here rather than left to be inferred, because every sibling
-    aggregate on this dashboard takes one and a reader will wonder what happened
-    to it.
+    **It now takes a parameter block, and Story 7.3 is why.** Until this story
+    this was the one aggregate on the dashboard that reached no rule at all — it
+    groups prose and counts claims, and the route loaded no document on its
+    behalf. Segmentation changes that and only that: two of the ten dimensions
+    are registered derivations (`risk` over `severity_score`, `age_band` over
+    `employee.age`), so **which claims** this view describes is now decided by
+    `derivation_thresholds` even though **what it says about them** still is not.
+    The block is threaded for the population, not for a figure, and
+    `FraudRedFlags` publishes no threshold because none of its numbers was
+    produced at one.
 
-    **Two scoped reads, not one**, and this is the one place in this module where
-    the count departs from `charts.py`'s discipline. The published coverage is
-    "how many claims in scope carry a fraud narrative, out of how many claims are
-    in scope", and the second half of that cannot come from the insight join: a
-    claim with no `ai_insight` row produces no row to count. An outer join from
-    `claim` would return one row per claim in the portfolio to answer a question
-    about a handful of them, and a count is one aggregate statement.
+    **Two scoped reads, still**, and the second one changed shape rather than
+    multiplied. Story 7.1 paid for a separate `count_claims_matching` because the
+    published coverage is "claims carrying a fraud narrative, out of claims in
+    scope" and the denominator cannot come from the insight join — a claim with no
+    `ai_insight` row produces no row to count. A **segmented** denominator cannot
+    come from a SQL count either, for this module's standing reason: two of the
+    ten dimensions are derived, so the narrowing happens in Python over rows. So
+    the count becomes `select_drill_rows` — the identical read `fraud_panel`
+    makes, projected through the identical `_projection` — and the denominator is
+    the length of what survives the filter.
     `test_the_red_flag_aggregate_takes_exactly_two_scoped_reads` pins the number
-    so it stays two rather than growing quietly. Two statements under READ
-    COMMITTED can disagree about a claim inserted between them, which is why
-    `red_flags_of` reconciles the pair rather than publishing whatever the two
-    reads happened to see.
+    so it stays two rather than growing quietly.
+
+    That read is wider than the `COUNT` it replaces, which is a real cost stated
+    rather than hidden: one row per claim in scope instead of one integer. It is
+    the same row set the panel and the rates already read on the same screen, and
+    the alternative — pushing eight of the ten dimensions into SQL and folding the
+    other two in Python — is the two-tier split this module exists not to make.
+
+    **The insight rows are narrowed by claim id**, against the set that survived,
+    rather than by re-deriving anything: a cached narrative belongs to a claim,
+    and whether that claim is in the segment is a question the claim rows answer.
+    A narrative whose claim was filtered out contributes no clause, raises no
+    coverage and is not counted unreadable — it is simply not in the population
+    being described.
 
     **`read_clauses` is injected rather than imported**, which is the layering
     rule this package is arranged around: `services/` may never import `agents/`,
@@ -1382,7 +1471,11 @@ async def fraud_red_flags(
     """
     require_fraud_analytics_access(ctx)
     rows = await insight_repo.select_fraud_insights(db, ctx)
-    counted = await claim_repo.count_claims_matching(db, ctx, {"claims": sa.true()})
+    claim_rows = await claim_repo.select_drill_rows(db, ctx)
+    caseload = segmentation_narrowed(
+        _projection(claim_rows), filters, SegmentationComputers.of(thresholds)
+    )
+    in_segment = {claim.claim_id for claim in caseload}
     # Named rather than positional, `_projection`'s argument over four columns of
     # which two are strings: `CachedFraudInsight(*row)` would type-check and would
     # be one reordered projection away from grouping clauses by model name.
@@ -1395,9 +1488,55 @@ async def fraud_red_flags(
                 model=row.model,
             )
             for row in rows
+            if row.claim_id in in_segment
         ],
-        counted["claims"],
+        len(caseload),
         read_clauses,
+    )
+
+
+async def segmentation_values(
+    db: AsyncSession,
+    ctx: CallerContext,
+    thresholds: DerivationThresholds,
+    filters: Segmentation,
+) -> SegmentationValues:
+    """What the caller's book can be segmented by — the control's one read.
+
+    **Why the analyst workspace's *segmentation* endpoint is served from
+    `fraud.py`.** `services/worklist/segmentation.py` owns the vocabulary and
+    every fold over it, and it is deliberately pure — no session, no gate, no
+    repository — because `fraud` and `trends` both import it and it must not
+    import either of them back. The gate this route needs is
+    `require_fraud_analytics_access`, which lives here, and the projection it
+    folds is `_projection` over `select_drill_rows`, which is this module's; a
+    wrapper in that module would have to import both and would close the cycle.
+    So the pure half is there, the scoped half is here, and this function is the
+    fourth analyst aggregate rather than a fifth module.
+
+    `fraud_panel`'s signature, and the same discipline: **one scoped read, one
+    pure fold**, and literally so — there is no other `await` in this body. It is
+    the identical read the panel and the rates make, through the identical
+    projection, which is what lets the picker's options and the figures beside
+    them describe one set of rows.
+
+    **The filter is taken and is used for exactly one number.** The dimension
+    values are folded over the *unfiltered* scoped book — a picker whose options
+    were cut by the active filter could not be used to widen one, which would
+    make every filter a one-way door — while `claims_matching` counts what
+    survives, and `applied_filters` is the server's reading of the URL that the
+    chip row draws. `values_of` carries that asymmetry and the argument for it.
+
+    Raises `FraudAnalyticsNotPermitted` (403) for any role outside
+    `FRAUD_ANALYTICS_ROLES`, **before the read**, for `fraud_panel`'s reason —
+    and it buys slightly more here than there: this payload enumerates the
+    employers, sectors and regions a caller's book carries, which is the most
+    directly enumerable thing the workspace publishes.
+    """
+    require_fraud_analytics_access(ctx)
+    rows = await claim_repo.select_drill_rows(db, ctx)
+    return segmentation_values_of(
+        _projection(rows), filters, SegmentationComputers.of(thresholds), thresholds
     )
 
 
@@ -1432,4 +1571,5 @@ __all__ = [
     "rates_of",
     "red_flags_of",
     "require_fraud_analytics_access",
+    "segmentation_values",
 ]

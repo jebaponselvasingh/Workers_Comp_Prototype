@@ -61,11 +61,14 @@ import { TrendsPage } from "./TrendsPage";
  * flight" would not be assertable at all.
  */
 
-function renderPage(routes: Parameters<typeof stubApi>[0]): QueryClient {
+function renderPage(
+  routes: Parameters<typeof stubApi>[0],
+  initial = "/dashboard/trends",
+): QueryClient {
   stubApi(routes);
   const client = createQueryClient();
   render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[initial]}>
       <QueryClientProvider client={client}>
         <TrendsPage />
         {/* What a drill *does* is a navigation. Rendering the current location
@@ -533,6 +536,35 @@ test("an empty book gets every card's sentence, not five flat lines at zero", as
   // The window still exists: it is a question the server answered, not an
   // absence, so the period control is still populated.
   expect(screen.getByTestId("trend-window-caption")).toHaveTextContent("0 of 0 claims");
+});
+
+test("a narrowed window blames the filter rather than the period (Story 7.3)", async () => {
+  // The same five empty cards, one dimension applied. An empty series has two
+  // causes with two different fixes — widen the period, or clear a chip — and
+  // "No claims fall in this window" over a nine-dimension intersection sends the
+  // reader to the wrong control, on the section where the right one is directly
+  // above the charts.
+  renderPage(
+    { trends: TRENDS_EMPTY },
+    "/dashboard/trends?filter%5Bsector%5D=Aerospace",
+  );
+
+  await waitFor(() =>
+    expect(screen.getByTestId("trend-volume-empty")).toBeInTheDocument(),
+  );
+  for (const testId of ["trend-volume", "trend-days-open", "trend-paid"]) {
+    expect(screen.getByTestId(`${testId}-empty`)).toHaveTextContent(
+      "No claims match these filters in this window.",
+    );
+  }
+  // …and the two SLA cards keep their own subject, which is the whole reason
+  // the sentence is per metric: a busy quarter in which nothing settled empties
+  // these two and no others, and one sentence for all five would lose that.
+  for (const testId of ["trend-settlement", "trend-rtw-rate"]) {
+    expect(screen.getByTestId(`${testId}-empty`)).toHaveTextContent(
+      "No claims matching these filters have settled in this window.",
+    );
+  }
 });
 
 test("a window whose claims never settled empties the two SLA cards and no others", async () => {

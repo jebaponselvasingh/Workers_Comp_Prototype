@@ -36,7 +36,7 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router";
 
 import {
-  DEFAULT_FRAUD_RATE_SORTS,
+  DEFAULT_FRAUD_RATE_SORT,
   useDrillClaims,
   useFraudPanel,
   useFraudRates,
@@ -46,11 +46,21 @@ import {
 } from "@/api/dashboard";
 import { ClaimCard } from "@/features/queue/ClaimCard";
 
-import { claimHref, drillHref, type DrillFilters, type DrillOrigin } from "../drill/filters";
+import {
+  claimHref,
+  drillHref,
+  isFiltered,
+  NO_MATCHING_CLAIMS,
+  toFilterKey,
+  withSegmentation,
+  type DrillFilters,
+  type DrillOrigin,
+} from "../drill/filters";
 import { KpiCard, KpiCardSkeleton } from "../KpiCard";
+import { pickOption, useSegmentation } from "../segmentation/useSegmentation";
 
 import { FraudDistributionCard } from "./FraudDistributionCard";
-import { FraudRateTables } from "./FraudRateTables";
+import { FraudRateTables, SORT_ORDER } from "./FraudRateTables";
 import { RedFlagFrequencyCard } from "./RedFlagFrequencyCard";
 import { SiuPipelineCard } from "./SiuPipelineCard";
 
@@ -66,6 +76,21 @@ import { SiuPipelineCard } from "./SiuPipelineCard";
  */
 const FLAGGED: DrillFilters = { fraudFlagged: "true" };
 
+/**
+ * Which URL parameter carries each table's order, and in which field.
+ *
+ * The API's own `sort[…]` names, so the address bar and the request are one
+ * string — `filters.ts`' ruling for `filter[…]`, applied to the three controls
+ * Story 7.1 deferred to this story. A table rather than three lookups because
+ * the read and the write have to agree about the pairing, and a mismatch would
+ * put the employer table's order in the handler table's parameter.
+ */
+const SORT_PARAM = {
+  injuryType: "sort[injuryType]",
+  employer: "sort[employer]",
+  handler: "sort[handler]",
+} as const;
+
 /** How many placeholder rows the embedded list holds open. */
 const SKELETON_ROWS = 4;
 
@@ -78,9 +103,13 @@ const SKELETON_ROWS = 4;
  * have is a "Show more" — this is an entry point, and the full walk is one click
  * away on a page built for it.
  */
-function FlaggedClaims() {
+function FlaggedClaims({ segmentation }: { segmentation: DrillFilters }) {
   const navigate = useNavigate();
-  const list = useDrillClaims(FLAGGED);
+  // The workspace's filter *and* the flagged rule, which is what makes this
+  // embedded list the same population the two cards above it count — the merge
+  // every drill target on this page goes through.
+  const filters = withSegmentation(segmentation, FLAGGED);
+  const list = useDrillClaims(filters);
   // `HandlerBenchmarkTable`'s one-predicate ruling.
   const isLoading = list.isPending && list.data === undefined;
 
@@ -100,7 +129,7 @@ function FlaggedClaims() {
         </h3>
         <Link
           data-testid="fraud-flagged-view-all"
-          to={drillHref(FLAGGED)}
+          to={drillHref(filters)}
           className="rounded text-[11px] font-semibold text-steel hover:underline focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none"
         >
           View all →
@@ -125,7 +154,13 @@ function FlaggedClaims() {
         </ul>
       ) : list.data !== undefined && list.data.items.length === 0 ? (
         <p data-testid="fraud-flagged-empty" className="text-[11.5px] text-faint">
-          No claim in this portfolio is flagged for fraud review.
+          {/* With the workspace narrowed this list is the intersection of the
+              flagged rule and the segmentation, so "no claim in this portfolio
+              is flagged" would blame the book for what the filter did. See
+              `NO_MATCHING_CLAIMS`. */}
+          {isFiltered(segmentation)
+            ? NO_MATCHING_CLAIMS
+            : "No claim in this portfolio is flagged for fraud review."}
         </p>
       ) : (
         <ul aria-label="Flagged claims" className="rounded border border-border">
@@ -141,7 +176,7 @@ function FlaggedClaims() {
                   // The *drill list's* URL, not this page's: a supervisor who
                   // opened a claim from here should come back to the list she was
                   // reading, which is the flagged list rather than the workspace.
-                  state: { from: drillHref(FLAGGED) } satisfies DrillOrigin,
+                  state: { from: drillHref(filters) } satisfies DrillOrigin,
                 })
               }
             />
@@ -153,19 +188,33 @@ function FlaggedClaims() {
 }
 
 export function FraudPage() {
-  const panel = useFraudPanel();
-  const redFlags = useFraudRedFlags();
   /**
-   * Which order each rate table is being read in.
+   * The workspace's filter and its controls, both from the URL (Story 7.3).
    *
-   * Local UI state, `AD-9`'s split: server state is TanStack Query's and nothing
-   * else, and "which of five orders is this analyst looking at" is neither a
-   * server fact nor part of the claim's identity. It is deliberately **not** in
-   * the URL — three sort parameters would triple the surface area of a shareable
-   * link for a preference that carries no data, and Story 7.3's segmentation is
-   * the story that owns what belongs in this workspace's address bar.
+   * Story 7.1 held the three sorts in component state and recorded why: this
+   * story owns what belongs in the workspace's address bar, and deciding it once
+   * for filters and once for sorts is how two schemes end up in one URL. So the
+   * decision is made — `filter[…]` for segmentation, the API's own `sort[…]`
+   * names for these three — and "send me this table sorted by most flagged" is a
+   * link.
    */
-  const [sorts, setSorts] = useState<FraudRateSorts>(DEFAULT_FRAUD_RATE_SORTS);
+  const { segmentation, control, setControl } = useSegmentation();
+  const panel = useFraudPanel(segmentation);
+  const redFlags = useFraudRedFlags(segmentation);
+  /**
+   * Which order each rate table is being read in — read out of the URL.
+   *
+   * Held to `SORT_ORDER` rather than sent as found, `pickOption`'s recorded
+   * reason: a `<select>` whose value is not one of its options renders as *no
+   * selection at all*, so a hand-edited `?sort[employer]=severity` would leave a
+   * control the analyst cannot read. The server would refuse the value anyway;
+   * this is about the control rather than about the request.
+   */
+  const sorts: FraudRateSorts = {
+    injuryType: pickOption(control(SORT_PARAM.injuryType), SORT_ORDER, DEFAULT_FRAUD_RATE_SORT),
+    employer: pickOption(control(SORT_PARAM.employer), SORT_ORDER, DEFAULT_FRAUD_RATE_SORT),
+    handler: pickOption(control(SORT_PARAM.handler), SORT_ORDER, DEFAULT_FRAUD_RATE_SORT),
+  };
   /**
    * Which table's order was asked about last — the one a re-fetch belongs to.
    *
@@ -178,7 +227,30 @@ export function FraudPage() {
    * nothing changed.
    */
   const [requestedSort, setRequestedSort] = useState<keyof FraudRateSorts | null>(null);
-  const rates = useFraudRates(sorts);
+  const rates = useFraudRates(sorts, segmentation);
+  /**
+   * …and it is forgotten when the *filter* changes, because a filter is not a sort.
+   *
+   * The flag answers "which table was the reader asking about", and a
+   * segmentation change is a question about all three at once — every row in
+   * every table moves. Left standing, the last-sorted table alone reported busy
+   * while the other two swapped their rows silently, which is the announcement
+   * inverted: the one table whose `aria-busy` a screen reader trusts was the one
+   * saying the least useful thing.
+   *
+   * **Adjusted during render against a remembered key**, React's own pattern for
+   * state derived from a prop ("You Might Not Need an Effect") and the same one
+   * `SegmentationBar` uses for its refusal notice: an effect would clear the flag
+   * *after* the paint that already showed one table busy. The key is
+   * `toFilterKey`'s ordered serialisation, so two renders that set the same
+   * dimensions in a different order are one filter and do not reset anything.
+   */
+  const filterKey = toFilterKey(segmentation);
+  const [sortedUnder, setSortedUnder] = useState(filterKey);
+  if (sortedUnder !== filterKey) {
+    setSortedUnder(filterKey);
+    setRequestedSort(null);
+  }
   /**
    * …and it only counts while the *placeholder* is on screen.
    *
@@ -192,7 +264,7 @@ export function FraudPage() {
 
   function setSort(table: keyof FraudRateSorts, next: FraudRateSort) {
     setRequestedSort(table);
-    setSorts((current) => ({ ...current, [table]: next }));
+    setControl(SORT_PARAM[table], next);
   }
 
   return (
@@ -260,7 +332,7 @@ export function FraudPage() {
               // decided it — the KPI cards' rule on a third surface.
               caption={`Score ≥ ${String(panel.data.fraudFlagScoreMin)} — review needed`}
               tone="error"
-              drill={FLAGGED}
+              drill={withSegmentation(segmentation, FLAGGED)}
             />
             <KpiCard
               testId="fraud-kpi-siu"
@@ -268,8 +340,10 @@ export function FraudPage() {
               label="SIU review"
               caption={`Score ≥ ${String(panel.data.siuFraudScoreMin)} — referred`}
               tone="warn"
-              // The *referral* rule, and deliberately not the card beside it.
-              drill={{ siuReview: "true" }}
+              // The *referral* rule, and deliberately not the card beside it —
+              // merged with the workspace's filter, like every drill target on
+              // this page, so the list opens the intersection the card counted.
+              drill={withSegmentation(segmentation, { siuReview: "true" })}
             />
           </>
         )}
@@ -278,20 +352,27 @@ export function FraudPage() {
       <div className="mb-[10px] grid gap-[10px] sm:grid-cols-2 lg:grid-cols-3">
         <FraudDistributionCard
           data={panel.data}
+          segmentation={segmentation}
           isPending={panel.isPending}
           isError={panel.isError}
         />
         <SiuPipelineCard
           data={panel.data}
+          segmentation={segmentation}
           isPending={panel.isPending}
           isError={panel.isError}
         />
       </div>
 
       <div className="mb-[14px] grid gap-[10px] lg:grid-cols-2">
-        <FlaggedClaims />
+        <FlaggedClaims segmentation={segmentation} />
         <RedFlagFrequencyCard
           data={redFlags.data}
+          // The card publishes a coverage figure — "N of M claims … have a
+          // cached fraud narrative" — and M is the *segmented* book since this
+          // story. Without knowing that, the sentence blames a cold AI cache for
+          // what the filter did.
+          segmented={isFiltered(segmentation)}
           isPending={redFlags.isPending}
           isError={redFlags.isError}
         />
@@ -299,6 +380,7 @@ export function FraudPage() {
 
       <FraudRateTables
         data={rates.data}
+        segmentation={segmentation}
         sorts={sorts}
         onSort={setSort}
         pendingSort={pendingSort}

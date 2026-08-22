@@ -64,7 +64,7 @@ from api import create_app
 from config import Settings
 from data.context import ALL_EMPLOYERS, CallerContext
 from data.models import AppUser, AuditEvent, Claim
-from data.models.enums import InsightKind, Stage, UserRole
+from data.models.enums import Disability, Gender, InsightKind, Stage, UserRole
 from data.repositories import claims as claim_repo
 from data.repositories import insights as insight_repo
 from data.repositories.identity import employer_ids_for
@@ -87,6 +87,7 @@ from services.worklist.fraud import (
     rates_of,
     red_flags_of,
 )
+from services.worklist.segmentation import Segmentation
 from tests import seed_fixture
 from tests.conftest import requires_db
 
@@ -116,7 +117,96 @@ FRAUD_FLAG_SCORE_MIN = 55
 FRAUD_BAND_HIGH_MIN = 55
 FRAUD_BAND_MED_MIN = 35
 
+#: Story 7.3's three age edges, required by `DerivationThresholds` and read by no
+#: fold in this file. Written out separately although two of them coincide with
+#: numbers above — the same discipline the four fraud constants keep.
+AGE_YOUNGER_MIN = 35
+AGE_OLDER_MIN = 45
+AGE_OLDEST_MIN = 55
+
 SETTINGS = Settings(database_url="postgresql://unused", env="e2e")  # type: ignore[arg-type]
+
+#: The ten `filter[…]` names every analyst route takes since Story 7.3.
+#:
+#: Written out rather than read off `segmentation.SEGMENTATION_WIRE_KEYS`, for
+#: `seed_fixture.HIGH_RISK_MIN`'s reason: a contract test that derived the
+#: expected parameter set from the module under test would agree with it however
+#: either was respelled, and the whole claim being made is that these ten names
+#: are the *same strings* `/dashboard/claims` accepts.
+SEGMENTATION_PARAMETERS = {
+    "filter[severityBand]",
+    "filter[injuryType]",
+    "filter[state]",
+    "filter[employerId]",
+    "filter[disability]",
+    "filter[sector]",
+    "filter[region]",
+    "filter[icd10]",
+    "filter[ageGroup]",
+    "filter[gender]",
+}
+
+#: The parameters on these routes that genuinely have no vocabulary to publish.
+#:
+#: Five free-text columns compared as stored — `injury_type`'s and `state`'s
+#: standing ruling, which this vocabulary inherits — and one integer id. A
+#: closed enum for any of them would be the server holding a copy of the *data*,
+#: which is what the values endpoint exists to answer instead.
+#:
+#: **An allowlist of six by name, rather than a prefix that skips ten.** The
+#: first version of the assertion below skipped every parameter not spelled
+#: `sort[…]`, which excused the four dimensions that *are* closed enums — and
+#: those four are where "the type is the refusal" is the whole validation story:
+#: `filter[gender]=nonsense` is a 422 from FastAPI's coercion precisely because
+#: the contract publishes the three members. Written out rather than derived
+#: from the enums, `SEGMENTATION_PARAMETERS`' reason: a test that read the
+#: expectation off the module under test would agree with it however either was
+#: respelled.
+OPEN_PARAMETERS = {
+    "filter[injuryType]",
+    "filter[state]",
+    "filter[employerId]",
+    "filter[sector]",
+    "filter[region]",
+    "filter[icd10]",
+}
+
+#: Every other parameter these routes take, and the members it must publish.
+#:
+#: Written out as literals rather than folded from the enum classes, for the
+#: reason one comment up: `{sort.value for sort in FraudRateSort}` agrees with a
+#: contract that lost a member the same day the enum did, and the claim being
+#: made is that *these strings* are what a client may send.
+CLOSED_PARAMETER_VALUES = {
+    "sort[injuryType]": {"rate_desc", "rate_asc", "claims_desc", "flagged_desc", "label_asc"},
+    "sort[employer]": {"rate_desc", "rate_asc", "claims_desc", "flagged_desc", "label_asc"},
+    "sort[handler]": {"rate_desc", "rate_asc", "claims_desc", "flagged_desc", "label_asc"},
+    "filter[severityBand]": {"high", "med", "low"},
+    "filter[disability]": {"temporary", "permanent"},
+    "filter[ageGroup]": {"youngest", "younger", "older", "oldest"},
+    "filter[gender]": {"female", "male", "other"},
+}
+
+
+def declared_enum(document: dict[str, Any], node: dict[str, Any]) -> set[str] | None:
+    """The member set one parameter's schema publishes, or `None` if it has none.
+
+    FastAPI spells an optional enum parameter as an `anyOf` over a `$ref` and a
+    null, a required one as the `$ref` alone, and an inline `Literal` as a bare
+    `enum` — three shapes for one fact. Reading only the first would make this
+    guard pass on a parameter whose vocabulary had moved into a component, which
+    is the failure mode of a contract test that knows one spelling.
+    """
+    if "enum" in node:
+        return set(node["enum"])
+    ref = node.get("$ref")
+    if ref is not None:
+        return declared_enum(document, document["components"]["schemas"][ref.rsplit("/", 1)[-1]])
+    for branch in (*node.get("anyOf", []), *node.get("allOf", [])):
+        members = declared_enum(document, branch)
+        if members is not None:
+            return members
+    return None
 
 
 # --- the pure half: synthetic projections -------------------------------
@@ -133,12 +223,27 @@ def claim(
     employer_label: str = "Acme",
     handler_id: int = 1,
     handler_name: str = "Ada",
+    severity: int = 10,
+    state: str = "WA",
+    disability: Disability = Disability.temporary,
+    sector: str = "Aerospace",
+    region: str = "Midwest",
+    icd: str = "S61.219A",
+    age: int = 30,
+    gender: Gender = Gender.male,
 ) -> FraudClaim:
     """One projection row, with every field this story does not vary defaulted.
 
     Named keyword-only, so each case below reads as the *delta* from a claim that
     is unremarkable in every other way — `test_drill_through.py`'s discipline for
     a fold whose whole subject is a two-column pair.
+
+    Story 7.3's eight are defaulted the same way and none of them is read by a
+    fold in this file: they exist because `FraudClaim` now satisfies
+    `segmentation.LabelledClaim` structurally, and the segmentation cases live in
+    `test_segmentation.py`. `severity` and `age` are the two the bands read, and
+    both default *below* their lowest interesting edge so a case that names a
+    band is narrowing away from the baseline rather than confirming it.
     """
     return FraudClaim(
         claim_id=claim_id,
@@ -150,6 +255,14 @@ def claim(
         employer_label=employer_label,
         handler_id=handler_id,
         handler_name=handler_name,
+        severity_score=severity,
+        state=state,
+        disability=disability,
+        sector=sector,
+        region=region,
+        icd=icd,
+        age=age,
+        gender=gender,
     )
 
 
@@ -175,7 +288,7 @@ def _thresholds(**changes: int) -> Any:
     from rules.parameters import DerivationThresholds
 
     values: dict[str, Any] = {
-        "version": 6,
+        "version": 7,
         "risk_high_min": 65,
         "risk_med_min": 35,
         "siu_fraud_score_min": SIU_FRAUD_SCORE_MIN,
@@ -192,6 +305,14 @@ def _thresholds(**changes: int) -> Any:
         "fraud_flag_score_min": FRAUD_FLAG_SCORE_MIN,
         "fraud_band_high_min": FRAUD_BAND_HIGH_MIN,
         "fraud_band_med_min": FRAUD_BAND_MED_MIN,
+        # Story 7.3's three. Not read by any fold in this file — they are here
+        # because `DerivationThresholds` requires them — and restated as their own
+        # numbers rather than shared with the risk or fraud edges above, for this
+        # file's standing reason: an integer that coincides today must still be
+        # able to move on its own.
+        "age_younger_min": AGE_YOUNGER_MIN,
+        "age_older_min": AGE_OLDER_MIN,
+        "age_oldest_min": AGE_OLDEST_MIN,
     }
     values.update(changes)
     return DerivationThresholds(**values)
@@ -1199,11 +1320,11 @@ async def test_the_refusal_happens_before_any_claim_is_read(
     thresholds = await thresholds_for(db)
 
     with pytest.raises(FraudAnalyticsNotPermitted):
-        await fraud_panel(db, ctx, thresholds)
+        await fraud_panel(db, ctx, thresholds, Segmentation())
     with pytest.raises(FraudAnalyticsNotPermitted):
-        await fraud_rates(db, ctx, thresholds, FraudRateSorts())
+        await fraud_rates(db, ctx, thresholds, FraudRateSorts(), Segmentation())
     with pytest.raises(FraudAnalyticsNotPermitted):
-        await fraud_red_flags(db, ctx, read_fraud_clauses)
+        await fraud_red_flags(db, ctx, read_fraud_clauses, thresholds, Segmentation())
 
 
 @requires_db
@@ -1468,8 +1589,8 @@ async def test_every_claim_behind_a_scoped_analysts_panel_is_inside_that_book(
     ctx = CallerContext(user_id=1, role=UserRole.analyst, employer_ids=frozenset(scoped_employers))
     thresholds = await thresholds_for(db)
 
-    panel = await fraud_panel(db, ctx, thresholds)
-    rates = await fraud_rates(db, ctx, thresholds, FraudRateSorts())
+    panel = await fraud_panel(db, ctx, thresholds, Segmentation())
+    rates = await fraud_rates(db, ctx, thresholds, FraudRateSorts(), Segmentation())
     expected = len(seed_fixture.claims_for(*SCOPED_SUPERVISOR))
 
     assert panel.claims_in_scope == expected
@@ -1486,16 +1607,20 @@ async def test_a_scoped_analysts_red_flag_coverage_counts_only_her_book(
 ) -> None:
     """The denominator is scoped too, which is the half a second read could lose.
 
-    `claimsInScope` comes from `count_claims_matching`, a different statement from
-    the insight read, so "both halves of the coverage figure are scoped" is a
-    property of two queries rather than of one — and therefore worth asserting.
+    `claimsInScope` comes from a scoped read of the claim rows, a different
+    statement from the insight read, so "both halves of the coverage figure are
+    scoped" is a property of two queries rather than of one — and therefore worth
+    asserting. Since Story 7.3 that second statement is `select_drill_rows` rather
+    than a `COUNT`, because a segmented denominator cannot be counted in SQL: two
+    of the ten dimensions are registered derivations.
     """
     scoped_employers = {
         seed_fixture.employer_id_of(name) for name in seed_fixture.employers_of(*SCOPED_SUPERVISOR)
     }
     ctx = CallerContext(user_id=1, role=UserRole.analyst, employer_ids=frozenset(scoped_employers))
+    thresholds = await thresholds_for(db)
 
-    ranked = await fraud_red_flags(db, ctx, read_fraud_clauses)
+    ranked = await fraud_red_flags(db, ctx, read_fraud_clauses, thresholds, Segmentation())
 
     assert ranked.claims_in_scope == len(seed_fixture.claims_for(*SCOPED_SUPERVISOR))
     # The freshly reset stack has no fraud narratives at all — the cold-cache
@@ -1514,7 +1639,7 @@ async def test_an_analyst_with_no_employers_reads_an_empty_book_not_the_portfoli
     """
     ctx = CallerContext(user_id=0, role=UserRole.analyst, employer_ids=frozenset())
 
-    panel = await fraud_panel(db, ctx, await thresholds_for(db))
+    panel = await fraud_panel(db, ctx, await thresholds_for(db), Segmentation())
 
     assert panel.claims_in_scope == 0
     assert [item.count for item in panel.by_band.items] == [0, 0, 0]
@@ -1534,41 +1659,61 @@ async def test_the_parameterless_routes_declare_no_parameters_at_all(
 
     Asserted against the published OpenAPI document rather than the function
     signature, because the contract is what a client (and a reviewer) reads.
+
+    **Ten parameters since Story 7.3, and the test is renamed in spirit rather
+    than in name.** These two routes took none at all until the workspace gained
+    a segmentation control; they now take exactly the ten `filter[…]` dimensions
+    and nothing else, so an allowlist naming all ten is what "nowhere to put a
+    scope" means here — `/dashboard/priority-claims` set that precedent when it
+    grew a cursor. Every one of the ten is a *narrowing* applied after
+    `employer_scope(ctx)`: `filter[employerId]` intersects the caller's book and
+    can never widen it.
     """
     async with make_client(seeded_db_url) as client:
         schema = (await client.get("/openapi.json")).json()
     operation = schema["paths"][path]["get"]
 
-    assert operation.get("parameters", []) == []
+    assert {parameter["name"] for parameter in operation["parameters"]} == SEGMENTATION_PARAMETERS
     assert "requestBody" not in operation
 
 
 @requires_db
-async def test_the_rates_route_declares_exactly_three_parameters_and_all_are_sorts(
+async def test_the_rates_route_declares_exactly_three_sorts_and_the_ten_dimensions(
     seeded_db_url: str,
 ) -> None:
-    """An allowlist of exactly three names rather than an assertion of emptiness.
+    """An allowlist of exactly thirteen names rather than an assertion of emptiness.
 
     `/dashboard/priority-claims` set the precedent when it grew a cursor: a test
     called "no parameters at all" that passes on a route with three is a sentence
-    a reader would have to disbelieve. Every one of the three is a `sort`, so
-    there is still nowhere to put an employer, a user or an "as".
+    a reader would have to disbelieve. Three sorts and Story 7.3's ten
+    segmentation dimensions, and there is still nowhere to put a user or an "as" —
+    `filter[employerId]` narrows the caller's book and can never widen it.
     """
     async with make_client(seeded_db_url) as client:
         schema = (await client.get("/openapi.json")).json()
     operation = schema["paths"][RATES]["get"]
     names = {parameter["name"] for parameter in operation["parameters"]}
 
-    assert names == {"sort[injuryType]", "sort[employer]", "sort[handler]"}
+    assert (
+        names == {"sort[injuryType]", "sort[employer]", "sort[handler]"} | SEGMENTATION_PARAMETERS
+    )
     assert "requestBody" not in operation
-    # …and each is closed, so an unknown value is a 422 from the contract rather
-    # than a branch in the service.
+    # …and every parameter that *has* a vocabulary publishes it, so an unknown
+    # value is a 422 from the contract rather than a branch in the service.
+    #
+    # **Exempted by name, never by prefix.** The first version of this loop
+    # skipped everything not starting with `sort[`, which excused all ten new
+    # dimensions — including the four that are closed enums and whose "the type
+    # is the refusal" property is the entire validation story for the
+    # segmentation feature. `OPEN_PARAMETERS` names the six that genuinely have
+    # no vocabulary, so a dimension that *lost* its enum fails here instead of
+    # being skipped with them.
     for parameter in operation["parameters"]:
-        schema_node = parameter["schema"]
-        enum = schema_node.get("enum") or schema_node.get("allOf", [{}])[0].get("enum")
-        if enum is None:
-            enum = schema["components"]["schemas"]["FraudRateSort"]["enum"]
-        assert set(enum) == {sort.value for sort in FraudRateSort}
+        if parameter["name"] in OPEN_PARAMETERS:
+            continue
+        assert (
+            declared_enum(schema, parameter["schema"]) == CLOSED_PARAMETER_VALUES[parameter["name"]]
+        ), parameter["name"]
 
 
 @requires_db
@@ -1608,7 +1753,7 @@ async def test_query_parameters_cannot_widen_or_change_the_scope(
 
 @requires_db
 async def test_the_responses_are_camel_case_and_carry_nothing_else(
-    seeded_db_url: str,
+    seeded_db_url: str, db: AsyncSession
 ) -> None:
     """The exact key set on all three payloads, so nothing is added unnoticed."""
     panel = await get_json(seeded_db_url, *ANALYST, PANEL)
@@ -1680,11 +1825,17 @@ async def test_the_responses_are_camel_case_and_carry_nothing_else(
         "generatedFrom",
         "generatedTo",
         "models",
+        "rulesVersion",
     }
-    # **No `rulesVersion`** on the red-flag payload, and the absence is the
-    # assertion: this view reaches no rule, so there is no version to name and
-    # publishing one would claim a provenance the figures do not have.
-    assert "rulesVersion" not in flags
+    # **`rulesVersion` names the document that decided the *population*, not one
+    # that decided a figure**, and until Story 7.3 this payload deliberately had
+    # none: the view groups prose and counts claims, so publishing a version
+    # would have claimed a provenance the figures did not have. That is still
+    # true of every number on it. What changed is which claims those numbers are
+    # over — the workspace's segmentation narrows this view like every other, and
+    # two of its ten dimensions are registered derivations over
+    # `derivation_thresholds`.
+    assert flags["rulesVersion"] == (await thresholds_for(db)).version
 
 
 @requires_db
@@ -1777,7 +1928,7 @@ async def test_the_panel_takes_exactly_one_scoped_read(db: AsyncSession) -> None
 
     db.execute = counting  # type: ignore[method-assign]
     try:
-        await fraud_panel(db, ctx, thresholds)
+        await fraud_panel(db, ctx, thresholds, Segmentation())
     finally:
         db.execute = original  # type: ignore[method-assign]
 
@@ -1811,6 +1962,7 @@ async def test_the_rates_take_exactly_one_scoped_read_whatever_the_sort(
                 employer=FraudRateSort.claims_desc,
                 handler=FraudRateSort.flagged_desc,
             ),
+            Segmentation(),
         )
     finally:
         db.execute = original  # type: ignore[method-assign]
@@ -1828,17 +1980,23 @@ async def test_the_red_flag_aggregate_takes_exactly_two_scoped_reads(
     this one does not, so the number is pinned rather than left to grow quietly.
     The published coverage is "claims with a fraud narrative, out of claims in
     scope", and the second half cannot come from the insight join: a claim with no
-    `ai_insight` row produces no row to count. An outer join from `claim` would
-    return one row per claim in the portfolio to answer a question about a handful
-    of them; a count is one aggregate statement.
+    `ai_insight` row produces no row to count.
+
+    Since Story 7.3 that second statement is `select_drill_rows` rather than a
+    `COUNT`: the denominator is the *segmented* book, and two of the ten
+    segmentation dimensions are registered derivations, so it cannot be counted in
+    SQL at all. Two reads, still, and this is the assertion that keeps it two —
+    the tempting implementation is the one that keeps the count *and* adds the
+    row read.
     """
     ctx = await context_for(db, *ANALYST)
+    thresholds = await thresholds_for(db)
     executed: list[str] = []
     original, counting = _counting(db, executed)
 
     db.execute = counting  # type: ignore[method-assign]
     try:
-        await fraud_red_flags(db, ctx, read_fraud_clauses)
+        await fraud_red_flags(db, ctx, read_fraud_clauses, thresholds, Segmentation())
     finally:
         db.execute = original  # type: ignore[method-assign]
 
@@ -1890,7 +2048,7 @@ async def test_a_superseded_rule_document_moves_the_bands(
 ) -> None:
     """AD-8, end to end, on the parameter that is this story's whole subject.
 
-    A v7 lowering `fraudBandHighMin` is inserted effective today; the same request
+    A v8 lowering `fraudBandHighMin` is inserted effective today; the same request
     comes back with a larger `high` segment *and* a lower published edge, so the
     legend's caption follows the document. Nothing is deployed, nothing is
     restarted and no Python changes.
@@ -1922,7 +2080,7 @@ async def test_a_superseded_rule_document_moves_the_bands(
     await db.execute(
         sa.text(
             "INSERT INTO rule_document (key, version, effective_from, content, created_at) "
-            "VALUES (:key, 7, :today, CAST(:content AS jsonb), now())"
+            "VALUES (:key, 8, :today, CAST(:content AS jsonb), now())"
         ),
         {
             "key": DERIVATION_THRESHOLDS_KEY,
@@ -1945,7 +2103,7 @@ async def test_a_superseded_rule_document_moves_the_bands(
         assert expected > high_before, "the retune must actually widen the band"
         assert high_after == expected
         assert after["fraudBandHighMin"] == lowered
-        assert after["rulesVersion"] == 7
+        assert after["rulesVersion"] == 8
         # One parameter changed, and the two populations that read a *different*
         # rule are exactly where they were — which is the assertion an
         # implementation that had collapsed the band edge into the review
@@ -1956,7 +2114,7 @@ async def test_a_superseded_rule_document_moves_the_bands(
         assert after["siuClaims"] == before["siuClaims"]
     finally:
         await db.execute(
-            sa.text("DELETE FROM rule_document WHERE key = :key AND version = 7"),
+            sa.text("DELETE FROM rule_document WHERE key = :key AND version = 8"),
             {"key": DERIVATION_THRESHOLDS_KEY},
         )
         await db.commit()
@@ -2081,6 +2239,16 @@ async def test_the_two_new_facets_join_the_vocabulary_and_change_no_other(
         "filter[doiTo]",
         "filter[disability]",
         "filter[sector]",
+        # Story 7.3's four, appended after 7.2's six. They are the tail of the
+        # *segmentation* vocabulary rather than click targets of this surface —
+        # `services/worklist/segmentation.py` asserts at import that its ten
+        # dimensions are a subset of these names, which is what makes an
+        # analyst's workspace filter survive a click into this list as a merge
+        # rather than a translation.
+        "filter[region]",
+        "filter[icd10]",
+        "filter[ageGroup]",
+        "filter[gender]",
         "cursor",
     }
 

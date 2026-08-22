@@ -163,6 +163,20 @@ it bands a *timeline* rather than a vocabulary: counts and sums zero-fill becaus
 an empty period really did see nothing, while means and rates go `null` because a
 mean over an empty set is not zero — `sla`'s own `no_data` vocabulary, inherited
 rather than invented.
+
+Story 7.3 adds `segmentation`, and it is the only module in this package that
+answers no question of its own. Every other one folds a book into a figure; this
+one *narrows the book* — ten dimensions, ANDed, applied inside `fraud` and
+`trends` over rows their existing scoped reads already returned, so the whole
+workspace recomputes under one filter and not one aggregate gains a query. Its
+vocabulary is a **subset of `drill_through`'s**, asserted at import against that
+module's field names and wire spellings, which is what makes a workspace filter
+and a drill-through filter the same words: an analyst's active segmentation
+survives a click into Story 5.5's list as a merge rather than a translation. Two
+of its ten dimensions are registered derivations — `risk`, and the new `age_band`
+over `employee.age` — which is exactly why it lives here and not in `data/`: half
+a filter in SQL and half in Python is the split the repository refuses in
+writing, twice.
 """
 
 # **`priority_claims` is deliberately missing from this list**, and it is the
@@ -183,6 +197,7 @@ from services.worklist import (
     fraud,
     priority,
     queue,
+    segmentation,
     sla,
     summary,
     trends,
@@ -255,6 +270,7 @@ from services.worklist.fraud import (
     rates_of,
     red_flags_of,
     require_fraud_analytics_access,
+    segmentation_values,
 )
 from services.worklist.priority import (
     QueueClaim,
@@ -288,6 +304,19 @@ from services.worklist.queue import (
     decode_cursor,
     encode_cursor,
 )
+from services.worklist.segmentation import (
+    SEGMENTATION_KEYS,
+    SEGMENTATION_WIRE_KEYS,
+    DimensionValue,
+    DimensionValues,
+    LabelledClaim,
+    Segmentation,
+    SegmentationValues,
+    SegmentedBands,
+    SegmentedClaim,
+    to_drill_filters,
+    values_of,
+)
 from services.worklist.sla import SlaMetric, SlaMetricKey, SlaSample, SlaStatus, sla_strip, strip_of
 from services.worklist.stats import TopBarStats, topbar_stats
 from services.worklist.summary import (
@@ -317,6 +346,8 @@ from services.worklist.trends import (
 
 __all__ = [
     "APPROVAL_KINDS",
+    "SEGMENTATION_KEYS",
+    "SEGMENTATION_WIRE_KEYS",
     "Action",
     "AppliedFilter",
     "ApprovalKind",
@@ -335,6 +366,8 @@ __all__ = [
     "DrillClaims",
     "DrillFilters",
     "DrillFlags",
+    "DimensionValue",
+    "DimensionValues",
     "DrillRow",
     "EmployerPaid",
     "EmployerRate",
@@ -355,6 +388,7 @@ __all__ = [
     "InjuryTypeRate",
     "InvalidCursor",
     "LabelCount",
+    "LabelledClaim",
     "MAX_PAGE_LIMIT",
     "MIN_PAGE_LIMIT",
     "NO_ACTION",
@@ -377,6 +411,10 @@ __all__ = [
     "STATE_LIMIT",
     "SlaMetric",
     "SlaMetricKey",
+    "SegmentationValues",
+    "SegmentedBands",
+    "SegmentedClaim",
+    "Segmentation",
     "SlaSample",
     "SlaStatus",
     "StageGroup",
@@ -429,13 +467,17 @@ __all__ = [
     "red_flags_of",
     "require_benchmarks_access",
     "require_fraud_analytics_access",
+    "segmentation",
+    "segmentation_values",
     "sla",
     "sla_strip",
     "strip_of",
     "summary",
     "summary_of",
+    "to_drill_filters",
     "topbar_stats",
     "trends",
     "trends_of",
+    "values_of",
     "window_for",
 ]

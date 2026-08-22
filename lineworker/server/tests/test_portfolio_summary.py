@@ -366,7 +366,7 @@ async def test_a_superseded_rule_document_moves_the_count_and_the_caption(
     await db.execute(
         sa.text(
             "INSERT INTO rule_document (key, version, effective_from, content, created_at) "
-            "VALUES (:key, 7, :today, CAST(:content AS jsonb), now())"
+            "VALUES (:key, 8, :today, CAST(:content AS jsonb), now())"
         ),
         {
             "key": DERIVATION_THRESHOLDS_KEY,
@@ -393,13 +393,13 @@ async def test_a_superseded_rule_document_moves_the_count_and_the_caption(
         # The caption's number followed the count, which is the half a client
         # holding its own constant would have got wrong.
         assert after["fraudScoreMin"] == raised
-        assert after["rulesVersion"] == 7
+        assert after["rulesVersion"] == 8
         # Nothing else moved: one parameter changed, one card changed.
         assert after["totalClaims"] == before["totalClaims"]
         assert after["highRisk"] == before["highRisk"]
     finally:
         await db.execute(
-            sa.text("DELETE FROM rule_document WHERE key = :key AND version = 7"),
+            sa.text("DELETE FROM rule_document WHERE key = :key AND version = 8"),
             {"key": DERIVATION_THRESHOLDS_KEY},
         )
         await db.commit()
