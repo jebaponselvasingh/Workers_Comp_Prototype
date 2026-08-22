@@ -3,6 +3,7 @@ title: 'Story 7.3 — Segmentation & Universal Drill-Down'
 type: 'feature'
 created: '2026-08-22'
 baseline_revision: '9bdecdbbac29d9cc881d5f06098a6261380f45d4'
+final_revision: '8dcb08916e9295cb15abe2b77de712c70f8b2835'
 status: 'done'
 review_loop_iteration: 0
 followup_review_recommended: true # sixteen findings were patched, two of them high, and both highs were surfaces stating something false to the analyst — a stranded filter reported as "unfiltered", and eight fraud surfaces plus the trend cards describing an intersection in the language of the whole portfolio. What a follow-up should read is whether the zero-result copy is now correct on every surface a filter can empty (the fix touched ten of them and the e2e assertion was widened to match, but the trends side was reached last), whether the two rewritten oracles are genuinely independent of the server and of each other this time rather than a third restatement, and whether the patch pass's wire change (DrillClaimsResponse now publishes the three age edges) and its tightened rule-document validation (a working-age domain plus a minimum band spread, which changes which documents are loadable at all) hold against the seeded v7 and every re-pinned test
