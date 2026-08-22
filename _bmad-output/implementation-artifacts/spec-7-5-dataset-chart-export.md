@@ -3,6 +3,7 @@ title: 'Story 7.5 — Dataset & Chart Export'
 type: 'feature'
 created: '2026-08-22'
 baseline_revision: '9420a67b4246cfe457912dfd0f26ceb1c708189d'
+final_revision: '8316dd560842c856346e2491a9ba5bfd3fdb13cc'
 status: 'done'
 review_loop_iteration: 0
 followup_review_recommended: true # eighteen findings were patched, one of them a live CSV-injection class in the bytes this story exists to produce, and the pass changed behaviour rather than only prose: the CSV renderer gained an escape the XLSX renderer deliberately does not have, the export control's concurrency model was rebuilt, target dispatch moved from a conditional to the registry its guard was written for, a second cap (the XLSX sheet limit) now refuses before the audit row, the audit payload's key spelling changed, and the dependency range narrowed to one patch series. What a follow-up should read is whether `_csv_cell`'s numeric exemption can be walked around (a cell that is a plain number to the regex and a formula to a spreadsheet), whether the rebuilt `pending` set and `mutateAsync` handling really deliver every refusal to the control that started it under interleavings the two new tests do not enumerate, and whether the new `_satisfies` oracle is genuinely independent of `matches` rather than a second reading of it
