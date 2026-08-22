@@ -1,7 +1,8 @@
 """AD-5's port posture, checked against the *rendered* compose documents.
 
-Run by `.github/workflows/ci.yaml` over three files: the dev profile, the dev
-profile merged with the GPU overlay, and the e2e profile.
+Run by `.github/workflows/ci.yaml` over four files: the dev profile, the dev
+profile merged with the GPU overlay, the e2e profile, and — since Story 8.2 —
+the full production stack (dev + GPU + prod overlay).
 
 The rule this enforces is a negative, which is what makes it worth a CI job at
 all. "The `ollama` service declares no `ports:` mapping, ever" is invisible in
@@ -33,6 +34,11 @@ EXPECTED: dict[str, tuple[str, str | None]] = {
     "dev.json": ("ollama", "model-stub"),
     "gpu.json": ("ollama", "model-stub"),
     "e2e.json": ("model-stub", "ollama"),
+    # The production stack: dev + GPU + the Story 8.2 TLS overlay. It is the
+    # profile nothing else can check — no server test boots it and no e2e spec
+    # drives it — and it is exactly where a published model port would be
+    # rationalised as "the GPU host needs it for debugging".
+    "prod.json": ("ollama", "model-stub"),
 }
 
 

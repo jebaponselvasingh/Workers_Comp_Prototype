@@ -185,8 +185,98 @@ services:
       start_period: 30m
 
   postgres:
-    image: pgvector/pgvector:pg18
+    build:
+      context: ./postgres
+    image: lineworker/postgres:pg18-pgaudit
     # No ports: mapping — the DB is reachable only on the internal network.
+    #
+    # ## The hardening flag list (Story 8.2, AD-11)
+    #
+    # **pgaudit captures `ddl, role` and nothing else, and every DML-logging
+    # knob is pinned off explicitly.** AD-4 gives value-level history to
+    # `audit_event`, whose before/after diffs the Story 8.1 purge cascade can
+    # redact in place. A line in Postgres's own log file cannot be redacted by
+    # anything this system owns — so a posture that logged statements or bound
+    # parameters would create a second, permanent copy of exactly the data the
+    # cascade exists to remove. `log_statement`, `log_duration`,
+    # `log_min_duration_statement`, `log_min_error_statement` and the two
+    # parameter-length caps are all already at these values by default; they
+    # are stated anyway so that turning one of them into a PHI surface is a
+    # visible diff rather than a default nobody wrote down.
+    #
+    # **`-c` flags rather than a mounted `postgresql.conf` or a baked
+    # `postgresql.conf.sample`.** A sample file applies at `initdb` only, so the
+    # `pgdata` volume below — created long before this image existed — would
+    # keep the stock posture for ever and the drift would be invisible.
+    # `config_file=` would mean shipping a complete configuration and owning
+    # every default in it. Flags apply on every start regardless of when the
+    # volume was created, and a weakened one is a reviewable one-line diff.
+    #
+    # **The list is byte-identical in `compose.e2e.yaml` and repeated with the
+    # TLS additions in `compose.prod.yaml`**, because the story's rule is that
+    # dev, e2e and prod get the same posture by the same mechanism so drift
+    # cannot hide. Restating it in three files is a real cost; it is paid by
+    # `server/tests/test_deploy_tls_posture.py`, which fails when they
+    # disagree, rather than by a comment asking people to remember.
+    #
+    # **Seven days of log, and the bound is a time bound.**
+    # `log_filename=postgresql-%a.log` + `log_truncate_on_rotation=on` +
+    # `log_rotation_age=1d` + `log_rotation_size=0` is Postgres's own recipe for
+    # "keep a week and no more": seven files, one per weekday, each truncated
+    # when its day comes round. A byte cap instead would rotate *within* a day
+    # back onto the same `%a` name and silently destroy that morning's lines,
+    # which is a worse property for an audit-adjacent log than a size bound is
+    # worth. What makes a time bound sufficient is the posture itself — with
+    # every DML class off, a day's log is connection lines and schema changes,
+    # not traffic.
+    #
+    # **`logging_collector=on` deliberately takes these logs off container
+    # stdout.** That is the point: `log_directory=log` is relative, so it
+    # resolves inside PGDATA and therefore inside the volume the deployment
+    # view encrypts at rest. `docker compose logs postgres` gets quieter and
+    # the DDL record stops flowing into whatever collects container output.
+    # `docker compose exec postgres cat /var/lib/postgresql/18/docker/log/
+    # postgresql-$(date +%a).log` is how you read it.
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pgaudit
+      - -c
+      - pgaudit.log=ddl,role
+      - -c
+      - pgaudit.log_catalog=off
+      - -c
+      - pgaudit.log_parameter=off
+      - -c
+      - pgaudit.log_relation=off
+      - -c
+      - pgaudit.log_statement_once=on
+      - -c
+      - log_statement=none
+      - -c
+      - log_duration=off
+      - -c
+      - log_min_duration_statement=-1
+      - -c
+      - log_min_error_statement=panic
+      - -c
+      - log_parameter_max_length=0
+      - -c
+      - log_parameter_max_length_on_error=0
+      - -c
+      - logging_collector=on
+      - -c
+      - log_destination=stderr
+      - -c
+      - log_directory=log
+      - -c
+      - log_filename=postgresql-%a.log
+      - -c
+      - log_rotation_age=1d
+      - -c
+      - log_rotation_size=0
+      - -c
+      - log_truncate_on_rotation=on
     environment:
       POSTGRES_USER: lineworker
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lineworker_dev}

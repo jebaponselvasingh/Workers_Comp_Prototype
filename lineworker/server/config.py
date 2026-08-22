@@ -120,13 +120,102 @@ _WEEKDAY_NUMBERS: dict[str, int] = {
 }
 
 
+#: libpq TLS parameters that name a *file* and that `asyncpg` cannot be told
+#: about through a URL at all, mapped to the reason they are refused.
+#:
+#: NFR-5 wants `sslmode=verify-full` on the API-to-Postgres connection, and
+#: verify-full needs a CA. libpq takes it as `sslrootcert` in the connection
+#: string; `asyncpg` does not — `connect_utils.py` reads the file parameters
+#: from a DSN or from the `PGSSLROOTCERT`/`PGSSLCERT`/… environment variables
+#: and has no keyword for any of them, so SQLAlchemy's asyncpg dialect (which
+#: does `opts.update(url.query)` and hands the result to `asyncpg.connect` as
+#: kwargs) would raise `TypeError: unexpected keyword argument` at the first
+#: connection — in prod, since no other profile speaks TLS.
+#:
+#: Dropping them silently would be worse than raising: a URL that *says*
+#: verify-full and connects without a CA is a connection that verifies nothing
+#: while reading as though it does. So they are refused at construction, naming
+#: the environment variable both drivers honour. See `deploy/.env.example`.
+#:
+#: This map is the *message*, not the rule — see `_PERMITTED_URL_QUERY_PARAMS`
+#: below, which is what actually decides. A named environment variable is the
+#: difference between "that parameter is refused" and "here is where it goes",
+#: and these five are the ones this build can answer that question for.
+_UNSUPPORTED_URL_TLS_PARAMS: dict[str, str] = {
+    "sslrootcert": "PGSSLROOTCERT",
+    "sslcert": "PGSSLCERT",
+    "sslkey": "PGSSLKEY",
+    "sslcrl": "PGSSLCRL",
+    "sslpassword": "PGSSLPASSWORD",
+}
+
+#: Every query parameter a database URL in this build may carry — an allowlist,
+#: and the inversion is the whole point.
+#:
+#: The guard started as a denylist of the five file parameters above, on the
+#: theory that they were the failing class. They are not: SQLAlchemy's asyncpg
+#: dialect does `opts.update(url.query)` and passes the result to
+#: `asyncpg.connect()`, whose keyword set is *fixed and small* — `host`, `port`,
+#: `user`, `password`, `database`, `passfile`, `ssl`, `direct_tls`, `timeout`,
+#: `command_timeout`, `server_settings`, `target_session_attrs`, `service`,
+#: `servicefile`, the statement-cache trio and a few objects a URL cannot
+#: express. **Everything libpq accepts and asyncpg does not** therefore fails
+#: the same way the file parameters do, with a `TypeError` at the first
+#: connection: `gssencmode`, `channel_binding`, `sslnegotiation`,
+#: `sslcompression`, `require_auth`, `application_name`, `connect_timeout`,
+#: `options`, `keepalives` and the rest of libpq's list. A denylist of five
+#: names a fraction of the class and reads as though it covers it.
+#:
+#: So the rule is inverted. What survives:
+#:
+#: * `sslmode` — the only parameter both driver paths need, and `_with_driver`
+#:   renames it to `ssl` for asyncpg. NFR-5's `verify-full` arrives this way.
+#: * `target_session_attrs`, `passfile`, `service`, `servicefile` — spelled
+#:   identically by libpq and asyncpg, taking a plain string in both, so they
+#:   survive the URL unchanged on all four engines this settings object builds.
+#:
+#: Nothing else, and a legitimate need for something else is a decision rather
+#: than a typo: it has to be argued for here, where the two-driver constraint is
+#: written down, instead of discovered when prod refuses to connect. The cost of
+#: an allowlist is a loud refusal for a parameter that would have worked; the
+#: cost of the denylist was a silent one for a parameter that would not.
+_PERMITTED_URL_QUERY_PARAMS: frozenset[str] = frozenset(
+    {
+        "sslmode",
+        "target_session_attrs",
+        "passfile",
+        "service",
+        "servicefile",
+    }
+)
+
+#: The database URL settings the guard above applies to.
+_URL_SETTINGS: tuple[str, ...] = ("database_url", "alembic_database_url")
+
+
 def _with_driver(url: str, driver: str) -> str:
-    """Force the DBAPI driver on a database URL.
+    """Force the DBAPI driver on a database URL, translating TLS as required.
 
     Parsed rather than string-replaced so the aliases people actually set —
     ``postgres://…``, or an already-qualified ``postgresql+asyncpg://…`` —
     are normalized here instead of reaching the engine as an opaque dialect
     error at startup.
+
+    **`sslmode` becomes `ssl` for asyncpg, and only for asyncpg** (Story 8.2,
+    Design Note 3). SQLAlchemy's asyncpg dialect does `opts.update(url.query)`
+    and passes the result to `asyncpg.connect()` as keyword arguments, and
+    `asyncpg.connect` has no `sslmode` parameter — so a deployment that set
+    `DATABASE_URL=…?sslmode=verify-full` would start the two psycopg engines
+    perfectly (psycopg speaks libpq natively, and it is also what the copilot's
+    `AsyncPostgresSaver` pool uses) and fail the async one at its first
+    connection. asyncpg accepts the identical libpq strings — `disable`,
+    `allow`, `prefer`, `require`, `verify-ca`, `verify-full` — under the name
+    `ssl`, so the parameter is renamed here rather than restated by every
+    operator in a second URL.
+
+    One mechanism, stated once: the prod overlay writes `sslmode` on both URLs
+    because that is the spelling an operator knows, and this is the single
+    place that knows what each driver calls it.
     """
     parsed = make_url(url)
     backend = parsed.get_backend_name()
@@ -134,7 +223,12 @@ def _with_driver(url: str, driver: str) -> str:
         raise ValueError(
             f"unsupported database backend {backend!r}: LINEWORKER requires postgresql"
         )
-    return parsed.set(drivername=f"postgresql+{driver}").render_as_string(hide_password=False)
+    parsed = parsed.set(drivername=f"postgresql+{driver}")
+    if driver == "asyncpg" and "sslmode" in parsed.query:
+        query = dict(parsed.query)
+        query["ssl"] = query.pop("sslmode")
+        parsed = parsed.set(query=query)
+    return parsed.render_as_string(hide_password=False)
 
 
 class Settings(BaseSettings):
@@ -161,6 +255,66 @@ class Settings(BaseSettings):
         )
         if retired:
             raise ValueError("retired setting(s) present in the environment: " + "; ".join(retired))
+        return data
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_unsupported_url_query_params(cls, data: Any) -> Any:
+        """Refuse any database-URL query parameter the async path cannot take.
+
+        `mode="before"` beside `_refuse_retired_settings` and for a related
+        reason: the failure this prevents is a silent one, and the only useful
+        moment to make it loud is construction. `sslmode` is translated for
+        asyncpg by `_with_driver`; nothing else is. SQLAlchemy's asyncpg dialect
+        copies the whole query string into `asyncpg.connect()`'s keyword
+        arguments, and that function's keyword set is fixed — so any libpq
+        parameter asyncpg does not happen to share arrives as an unexpected
+        keyword argument at the first connection, in prod, which is the worst
+        place to learn it.
+
+        **An allowlist rather than a list of the parameters somebody thought
+        of.** This began as a denylist of the five TLS *file* parameters, which
+        named a fraction of the failing class: `gssencmode`, `channel_binding`,
+        `sslnegotiation`, `application_name` and a dozen more fail identically
+        and were all permitted. `_PERMITTED_URL_QUERY_PARAMS` carries the
+        argument for each of the five names that survive.
+
+        Raising rather than dropping is the other decision, and the file
+        parameters are why. A `verify-full` URL whose CA was quietly discarded
+        still connects — to anything presenting any certificate — while reading
+        in review as though it verifies the chain. So this refuses, naming the
+        environment variable that works for both drivers where there is one, and
+        `deploy/compose.prod.yaml` sets `PGSSLROOTCERT`.
+        """
+        if not isinstance(data, dict):
+            return data
+        lowered = {str(key).lower(): value for key, value in data.items()}
+        for field in _URL_SETTINGS:
+            raw = lowered.get(field)
+            if not isinstance(raw, str) or not raw:
+                continue
+            try:
+                query = make_url(raw).query
+            except Exception:
+                # Not this validator's refusal to make — an unparseable URL is
+                # the field validator's, with its own message.
+                continue
+            refused = sorted(name for name in query if name not in _PERMITTED_URL_QUERY_PARAMS)
+            if refused:
+                named = "; ".join(
+                    f"{name} (set {_UNSUPPORTED_URL_TLS_PARAMS[name]} instead)"
+                    if name in _UNSUPPORTED_URL_TLS_PARAMS
+                    else name
+                    for name in refused
+                )
+                raise ValueError(
+                    f"{field.upper()} carries query parameter(s) the asyncpg engines "
+                    f"cannot accept: {named}. SQLAlchemy passes a URL's query straight "
+                    "into asyncpg.connect(), which takes a fixed keyword set, so this "
+                    "would fail at the first connection rather than here. Keep sslmode "
+                    "in the URL and put certificate paths in the environment "
+                    "(PGSSLROOTCERT and friends — deploy/.env.example, Story 8.2)."
+                )
         return data
 
     # Runtime connection — the app role (no DDL rights from Story 1.2 on).

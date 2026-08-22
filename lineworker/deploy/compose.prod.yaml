@@ -1,0 +1,212 @@
+# Production overlay — the non-GPU prod deltas (Story 8.2, NFR-5).
+#
+#   TLS_CERT_DIR=/etc/lineworker/tls PG_TLS_DIR=/etc/lineworker/pg-tls \
+#     docker compose -f deploy/compose.yaml \
+#                    -f deploy/compose.gpu.yaml \
+#                    -f deploy/compose.prod.yaml up -d
+#
+# ## Why this is not folded into compose.gpu.yaml
+#
+# That file's header argues at length that it holds exactly the GPU delta and
+# that anything else in it becomes drift — "a service listed here would be a
+# second place to keep their configuration correct". TLS is not a GPU concern;
+# a prod host without an NVIDIA card still terminates HTTPS, and a GPU
+# workstation running the dev profile still does not. Keeping them apart keeps
+# that file's argument true and gives Story 8.4 — which finishes the prod
+# profile with health endpoints and the encrypted-volume documentation — an
+# obvious file to complete rather than a choice to make.
+#
+# ## What is here
+#
+# TLS at the nginx ingress, TLS on the API-to-Postgres connection, and the
+# pgaudit posture restated with `ssl=on` added. Nothing else: `ollama` is the
+# GPU overlay's, and `api`'s model and tracing configuration is identical in
+# every profile and stays in the base file.
+#
+# ## Certificates
+#
+# Two host directories, both required (`:?` fails the render rather than
+# mounting an empty anonymous volume and failing at start with a missing-file
+# error three layers down):
+#
+#   ${TLS_CERT_DIR}          -> /etc/nginx/tls        server.crt, server.key
+#   ${PG_TLS_DIR}            -> /etc/postgresql/tls   server.crt, server.key,
+#                               (postgres only)       ca.crt
+#   ${PG_TLS_DIR}/ca.crt     -> /etc/postgresql/tls/ca.crt   (api only)
+#
+# Read-only mounts from the host secret store. **Nothing cryptographic is in
+# version control**, which is why CI can render this file (below) and cannot
+# boot it — TLS is proven here by configuration and by the two manual commands
+# `deploy/.env.example` documents.
+#
+# **The api gets the one file it needs and not the directory.** It verifies a
+# chain, so it needs `ca.crt`; the private key that signs the server's
+# certificate is the database's and nothing in the application container has
+# any use for it. Mounting the whole directory would hand a process that runs
+# handler-supplied input — prompts, uploads, an ingress away from the internet
+# — the key an attacker needs to impersonate the database to it. A story about
+# least-privilege audit posture is the wrong place to make that trade for the
+# convenience of one shorter line.
+#
+# Postgres refuses to start if its key file is group- or world-readable and is
+# not owned by the server's user; `chmod 0600` and `chown 999` (the postgres
+# uid in the Debian base image) on the host before the first `up`.
+#
+# ## The Postgres certificate must be issued for the name `postgres`
+#
+# Both database URLs below connect to host `postgres` — the compose service
+# name — and `sslmode=verify-full` checks the certificate's name against the
+# host the URL asked for, not against the deployment's hostname. So
+# `${PG_TLS_DIR}/server.crt` needs `postgres` in its subjectAltName, and the
+# ingress certificate in `${TLS_CERT_DIR}` needs the public hostname:
+# **two different certificates, and issuing one for the deployment's hostname
+# and pointing both mounts at it fails at the api's first connection.** That is
+# the likeliest first-deployment failure this profile has, which is why it is
+# stated here and at the knob in `deploy/.env.example` rather than left to be
+# discovered.
+
+name: lineworker
+
+services:
+  web:
+    # **`!override`, and it is load-bearing.** Compose *appends* port lists
+    # across files rather than replacing them, so without it the merged
+    # document publishes 8080:80 *as well as* 443 — a prod stack answering
+    # plain HTTP on the dev port, which is precisely the thing this file exists
+    # to stop.
+    ports: !override
+      - "443:443"
+      - "80:80"
+    volumes:
+      # nginx.conf is baked into the image by web/Dockerfile, not mounted, so
+      # the prod server block arrives by mounting over the baked copy. The
+      # image is unchanged and profile-independent; which block it serves is a
+      # deployment fact.
+      - ./nginx/tls.conf:/etc/nginx/conf.d/default.conf:ro
+      - ${TLS_CERT_DIR:?TLS_CERT_DIR must point at the host directory holding server.crt and server.key}:/etc/nginx/tls:ro
+    healthcheck:
+      # The base file's check asks for http://127.0.0.1:80/, which now answers
+      # 308 rather than 200 — wget treats a redirect it will not follow to
+      # https as a failure, so the container would report unhealthy while
+      # serving correctly. Checked on the TLS listener instead, with
+      # --no-check-certificate because the certificate is issued for the
+      # deployment's hostname and this request is to a loopback address.
+      test:
+        ["CMD", "wget", "-q", "--no-check-certificate", "-O", "/dev/null", "https://127.0.0.1:443/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  api:
+    environment:
+      # **`ENV: prod` is deliberately NOT set here, and its absence is asserted
+      # by `server/tests/test_deploy_tls_posture.py`.** `api/app.py::create_app`
+      # refuses to boot under it, in as many words —
+      #
+      #     "ENV=prod is refused while persona login is the authentication
+      #      mechanism: POST /auth/login mints a session from an unauthenticated
+      #      persona id. Resolve the Deferred IdP decision and replace
+      #      _resolve_user in api/deps.py before enabling prod."
+      #
+      # — which is Story 1.3's decision and still stands: anybody who can reach
+      # the API can post a persona id and get a full session, so the flag that
+      # says "this is production" is the flag that must refuse until the
+      # Deferred IdP decision lands. Setting it here would make the api
+      # crash-loop and `web` (which waits on `service_healthy`) never come up,
+      # so the whole overlay would be unbootable rather than merely incomplete.
+      #
+      # Transport encryption is orthogonal to that refusal, which is why the
+      # rest of this file is correct and useful today: it is the TLS
+      # configuration NFR-5 asks for, verified by configuration, waiting for a
+      # profile that can be started. Story 8.4 (prod-profile completion)
+      # inherits both halves — the IdP dependency and the question of what sets
+      # `ENV` once it can.
+      #
+      # `sslmode` on both URLs, and `verify-full` rather than `require`:
+      # `require` encrypts and verifies nothing, so it stops a passive listener
+      # and not an impostor on the compose network. `config.py::_with_driver`
+      # renames the parameter to `ssl` for the asyncpg engines and leaves it
+      # alone for psycopg — one spelling here, two drivers there.
+      #
+      # The credential interpolation is the base file's, character for
+      # character: this overlay adds a query parameter and nothing else. It is
+      # deliberately *not* upgraded to a `:?` guard here — a prod stack running
+      # on the synthetic dev password is a real hazard, and it is the prod
+      # profile's completion (Story 8.4) rather than a transport-encryption
+      # change smuggling in a second unrelated refusal.
+      DATABASE_URL: postgresql://lineworker_app:${APP_DB_PASSWORD:-lineworker_app_dev}@postgres:5432/lineworker?sslmode=verify-full
+      ALEMBIC_DATABASE_URL: postgresql://lineworker:${POSTGRES_PASSWORD:-lineworker_dev}@postgres:5432/lineworker?sslmode=verify-full
+      # The CA arrives through the environment rather than through the URL and
+      # that is not a style choice: asyncpg has no keyword for `sslrootcert`
+      # and reads it from PGSSLROOTCERT (asyncpg/connect_utils.py), while
+      # psycopg passes it to libpq which honours the same name. One mechanism
+      # both drivers obey. `Settings` refuses the file parameters in a URL
+      # outright, naming this variable.
+      PGSSLROOTCERT: /etc/postgresql/tls/ca.crt
+    volumes:
+      # **One file, not the directory.** The api verifies a chain and needs
+      # `ca.crt` for it; `server.key` in the same directory is the database's
+      # private key, and handing it to the container that parses handler input
+      # would give anybody who got a foothold there everything needed to
+      # impersonate Postgres to the application. `${PG_TLS_DIR}` is still the
+      # single knob an operator sets — the narrowing happens here, not in their
+      # secret store. `server/tests/test_deploy_tls_posture.py` asserts it.
+      - ${PG_TLS_DIR:?PG_TLS_DIR must point at the host directory holding the Postgres server certificate, key and ca.crt}/ca.crt:/etc/postgresql/tls/ca.crt:ro
+
+  postgres:
+    # The base file's hardening list, restated in full and extended with three
+    # TLS flags. Restated rather than appended because compose *replaces* a
+    # `command:` rather than merging it — an overlay carrying only the TLS
+    # flags would silently drop pgaudit and every logging GUC with it, which is
+    # the one failure this story could not detect from inside the database.
+    # `server/tests/test_deploy_tls_posture.py` drives all three files off one
+    # tuple so the restatement cannot drift.
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pgaudit
+      - -c
+      - pgaudit.log=ddl,role
+      - -c
+      - pgaudit.log_catalog=off
+      - -c
+      - pgaudit.log_parameter=off
+      - -c
+      - pgaudit.log_relation=off
+      - -c
+      - pgaudit.log_statement_once=on
+      - -c
+      - log_statement=none
+      - -c
+      - log_duration=off
+      - -c
+      - log_min_duration_statement=-1
+      - -c
+      - log_min_error_statement=panic
+      - -c
+      - log_parameter_max_length=0
+      - -c
+      - log_parameter_max_length_on_error=0
+      - -c
+      - logging_collector=on
+      - -c
+      - log_destination=stderr
+      - -c
+      - log_directory=log
+      - -c
+      - log_filename=postgresql-%a.log
+      - -c
+      - log_rotation_age=1d
+      - -c
+      - log_rotation_size=0
+      - -c
+      - log_truncate_on_rotation=on
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/etc/postgresql/tls/server.crt
+      - -c
+      - ssl_key_file=/etc/postgresql/tls/server.key
+    volumes:
+      - ${PG_TLS_DIR:?PG_TLS_DIR must point at the host directory holding the Postgres server certificate, key and ca.crt}:/etc/postgresql/tls:ro

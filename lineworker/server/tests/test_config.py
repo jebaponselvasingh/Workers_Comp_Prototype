@@ -80,6 +80,108 @@ def test_an_unrelated_unknown_variable_is_still_ignored() -> None:
     assert Settings.model_validate({"some_other_teams_variable": "whatever"}).env is Env.dev
 
 
+# --- Story 8.2: what a database URL may carry in its query ----------------
+
+
+def test_sslmode_survives_the_url_and_becomes_ssl_for_asyncpg_only() -> None:
+    """NFR-5's parameter, and the one translation the two driver paths need.
+
+    `asyncpg.connect()` has no `sslmode` keyword and psycopg has nothing else,
+    so the same URL has to mean the same thing under both names. The prod
+    overlay writes the spelling an operator knows and `_with_driver` renames it
+    for the async engines; asserting both halves here is what keeps the rename
+    from being applied to psycopg too, which would fail at the *other* first
+    connection.
+    """
+    settings = Settings(database_url="postgresql://u:p@h:5432/db?sslmode=verify-full")
+    assert settings.async_database_url.endswith("?ssl=verify-full")
+    assert settings.sync_database_url.endswith("?sslmode=verify-full")
+
+
+@pytest.mark.parametrize(
+    "parameter",
+    [
+        "sslrootcert=/etc/postgresql/tls/ca.crt",
+        "sslcert=/etc/postgresql/tls/client.crt",
+        "sslkey=/etc/postgresql/tls/client.key",
+        "sslcrl=/etc/postgresql/tls/root.crl",
+        "sslpassword=hunter2",
+        "gssencmode=disable",
+        "channel_binding=require",
+        "sslnegotiation=direct",
+        "sslcompression=0",
+        "require_auth=scram-sha-256",
+        "application_name=lineworker",
+        "connect_timeout=10",
+    ],
+)
+def test_a_query_parameter_asyncpg_cannot_take_is_refused_at_construction(parameter: str) -> None:
+    """Every one of these fails at the first connection, in prod, and nowhere else.
+
+    SQLAlchemy's asyncpg dialect does `opts.update(url.query)` and hands the
+    result to `asyncpg.connect()`, whose keyword set is fixed and much smaller
+    than libpq's parameter list. So a URL carrying any of these starts the two
+    psycopg engines perfectly — psycopg speaks libpq natively — and raises
+    `TypeError: unexpected keyword argument` on the async one, at the moment the
+    first request needs the database, on the only profile that speaks TLS.
+
+    The list is deliberately not five TLS file parameters. That is what the
+    guard refused first, and the six names after them are the reason it was
+    inverted: they are the same failure with different spellings, they are all
+    things a security-minded operator would plausibly add, and a denylist of the
+    ones somebody thought of reads exactly like a rule that covers the class.
+
+    Refusing at construction is the point. The alternative — dropping them —
+    would let `?sslrootcert=…` produce a `verify-full` connection with no CA,
+    which verifies nothing while reading in review as though it verifies the
+    chain.
+    """
+    with pytest.raises(ValidationError, match="cannot accept"):
+        Settings.model_validate({"database_url": f"postgresql://u:p@h:5432/db?{parameter}"})
+
+
+def test_the_refusal_names_the_environment_variable_for_a_file_parameter() -> None:
+    """A refusal that only says "no" makes the operator go looking.
+
+    The five file parameters are the ones this build can answer for: both
+    drivers read them from `PGSSLROOTCERT` and friends, `deploy/compose.prod
+    .yaml` sets the first, and `deploy/.env.example` documents the arrangement.
+    Naming the variable in the error is what turns a refusal into a fix.
+    """
+    with pytest.raises(ValidationError, match="PGSSLROOTCERT"):
+        Settings.model_validate(
+            {"database_url": "postgresql://u:p@h:5432/db?sslrootcert=/tmp/ca.crt"}
+        )
+
+
+def test_the_alembic_url_is_held_to_the_same_rule() -> None:
+    """The migration connection is as much a PHI channel as the runtime one.
+
+    It is also the one an operator is likelier to hand-edit — a one-off upgrade
+    against a different host — and `sync_alembic_database_url` is not the only
+    consumer: `async_alembic_database_url` builds an asyncpg engine from the
+    same string, so the failure mode is identical.
+    """
+    with pytest.raises(ValidationError, match="ALEMBIC_DATABASE_URL"):
+        Settings.model_validate(
+            {
+                "database_url": "postgresql://u:p@h:5432/db",
+                "alembic_database_url": "postgresql://o:o@h:5432/db?gssencmode=prefer",
+            }
+        )
+
+
+def test_a_url_with_no_query_at_all_is_untouched() -> None:
+    """The negative control: the guard is a filter, not a refusal to have a URL.
+
+    Every dev and e2e profile in the repository sets a bare URL, so a guard with
+    an inverted condition would fail every boot rather than the one it is about
+    — and would do it identically to a real misconfiguration.
+    """
+    settings = Settings(database_url="postgresql://u:p@h:5432/db")
+    assert settings.async_database_url == "postgresql+asyncpg://u:p@h:5432/db"
+
+
 # --- Story 3.4: the payment batch's cadence -------------------------------
 
 

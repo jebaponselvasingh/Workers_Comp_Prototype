@@ -43,6 +43,16 @@ jobs:
         working-directory: lineworker/server
       - run: uv run mypy .
         working-directory: lineworker/server
+      # AD-11's app-log PHI ban, as a build step (Story 8.2). Beside ruff and
+      # mypy rather than inside pytest because it is the same *kind* of thing —
+      # a whole-tree static check whose failure names a file and a line — and
+      # because a developer who has just written `log.info("x", body=…)` should
+      # meet it in the lint step where they are already looking. It also runs
+      # in `pytest` via tests/test_log_phi_lint.py, which is what keeps the
+      # migrations job covering it too.
+      - name: log PHI lint
+        run: uv run python -m scripts.lint_log_phi
+        working-directory: lineworker/server
       - run: uv run pytest
         working-directory: lineworker/server
 
@@ -83,20 +93,21 @@ jobs:
   migrations:
     name: alembic upgrade against fresh DB
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: pgvector/pgvector:pg18
-        env:
-          POSTGRES_USER: lineworker
-          POSTGRES_PASSWORD: ci
-          POSTGRES_DB: lineworker
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U lineworker -d lineworker"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
+    # **No `services:` block, since Story 8.2.** A GitHub service container is
+    # created before the first step runs and can therefore only pull an image
+    # from a registry — it cannot use one the workflow builds. This job now
+    # needs `deploy/postgres`'s image, because migration `0050_pgaudit` runs
+    # `CREATE EXTENSION pgaudit` and raises against a server that has not
+    # preloaded the library. That refusal is deliberate (a bare upgrade against
+    # an unconfigured Postgres must fail loudly rather than skip), which means
+    # the job proving "migrations run clean against a fresh database" has to
+    # start a configured one.
+    #
+    # So the database is built and started as ordinary steps below. The flags
+    # are `deploy/compose.yaml`'s hardening list, which is also what
+    # `tests/test_pgaudit_posture.py` asserts — so those four tests run here
+    # rather than skipping, and this job covers the whole AD-11 database
+    # posture instead of only the schema.
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -104,6 +115,63 @@ jobs:
           python-version: "3.12"
       - run: uv sync --frozen
         working-directory: lineworker/server
+      - name: build and start the pgaudit test database
+        run: |
+          docker build -t lineworker/postgres:pg18-pgaudit deploy/postgres
+          docker run -d --name lw-ci-pg \
+            -e POSTGRES_USER=lineworker -e POSTGRES_PASSWORD=ci -e POSTGRES_DB=lineworker \
+            -p 5432:5432 lineworker/postgres:pg18-pgaudit postgres \
+            -c shared_preload_libraries=pgaudit \
+            -c pgaudit.log=ddl,role \
+            -c pgaudit.log_catalog=off \
+            -c pgaudit.log_parameter=off \
+            -c pgaudit.log_relation=off \
+            -c pgaudit.log_statement_once=on \
+            -c log_statement=none \
+            -c log_duration=off \
+            -c log_min_duration_statement=-1 \
+            -c log_min_error_statement=panic \
+            -c log_parameter_max_length=0 \
+            -c log_parameter_max_length_on_error=0 \
+            -c logging_collector=on \
+            -c log_destination=stderr \
+            -c log_directory=log \
+            -c log_filename=postgresql-%a.log \
+            -c log_rotation_age=1d \
+            -c log_rotation_size=0 \
+            -c log_truncate_on_rotation=on
+          # Bounded, for compose.yaml's `ollama` entrypoint reason: an
+          # unbounded wait on a container that died before it listened spins
+          # until the job's own timeout with nothing saying why. Sixty tries at
+          # one second is far longer than Postgres needs to bind a port, and
+          # the container's own logs are printed on the way out — a postmaster
+          # that refused to load pgaudit says so there and nowhere else.
+          #
+          # **Probed from the runner over TCP, not with `docker exec`.** The
+          # official image's entrypoint runs an initdb-time temporary server
+          # for the init scripts, and that server listens on the container's
+          # unix socket with TCP disabled — so `docker exec … pg_isready`
+          # succeeds against a postmaster nothing outside the container can
+          # reach, and the very next step is `alembic upgrade head` from the
+          # runner over `localhost:5432`. The probe has to ask the question the
+          # next step asks. `pg_isready` ships with the postgresql-client
+          # package the ubuntu runner image already carries; it checks that the
+          # port accepts a connection *and* that the server is answering, which
+          # a bare TCP knock does not.
+          ready=""
+          for _ in $(seq 1 60); do
+            if pg_isready -h 127.0.0.1 -p 5432 -U lineworker -d lineworker >/dev/null 2>&1; then
+              ready=yes
+              break
+            fi
+            sleep 1
+          done
+          if [ -z "$ready" ]; then
+            echo "::error::the pgaudit test database did not become ready within 60s"
+            docker logs lw-ci-pg
+            exit 1
+          fi
+          echo "postgres is ready"
       - run: uv run alembic upgrade head
         working-directory: lineworker/server
         env:
@@ -127,6 +195,8 @@ jobs:
         working-directory: lineworker/server
         env:
           MIGRATION_TEST_DATABASE_URL: postgresql://lineworker:ci@localhost:5432/lineworker
+      - run: docker rm -f lw-ci-pg
+        if: always()
 
   compose:
     name: compose config (AD-5 port posture)
@@ -144,17 +214,60 @@ jobs:
       # YAML, because the overlay is the case that matters: a port added in
       # compose.gpu.yaml would not appear in compose.yaml's text at all, and the
       # merged document is the thing that actually runs.
-      - name: render the three profiles
+      - name: render the four profiles
+        # The prod overlay joined the list with Story 8.2. It cannot be booted
+        # here — there are no certificates in version control — but it *can* be
+        # rendered, and rendering it is what proves the `${TLS_CERT_DIR:?}`
+        # guards, the `ports: !override` on web and the restated postgres
+        # `command:` all merge into a document that would start. The two
+        # directories are dummy paths: `config` interpolates them and never
+        # looks for them.
+        env:
+          TLS_CERT_DIR: /tmp/tls
+          PG_TLS_DIR: /tmp/tls
         run: |
           docker compose -f deploy/compose.yaml config --format json > /tmp/dev.json
           docker compose -f deploy/compose.yaml -f deploy/compose.gpu.yaml config \
             --format json > /tmp/gpu.json
           docker compose -f deploy/compose.e2e.yaml config --format json > /tmp/e2e.json
+          docker compose -f deploy/compose.yaml -f deploy/compose.gpu.yaml \
+            -f deploy/compose.prod.yaml config --format json > /tmp/prod.json
       # The e2e profile is asserted from the other direction: it must run the
       # deterministic stub and must NOT declare a real model server, or specs
       # would wait on inference and a CI runner would download gigabytes.
+      #
+      # The prod document is passed to the same check for AD-5's sake: a prod
+      # overlay is exactly where somebody eventually publishes the model port
+      # "just for the GPU host", and it is the one profile no test in the server
+      # suite can boot to notice.
       - name: no published port on the model server
-        run: python3 ../.github/scripts/check_model_ports.py /tmp/dev.json /tmp/gpu.json /tmp/e2e.json
+        run: |
+          python3 ../.github/scripts/check_model_ports.py \
+            /tmp/dev.json /tmp/gpu.json /tmp/e2e.json /tmp/prod.json
+      # `ports: !override` on web, asserted against the *rendered* document
+      # rather than against the file's text (Story 8.2).
+      #
+      # Compose appends port lists across files, so without the tag the merged
+      # prod stack publishes 8080:80 beside 443 — plain HTTP on the dev port, a
+      # healthy `docker compose ps`, and no error anywhere. `server/tests/
+      # test_deploy_tls_posture.py` asserts the string `ports: !override` is
+      # present, which catches deletion and not a misspelling: `!overide` is a
+      # YAML tag compose ignores, and every text assertion in the suite would
+      # still pass. The rendered document is the only place the difference
+      # shows, and this job is the only thing that renders it.
+      - name: the prod ingress publishes 443 and 80 and nothing else
+        run: |
+          python3 -c '
+          import json, sys
+          web = json.load(open("/tmp/prod.json"))["services"]["web"]
+          published = sorted(str(p.get("published")) for p in web.get("ports", []))
+          if published != ["443", "80"]:
+              print(f"::error::the rendered prod profile publishes {published} on web, "
+                    "expected 443 and 80 only — `ports: !override` has been dropped or "
+                    "misspelled and compose has appended the dev mapping.")
+              sys.exit(1)
+          print("ok: prod web publishes 443 and 80 only")
+          '
 
   e2e:
     name: playwright story specs + smoke
