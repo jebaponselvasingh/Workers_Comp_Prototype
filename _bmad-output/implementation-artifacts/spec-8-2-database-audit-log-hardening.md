@@ -3,6 +3,7 @@ title: 'Story 8.2 — Database Audit & Log Hardening'
 type: 'feature'
 created: '2026-08-22'
 baseline_revision: '7d046a5db4049deb32d8740eec581b0225b05bd7'
+final_revision: 'f9cad3a06aebd773434a6602c6b4eeab733ca499'
 status: 'done'
 review_loop_iteration: 0
 followup_review_recommended: true # twenty-two findings were patched and thirteen of them changed behaviour rather than prose: the prod overlay could not boot at all and a test pinned it that way, the recipe the failure message prints started a database that failed that suite, both DML-absence probes raced the collector they document, the URL guard denylisted five parameters where the failing class is every libpq-only name, and the lint could not see `bind`, `str(exc)` or `_META_KEYS`. What a follow-up should read is whether the inverted `ENV: prod` assertion and the `directives()` helper it needed leave any other prose/assertion collision, whether the widened lint's new interpolation rules have false positives the parametrized controls do not enumerate, and whether the allowlisted URL query-parameter set is right for both drivers rather than only for the two the tests exercise
