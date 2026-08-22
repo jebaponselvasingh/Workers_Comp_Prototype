@@ -173,7 +173,18 @@ class Settings(BaseSettings):
     app_db_password: str = "lineworker_app_dev"
     # AD-4/AD-11 retention floor (years) baked into the audit_event RLS
     # delete policy for the audit_redactor role.
-    audit_retention_years: int = 7
+    #
+    # gt=0 matters more here than on an ordinary knob, because this value is
+    # not only read at run time: migration 0003 interpolates it into the
+    # `audit_redactor_delete` policy's `USING (at < now() - interval '<n>
+    # years')`. `AUDIT_RETENTION_YEARS=0` in the environment a migration is run
+    # from therefore produces a policy with no floor at all — a redactor role
+    # entitled to delete the whole audit log, including the row written a
+    # second ago — which is precisely the outcome migration 0049's docstring
+    # spends four paragraphs refusing a `current_setting()` GUC in order to
+    # prevent. The bound here is what stops the same hole being opened by the
+    # env file instead of by the policy.
+    audit_retention_years: int = Field(default=7, gt=0)
     env: Env = Env.dev
     log_level: str = "INFO"
 
@@ -464,6 +475,36 @@ class Settings(BaseSettings):
     # exists to prevent.
     ai_health_probe_cache_seconds: float = Field(default=10.0, gt=0)
 
+    # --- End-of-retention housekeeping (Story 8.1) --------------------
+    # **Cadences, not floors.** The two floors already exist above and are the
+    # numbers a compliance officer sets: `audit_retention_years` (7) and
+    # `copilot_checkpoint_retention_days` (90). These two say only how often the
+    # jobs that enforce them wake up, which is the same two-knob split
+    # `payment_batch_weekdays`/`scheduler_tick_seconds` and
+    # `embedding_refresh_interval_seconds` both keep — conflating "how long a
+    # row may live" with "how often we check" is how a seven-year floor ends up
+    # being swept every five minutes.
+    #
+    # Daily, for both, and daily is the *right* order of magnitude rather than a
+    # rounded-up guess. The audit sweep's cutoff moves by one day per day, so a
+    # run that fires more often than daily deletes nothing it would not have
+    # deleted at the next midnight; the checkpoint sweep's cutoff is likewise a
+    # day-grained thing. What a shorter interval would buy is a smaller window
+    # between a row passing the floor and its deletion, and AD-11 states the
+    # floor in years and days, not in minutes. `gt=0` for
+    # `scheduler_tick_seconds`' reason: a zero interval is a job that either
+    # never fires or fires on every tick, and neither is what anybody typed it
+    # to mean.
+    #
+    # Both jobs are idempotent by construction — each one's query is "what is
+    # past the floor", so a run with nothing due deletes nothing and (unlike a
+    # batch that logged "ran, swept nothing" every day for a year) writes no
+    # audit row and no log line at all. That is what makes
+    # `services/jobs.every_seconds`' fire-on-first-tick-after-restart default
+    # safe here.
+    audit_retention_interval_seconds: float = Field(default=86_400.0, gt=0)
+    checkpoint_retention_interval_seconds: float = Field(default=86_400.0, gt=0)
+
     @model_validator(mode="after")
     def _bounded_retry_fits_the_run(self) -> "Settings":
         """The retry must be able to finish before the run bound cuts it off.
@@ -555,6 +596,39 @@ class Settings(BaseSettings):
     def sync_alembic_database_url(self) -> str:
         """Alembic connection URL (owner role, psycopg driver)."""
         return _with_driver(self.alembic_database_url or self.database_url, "psycopg")
+
+    @property
+    def async_alembic_database_url(self) -> str:
+        """The owner connection over asyncpg — the redactor's only door (Story 8.1).
+
+        The fourth URL property, and the only one that exists for a *role*
+        rather than for a driver. AD-4 gives `audit_redactor` its two grants and
+        `data/roles.py` creates it `NOLOGIN`, so nothing can connect *as* it;
+        `services/audit/_redactor.py` reaches it with `SET ROLE` on an owner
+        connection, exactly as `tests/test_schema_seed.py` has since Story 1.2.
+        The app role cannot be that connection — its `audit_event` grants are
+        INSERT and SELECT and nothing else, which is the invariant the whole
+        audit design rests on — so the redaction path needs owner credentials,
+        and every async path in this build speaks asyncpg.
+
+        The three existing properties left exactly one gap and this fills it:
+        `sync_alembic_database_url` is the owner over psycopg (Alembic and
+        `sync_app_role`), `async_database_url` is the *app* role over asyncpg,
+        and nothing was the owner over asyncpg.
+
+        **The fallback to `database_url` is inherited deliberately**, mirroring
+        `sync_alembic_database_url` rather than diverging from it: a single-role
+        setup (the CI job, a laptop) genuinely has one URL that is both. What
+        must not be inherited is the *silence* — falling back would hand the
+        redactor the app role's credentials, whose `SET ROLE` is refused and
+        whose refusal would arrive mid-purge. So `_redactor.py` requires
+        `alembic_database_url` to be set explicitly and raises
+        `RedactorUnavailable` before touching a row when it is not; this
+        property stays consistent with its three siblings, and the policy about
+        which of them is acceptable lives with the code that opens the
+        connection.
+        """
+        return _with_driver(self.alembic_database_url or self.database_url, "asyncpg")
 
 
 @lru_cache

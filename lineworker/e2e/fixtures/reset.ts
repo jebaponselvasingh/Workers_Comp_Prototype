@@ -87,6 +87,42 @@ export function resetDb(): void {
 }
 
 /**
+ * Purge one claim's PHI through the shipped management command (Story 8.1).
+ *
+ * `python -m scripts.purge_claim WC-nnnn`, run inside the api container — the
+ * same `compose exec -T api uv run --no-dev …` shape `resetDb` uses for the
+ * migration, and for the same reason: the database port is never published, so
+ * anything that needs a connection has to run on the compose network.
+ *
+ * **A named helper rather than a second `execFileSync` at the call site.** The
+ * spec that needs this is an ops-shaped one — there is no purge UI and there is
+ * deliberately not going to be one while the IdP decision is deferred — so the
+ * temptation is to inline the invocation once and move on. That is how a second
+ * place that knows the module path, the container name and the `--no-dev` flag
+ * comes to exist, and `compose()` above carries the same argument about the
+ * compose file's location.
+ *
+ * The command exits non-zero on an unknown claim, on a missing redactor
+ * connection and on a claim with binaries and no store, and `compose()` lets a
+ * non-zero exit throw — so a spec that calls this and carries on is a spec whose
+ * purge really happened.
+ */
+export function purgeClaim(businessId: string): void {
+  compose(
+    "exec",
+    "-T",
+    "api",
+    "uv",
+    "run",
+    "--no-dev",
+    "python",
+    "-m",
+    "scripts.purge_claim",
+    businessId,
+  );
+}
+
+/**
  * Kill the api's pooled connections so nothing serves cached state from the
  * dropped schema; the engine runs pool_pre_ping and reconnects transparently.
  *

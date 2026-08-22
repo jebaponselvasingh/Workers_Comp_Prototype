@@ -116,7 +116,7 @@ development_status:
 
   # Epic 8: Production Hardening & Compliance Operations
   epic-8: in-progress
-  8-1-phi-purge-cascade-retention: ready-for-dev
+  8-1-phi-purge-cascade-retention: done
   8-2-database-audit-log-hardening: ready-for-dev
   8-3-encrypted-backups-restore-drill: ready-for-dev
   8-4-complete-quality-operations-gate: ready-for-dev

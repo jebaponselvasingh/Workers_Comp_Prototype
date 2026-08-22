@@ -12,10 +12,15 @@ Three separable claims, and the file is organised along them:
    child rows whose display order *is* their insertion order, and the forms
    table needed an explicit number only because three independent reference
    lists share one table.
-3. The **grants** are SELECT and nothing else. No story in Epics 1–8 uploads,
-   annotates or deletes a photo, so the seed migration is the table's only
-   writer (AD-12) — and a grant that said otherwise would be a capability
-   nobody asked for behind an endpoint that cannot use it.
+3. The **grants** are SELECT and DELETE, and nothing else. No story in Epics
+   1–8 uploads or annotates a photo, so the seed migration is the table's only
+   *writer* (AD-12) — and an INSERT or UPDATE grant would be a capability
+   nobody asked for behind an endpoint that cannot use it. DELETE arrived with
+   Story 8.1 (migration 0049) and belongs to one caller: AD-11's purge cascade
+   in `services/audit`, which is the only thing in the build permitted to
+   delete PHI and which `tests/test_purge_ownership.py` keeps that way. See
+   the grant test at the bottom of this file on why that is a narrowing rather
+   than a widening.
 
 Only the third needs a database, so the first two run everywhere.
 """
@@ -28,7 +33,7 @@ from typing import Any
 import pytest
 import sqlalchemy as sa
 
-from tests.conftest import requires_db
+from tests.conftest import APP_PASSWORD, requires_db
 
 SERVER_ROOT = Path(__file__).resolve().parents[1]
 SEED_PATH = SERVER_ROOT / "data" / "seed" / "photos.json"
@@ -217,14 +222,32 @@ def test_a_photo_cannot_outlive_the_claim_it_documents(engine: Any) -> None:
 
 
 @requires_db
-def test_the_app_role_can_read_the_photos_and_cannot_write_them(engine: Any) -> None:
-    """AD-4's grant statement, asserted rather than trusted.
+def test_the_app_role_can_read_and_purge_the_photos_and_cannot_write_them(engine: Any) -> None:
+    """AD-4's grant statement, asserted rather than trusted — and Story 8.1's edit.
 
-    Nothing in Epics 1–8 uploads, annotates or removes a photo — the story is
-    explicit that the viewer is read-only and that no write command exists — so
-    the seed migration is the table's only writer. `path_required_form` and
+    Nothing in Epics 1–8 uploads or annotates a photo — the story is explicit
+    that the viewer is read-only and that no write command exists — so the seed
+    migration remains the table's only *writer*. `path_required_form` and
     `glossary_term` set the precedent: the grant is where "read-only" stops
-    being a claim in a docstring.
+    being a claim in a docstring, and that half is unchanged. INSERT is still
+    refused by the database rather than by convention, and the assertion below
+    asks for the refusal rather than inferring it from the grant list.
+
+    **`DELETE` is new, and it exists for the purge cascade and for nothing
+    else.** Migration 0020 granted `SELECT` alone and argued that a wider grant
+    would be "a capability nobody asked for behind an endpoint that cannot use
+    it". Story 8.1 is the story that asked: an incident photograph is
+    claim-derived PHI under AD-11, and `services/audit/purge.py` is the one
+    module in the build permitted to delete one — a rule
+    `tests/test_purge_ownership.py` enforces over the whole tree, which is what
+    keeps this grant from becoming a general licence. Without it the cascade
+    fails part-way through with `permission denied` on a table whose parent row
+    it has already queued for deletion, which is the worst moment to discover a
+    missing privilege.
+
+    The set comparison stays an equality rather than a subset check: UPDATE and
+    TRUNCATE must still be absent, and a `>=` would let a future migration widen
+    this table's grants without anything noticing.
     """
     with engine.connect() as conn:
         granted = conn.execute(
@@ -234,4 +257,24 @@ def test_the_app_role_can_read_the_photos_and_cannot_write_them(engine: Any) -> 
             )
         ).scalars()
 
-        assert set(granted) == {"SELECT"}
+        assert set(granted) == {"SELECT", "DELETE"}
+
+    # …and the catalog is checked against the behaviour, because a grant list is
+    # a description and a refusal is the thing being described. Run as the app
+    # role itself rather than as the owner — the fixture above connects as the
+    # migration owner, who may do anything and would prove nothing.
+    app_url = sa.make_url(str(engine.url)).set(username="lineworker_app", password=APP_PASSWORD)
+    app_engine = sa.create_engine(app_url)
+    try:
+        with (
+            app_engine.connect() as conn,
+            pytest.raises(sa.exc.ProgrammingError, match="permission denied"),
+        ):
+            conn.execute(
+                sa.text(
+                    "INSERT INTO photo (claim_id, caption, source) "
+                    "VALUES ((SELECT id FROM claim LIMIT 1), 'x', 'y')"
+                )
+            )
+    finally:
+        app_engine.dispose()

@@ -32,6 +32,7 @@ from agents import InsightGenerationDeps, chat_client, refresh_pending_insights
 from agents.chat_model import copilot_chat_model
 from agents.degradation import ModelAvailabilityProbe
 from agents.graph import build_graph
+from agents.threads import discard_thread
 from api.deps import enforce_authenticated
 from api.errors import register_error_handlers
 from api.routers import (
@@ -46,6 +47,8 @@ from api.routers import (
 )
 from config import Env, Settings, get_settings
 from logging_config import configure_logging
+from services.audit.purge import ThreadDeleter
+from services.audit.retention import purge_expired_audit_events, purge_expired_checkpoints
 from services.financials.batch import run_payment_batch, system_context
 from services.jobs import JobRunner, ScheduledJob, every_seconds, weekly_on
 from services.rag import EmbeddingClient, embedding_client, refresh_stale_embeddings
@@ -69,28 +72,45 @@ COPILOT_POOL_MAX_SIZE = 4
 PAYMENT_BATCH_JOB = "payment_batch"
 EMBEDDING_REFRESH_JOB = "embedding_refresh"
 INSIGHT_REFRESH_JOB = "insight_refresh"
+AUDIT_RETENTION_JOB = "audit_retention"
+CHECKPOINT_RETENTION_JOB = "checkpoint_retention"
 
 
 def build_job_runner(
     settings: Settings,
     sessionmaker: async_sessionmaker[AsyncSession],
+    *,
+    delete_thread: ThreadDeleter,
 ) -> JobRunner:
     """The api process's scheduled jobs (spine: Structural Seed).
 
-    Three jobs: Story 3.4's payment batch, Story 6.1's embedding refresh and
-    Story 6.2's insight refresh. The second is why the runner was written
-    generic in the first place — the comment that stood here reserved the slot,
-    and filling it required no change to `services/jobs.py` beyond a second
-    due-predicate beside `weekly_on`. The third cost nothing at all: same
-    predicate, same session-per-run shape, same system actor, which is the
-    outcome that made "a small generic hook, not a payments-specific one-off"
-    worth insisting on.
+    Five jobs: Story 3.4's payment batch, Story 6.1's embedding refresh, Story
+    6.2's insight refresh and Story 8.1's two retention sweeps. The second is
+    why the runner was written generic in the first place — the comment that
+    stood here reserved the slot, and filling it required no change to
+    `services/jobs.py` beyond a second due-predicate beside `weekly_on`. The
+    third cost nothing at all: same predicate, same session-per-run shape, same
+    system actor, which is the outcome that made "a small generic hook, not a
+    payments-specific one-off" worth insisting on. The fourth and fifth cost
+    nothing either, which is the same evidence a third time.
+
+    **`delete_thread` is the one dependency this function cannot resolve
+    itself.** The checkpoint sweep deletes transcripts through the saver, and
+    the saver lives on `CopilotRuntime`, which `lifespan` builds *before* it
+    builds this runner — so the deleter arrives as a parameter rather than being
+    reached for. `services/audit` may not import `agents/`
+    (`tests/test_layering.py`), which is what makes the seam a callable rather
+    than an import in the first place; this signature is where the two halves
+    are joined, and it is required rather than defaulted because a job silently
+    registered with no way to delete a checkpoint would be a retention floor
+    that quietly did not apply.
 
     **The two cadences are different kinds of thing**, and the predicates say
     so. `weekly_on` is a claim about the calendar (a bank's cut-off days);
     `every_seconds` is a claim about elapsed time (how long a stale embedding
-    may stay stale). Neither is expressed as a cron string, so neither can be
-    misread as the other.
+    may stay stale, how long a row past its retention floor may linger).
+    Neither is expressed as a cron string, so neither can be misread as the
+    other.
 
     **The job opens and closes its own session.** A long-lived session held
     across ticks would hold a pooled connection for the process's lifetime and
@@ -195,6 +215,49 @@ def build_job_runner(
             # write neither. `JobRunner.tick`'s in-flight guard is what stops a
             # second copy of *this* job starting on the next tick.
             background=True,
+        )
+    )
+
+    async def audit_retention() -> None:
+        # The payment batch's shape a fourth time: its own session, the system
+        # actor resolved per run. The one thing that is *not* the same is where
+        # the deletion happens — `purge_expired_audit_events` opens its own
+        # owner connection and runs `SET ROLE audit_redactor` on it, because the
+        # session below belongs to the app role, whose `audit_event` grants are
+        # INSERT and SELECT by design (AD-4). The session is still needed: it is
+        # what resolves the actor and what writes the run's summary event, which
+        # the redactor cannot do because it has no INSERT.
+        async with sessionmaker() as session:
+            await purge_expired_audit_events(
+                session, await system_context(session), settings=settings
+            )
+
+    runner.register(
+        ScheduledJob(
+            name=AUDIT_RETENTION_JOB,
+            due=every_seconds(settings.audit_retention_interval_seconds),
+            run=audit_retention,
+        )
+    )
+
+    async def checkpoint_retention() -> None:
+        # Same shape, second floor. Serial rather than `background=True`: a
+        # sweep is a bounded set of `DELETE`s rather than a model completion, so
+        # it holds the tick for milliseconds — and the insight refresh's flag is
+        # opt-in precisely because serial is the safer default.
+        async with sessionmaker() as session:
+            await purge_expired_checkpoints(
+                session,
+                await system_context(session),
+                settings=settings,
+                delete_thread=delete_thread,
+            )
+
+    runner.register(
+        ScheduledJob(
+            name=CHECKPOINT_RETENTION_JOB,
+            due=every_seconds(settings.checkpoint_retention_interval_seconds),
+            run=checkpoint_retention,
         )
     )
     return runner
@@ -413,7 +476,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         copilot, copilot_pool = await build_copilot(settings, app.state.sessionmaker)
         app.state.copilot = copilot
 
-        runner = build_job_runner(settings, app.state.sessionmaker)
+        # The checkpoint half of Story 8.1's retention floor, bound here because
+        # this is the only place in the process that holds both a saver and a
+        # job registry. A named closure rather than `functools.partial`, for a
+        # reason that is about the two signatures rather than about style.
+        # `discard_thread` takes its `thread_id` by keyword, which is the
+        # house convention for a string argument beside an object one; the
+        # `ThreadDeleter` contract `services/audit` publishes is positional, so
+        # that it says nothing about how the function on the far side of the
+        # seam spells its parameter. `functools.partial(discard_thread, saver)`
+        # satisfies neither — called positionally it fills nothing, and calling
+        # it by keyword would put `discard_thread`'s spelling into the service's
+        # type. Three lines bridge it and no type has to know about the other.
+        async def delete_thread(thread_id: str) -> None:
+            await discard_thread(copilot.checkpointer, thread_id=thread_id)
+
+        runner = build_job_runner(settings, app.state.sessionmaker, delete_thread=delete_thread)
         app.state.jobs = runner
         task: asyncio.Task[None] | None = None
         if settings.scheduler_runs:

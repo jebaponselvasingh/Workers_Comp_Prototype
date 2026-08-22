@@ -1080,7 +1080,19 @@ def test_the_refresh_is_registered_as_a_second_job() -> None:
     from api.app import EMBEDDING_REFRESH_JOB, PAYMENT_BATCH_JOB, build_job_runner
     from config import Settings
 
-    runner = build_job_runner(Settings(), sessionmaker=None)  # type: ignore[arg-type]
+    # `delete_thread` is Story 8.1's, and a no-op suffices: this test is
+    # about the registry rather than about any job's body, and the runner is
+    # never ticked. It is a required argument rather than a defaulted one
+    # precisely so that a checkpoint sweep can never be registered without a
+    # way to delete a checkpoint (`api/app.py::build_job_runner`).
+    async def no_threads(thread_id: str) -> None:  # pragma: no cover - never ticked
+        raise AssertionError(f"no job should have run: {thread_id}")
+
+    runner = build_job_runner(
+        Settings(),
+        sessionmaker=None,  # type: ignore[arg-type]
+        delete_thread=no_threads,
+    )
 
     names = [job.name for job in runner.jobs]
     assert EMBEDDING_REFRESH_JOB in names
