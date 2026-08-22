@@ -3,6 +3,7 @@ title: 'Story 7.4 — Financial Decomposition'
 type: 'feature'
 created: '2026-08-22'
 baseline_revision: '0dc7a6b0bb55280be944c0fac03c1bcb3ac4bd95'
+final_revision: 'ffbdf834fca682b32c71fbe75fbedd379ff0461f'
 status: 'done'
 review_loop_iteration: 0
 followup_review_recommended: true # fifteen findings were patched across both halves of the stack, and the pass changed behaviour rather than only prose: cursor semantics gained a third compared document, the drill list's verdict load was re-ordered behind the other twenty-four facets, an API response gained a field, and four client surfaces changed what they say. What a follow-up should read is whether the narrowing in `drill_through_claims` preserves `total` and the chip labels under every facet combination (the population handed to `select` moved, `_applied` deliberately did not), whether `bands_version` is minted and compared on exactly the paths that load the document, and whether the two new mutation-closed guards hold against a second verdict written some third way
