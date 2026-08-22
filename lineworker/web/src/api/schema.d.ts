@@ -1106,7 +1106,16 @@ export interface paths {
          *
          *     ## Twenty-six parameters, and not one of them is a scope
          *
-         *     Twenty-five facets and a cursor. Every facet is a *narrowing* applied after
+         *     Twenty-five facets and a cursor. **The facets arrive as one injected
+         *     `DrillFilters` since Story 7.5** — see `_drill_filters`, which declares them
+         *     once for this route and for its export — and the extraction moved no alias,
+         *     no type and no default: `tests/test_drill_through.py`'s parameter-set
+         *     contract re-runs unchanged against it, and now also asserts that this route
+         *     and `/dashboard/claims/export` publish the same `filter[…]` set. A list and
+         *     an export of it that could declare different facets is the one failure that
+         *     story exists to prevent.
+         *
+         *     Every facet is a *narrowing* applied after
          *     `employer_scope(ctx)` has already decided which rows exist, so
          *     `filter[employerId]` and `filter[handlerId]` intersect the caller's book and
          *     can never widen it: a scoped supervisor naming an employer outside hers gets
@@ -1274,6 +1283,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/dashboard/claims/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The whole filtered claim list as a file, for the session's analyst
+         * @description Every row of the claim list this query string describes — all of its pages.
+         *
+         *     ## Twenty-six parameters, and not one of them is a scope
+         *
+         *     The same twenty-five facets `/dashboard/claims` declares — literally the same,
+         *     through `_drill_filters` — plus the format. **Not a cursor**, and its absence
+         *     is the whole difference between this route and its sibling: a cursor names a
+         *     page, and this route's answer is the *list*. `drill_through.select` returns
+         *     the entire ranked population, which is what AC 2's "every page of them, not
+         *     the pages that happen to be loaded" asks for.
+         *
+         *     There is nowhere in this signature to put an employer, a user or an "as"
+         *     (AD-7), and `?scopeAll=true` remains an unknown parameter FastAPI ignores.
+         *
+         *     ## This endpoint is gated where `/dashboard/claims` is not
+         *
+         *     That is the one place in this file where a route and its neighbour answer the
+         *     same query string with different access rules, so it is argued rather than
+         *     inherited. The list is ungated because it shows claims the session can
+         *     already open one at a time and its rows name nobody. **An export is not the
+         *     same act.** It moves PHI out of the system (NFR-5) — which is why it is the
+         *     one read on this console that writes an audit row at all — and it is a
+         *     capability of the analyst *workspace* rather than a view of a payload. A
+         *     handler entitled to read her queue is not thereby entitled to extract it, and
+         *     a supervisor's entitlement to oversee is not an entitlement to take a copy
+         *     home.
+         *
+         *     The `filter[handlerId]` capability check stays as well, unchanged and above
+         *     the document loads: asking about somebody else's book is oversight whichever
+         *     shape the answer arrives in. It is unreachable behind the analyst gate today
+         *     — an analyst carries the oversight capability — and it stays because a gate
+         *     that depends on which role happens to hold which capability is a gate one
+         *     rules change from being wrong.
+         *
+         *     ## Three documents, loaded here
+         *
+         *     `derivation_thresholds` decides the band on every row and five of the facets'
+         *     populations, `priority_weights` decides the ordering the file is written in,
+         *     and `export_limits` decides how much of it may leave. All three are loaded
+         *     here and handed down so the service stays a composition of scope and
+         *     parameters — `portfolio_summary`'s rule.
+         */
+        get: operations["export_drill_claims_dashboard_claims_export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/dashboard/financials": {
         parameters: {
             query?: never;
@@ -1328,6 +1397,53 @@ export interface paths {
          *     there.
          */
         get: operations["financials_dashboard_financials_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dashboard/financials/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The money breakdown or the cost-driver comparison as a file
+         * @description The Financial section's breakdown, or both cost-driver pairs.
+         *
+         *     ## Thirteen parameters, and not one of them is a scope
+         *
+         *     `/dashboard/financials`' own eleven — the ten dimensions and `groupBy` —
+         *     plus the surface and the format. `groupBy` reaches the cost-driver export as
+         *     well, where it changes nothing about the rows and is still recorded in the
+         *     audit row: the row says what was *asked*, and two requests that differ only
+         *     in a parameter one of them ignores are still two different requests.
+         *
+         *     **Money leaves as integer cents in `*_cents` columns**, which
+         *     `export.ExportColumn` enforces structurally rather than by convention. The
+         *     formatting `web/src/lib/money.ts` does stays in the browser — this is the
+         *     payload made rectangular, not the screen made textual — and it is also what
+         *     keeps that module the only division by a hundred in the build.
+         *
+         *     ## One fold, two targets
+         *
+         *     `decomposition.decomposition_of` accumulates the portfolio totals, the
+         *     breakdown groups and all four cohorts in one pass, so both surfaces come from
+         *     one scoped read. The **Totals tiles are not a third target**: `KpiCard` wraps
+         *     its body in a `<Link>`, so a control inside one would be invalid markup, and
+         *     all three figures already travel on every row of the breakdown export.
+         *
+         *     ## Two documents, loaded here
+         *
+         *     `derivation_thresholds` and `export_limits`. `reserve_bands` is the *other*
+         *     route's document, and it is loaded there.
+         */
+        get: operations["export_financials_table_dashboard_financials_export_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1401,6 +1517,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/dashboard/financials/reserve-adequacy/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The reserve adequacy verdict distribution as a file
+         * @description Epic 3's verdicts, counted over the segmented book, as five rows.
+         *
+         *     ## Eleven parameters, and not one of them is a scope
+         *
+         *     The same ten dimensions its sibling takes, plus the format. There is no
+         *     control: a distribution over a closed five-member vocabulary has nothing to
+         *     group by and nothing to sort.
+         *
+         *     All five verdicts are written, including those no claim in the segment
+         *     reached — `ReserveAdequacy`'s zero-fill, which matters more in a file than on
+         *     a donut: a three-row spreadsheet cannot be told from a five-row one with two
+         *     rows lost, and "no claim in this segment is under-reserved" is the single
+         *     most valuable thing this export can say.
+         *
+         *     ## Three scoped reads, and the number is guarded
+         *
+         *     The claims, then the weeks and the bills in bulk — `decomposition
+         *     .reserve_adequacy`'s own shape, inherited rather than re-implemented, which
+         *     is also what makes AC 2's "never a re-derivation" true of the file.
+         *     `tests/test_dataset_export.py` counts them so a fourth cannot appear quietly.
+         *
+         *     ## Three documents, loaded here
+         *
+         *     `derivation_thresholds` builds the segmentation's two band computers,
+         *     `reserve_bands` decides the verdict, `export_limits` bounds the file.
+         */
+        get: operations["export_financial_reserve_adequacy_dashboard_financials_reserve_adequacy_export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/dashboard/fraud": {
         parameters: {
             query?: never;
@@ -1449,6 +1609,51 @@ export interface paths {
          *     `DerivationThresholds` is the single block all three are built from.
          */
         get: operations["fraud_dashboard_fraud_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dashboard/fraud/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The fraud band distribution or the SIU pipeline as a file
+         * @description One of the Fraud section's two charts, exactly as it is drawn.
+         *
+         *     ## Twelve parameters, and not one of them is a scope
+         *
+         *     The workspace's ten `filter[…]` dimensions through `_segmentation` — the same
+         *     dependency `/dashboard/fraud` takes, so the export and the chart cannot come
+         *     to describe different populations — plus the chart and the format. Both are
+         *     closed enums, so `table=redFlags` is a 422 before the service runs, which is
+         *     also how the one deliberately unexportable surface on this page refuses: the
+         *     red-flag view is model output (AD-10), and a CSV strips the labelling and the
+         *     timestamp that keep it from reading as fact.
+         *
+         *     `table` has no default. Which of two charts a click meant is not a question
+         *     this API should answer on the caller's behalf.
+         *
+         *     ## One fold, two targets
+         *
+         *     `fraud.panel_of` accumulates the band distribution and the SIU pipeline in a
+         *     single pass over one caseload, so this route serves both from one scoped read
+         *     rather than being split in two. Which one is written is decided by
+         *     `_EXPORT_TARGETS` and never by a conditional in the service.
+         *
+         *     ## Two documents, loaded here
+         *
+         *     `derivation_thresholds` — the block all three fraud derivations are built
+         *     from — and `export_limits`. Both handed down.
+         */
+        get: operations["export_fraud_panel_dashboard_fraud_export_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1508,6 +1713,52 @@ export interface paths {
          *     registered derivation's answer and that block is what it is built from.
          */
         get: operations["fraud_rate_breakdowns_dashboard_fraud_rates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dashboard/fraud/rates/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The three flagged-claim rate breakdowns as a file
+         * @description All three rate tables in one file, each in the order it is being read in.
+         *
+         *     ## Fourteen parameters, and not one of them is a scope
+         *
+         *     `/dashboard/fraud/rates`' own thirteen — ten dimensions and three sorts,
+         *     declared here exactly as they are declared there — plus the format. The three
+         *     sorts travel because a table exported while the analyst is reading it in
+         *     `label_asc` has to come out in `label_asc`: an export that silently reverted
+         *     to the default order would be the one place on this surface where the file
+         *     and the screen disagree, and it would look like a tidy-up.
+         *
+         *     They also reach the audit row, beside the facets, for `record_export`'s
+         *     reason: `sort[employer]=claims_desc` produces a different file from the same
+         *     filter set, and a row recording only the facets would say the two exports
+         *     were the same.
+         *
+         *     ## One file, three breakdowns
+         *
+         *     A `dimension` column distinguishes them, which is what a rectangular file has
+         *     instead of three sheets. Each breakdown is truncated exactly as its card is —
+         *     the injury-type table at the eight types with the most claims, the other two
+         *     uncut — because the rows arrive from `fraud.rates_of` already cut, and a fold
+         *     that exported the whole tail would be publishing a set the card never showed.
+         *
+         *     ## Two documents, loaded here
+         *
+         *     `derivation_thresholds` and `export_limits`, both handed down.
+         */
+        get: operations["export_fraud_rate_breakdowns_dashboard_fraud_rates_export_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1821,6 +2072,60 @@ export interface paths {
          *     assignments.
          */
         get: operations["trends_dashboard_trends_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dashboard/trends/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Every point of every trend series as a file
+         * @description The five series over the requested window, one row per point.
+         *
+         *     ## Sixteen parameters, and not one of them is a scope
+         *
+         *     `/dashboard/trends`' own fifteen, declared here exactly as they are declared
+         *     there, plus the format. `from` and `to` are aliased because `from` is a
+         *     Python keyword — the wire name and the parameter name are one string
+         *     everywhere else in this file and this is the one place the language will not
+         *     allow it.
+         *
+         *     ## Long form, not the chart's shape
+         *
+         *     One row per (series, bucket), with `metric`, `cohortKey` and the bucket's own
+         *     boundaries on every row. A wide table with one column per period would read
+         *     like the chart and would have a different header every time the grain or the
+         *     window moved, so no two exports of this section could be appended to each
+         *     other. `lowConfidence` and `partial` travel beside the value they qualify,
+         *     because a mean over two claims and a half-finished month are exactly the
+         *     facts a spreadsheet strips and a reader then leans on (NFR-3).
+         *
+         *     ## Two caps apply, and they bound different things
+         *
+         *     The window refusals are the chart route's, unchanged: an inverted range is
+         *     `/problems/trend-range-invalid` and a window wider than `maxBuckets` is
+         *     `/problems/trend-range-too-wide`, both decided from the parameters and
+         *     `trend_periods` alone, before any read. `export_limits.maxRows` then bounds
+         *     how many rows may *leave*. A request can be inside one and outside the other:
+         *     twenty-four monthly buckets across five metrics and four cohorts is a legible
+         *     chart and a large file.
+         *
+         *     ## Three documents, loaded here
+         *
+         *     `derivation_thresholds` for the severity cohort's band edges, `trend_periods`
+         *     for the window and its cap, `export_limits` for the row cap. All three handed
+         *     down.
+         */
+        get: operations["export_trend_series_dashboard_trends_export_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3633,6 +3938,24 @@ export interface components {
             version: number;
         };
         /**
+         * ExportFormat
+         * @description The two shapes a table may leave in. Closed, and the **type is the check**.
+         *
+         *     `format=pdf` cannot reach this module: FastAPI coerces the query parameter
+         *     into this enum and answers 422 before the service runs, which is
+         *     `FraudRateSort`'s arrangement and its consequence — there is no vocabulary
+         *     check in this file and there must not be one, or the enum would be spelled
+         *     twice.
+         *
+         *     Two members and no third. PDF is named in the story as out of scope and the
+         *     reason is worth keeping: a PDF is a *rendering*, which would put layout,
+         *     typography and page breaks in a module whose entire claim is that it decides
+         *     nothing about how a figure reads. JSON is absent because the API already
+         *     serves it, at the sibling route, to the client that asked.
+         * @enum {string}
+         */
+        ExportFormat: "csv" | "xlsx";
+        /**
          * FinancialBreakdownResponse
          * @description One dimension's groups, ranked by projected cost and cut.
          *
@@ -3695,6 +4018,18 @@ export interface components {
             surgery: components["schemas"]["CostDriverPairResponse"];
             totals: components["schemas"]["MoneyTotalsResponse"];
         };
+        /**
+         * FinancialExportTable
+         * @description Which of the Financial section's two exportable surfaces is being exported.
+         *
+         *     `FraudExportTable`'s arrangement and its reasons, over
+         *     `decomposition.decomposition_of`'s single pass. The Totals tiles are absent
+         *     and that is a decision rather than an omission: `KpiCard` wraps its body in a
+         *     `<Link>`, so a button inside one would be invalid markup, and all three
+         *     figures already travel on every row of the breakdown export.
+         * @enum {string}
+         */
+        FinancialExportTable: "breakdown" | "costDrivers";
         /**
          * FinancialSummaryResponse
          * @description The four paycards, the cost bar and the metrics row (AC 1).
@@ -3782,6 +4117,23 @@ export interface components {
          * @enum {string}
          */
         FraudBand: "low" | "medium" | "high";
+        /**
+         * FraudExportTable
+         * @description Which of the Fraud section's two charts is being exported.
+         *
+         *     The **camelCase wire spellings**, `BreakdownDimension`'s exception to the
+         *     enum convention and for a related reason: these are not tokens whose copy the
+         *     UI owns, they are the names of two cards, and `table=siuPipeline` reads as a
+         *     parameter beside `groupBy` and `sort[injuryType]` where `siu_pipeline` would
+         *     read as a database value. The *target* those names resolve to is snake_case
+         *     and is what reaches the audit row — see `_EXPORT_TARGETS`.
+         *
+         *     One control rather than two routes, because the two charts come from **one
+         *     fold**: `fraud.panel_of` accumulates both in a single pass over one caseload,
+         *     so two routes would be two scoped reads for one card row.
+         * @enum {string}
+         */
+        FraudExportTable: "bands" | "siuPipeline";
         /**
          * FraudLowRiskInsight
          * @description The stored fraud card, low-risk-confirmation variant.
@@ -10462,6 +10814,8 @@ export interface operations {
     drill_claims_dashboard_claims_get: {
         parameters: {
             query?: {
+                /** @description An opaque `nextCursor` from a previous response. */
+                cursor?: string | null;
                 /** @description The claim's lifecycle stage. */
                 "filter[stage]"?: components["schemas"]["Stage"] | null;
                 /** @description The registered `risk` band the High Risk card counts with. */
@@ -10512,8 +10866,6 @@ export interface operations {
                 "filter[gender]"?: components["schemas"]["Gender"] | null;
                 /** @description Epic 3's reserve adequacy verdict for the claim, as the analyst workspace's adequacy distribution counted it. **This is the one facet that costs extra reads**: the verdict is not a column, so setting it loads each claim's payment schedule and bills and the `reserve_bands` document. Every other facet leaves the route at one scoped read. */
                 "filter[reserveVerdict]"?: components["schemas"]["ReserveVerdict"] | null;
-                /** @description An opaque `nextCursor` from a previous response. */
-                cursor?: string | null;
             };
             header?: never;
             path?: never;
@@ -10591,6 +10943,134 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_drill_claims_dashboard_claims_export_get: {
+        parameters: {
+            query: {
+                /** @description Which file the table is rendered as. CSV or XLSX; nothing else. */
+                format: components["schemas"]["ExportFormat"];
+                /** @description The claim's lifecycle stage. */
+                "filter[stage]"?: components["schemas"]["Stage"] | null;
+                /** @description The registered `risk` band the High Risk card counts with. */
+                "filter[severityBand]"?: components["schemas"]["RiskBand"] | null;
+                /** @description The Fraud Flags card's *review* rule — deliberately not the queue's higher SIU referral cut. */
+                "filter[fraudFlagged]"?: boolean | null;
+                /** @description The Litigation card's flag. */
+                "filter[litigation]"?: boolean | null;
+                /** @description The Surgery Required card's flag. */
+                "filter[surgery]"?: boolean | null;
+                /** @description The OSHA Recordable card's flag. */
+                "filter[oshaRecordable]"?: boolean | null;
+                /** @description The recovery-status chart's fold key. */
+                "filter[recoveryStatus]"?: components["schemas"]["ReturnStatus"] | null;
+                /** @description The injury-type chart's bar label, matched as the exact stored string — no trimming, case-folding or merging. */
+                "filter[injuryType]"?: string | null;
+                /** @description The claims-by-state chart's bar label, matched exactly. */
+                "filter[state]"?: string | null;
+                /** @description An employer's id, as published by the employer spend chart. Intersects the caller's scope and can never widen it. */
+                "filter[employerId]"?: number | null;
+                /** @description A handler's id, as published by the handler benchmark table. Intersects the caller's scope and can never widen it. */
+                "filter[handlerId]"?: number | null;
+                /** @description The priority worklist's population, before its cap. */
+                "filter[priority]"?: boolean | null;
+                /** @description The registered `fraud_band` banding of `fraud_score` **alone** — no `fraud_flag` conjunct, so this is neither the review rule above nor the referral rule below. */
+                "filter[fraudBand]"?: components["schemas"]["FraudBand"] | null;
+                /** @description The queue's SIU *referral* rule — deliberately narrower than `filter[fraudFlagged]`'s review cut. */
+                "filter[siuReview]"?: boolean | null;
+                /** @description Claims whose FNOL date is on or after this day. **Inclusive**, which is the reading a trend bucket's own boundary publishes. */
+                "filter[fnolFrom]"?: string | null;
+                /** @description Claims whose FNOL date is on or before this day. Inclusive. */
+                "filter[fnolTo]"?: string | null;
+                /** @description Claims whose date of injury is on or after this day. Inclusive, and a different column from `filter[fnolFrom]` on purpose. */
+                "filter[doiFrom]"?: string | null;
+                /** @description Claims whose date of injury is on or before this day. Inclusive. */
+                "filter[doiTo]"?: string | null;
+                /** @description The claim's disability type, as the trend cohort splits on it. */
+                "filter[disability]"?: components["schemas"]["Disability"] | null;
+                /** @description The employer's sector, matched as the exact stored string — no trimming, case-folding or merging. An employer attribute, not an industry rollup. */
+                "filter[sector]"?: string | null;
+                /** @description The operating region the claim's plant sits in, matched as the exact stored string — a different column from `filter[state]`, which is the jurisdiction a benefit is calculated under. */
+                "filter[region]"?: string | null;
+                /** @description The claim's ICD-10 code, matched as the exact stored string. The column is `claim.icd`; the facet names the coding system. */
+                "filter[icd10]"?: string | null;
+                /** @description The registered `age_band` of the injured worker's age. Ordinal words rather than ranges: the edges live in `derivation_thresholds` and are published on `/dashboard/segmentation/values`. */
+                "filter[ageGroup]"?: components["schemas"]["AgeBand"] | null;
+                /** @description The injured worker's gender. */
+                "filter[gender]"?: components["schemas"]["Gender"] | null;
+                /** @description Epic 3's reserve adequacy verdict for the claim, as the analyst workspace's adequacy distribution counted it. **This is the one facet that costs extra reads**: the verdict is not a column, so setting it loads each claim's payment schedule and bills and the `reserve_bands` document. Every other facet leaves the route at one scoped read. */
+                "filter[reserveVerdict]"?: components["schemas"]["ReserveVerdict"] | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The table as a file, streamed with `Content-Disposition: attachment`. The media type follows the `format` parameter. Never cached — the rows are one persona's scope. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": string;
+                    "text/csv": string;
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The caller's role does not carry the analyst-workspace capability. Answered before any claim is read and before any rule document is loaded, so it says nothing about what is in the caller's scope (RFC 9457 problem document). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The table is longer than `export_limits.maxRows` allows, or (for `format=xlsx`) longer than a worksheet can hold. The detail names the bound and the row count (RFC 9457 problem document). No audit event is written and no bytes are sent. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
                 };
             };
         };
@@ -10683,6 +11163,108 @@ export interface operations {
             };
         };
     };
+    export_financials_table_dashboard_financials_export_get: {
+        parameters: {
+            query: {
+                /** @description Which of the section's two exportable surfaces is exported. */
+                table: components["schemas"]["FinancialExportTable"];
+                /** @description Which file the table is rendered as. CSV or XLSX; nothing else. */
+                format: components["schemas"]["ExportFormat"];
+                /** @description Which of the ten segmentation dimensions the money is broken down by. The members are the `filter[…]` facet names themselves, so a group's key is what its own drill-through filters on. */
+                groupBy?: components["schemas"]["BreakdownDimension"];
+                /** @description The registered `risk` band — the same one the High Risk card counts. */
+                "filter[severityBand]"?: components["schemas"]["RiskBand"] | null;
+                /** @description The claim's injury type, matched as the exact stored string — no trimming, case-folding or merging. */
+                "filter[injuryType]"?: string | null;
+                /** @description The claim's jurisdiction, matched exactly. Not the employer's region. */
+                "filter[state]"?: string | null;
+                /** @description An employer's id. Intersects the caller's scope and can never widen it — naming one outside the book empties every aggregate. */
+                "filter[employerId]"?: number | null;
+                /** @description The claim's disability type. */
+                "filter[disability]"?: components["schemas"]["Disability"] | null;
+                /** @description The employer's sector, matched as the exact stored string. An employer attribute, not an industry rollup. */
+                "filter[sector]"?: string | null;
+                /** @description The operating region the claim's plant sits in, matched exactly — a different column from `filter[state]`, which is the jurisdiction. */
+                "filter[region]"?: string | null;
+                /** @description The claim's ICD-10 code, matched as the exact stored string. */
+                "filter[icd10]"?: string | null;
+                /** @description The registered `age_band` of the injured worker's age. Ordinal words rather than ranges: the edges are published on `/dashboard/segmentation/values` and the label is composed from them. */
+                "filter[ageGroup]"?: components["schemas"]["AgeBand"] | null;
+                /** @description The injured worker's gender. */
+                "filter[gender]"?: components["schemas"]["Gender"] | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The table as a file, streamed with `Content-Disposition: attachment`. The media type follows the `format` parameter. Never cached — the rows are one persona's scope. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": string;
+                    "text/csv": string;
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The caller's role does not carry the analyst-workspace capability. Answered before any claim is read and before any rule document is loaded, so it says nothing about what is in the caller's scope (RFC 9457 problem document). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The table is longer than `export_limits.maxRows` allows, or (for `format=xlsx`) longer than a worksheet can hold. The detail names the bound and the row count (RFC 9457 problem document). No audit event is written and no bytes are sent. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+        };
+    };
     financial_reserve_adequacy_dashboard_financials_reserve_adequacy_get: {
         parameters: {
             query?: {
@@ -10769,6 +11351,104 @@ export interface operations {
             };
         };
     };
+    export_financial_reserve_adequacy_dashboard_financials_reserve_adequacy_export_get: {
+        parameters: {
+            query: {
+                /** @description Which file the table is rendered as. CSV or XLSX; nothing else. */
+                format: components["schemas"]["ExportFormat"];
+                /** @description The registered `risk` band — the same one the High Risk card counts. */
+                "filter[severityBand]"?: components["schemas"]["RiskBand"] | null;
+                /** @description The claim's injury type, matched as the exact stored string — no trimming, case-folding or merging. */
+                "filter[injuryType]"?: string | null;
+                /** @description The claim's jurisdiction, matched exactly. Not the employer's region. */
+                "filter[state]"?: string | null;
+                /** @description An employer's id. Intersects the caller's scope and can never widen it — naming one outside the book empties every aggregate. */
+                "filter[employerId]"?: number | null;
+                /** @description The claim's disability type. */
+                "filter[disability]"?: components["schemas"]["Disability"] | null;
+                /** @description The employer's sector, matched as the exact stored string. An employer attribute, not an industry rollup. */
+                "filter[sector]"?: string | null;
+                /** @description The operating region the claim's plant sits in, matched exactly — a different column from `filter[state]`, which is the jurisdiction. */
+                "filter[region]"?: string | null;
+                /** @description The claim's ICD-10 code, matched as the exact stored string. */
+                "filter[icd10]"?: string | null;
+                /** @description The registered `age_band` of the injured worker's age. Ordinal words rather than ranges: the edges are published on `/dashboard/segmentation/values` and the label is composed from them. */
+                "filter[ageGroup]"?: components["schemas"]["AgeBand"] | null;
+                /** @description The injured worker's gender. */
+                "filter[gender]"?: components["schemas"]["Gender"] | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The table as a file, streamed with `Content-Disposition: attachment`. The media type follows the `format` parameter. Never cached — the rows are one persona's scope. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": string;
+                    "text/csv": string;
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The caller's role does not carry the analyst-workspace capability. Answered before any claim is read and before any rule document is loaded, so it says nothing about what is in the caller's scope (RFC 9457 problem document). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The table is longer than `export_limits.maxRows` allows, or (for `format=xlsx`) longer than a worksheet can hold. The detail names the bound and the row count (RFC 9457 problem document). No audit event is written and no bytes are sent. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+        };
+    };
     fraud_dashboard_fraud_get: {
         parameters: {
             query?: {
@@ -10851,6 +11531,106 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_fraud_panel_dashboard_fraud_export_get: {
+        parameters: {
+            query: {
+                /** @description Which of the section's two charts is exported. */
+                table: components["schemas"]["FraudExportTable"];
+                /** @description Which file the table is rendered as. CSV or XLSX; nothing else. */
+                format: components["schemas"]["ExportFormat"];
+                /** @description The registered `risk` band — the same one the High Risk card counts. */
+                "filter[severityBand]"?: components["schemas"]["RiskBand"] | null;
+                /** @description The claim's injury type, matched as the exact stored string — no trimming, case-folding or merging. */
+                "filter[injuryType]"?: string | null;
+                /** @description The claim's jurisdiction, matched exactly. Not the employer's region. */
+                "filter[state]"?: string | null;
+                /** @description An employer's id. Intersects the caller's scope and can never widen it — naming one outside the book empties every aggregate. */
+                "filter[employerId]"?: number | null;
+                /** @description The claim's disability type. */
+                "filter[disability]"?: components["schemas"]["Disability"] | null;
+                /** @description The employer's sector, matched as the exact stored string. An employer attribute, not an industry rollup. */
+                "filter[sector]"?: string | null;
+                /** @description The operating region the claim's plant sits in, matched exactly — a different column from `filter[state]`, which is the jurisdiction. */
+                "filter[region]"?: string | null;
+                /** @description The claim's ICD-10 code, matched as the exact stored string. */
+                "filter[icd10]"?: string | null;
+                /** @description The registered `age_band` of the injured worker's age. Ordinal words rather than ranges: the edges are published on `/dashboard/segmentation/values` and the label is composed from them. */
+                "filter[ageGroup]"?: components["schemas"]["AgeBand"] | null;
+                /** @description The injured worker's gender. */
+                "filter[gender]"?: components["schemas"]["Gender"] | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The table as a file, streamed with `Content-Disposition: attachment`. The media type follows the `format` parameter. Never cached — the rows are one persona's scope. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": string;
+                    "text/csv": string;
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The caller's role does not carry the analyst-workspace capability. Answered before any claim is read and before any rule document is loaded, so it says nothing about what is in the caller's scope (RFC 9457 problem document). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The table is longer than `export_limits.maxRows` allows, or (for `format=xlsx`) longer than a worksheet can hold. The detail names the bound and the row count (RFC 9457 problem document). No audit event is written and no bytes are sent. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
                 };
             };
         };
@@ -10943,6 +11723,110 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_fraud_rate_breakdowns_dashboard_fraud_rates_export_get: {
+        parameters: {
+            query: {
+                /** @description Which file the table is rendered as. CSV or XLSX; nothing else. */
+                format: components["schemas"]["ExportFormat"];
+                /** @description The order the injury-type breakdown is exported in. */
+                "sort[injuryType]"?: components["schemas"]["FraudRateSort"];
+                /** @description The order the employer breakdown is exported in. */
+                "sort[employer]"?: components["schemas"]["FraudRateSort"];
+                /** @description The order the handler breakdown is exported in. */
+                "sort[handler]"?: components["schemas"]["FraudRateSort"];
+                /** @description The registered `risk` band — the same one the High Risk card counts. */
+                "filter[severityBand]"?: components["schemas"]["RiskBand"] | null;
+                /** @description The claim's injury type, matched as the exact stored string — no trimming, case-folding or merging. */
+                "filter[injuryType]"?: string | null;
+                /** @description The claim's jurisdiction, matched exactly. Not the employer's region. */
+                "filter[state]"?: string | null;
+                /** @description An employer's id. Intersects the caller's scope and can never widen it — naming one outside the book empties every aggregate. */
+                "filter[employerId]"?: number | null;
+                /** @description The claim's disability type. */
+                "filter[disability]"?: components["schemas"]["Disability"] | null;
+                /** @description The employer's sector, matched as the exact stored string. An employer attribute, not an industry rollup. */
+                "filter[sector]"?: string | null;
+                /** @description The operating region the claim's plant sits in, matched exactly — a different column from `filter[state]`, which is the jurisdiction. */
+                "filter[region]"?: string | null;
+                /** @description The claim's ICD-10 code, matched as the exact stored string. */
+                "filter[icd10]"?: string | null;
+                /** @description The registered `age_band` of the injured worker's age. Ordinal words rather than ranges: the edges are published on `/dashboard/segmentation/values` and the label is composed from them. */
+                "filter[ageGroup]"?: components["schemas"]["AgeBand"] | null;
+                /** @description The injured worker's gender. */
+                "filter[gender]"?: components["schemas"]["Gender"] | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The table as a file, streamed with `Content-Disposition: attachment`. The media type follows the `format` parameter. Never cached — the rows are one persona's scope. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": string;
+                    "text/csv": string;
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The caller's role does not carry the analyst-workspace capability. Answered before any claim is read and before any rule document is loaded, so it says nothing about what is in the caller's scope (RFC 9457 problem document). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The table is longer than `export_limits.maxRows` allows, or (for `format=xlsx`) longer than a worksheet can hold. The detail names the bound and the row count (RFC 9457 problem document). No audit event is written and no bytes are sent. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
                 };
             };
         };
@@ -11367,6 +12251,114 @@ export interface operations {
                 };
             };
             /** @description The requested window cannot be served: `/problems/trend-range-invalid` for a range that runs backwards, `/problems/trend-range-too-wide` for one covering more buckets than `maxBuckets` allows (RFC 9457 problem document). Decided from the parameters and the rules document alone, so no claim is read to produce it. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+        };
+    };
+    export_trend_series_dashboard_trends_export_get: {
+        parameters: {
+            query: {
+                /** @description Which file the table is rendered as. CSV or XLSX; nothing else. */
+                format: components["schemas"]["ExportFormat"];
+                /** @description How wide one bucket is. */
+                grain?: components["schemas"]["TrendGrain"];
+                /** @description Which date a claim is bucketed by — the claim's FNOL date or the date of injury. Never both, and never a third column. */
+                anchor?: components["schemas"]["TrendAnchor"];
+                /** @description The single dimension each metric is split by, or `none`. Not a filter: a cohort split partitions the population rather than narrowing it. */
+                cohort?: components["schemas"]["TrendCohort"];
+                /** @description The first day the window covers; its whole bucket is included. Omitted, the window is `defaultBuckets` ending in `to`'s bucket. */
+                from?: string | null;
+                /** @description The last day the window covers; its whole bucket is included. Omitted, the window ends in the bucket `asOf` falls in. */
+                to?: string | null;
+                /** @description The registered `risk` band — the same one the High Risk card counts. */
+                "filter[severityBand]"?: components["schemas"]["RiskBand"] | null;
+                /** @description The claim's injury type, matched as the exact stored string — no trimming, case-folding or merging. */
+                "filter[injuryType]"?: string | null;
+                /** @description The claim's jurisdiction, matched exactly. Not the employer's region. */
+                "filter[state]"?: string | null;
+                /** @description An employer's id. Intersects the caller's scope and can never widen it — naming one outside the book empties every aggregate. */
+                "filter[employerId]"?: number | null;
+                /** @description The claim's disability type. */
+                "filter[disability]"?: components["schemas"]["Disability"] | null;
+                /** @description The employer's sector, matched as the exact stored string. An employer attribute, not an industry rollup. */
+                "filter[sector]"?: string | null;
+                /** @description The operating region the claim's plant sits in, matched exactly — a different column from `filter[state]`, which is the jurisdiction. */
+                "filter[region]"?: string | null;
+                /** @description The claim's ICD-10 code, matched as the exact stored string. */
+                "filter[icd10]"?: string | null;
+                /** @description The registered `age_band` of the injured worker's age. Ordinal words rather than ranges: the edges are published on `/dashboard/segmentation/values` and the label is composed from them. */
+                "filter[ageGroup]"?: components["schemas"]["AgeBand"] | null;
+                /** @description The injured worker's gender. */
+                "filter[gender]"?: components["schemas"]["Gender"] | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The table as a file, streamed with `Content-Disposition: attachment`. The media type follows the `format` parameter. Never cached — the rows are one persona's scope. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": string;
+                    "text/csv": string;
+                };
+            };
+            /** @description No valid session (RFC 9457 problem document). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The caller's role does not carry the analyst-workspace capability. Answered before any claim is read and before any rule document is loaded, so it says nothing about what is in the caller's scope (RFC 9457 problem document). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description The table is longer than `export_limits.maxRows` allows, or (for `format=xlsx`) longer than a worksheet can hold. The detail names the bound and the row count (RFC 9457 problem document). No audit event is written and no bytes are sent. */
             422: {
                 headers: {
                     [name: string]: unknown;

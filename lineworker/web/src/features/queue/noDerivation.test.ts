@@ -575,8 +575,18 @@ const DERIVED_FIELDS =
   // (`highRiskSeverityMin`, `medRiskSeverityMin`, `fraudFlagScoreMin`,
   // `fraudBandHighMin`, `fraudBandMedMin`) is guarded because the payload it
   // rides on *also* carries the per-claim column it bands, so the browser holds
-  // every ingredient of a second opinion. These three do not: no payload in this
-  // console carries `employee.age` at all, so there is nothing here to re-band
+  // every ingredient of a second opinion. These three do not: **no payload this
+  // console parses** carries `employee.age` at all, so there is nothing here to
+  // re-band. Story 7.5 is the reason that clause had to be sharpened rather than
+  // left as "no payload carries it": the claim export emits an `age` column, so
+  // an age does now leave the server on a response this app receives. It never
+  // becomes a JS value — `useExport` reads that response with `parseAs: "blob"`
+  // and hands the bytes straight to an anchor, so the browser holds an opaque
+  // file and not a field, and there is still nothing in memory to band. The
+  // distinction matters because it is what would change: a hook that parsed an
+  // export, or any read route that started publishing an age, would put the
+  // ingredient in the client's hands and these three names would have to be
+  // added the same day. As it stands the omission is correct rather than lucky,
   // and the only thing a component can do with them is what they are published
   // for — compose the range label an ordinal band name deliberately does not
   // carry (`features/dashboard/segmentation/ageBands.ts`). Guarding them would
@@ -999,6 +1009,24 @@ test("the scan reaches the files it claims to", () => {
   ]) {
     expect(scanned).toContain(path.join("features", "dashboard", "financial", file));
   }
+  // Story 7.5's one, in a fifth Epic 7 folder — and the shortest file in this
+  // list beside the strongest pull in the epic.
+  //
+  // `ExportControl.tsx` sits between a query cache holding every row on screen
+  // and a button labelled "CSV". A client-side dump is **one `.map().join()`**
+  // away, it would work, it would be faster than a round trip, and it would be
+  // the exact thing AD-1 and AD-7 forbid: a file whose scope was decided by
+  // whatever the browser happened to have fetched rather than by
+  // `employer_scope(ctx)` re-resolved server-side. The list surfaces make it
+  // worse, not better — the drill page holds one *page* of a cursored ranking,
+  // so a browser-assembled export of "what is on screen" would silently be a
+  // subset of the file the reader asked for, under a heading quoting the
+  // server's own total.
+  //
+  // The folder is registered rather than the file, because the next surface to
+  // gain an export affordance will land beside it and the temptation is the
+  // folder's rather than the component's.
+  expect(scanned).toContain(path.join("features", "dashboard", "export", "ExportControl.tsx"));
   // Story 7.1's navigation, in `features/shell` — which is scanned, but by a
   // root added for the *queue* payload five stories ago. Named because it is the
   // first component in that folder that branches on a value from `/api/me`, and

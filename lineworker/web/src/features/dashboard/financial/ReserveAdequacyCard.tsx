@@ -51,9 +51,11 @@ import { DistributionDonut } from "../charts/DistributionDonut";
 import {
   drillHref,
   NO_MATCHING_CLAIMS,
+  toSegmentationParams,
   withSegmentation,
   type DrillFilters,
 } from "../drill/filters";
+import { ExportControl } from "../export/ExportControl";
 
 /** The unknown-value glyph, `HandlerBenchmarkTable`'s. */
 const EM_DASH = "—";
@@ -129,6 +131,18 @@ export function ReserveAdequacyCard({
       <DistributionDonut
         testId="reserve-adequacy-distribution"
         title="Reserve adequacy"
+        // Its **own** route rather than the section's, because the distribution
+        // is its own query: it costs three scoped reads and a second rule
+        // document where the totals cost one and one, and one file carrying both
+        // would make every breakdown export pay for it.
+        action={
+          <ExportControl
+            testId="reserve-adequacy-distribution"
+            label="the reserve adequacy distribution"
+            path="/dashboard/financials/reserve-adequacy/export"
+            params={toSegmentationParams(segmentation)}
+          />
+        }
         series={
           data === undefined
             ? undefined

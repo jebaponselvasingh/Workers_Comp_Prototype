@@ -4605,3 +4605,102 @@ export function expectedBreakdownFor(
     groupCount: totals.size,
   };
 }
+
+// --- Story 7.5: what an export must contain, restated independently -------
+//
+// **The oracle for a file is a count of rows, not a re-fold of the figures.**
+// Everything an exported table holds is already asserted elsewhere in this file
+// against the surface it came from — the money by `expectedFinancialsFor`, the
+// distributions by `expectedFraudPanelFor` — and the one thing an *export* can
+// get wrong that none of those can is which rows are in it. So this block
+// answers exactly that, for the one target where the question is hardest: the
+// claim list, whose on-screen form is a cursored page and whose file is the
+// whole ranking.
+//
+// **It shares no helper with `expectedDrillClaimsFor`**, deliberately, and that
+// is the one reuse this file otherwise would have made. That function narrows
+// through `matchesFacet` — the *drill* vocabulary, twenty-five facets — and this
+// one narrows through `matchesDimension`, the *segmentation* vocabulary's ten.
+// Reusing it would make "the export contains the rows the workspace's filter
+// leaves" a statement about one predicate rather than about two that must agree,
+// which is precisely the agreement Story 7.3 asserted at import on the server and
+// this story now has to hold across a download. It also does no ranking at all,
+// where that one sorts: a row count is order-independent, and an oracle that
+// sorted would be restating the scorer for an assertion that cannot see it.
+
+/**
+ * How many **data rows** a claim export must hold for one persona and filter.
+ *
+ * Data rows, never lines: the file carries a header, so a spec comparing line
+ * counts would be off by one in a way that looks like an off-by-one in the
+ * export. The caller subtracts the header, and the name says which number this
+ * is.
+ *
+ * The count is the whole filtered population rather than a page of it, which is
+ * the property AC 2 turns on and the reason this is not `expectedDrillClaimsFor
+ * (…).pages[0].length`: the list on screen is cut at `DRILL_PAGE_LIMIT` and the
+ * file is not, so an export built from what the browser had loaded would agree
+ * with the first page and disagree with the total printed beside it.
+ */
+export function expectedExportRowsFor(
+  persona: { name: string; role: string },
+  filters: Segmentation = {},
+): number {
+  return claimsFor(persona.name, persona.role).filter((claim) =>
+    SEGMENTATION_ORDER.every((dimension) => {
+      const value = filters[dimension];
+      return value === undefined || matchesDimension(claim, dimension, value);
+    }),
+  ).length;
+}
+
+/**
+ * The claim ids a claim export must hold, as a set the spec can compare.
+ *
+ * Beside the count rather than instead of it, for `expectedSegmentedFor`'s
+ * reason: two populations of the same size are the failure a count cannot catch,
+ * and a downloaded file is the one place a scope error would be permanent.
+ * Unordered on purpose — the ranking is `expectedDrillClaimsFor`'s subject and
+ * restating the scorer here would be a second implementation of it for an
+ * assertion that does not need one.
+ */
+export function expectedExportClaimIdsFor(
+  persona: { name: string; role: string },
+  filters: Segmentation = {},
+): Set<string> {
+  return new Set(
+    claimsFor(persona.name, persona.role)
+      .filter((claim) =>
+        SEGMENTATION_ORDER.every((dimension) => {
+          const value = filters[dimension];
+          return value === undefined || matchesDimension(claim, dimension, value);
+        }),
+      )
+      .map((claim) => claim.claim_id),
+  );
+}
+
+/**
+ * How many data rows the fraud band export must hold — always three.
+ *
+ * A constant expressed as a function of nothing, which reads oddly and is the
+ * point: `FraudBand` is a **rule's** vocabulary rather than a column's, so all
+ * three members exist for every book and for every filter, including one no
+ * claim in the segment reached. A spec asserting "as many rows as there are
+ * occupied bands" would pass against an export that silently dropped the empty
+ * one, which is the single most valuable row in the file.
+ */
+export const EXPECTED_FRAUD_BAND_EXPORT_ROWS = 3;
+
+/**
+ * The claim export's header, written out — the contract a consumer joins on.
+ *
+ * Restated here rather than read off the file under test for this whole file's
+ * founding reason. Only the first three are named: the full thirty-six are
+ * pinned by `server/tests/seed_fixture.py`, and a second full copy in TypeScript
+ * would be a list to keep in step for no assertion the server's does not already
+ * make. What a *browser* download has to prove is that the bytes that arrived
+ * are the table the server rendered, and the first three columns are enough to
+ * tell that from an error page, an empty file or a JSON payload.
+ */
+export const EXPECTED_EXPORT_HEADER_PREFIX = "claim_id,stage,status";

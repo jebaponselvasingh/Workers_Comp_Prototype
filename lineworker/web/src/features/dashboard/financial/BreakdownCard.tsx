@@ -48,11 +48,13 @@ import {
   FILTER_LABEL,
   NO_MATCHING_CLAIMS,
   SEGMENTATION_KEYS,
+  toSegmentationParams,
   valueLabel,
   withSegmentation,
   type DrillFilters,
   type FilterKey,
 } from "../drill/filters";
+import { ExportControl } from "../export/ExportControl";
 
 /**
  * The ten groupings the control offers, in the chip row's order.
@@ -160,6 +162,30 @@ export function BreakdownCard({
             ))}
           </select>
         </div>
+        {/* The grouping travels with the filter, so the file holds the bars that
+            are on screen — `groupBy` is what decides which groups exist, and an
+            export that sent the default would download a different chart. It is
+            `shown` rather than the asked-for `groupBy`, and the difference is
+            the one window where the two disagree: while a regroup is in flight,
+            `keepPreviousData` leaves the *previous* dimension's bars drawn, and
+            `shown` is by construction the dimension those bars belong to (the
+            asked-for value only while nothing has landed yet, the server's echo
+            afterwards). Exporting the asked-for value in that window would hand
+            the reader a file of groups the screen is not showing, under a
+            heading and a select that both still read the old one — which is
+            precisely the "the file and the screen disagree" failure this story
+            exists to prevent. The same `shown` feeds the heading, the select and
+            the drill target, so all four say one thing at every moment. */}
+        <ExportControl
+          testId="financial-breakdown"
+          label="the cost breakdown"
+          path="/dashboard/financials/export"
+          params={{
+            ...toSegmentationParams(segmentation),
+            table: "breakdown",
+            groupBy: shown,
+          }}
+        />
       </div>
 
       <DistributionBars

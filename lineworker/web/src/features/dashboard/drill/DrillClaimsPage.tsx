@@ -42,6 +42,8 @@ import { DASHBOARD_ROUTE } from "@/features/shell/routes";
 
 import { ageBandLabels } from "../segmentation/ageBands";
 
+import { ExportControl } from "../export/ExportControl";
+
 import { FilterChips } from "./FilterChips";
 import {
   appliedFromFilters,
@@ -51,6 +53,7 @@ import {
   fromSearchParams,
   type DrillOrigin,
   toFilterKey,
+  toQueryParams,
   toSearchParams,
   type FilterKey,
 } from "./filters";
@@ -214,13 +217,26 @@ export function DrillClaimsPage() {
             </span>
           )}
         </h2>
-        <Link
-          data-testid="drill-back"
-          to={DASHBOARD_ROUTE}
-          className="rounded text-[11px] font-semibold text-steel hover:underline focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none"
-        >
-          ← Back to dashboard
-        </Link>
+        <div className="flex items-center gap-3">
+          {/* **The whole list, not the page on screen.** This surface pages with
+              a cursor and the file does not: `drill_through.select` returns the
+              entire ranked population, so the export is every page of it. The
+              count beside the heading is what the row count in the file has to
+              equal, which is how a reader checks it without opening anything. */}
+          <ExportControl
+            testId="drill-claims"
+            label="this claim list"
+            path="/dashboard/claims/export"
+            params={toQueryParams(filters)}
+          />
+          <Link
+            data-testid="drill-back"
+            to={DASHBOARD_ROUTE}
+            className="rounded text-[11px] font-semibold text-steel hover:underline focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none"
+          >
+            ← Back to dashboard
+          </Link>
+        </div>
       </div>
 
       <FilterChips

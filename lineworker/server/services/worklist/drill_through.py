@@ -112,6 +112,7 @@ from dataclasses import dataclass, fields, replace
 from datetime import date
 from typing import Any, Final
 
+import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from data.context import CallerContext
@@ -1229,7 +1230,75 @@ class RankedClaim:
     priority_score: float
 
 
-def _without_reserve_verdict(
+def claims_of(
+    rows: Sequence[sa.Row[Any]],
+    thresholds: DerivationThresholds,
+    aged_on: date,
+) -> list[DrillClaim]:
+    """The drill projection's rows as `DrillClaim`s. Named, never positional.
+
+    **Extracted and made public by Story 7.5, and the extraction is the point
+    rather than a tidy-up.** `services/worklist/export.py` folds the same
+    twenty-eight columns through the same `select` this module's own paged entry
+    point does, and the one thing it must not do is build the projection itself:
+    the whole claim of that story is that an exported row cannot differ from a
+    displayed one, and two spellings of a twenty-eight-field named build is
+    exactly where the difference would appear — silently, on a projection whose
+    five adjacent free-text columns and four adjacent booleans all type-check in
+    any order. One function, two callers, no drift possible.
+
+    Named rather than positional (`DrillClaim(*row)`), which would work and would
+    be one reordered projection away from filtering claims by their worker's name
+    — `charts.portfolio_charts`' argument.
+
+    `days_open` is built here, once, above the comprehension: it is the one
+    derived value on the projection (`QueueClaim`'s rule — the card's age and the
+    scorer's input must both be the registry's answer rather than an aged date),
+    and building it per row would be one `for_thresholds` call per claim.
+
+    `aged_on` is a parameter rather than a clock read here, for
+    `drill_through_claims`' recorded reason: a cursor's own day wins over today's
+    so that page two is cut from the list page one was, and a function that read
+    the clock could not honour that. The export passes today, having no cursor to
+    disagree with.
+    """
+    days_open = derivations.days_open.for_thresholds(thresholds)
+    return [
+        DrillClaim(
+            claim_id=row.claim_id,
+            stage=row.stage,
+            status=row.status,
+            return_status=row.return_status,
+            severity_score=row.severity_score,
+            days_open=days_open.of(row.froi_date, aged_on),
+            injury_type=row.injury_type,
+            worker_name=row.worker_name,
+            employer_short_name=row.employer_short_name,
+            surgery_required=row.surgery_required,
+            litigation_flag=row.litigation_flag,
+            fraud_flag=row.fraud_flag,
+            fraud_score=row.fraud_score,
+            employer_id=row.employer_id,
+            handler_id=row.handler_id,
+            handler_name=row.handler_name,
+            state=row.state,
+            osha_recordable=row.osha_recordable,
+            froi_date=row.froi_date,
+            doi=row.doi,
+            disability=row.disability,
+            sector=row.sector,
+            region=row.region,
+            icd=row.icd,
+            age=row.age,
+            gender=row.gender,
+            reserve=row.reserve,
+            recovery=row.recovery,
+        )
+        for row in rows
+    ]
+
+
+def without_reserve_verdict(
     caseload: Sequence[DrillClaim],
     filters: DrillFilters,
     thresholds: DerivationThresholds,
@@ -1241,11 +1310,20 @@ def _without_reserve_verdict(
     claims worth fetching a payment schedule and a bill list for.
 
     `filter[reserveVerdict]` is the one facet whose predicate cannot run over a
-    row, and `drill_through_claims` is the only caller. Running the other
-    twenty-four first is what keeps the two reads it pays for proportional to
-    the *filtered* list rather than to the caller's whole book — see the block
-    there, and note that this route has no role gate, so "the whole book" is
-    reachable by any authenticated session with one query parameter.
+    row. Running the other twenty-four first is what keeps the two reads it pays
+    for proportional to the *filtered* list rather than to the caller's whole
+    book — see the block in `drill_through_claims`, and note that that route has
+    no role gate, so "the whole book" is reachable by any authenticated session
+    with one query parameter.
+
+    **Public since Story 7.5**, and the underscore it lost is the point rather
+    than an accident of reuse: `services/worklist/export.py` reaches `select`
+    with the same twenty-five facets this route declares, so it faces the
+    identical conditional and must narrow before it loads a verdict for exactly
+    the same reason. A second copy of a three-line `replace`-and-filter would be
+    a second place the "narrow first" rule could be forgotten, on the one path
+    where forgetting it turns a filtered export into a whole-book
+    schedule-and-bill materialisation.
 
     The verdict facet is cleared rather than skipped: `matches` is an `and` over
     the facets that are *set*, so handing it a filter set whose verdict field is
@@ -1492,45 +1570,8 @@ async def drill_through_claims(
                 f"pages at {page_size}; reload the list from the first page."
             )
 
-    days_open = derivations.days_open.for_thresholds(thresholds)
     rows = await claim_repo.select_drill_rows(db, ctx)
-    # Named rather than positional (`DrillClaim(*row)`), which would work and
-    # would be one reordered projection away from filtering claims by their
-    # worker's name — `charts.portfolio_charts`' argument, on a projection
-    # carrying five adjacent free-text columns and four adjacent booleans.
-    caseload = [
-        DrillClaim(
-            claim_id=row.claim_id,
-            stage=row.stage,
-            status=row.status,
-            return_status=row.return_status,
-            severity_score=row.severity_score,
-            days_open=days_open.of(row.froi_date, aged_on),
-            injury_type=row.injury_type,
-            worker_name=row.worker_name,
-            employer_short_name=row.employer_short_name,
-            surgery_required=row.surgery_required,
-            litigation_flag=row.litigation_flag,
-            fraud_flag=row.fraud_flag,
-            fraud_score=row.fraud_score,
-            employer_id=row.employer_id,
-            handler_id=row.handler_id,
-            handler_name=row.handler_name,
-            state=row.state,
-            osha_recordable=row.osha_recordable,
-            froi_date=row.froi_date,
-            doi=row.doi,
-            disability=row.disability,
-            sector=row.sector,
-            region=row.region,
-            icd=row.icd,
-            age=row.age,
-            gender=row.gender,
-            reserve=row.reserve,
-            recovery=row.recovery,
-        )
-        for row in rows
-    ]
+    caseload = claims_of(rows, thresholds, aged_on)
 
     # **Two more reads, and only when the twenty-fifth facet is set.** The
     # reserve verdict is not a column and cannot become one
@@ -1571,7 +1612,7 @@ async def drill_through_claims(
                 f"and v{bands.version} is now effective; "
                 "reload the list from the first page."
             )
-        population = _without_reserve_verdict(caseload, filters, thresholds)
+        population = without_reserve_verdict(caseload, filters, thresholds)
         verdicts = await reserve_checks_for_claims(db, ctx, population, bands=bands)
         bands_version: int | None = bands.version
     else:
@@ -1637,9 +1678,11 @@ __all__ = [
     "InvalidCursor",
     "RankedClaim",
     "chip_value",
+    "claims_of",
     "decode_cursor",
     "drill_through_claims",
     "encode_cursor",
     "matches",
     "select",
+    "without_reserve_verdict",
 ]

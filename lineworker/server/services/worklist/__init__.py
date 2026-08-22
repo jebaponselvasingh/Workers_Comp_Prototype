@@ -212,6 +212,20 @@ of its ten dimensions are registered derivations — `risk`, and the new `age_ba
 over `employee.age` — which is exactly why it lives here and not in `data/`: half
 a filter in SQL and half in Python is the split the repository refuses in
 writing, twice.
+
+Story 7.5 adds `export`, and it is the second module here that answers no
+question of its own — but it is the opposite kind of passenger from
+`segmentation`. That one narrows the book every other module folds; this one
+takes what they folded and makes it rectangular. It holds no threshold, no
+derivation, no `sorted` and no arithmetic on a published number, because the
+whole claim of the story is that an exported figure cannot differ from a
+displayed one: each of its eight targets is handed an already-computed aggregate
+— a `FraudPanel`, a `FraudRates`, a `PortfolioTrends`, a
+`FinancialDecomposition`, a `ReserveAdequacy`, or `drill_through.select`'s whole
+ranked list — by the same function the sibling route calls, and shapes it. Its
+six entry points are the only reads in this package that write anything: one
+content-free `audit_event` each, through `services/audit`, because an export is
+the one thing a dashboard does that moves PHI out of the system (AD-4, NFR-5).
 """
 
 # **`priority_claims` is deliberately missing from this list**, and it is the
@@ -230,6 +244,7 @@ from services.worklist import (
     charts,
     decomposition,
     drill_through,
+    export,
     fraud,
     priority,
     queue,
@@ -301,6 +316,25 @@ from services.worklist.drill_through import (
     DrillRow,
     RankedClaim,
     drill_through_claims,
+)
+from services.worklist.export import (
+    MEDIA_TYPE,
+    ExportColumn,
+    ExportFormat,
+    ExportTable,
+    ExportTarget,
+    ExportTooLarge,
+    ExportUnit,
+    ExportUnwritable,
+    export_claims,
+    export_financials,
+    export_fraud,
+    export_fraud_rates,
+    export_reserve_adequacy,
+    export_trends,
+    filename_for,
+    render_csv,
+    render_xlsx,
 )
 from services.worklist.fraud import (
     FRAUD_ANALYTICS_ROLES,
@@ -399,6 +433,24 @@ from services.worklist.trends import (
 )
 
 __all__ = [
+    "MEDIA_TYPE",
+    "ExportColumn",
+    "ExportFormat",
+    "ExportTable",
+    "ExportTarget",
+    "ExportTooLarge",
+    "ExportUnit",
+    "ExportUnwritable",
+    "export",
+    "export_claims",
+    "export_financials",
+    "export_fraud",
+    "export_fraud_rates",
+    "export_reserve_adequacy",
+    "export_trends",
+    "filename_for",
+    "render_csv",
+    "render_xlsx",
     "reserve_adequacy",
     "financial_decomposition",
     "decomposition_of",

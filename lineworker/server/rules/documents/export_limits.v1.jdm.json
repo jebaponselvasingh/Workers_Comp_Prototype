@@ -1,0 +1,48 @@
+{
+  "contentType": "application/vnd.gorules.decision",
+  "name": "export_limits",
+  "description": "How much of a book one export request may extract (Story 7.5, AD-8). A document of its own for trend_periods' reason rather than another expression in derivation_thresholds: that block is the single argument every REGISTERED DERIVATION is BUILT from, and this parameter reaches no derivation at all. It is a CAP, which is one of the four words AD-8 gives the rules tier by name, and it is the one cap in this tree whose subject is not a chart's legibility but a compliance posture: an export is PHI leaving the system (NFR-5), and how much of it may leave in one request is policy with an owner outside this codebase — a compliance officer who must be able to retune it with an effective date rather than a deploy. That is exactly the argument trend_periods.maxBuckets makes for itself and exactly why neither belongs beside charts.INJURY_TYPE_LIMIT as a module constant: a chart's category count is UX-DR7's SHAPE, and moving it changes what the chart is rather than how the business behaves. WHAT maxRows BOUNDS IS THE ANSWER, NOT THE WORK, which is the same sentence maxBuckets carries and is worth restating because the arithmetic differs: services/worklist/export.py re-runs the fold its sibling chart already runs over the caller's whole scoped book, so the read, the projection and the fold cost exactly what the screen costs whatever this number is. What scales with it is the TABLE — rows built, encoded, streamed, downloaded and opened in a spreadsheet — and, more to the point, how many claims one authenticated session can carry out of the console in one gesture. The O(scope) fold is a real question and it is NOT this parameter's: it is deferred-work.md's, on the eighth endpoint to fold a whole scope in Python, and lowering this cap at two in the morning would not touch it. 50000 is far above anything the seeded hundred-claim portfolio can reach and is deliberately not a number tuned to today's data: the refusal is a guard rail against a future book, and a cap the shipped dataset trips would be a feature that never works rather than a bound that rarely fires. THE UNIT IS ROWS OF THE EXPORTED TABLE, not claims, which matters because six of the eight targets export AGGREGATE rows: a claim-list export of fifty thousand claims and a breakdown export of fifty thousand groups are the same size of file and the same amount of egress, so one number governs eight targets without eight parameters that could drift apart. A ZERO IS REFUSED AT LOAD rather than clamped, and it is the sharp end of this document: the cap is compared as table length > maxRows, so zero would refuse every export that exists — including the empty one — which is not a tuning of the feature but a request to retire it. rules/parameters.py refuses max_rows < 1 for that reason, exactly as TrendPeriods refuses a zero bucket window and handler_performance refuses all-three-zero blend weights: SWITCHING A CAPABILITY OFF IS A DEPLOYMENT DECISION, NOT A VALUE TO SET. A one is legal and means what it says — one row per export — which is a coherent, if unfriendly, policy an operator might genuinely mean while a zero cannot be.",
+  "nodes": [
+    {
+      "id": "request",
+      "type": "inputNode",
+      "name": "request",
+      "position": { "x": 0, "y": 0 }
+    },
+    {
+      "id": "limits",
+      "type": "expressionNode",
+      "name": "limits",
+      "position": { "x": 240, "y": 0 },
+      "content": {
+        "expressions": [
+          {
+            "id": "maxRows",
+            "key": "maxRows",
+            "value": "50000"
+          }
+        ]
+      }
+    },
+    {
+      "id": "response",
+      "type": "outputNode",
+      "name": "response",
+      "position": { "x": 480, "y": 0 }
+    }
+  ],
+  "edges": [
+    {
+      "id": "request-limits",
+      "type": "edge",
+      "sourceId": "request",
+      "targetId": "limits"
+    },
+    {
+      "id": "limits-response",
+      "type": "edge",
+      "sourceId": "limits",
+      "targetId": "response"
+    }
+  ]
+}

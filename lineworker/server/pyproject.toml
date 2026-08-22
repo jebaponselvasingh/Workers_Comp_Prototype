@@ -79,6 +79,50 @@ dependencies = [
     # `ImportError` the day that somebody drops it (`httpx`'s promotion in 6.1
     # is the same lesson).
     "psycopg-pool>=3.2,<4",
+    # The XLSX writer (Story 7.5). Listed *before* the module that imports it
+    # ships, because `httpx`'s promotion from the dev group in 6.1 is this
+    # file's own cautionary tale: a runtime import resolved from a dev-only
+    # dependency is an `ImportError` in the shipped image and nowhere else.
+    #
+    # **`xlsxwriter` rather than `openpyxl`, and the reason is AD-11 rather than
+    # ergonomics.** This story's posture is that no export artifact touches a
+    # disk: nothing goes to the blob store, nothing to a volume, nothing to
+    # `tempfile`. `xlsxwriter.Workbook(buffer, {"in_memory": True})` holds every
+    # worksheet part in memory and writes the zip into the caller's `BytesIO`;
+    # openpyxl's write-only mode — the only one whose memory profile is
+    # comparable — spools worksheet XML through `tempfile` by design, which
+    # would put a PHI-bearing fragment on the container filesystem for the
+    # duration of a request and leave the cleanup to a library rather than to
+    # this codebase.
+    #
+    # A *range*, like every other dependency here, and both ends are
+    # load-bearing — which the first version of this comment was not: it said
+    # the floor was 3.2 "because that is where `{"in_memory": True}` is honoured
+    # for the constant-memory path this module uses", and all three halves of
+    # that are false. `in_memory` was added in 0.4.8 and fixed to compress in
+    # 1.1.2; 3.2.0 added `embed_image()` and an alignment fix; and
+    # `render_xlsx` does not use `constant_memory` at all — it deliberately
+    # does not, because that mode is the one that spools through `tempfile`.
+    #
+    # The real floor is **typing**, and it is `langgraph-checkpoint-postgres`'
+    # kind of floor rather than a feature's. 3.2.6 and 3.2.7 shipped a `py.typed`
+    # marker with partial annotations, 3.2.8 shipped a fix for the `mypy`
+    # implicit-export error they caused, and 3.2.9 removed the marker outright
+    # ("it was causing a lot of downstream CI failures"). The
+    # `[[tool.mypy.overrides]]` block below says this package ships no stubs and
+    # no `py.typed` — which is true of 3.2.9 and *false* of the three releases
+    # before it, where `ignore_missing_imports` stops applying and strict mode
+    # type-checks `services/worklist/export.py` against the library's own
+    # admittedly incomplete annotations. So the floor is the release that made
+    # the override honest.
+    #
+    # The ceiling is `<3.3` for the same fact from the other side: upstream says
+    # the marker "will be re-added once the xlsxwriter typing is more
+    # comprehensive", and the next minor is exactly where that can happen. It is
+    # also where the rest of this list's rule lands anyway — a bump of a
+    # file-format writer is a change to bytes a spreadsheet has to open, which is
+    # not a thing to pick up in a `uv lock` nobody read.
+    "xlsxwriter>=3.2.9,<3.3",
     # `langchain.agents.create_agent` — §5.2's prescribed tool-calling core and
     # the successor to the deprecated `langgraph.prebuilt.create_react_agent`.
     # The floor is v1 because that is where `create_agent` exists at all; the
@@ -134,6 +178,22 @@ ignore_missing_imports = true
 # `rules/parameters.py` rather than left as `Any` at each call site).
 [[tool.mypy.overrides]]
 module = ["zen.*"]
+ignore_missing_imports = true
+
+# `xlsxwriter` ships no stubs and no `py.typed`, so strict mode cannot see
+# through it — the `zen.*` situation, arrived at from the other direction (that
+# one is a compiled pyo3 extension; this one is pure Python that carried a
+# marker for three releases and withdrew it). "No `py.typed`" is a statement
+# about the *pinned range* rather than about the library in general, which is
+# why the floor above is `3.2.9` and not `3.2`: in 3.2.6–3.2.8 the marker is
+# present and this override silently stops applying. The override is scoped to
+# the import and not to `services/worklist/`: everything this project writes
+# around the writer stays fully typed, and `services/worklist/export.py` is the
+# single module that touches the untyped surface — and every one of those calls
+# is inside `render_xlsx`, which is why the boundary is a function rather than a
+# layer.
+[[tool.mypy.overrides]]
+module = ["xlsxwriter.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

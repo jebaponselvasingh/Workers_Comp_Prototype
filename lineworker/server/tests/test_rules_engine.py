@@ -31,6 +31,7 @@ from rules.engine import LoadedDocument, RuleDocumentMissing, evaluate, load
 from rules.parameters import (
     BENEFIT_PARAMS_KEY,
     DERIVATION_THRESHOLDS_KEY,
+    EXPORT_LIMITS_KEY,
     HANDLER_PERFORMANCE_KEY,
     INJURY_CAPTURE_KEY,
     INTAKE_REQUIRED_DOCUMENTS_KEY,
@@ -40,6 +41,7 @@ from rules.parameters import (
     WORKLIST_ACTIONS_KEY,
     BenefitParams,
     DerivationThresholds,
+    ExportLimits,
     HandlerPerformance,
     IntakeRequirements,
     PriorityWeights,
@@ -47,6 +49,7 @@ from rules.parameters import (
     TrendPeriods,
     WorklistActions,
     benefit_params_for,
+    export_limits_for,
     handler_performance_for,
     intake_requirements_for,
     reserve_bands_for,
@@ -99,6 +102,10 @@ EFFECTIVE_DOCUMENTS: tuple[tuple[str, int, str], ...] = (
     # unversioned name is a constraint on the two keys 0009 seeds by reading
     # `<key>.jdm.json` at migration time, and 0046 names its file explicitly.
     (TREND_PERIODS_KEY, 1, "trend_periods.v1.jdm.json"),
+    # Story 7.5's, the fourth owned by `services/worklist` — how many rows of a
+    # table one export request may extract. `.v1` in its filename for 0046's
+    # reason, one document over.
+    (EXPORT_LIMITS_KEY, 1, "export_limits.v1.jdm.json"),
 )
 
 # **Every** seeded (key, version, file), not only the effective ones.
@@ -222,6 +229,16 @@ EXPECTED_TREND_PERIODS: dict[str, Any] = {
     "defaultBuckets": 12,
     "maxBuckets": 24,
     "lowConfidenceClaimMax": 3,
+}
+
+# Story 7.5's document, restated. A count of ROWS OF THE EXPORTED TABLE, never of
+# claims — six of the eight targets export aggregate rows, so one number governs
+# all eight without eight caps that could drift apart. Deliberately far above
+# anything the seeded hundred-claim portfolio can reach: the refusal is a guard
+# rail against a future book, and a cap the shipped dataset trips would be a
+# feature that never works rather than a bound that rarely fires.
+EXPECTED_EXPORT_LIMITS: dict[str, Any] = {
+    "maxRows": 50_000,
 }
 
 # Story 3.2's document, restated. Ratios are BASIS POINTS: 11500 is 115%.
@@ -495,6 +512,12 @@ async def test_the_trend_periods_document_evaluates_to_the_story_values(
     assert evaluate(await load(db, TREND_PERIODS_KEY)) == EXPECTED_TREND_PERIODS
 
 
+async def test_the_export_limits_document_evaluates_to_the_story_values(
+    db: AsyncSession,
+) -> None:
+    assert evaluate(await load(db, EXPORT_LIMITS_KEY)) == EXPECTED_EXPORT_LIMITS
+
+
 async def test_every_trigger_rule_has_an_urgency_in_the_document(db: AsyncSession) -> None:
     """The eleven rules and the eleven parameters are the same eleven.
 
@@ -574,6 +597,10 @@ async def test_the_typed_blocks_carry_the_evaluated_values(db: AsyncSession) -> 
         default_buckets=EXPECTED_TREND_PERIODS["defaultBuckets"],
         max_buckets=EXPECTED_TREND_PERIODS["maxBuckets"],
         low_confidence_claim_max=EXPECTED_TREND_PERIODS["lowConfidenceClaimMax"],
+    )
+    assert await export_limits_for(db) == ExportLimits(
+        version=1,
+        max_rows=EXPECTED_EXPORT_LIMITS["maxRows"],
     )
     assert await worklist_actions_for(db) == WorklistActions(
         version=2,

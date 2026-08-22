@@ -1362,6 +1362,41 @@ async def test_the_route_declares_exactly_twenty_five_parameters(seeded_db_url: 
 
 
 @requires_db
+async def test_the_list_and_its_export_declare_the_same_facets(seeded_db_url: str) -> None:
+    """Story 7.5 extracted these twenty-five into a dependency. This is the proof.
+
+    `/dashboard/claims` and `/dashboard/claims/export` consume one
+    `_drill_filters`, so the two **cannot** declare different facets — and this
+    asserts the consequence rather than the mechanism, because a future reader
+    inlining the parameters back into one of them would leave the mechanism gone
+    and the test standing.
+
+    It is the failure Story 7.5 exists to prevent, in its purest form: an export
+    that ignored a narrowing the list applies, or applied one the list does not,
+    produces a file that is not the list it was exported from — with every step of
+    it looking correct and nothing on screen to say otherwise.
+
+    Compared against `PARAMETER_NAMES` on both sides rather than only against each
+    other, so "the two agree" cannot be satisfied by both of them being wrong. The
+    export takes no cursor (its answer is the list, not a page of one) and takes a
+    `format` the list has no use for, which is why the two sets are adjusted by
+    exactly one name each.
+    """
+    async with make_client(seeded_db_url) as client:
+        schema = (await client.get("/openapi.json")).json()
+
+    listed = {parameter["name"] for parameter in schema["paths"][DRILL]["get"]["parameters"]} - {
+        "cursor"
+    }
+    exported = {
+        parameter["name"] for parameter in schema["paths"][f"{DRILL}/export"]["get"]["parameters"]
+    } - {"format"}
+
+    assert listed == exported == PARAMETER_NAMES - {"cursor"}
+    assert len(exported) == FACET_COUNT
+
+
+@requires_db
 async def test_query_parameters_cannot_widen_or_change_the_scope(seeded_db_url: str) -> None:
     """The smuggling attempt: ask as Park, name Bline's portfolio anyway.
 

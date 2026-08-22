@@ -42,6 +42,7 @@
  * reader who aims at the slice should not have to discover that the words
  * beside it are the control.
  */
+import type { ReactNode } from "react";
 import { Cell, Pie, PieChart, ResponsiveContainer } from "recharts";
 
 import { ChartFrame } from "./ChartFrame";
@@ -68,6 +69,7 @@ const ARC_OPACITY = 0.85;
 export function DistributionDonut({
   testId,
   title,
+  action,
   series,
   label,
   fill,
@@ -80,6 +82,15 @@ export function DistributionDonut({
 }: {
   testId: string;
   title: string;
+  /**
+   * A control for the heading row — passed straight to `ChartFrame`.
+   *
+   * Forwarded rather than interpreted, which is the whole of this component's
+   * relationship to it: the frame owns the header's layout and its no-reflow
+   * reservation, and a wrapper that positioned the action itself would be a
+   * second opinion about where a control goes on a surface it does not draw.
+   */
+  action?: ReactNode;
   /** The server's series, or `undefined` while it is unknown. */
   series: CategorySeries | undefined;
   /** Wire key → display label. UI-owned copy over snake_case wire values. */
@@ -112,6 +123,7 @@ export function DistributionDonut({
     <ChartFrame
       testId={testId}
       title={title}
+      action={action}
       height={CHART_HEIGHT.donut}
       isLoading={isLoading}
       isError={isError}

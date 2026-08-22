@@ -74,11 +74,14 @@ whose meaning a re-ordering could invalidate. `services/worklist/fraud.py` carri
 the argument.
 """
 
+from collections import Counter
 from collections.abc import Mapping
 from datetime import date, datetime
+from enum import StrEnum
 from typing import Annotated, Final
 
 from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi.responses import StreamingResponse
 
 from agents.schemas import read_fraud_clauses
 from api.deps import CallerContextDep, DbDep, SettingsDep
@@ -88,6 +91,7 @@ from api.routers.stats import SlaMetricResponse, SlaStripResponse
 from api.schemas import ApiModel
 from data.models.enums import Disability, Gender, ReturnStatus, Stage
 from rules.parameters import (
+    export_limits_for,
     handler_performance_for,
     reserve_bands_for,
     thresholds_for,
@@ -95,13 +99,19 @@ from rules.parameters import (
     weights_for,
     worklist_actions_for,
 )
+from services import derivations
 from services.derivations import AgeBand, ComplexityBand, CycleStatus, FraudBand, RiskBand
 from services.financials import ReserveVerdict
 from services.worklist import (
+    MEDIA_TYPE,
     BenchmarksNotPermitted,
     BreakdownDimension,
     DrillFilters,
     EmployerRate,
+    ExportFormat,
+    ExportTable,
+    ExportTarget,
+    ExportTooLarge,
     FraudAnalyticsNotPermitted,
     FraudRateSort,
     FraudRateSorts,
@@ -118,6 +128,13 @@ from services.worklist import (
     TrendRangeInvalid,
     TrendRangeTooWide,
     drill_through_claims,
+    export_claims,
+    export_financials,
+    export_fraud,
+    export_fraud_rates,
+    export_reserve_adequacy,
+    export_trends,
+    filename_for,
     financial_decomposition,
     fraud_panel,
     fraud_rates,
@@ -127,6 +144,8 @@ from services.worklist import (
     portfolio_summary,
     portfolio_trends,
     priority_claims,
+    render_csv,
+    render_xlsx,
     require_benchmarks_access,
     require_fraud_analytics_access,
     reserve_adequacy,
@@ -140,7 +159,7 @@ from services.worklist.decomposition import (
     MoneyTotals,
 )
 from services.worklist.fraud import HandlerCount
-from services.worklist.segmentation import DimensionValues
+from services.worklist.segmentation import DimensionValues, VocabularyDivergence
 from services.worklist.sla import SlaMetric, SlaMetricKey
 
 router = APIRouter(tags=["dashboard"])
@@ -1202,16 +1221,7 @@ class DrillClaimsResponse(ApiModel):
     age_oldest_min: int
 
 
-@router.get(
-    "/dashboard/claims",
-    response_model=DrillClaimsResponse,
-    summary="The claims behind a dashboard figure, filtered, ranked and paged",
-    responses={**UNAUTHENTICATED_RESPONSE, **FORBIDDEN_RESPONSE, **DRILL_BAD_CURSOR_RESPONSE},
-)
-async def drill_claims(  # noqa: PLR0913 - one parameter per published facet; see below
-    ctx: CallerContextDep,
-    db: DbDep,
-    response: Response,
+async def _drill_filters(  # noqa: PLR0913 - one parameter per published facet; see below
     stage: Annotated[
         Stage | None,
         Query(alias="filter[stage]", description="The claim's lifecycle stage."),
@@ -1419,6 +1429,110 @@ async def drill_claims(  # noqa: PLR0913 - one parameter per published facet; se
             ),
         ),
     ] = None,
+) -> DrillFilters:
+    """The twenty-five `filter[…]` facets, declared **once** for two routes.
+
+    A FastAPI dependency rather than twenty-five parameters written out on both
+    `/dashboard/claims` and `/dashboard/claims/export`, and the argument is
+    `_segmentation`'s sharpened by what the second caller is: twenty-five
+    parameters spelled twice is one place to drift, and the drift on *this* pair
+    would be silent in the worst direction — an export declaring a facet the list
+    does not, or ignoring one the list applies, produces a file that is not the
+    list it was exported from, which is the single failure Story 7.5 exists to
+    prevent. The list and its export must be **incapable** of declaring different
+    facets, and a shared dependency is the only arrangement in which they are.
+
+    Extracted by Story 7.5 and **not one alias, type, default or description
+    moved with the extraction**. `tests/test_drill_through.py`'s parameter-set
+    contract and its smuggled-parameter test re-run unchanged against this
+    dependency, which is the proof the OpenAPI surface did not shift: a refactor
+    that quietly renamed a facet is exactly what that contract exists to catch,
+    and it now also asserts the two routes declare the same `filter[…]` set.
+
+    **The order is `DrillFilters`' field order**, which is load-bearing rather
+    than tidy: `FILTER_KEYS` is read off that dataclass and is the order the chip
+    row draws in, so this signature reads in the same sequence a reader sees on
+    screen and in `appliedFilters`.
+
+    **Not one of the twenty-five is a scope.** Every one is a *narrowing* applied
+    after `employer_scope(ctx)` has already decided which rows exist, so
+    `filter[employerId]` and `filter[handlerId]` intersect the caller's book and
+    can never widen it. There is nowhere in this signature to put a user or an
+    "as", and `?scopeAll=true` remains an unknown parameter FastAPI ignores —
+    which is what keeps `test_query_parameters_cannot_widen_or_change_the_scope`
+    a property of the shape rather than of a validator (AD-7).
+
+    The **type of each parameter is the refusal**: `filter[stage]=banana` is a
+    422 from FastAPI's own coercion before any service runs, which is why
+    `DrillFilters` holds no vocabulary check and must not grow one.
+
+    Built field by field, like every response model in this file and for the same
+    reason: the mapping from these twenty-five parameters to the service's
+    twenty-five fields is the place a renamed facet should fail to compile, and a
+    `**locals()`-shaped shortcut is the place it silently would not.
+
+    **`async def`, although nothing here awaits**, for `_segmentation`'s reason:
+    Starlette runs a *sync* dependency in a threadpool, so a plain `def` would
+    put a thread hop in front of the drill list and its export on every request,
+    to build a frozen dataclass out of arguments FastAPI has already coerced.
+
+    **The `filter[handlerId]` gate is deliberately not here.** It is a
+    *capability* check — asking about somebody else's book is oversight — and it
+    depends on `ctx`, which this dependency does not take and must not, because
+    then it would be a dependency that can refuse. Both routes call it
+    themselves, above their document loads, where "the refusal happens before any
+    read" is visible in the route body a reviewer is reading.
+    """
+    return DrillFilters(
+        stage=stage,
+        severity_band=severity_band,
+        fraud_flagged=fraud_flagged,
+        litigation=litigation,
+        surgery=surgery,
+        osha_recordable=osha_recordable,
+        recovery_status=recovery_status,
+        injury_type=injury_type,
+        state=state,
+        employer_id=employer_id,
+        handler_id=handler_id,
+        priority=priority,
+        fraud_band=fraud_band,
+        siu_review=siu_review,
+        fnol_from=fnol_from,
+        fnol_to=fnol_to,
+        doi_from=doi_from,
+        doi_to=doi_to,
+        disability=disability,
+        sector=sector,
+        region=region,
+        icd10=icd10,
+        age_group=age_group,
+        gender=gender,
+        reserve_verdict=reserve_verdict,
+    )
+
+
+#: The twenty-five facets as one injected argument.
+#:
+#: Named rather than spelled `Annotated[DrillFilters, Depends(_drill_filters)]` at
+#: two call sites, `SegmentationDep`'s idiom and `CallerContextDep`'s before it: a
+#: dependency written out per route is a dependency one route can be given a
+#: different version of, which on this pair would mean a list and an export of it
+#: that disagree about what was filtered.
+DrillFiltersDep = Annotated[DrillFilters, Depends(_drill_filters)]
+
+
+@router.get(
+    "/dashboard/claims",
+    response_model=DrillClaimsResponse,
+    summary="The claims behind a dashboard figure, filtered, ranked and paged",
+    responses={**UNAUTHENTICATED_RESPONSE, **FORBIDDEN_RESPONSE, **DRILL_BAD_CURSOR_RESPONSE},
+)
+async def drill_claims(
+    ctx: CallerContextDep,
+    db: DbDep,
+    response: Response,
+    filters: DrillFiltersDep,
     cursor: Annotated[
         str | None,
         Query(description="An opaque `nextCursor` from a previous response."),
@@ -1428,7 +1542,16 @@ async def drill_claims(  # noqa: PLR0913 - one parameter per published facet; se
 
     ## Twenty-six parameters, and not one of them is a scope
 
-    Twenty-five facets and a cursor. Every facet is a *narrowing* applied after
+    Twenty-five facets and a cursor. **The facets arrive as one injected
+    `DrillFilters` since Story 7.5** — see `_drill_filters`, which declares them
+    once for this route and for its export — and the extraction moved no alias,
+    no type and no default: `tests/test_drill_through.py`'s parameter-set
+    contract re-runs unchanged against it, and now also asserts that this route
+    and `/dashboard/claims/export` publish the same `filter[…]` set. A list and
+    an export of it that could declare different facets is the one failure that
+    story exists to prevent.
+
+    Every facet is a *narrowing* applied after
     `employer_scope(ctx)` has already decided which rows exist, so
     `filter[employerId]` and `filter[handlerId]` intersect the caller's book and
     can never widen it: a scoped supervisor naming an employer outside hers gets
@@ -1596,45 +1719,13 @@ async def drill_claims(  # noqa: PLR0913 - one parameter per published facet; se
     # read" is true of this route the way it is true of `/handler-benchmarks`.
     # `is not None` rather than a truthiness test: handler ids are integers and
     # a falsy one would silently skip the gate.
-    if handler_id is not None and handler_id != ctx.user_id:
+    if filters.handler_id is not None and filters.handler_id != ctx.user_id:
         try:
             require_benchmarks_access(ctx)
         except BenchmarksNotPermitted as exc:
             raise _forbidden(exc) from exc
     thresholds = await thresholds_for(db)
     weights = await weights_for(db)
-    # Built field by field, like every response model in this file and for the
-    # same reason: the mapping from the route's twenty-five parameters to the
-    # service's twenty-five fields is the place a renamed facet should fail to
-    # compile, and a `**locals()`-shaped shortcut is the place it silently
-    # would not.
-    filters = DrillFilters(
-        stage=stage,
-        severity_band=severity_band,
-        fraud_flagged=fraud_flagged,
-        litigation=litigation,
-        surgery=surgery,
-        osha_recordable=osha_recordable,
-        recovery_status=recovery_status,
-        injury_type=injury_type,
-        state=state,
-        employer_id=employer_id,
-        handler_id=handler_id,
-        priority=priority,
-        fraud_band=fraud_band,
-        siu_review=siu_review,
-        fnol_from=fnol_from,
-        fnol_to=fnol_to,
-        doi_from=doi_from,
-        doi_to=doi_to,
-        disability=disability,
-        sector=sector,
-        region=region,
-        icd10=icd10,
-        age_group=age_group,
-        gender=gender,
-        reserve_verdict=reserve_verdict,
-    )
     try:
         page = await drill_through_claims(db, ctx, thresholds, weights, filters, cursor=cursor)
     except InvalidCursor as exc:
@@ -3690,3 +3781,785 @@ async def financial_reserve_adequacy(
         bands_version=adequacy.bands_version,
         rules_version=thresholds.version,
     )
+
+
+# --- Story 7.5: the analyst workspace's export -----------------------------
+#
+# Six routes rather than one, and the multiplication is the point rather than a
+# failure to factor. A single `/dashboard/export?target=…` would have to declare
+# the **union** of six parameter surfaces — twenty-five drill facets, ten
+# segmentation dimensions, three sorts, a grain, an anchor, a cohort, two dates,
+# a grouping — and would then ignore most of them on every request. That is
+# exactly the shape `test_query_parameters_cannot_widen_or_change_the_scope`
+# exists to keep out of this file: a parameter a caller may send and the server
+# silently drops is indistinguishable, from the outside, from one it honours.
+# Each route below declares precisely its sibling's parameters and nothing else,
+# which is what makes "the export takes the same query string as the chart" a
+# fact about the OpenAPI document rather than a claim in a docstring.
+
+
+class FraudExportTable(StrEnum):
+    """Which of the Fraud section's two charts is being exported.
+
+    The **camelCase wire spellings**, `BreakdownDimension`'s exception to the
+    enum convention and for a related reason: these are not tokens whose copy the
+    UI owns, they are the names of two cards, and `table=siuPipeline` reads as a
+    parameter beside `groupBy` and `sort[injuryType]` where `siu_pipeline` would
+    read as a database value. The *target* those names resolve to is snake_case
+    and is what reaches the audit row — see `_EXPORT_TARGETS`.
+
+    One control rather than two routes, because the two charts come from **one
+    fold**: `fraud.panel_of` accumulates both in a single pass over one caseload,
+    so two routes would be two scoped reads for one card row.
+    """
+
+    bands = "bands"
+    siuPipeline = "siuPipeline"  # noqa: N815 - the wire's own spelling; see above
+
+
+class FinancialExportTable(StrEnum):
+    """Which of the Financial section's two exportable surfaces is being exported.
+
+    `FraudExportTable`'s arrangement and its reasons, over
+    `decomposition.decomposition_of`'s single pass. The Totals tiles are absent
+    and that is a decision rather than an omission: `KpiCard` wraps its body in a
+    `<Link>`, so a button inside one would be invalid markup, and all three
+    figures already travel on every row of the breakdown export.
+    """
+
+    breakdown = "breakdown"
+    costDrivers = "costDrivers"  # noqa: N815 - the wire's own spelling; see above
+
+
+#: Each export route — and, where it has one, each `table` — as exactly one target.
+#:
+#: **A mapping rather than a conditional in six route bodies**, and it is checked
+#: total against `ExportTarget` at import for `services/worklist/export.py`'s
+#: `_DISPATCHED` reason, from the other end: that guard says every target has a
+#: fold, and this one says every target has a way in. A ninth target with no
+#: route would be a fold nothing can reach, and a route resolving to a target
+#: that is already spoken for would put two surfaces under one word in the audit
+#: log — which is the column a compliance reader groups seven years of egress by.
+#:
+#: Keyed on `(path, table)` rather than on a bare string, so the two halves of the
+#: decision are two values a reader can see rather than a concatenation to parse.
+#: The path constants are the routes' own, spelled once, because a mapping keyed
+#: on a literal that had drifted from its decorator would resolve nothing and
+#: raise a `KeyError` in a request rather than at import.
+_CLAIMS_EXPORT = "/dashboard/claims/export"
+_FRAUD_EXPORT = "/dashboard/fraud/export"
+_FRAUD_RATES_EXPORT = "/dashboard/fraud/rates/export"
+_TRENDS_EXPORT = "/dashboard/trends/export"
+_FINANCIALS_EXPORT = "/dashboard/financials/export"
+_ADEQUACY_EXPORT = "/dashboard/financials/reserve-adequacy/export"
+
+_EXPORT_TARGETS: Final[Mapping[tuple[str, str | None], ExportTarget]] = {
+    (_CLAIMS_EXPORT, None): ExportTarget.claims,
+    (_FRAUD_EXPORT, FraudExportTable.bands): ExportTarget.fraud_bands,
+    (_FRAUD_EXPORT, FraudExportTable.siuPipeline): ExportTarget.siu_pipeline,
+    (_FRAUD_RATES_EXPORT, None): ExportTarget.fraud_rates,
+    (_TRENDS_EXPORT, None): ExportTarget.trend_series,
+    (_FINANCIALS_EXPORT, FinancialExportTable.breakdown): ExportTarget.financial_breakdown,
+    (_FINANCIALS_EXPORT, FinancialExportTable.costDrivers): ExportTarget.cost_drivers,
+    (_ADEQUACY_EXPORT, None): ExportTarget.reserve_adequacy,
+}
+
+
+def _export_target_divergence(routes: Mapping[tuple[str, str | None], ExportTarget]) -> str | None:
+    """What is wrong with the route table above, or `None` if nothing is.
+
+    A function rather than an inline `if`, for two reasons that arrived together.
+    The first is that an import-time guard cannot be re-triggered from a test —
+    the module is already imported by the time anything can assert about it — so
+    the only honest "would notice" is to hand the same predicate a table that has
+    diverged and watch it complain. The second is that the guard has two clauses
+    and **the second one used to print nothing**: for the duplicate case it exists
+    to catch — two routes resolving to one target while all eight are still
+    covered — `frozenset(values) == frozenset(ExportTarget)` holds, so the
+    symmetric difference is empty and the message read `…have diverged: []`. A
+    diagnostic that names no name is a diagnostic that sends the next reader to
+    count entries by hand, which is what the guard was for.
+
+    So each clause names its own kind of failure: an unreachable or unrouted
+    target for the coverage half, and the target that more than one route claims
+    for the injectivity half. An explicit `raise` at the call site rather than an
+    `assert`, `VocabularyDivergence`'s recorded reason — `python -O` strips
+    asserts, and "every target is reachable and no two routes claim one" is the
+    whole contract of this table rather than a debugging aid.
+    """
+    faults: list[str] = []
+    uncovered = frozenset(routes.values()) ^ frozenset(ExportTarget)
+    if uncovered:
+        faults.append(f"unreachable or unrouted: {sorted(target.value for target in uncovered)}")
+    duplicated = sorted(
+        {target.value for target, count in Counter(routes.values()).items() if count > 1}
+    )
+    if duplicated:
+        faults.append(f"claimed by more than one route: {duplicated}")
+    if not faults:
+        return None
+    return "the export routes and ExportTarget have diverged — " + "; ".join(faults)
+
+
+_EXPORT_DIVERGENCE = _export_target_divergence(_EXPORT_TARGETS)
+if _EXPORT_DIVERGENCE is not None:
+    raise VocabularyDivergence(_EXPORT_DIVERGENCE)
+
+
+#: The 200 body, described as two media types rather than as a schema.
+#:
+#: There is no response *model* here — the body is a file — so the OpenAPI
+#: document has to say what kind of file, and it says both: one operation serves
+#: whichever the `format` parameter named. `format: binary` is OpenAPI's own
+#: spelling for "opaque bytes", which is what makes `openapi-typescript` type the
+#: client's return as a blob rather than as a string it would then try to parse.
+EXPORT_DOWNLOAD_RESPONSE: dict[int | str, dict[str, object]] = {
+    200: {
+        "description": (
+            "The table as a file, streamed with `Content-Disposition: attachment`. "
+            "The media type follows the `format` parameter. Never cached — the "
+            "rows are one persona's scope."
+        ),
+        "content": {
+            media_type: {"schema": {"type": "string", "format": "binary"}}
+            for media_type in MEDIA_TYPE.values()
+        },
+    }
+}
+
+
+#: `TREND_RANGE_RESPONSE`'s shape, for the one refusal the exports add.
+#:
+#: Its own problem type rather than a reuse of `/problems/trend-range-too-wide`,
+#: which is the same argument that constant makes for having two of its own: a
+#: client can act differently on each, and the actions differ here in a way worth
+#: separating — a too-wide *window* is narrowed by moving a period control, and a
+#: too-large *export* is narrowed by adding a segmentation filter or by exporting
+#: a different surface. The cap is named in the detail alongside the row count
+#: that exceeded it, because "too big" without either number leaves the caller
+#: guessing how much to cut.
+#:
+#: **Answered after the fold and before the audit row**, which is the ordering AC
+#: 4 turns on: a refused export leaves no trace and sends no bytes.
+#:
+#: One problem type for **two** caps, which is a deliberate collapse rather than
+#: an oversight: `export_limits.maxRows` bounds how much may leave, and a
+#: worksheet's 1,048,576 rows bound what `format=xlsx` can physically hold. They
+#: differ in what the caller does next only in degree — narrow the segmentation,
+#: or take the CSV — and both answers are in the detail sentence, whereas a
+#: second problem type would be a second thing a client has to match on for a
+#: refusal it will meet only if an owner retunes the document past a million.
+EXPORT_TOO_LARGE_RESPONSE: dict[int | str, dict[str, object]] = {
+    422: {
+        "description": (
+            "The table is longer than `export_limits.maxRows` allows, or (for "
+            "`format=xlsx`) longer than a worksheet can hold. The detail names "
+            "the bound and the row count (RFC 9457 problem document). No audit "
+            "event is written and no bytes are sent."
+        ),
+        "content": {PROBLEM_CONTENT_TYPE: {"schema": ProblemDocument.model_json_schema()}},
+    }
+}
+
+
+def _export_too_large(exc: ExportTooLarge) -> ProblemException:
+    """`ExportTooLarge` as this section's 422 problem document.
+
+    `_trend_range_too_wide`'s shape and its rule: one translator per refusal,
+    raised from one place each, because two copies of a problem type string is
+    how the second one drifts. It is called from six routes rather than one, and
+    that is precisely why it is a function — six `raise ProblemException(...)`
+    blocks would be six chances for one of them to spell the type differently and
+    for a client's handler to stop matching it on one surface.
+
+    `Cache-Control: no-store` is restated in the exception for `_fraud_forbidden`'s
+    reason, sharpened here: these routes inject no `Response` at all (see
+    `_download`), so the exception is the *only* place the header can be set.
+    """
+    return ProblemException(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        title="Unprocessable Content",
+        detail=str(exc),
+        type_="/problems/export-too-large",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def _download(table: ExportTable, fmt: ExportFormat) -> StreamingResponse:
+    """One finished table as a browser download. The six routes' one exit.
+
+    **These routes inject no `Response`**, unlike every other route in this file,
+    and the departure is forced rather than chosen: FastAPI discards the injected
+    sub-response when an endpoint *returns* a `Response` object, so a
+    `response.headers["Cache-Control"] = "no-store"` at the top of one of these
+    bodies would be a line that reads like the file's standing convention and
+    sends nothing. The header is set here, on the response that is actually sent,
+    and restated in `_export_too_large` and `_fraud_forbidden` for the refusals —
+    so every answer from these six routes is uncacheable, which is the rule and
+    not the mechanism.
+
+    `Content-Disposition: attachment` is what makes this a download rather than a
+    page: without it a browser renders CSV as text in the tab, which is a screen
+    full of commas instead of a file in a folder. The filename carries the
+    product, the target and the day and deliberately **not** the filter set — see
+    `export.filename_for`, which argues it: a filename is metadata that travels
+    into tickets, mail clients and proxy logs, and AD-11 keeps PHI-adjacent detail
+    out of it. The filter set is in the audit row, which is content-free
+    precisely so that it can be.
+
+    The CSV arrives as an iterator of chunks and the XLSX as one `bytes` in a
+    one-element iterator, which is the honest shape for each: a zip's central
+    directory is written last, so no prefix of an XLSX is a valid file and a
+    chunked build of one would be a stream in shape and not in substance. Both
+    leave through this single call so the two formats cannot acquire different
+    headers.
+    """
+    name = filename_for(table.target, fmt, derivations.utc_today())
+    body = render_csv(table) if fmt is ExportFormat.csv else iter((render_xlsx(table),))
+    return StreamingResponse(
+        body,
+        media_type=MEDIA_TYPE[fmt],
+        headers={
+            "Content-Disposition": f'attachment; filename="{name}"',
+            # `/stats/topbar`'s reasoning: this body is specific to one persona's
+            # scope and must never be served to another from a cache upstream.
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+#: The `format` parameter, declared once for six routes.
+#:
+#: An `Annotated` alias rather than six copies of one `Query(...)`, `SegmentationDep`'s
+#: idiom over a scalar: six spellings of one description is five chances for a
+#: client reading the OpenAPI document to be told something different about the
+#: same parameter. The **type is the check** — `format=pdf` is a 422 from
+#: FastAPI's own coercion before any service runs — and there is no default,
+#: because "which file did you want" is not a question this API should answer on
+#: the caller's behalf: a mis-typed parameter silently yielding a CSV is a
+#: download that opens as garbage in the spreadsheet the analyst asked for.
+ExportFormatParam = Annotated[
+    ExportFormat,
+    Query(description="Which file the table is rendered as. CSV or XLSX; nothing else."),
+]
+
+
+@router.get(
+    _CLAIMS_EXPORT,
+    response_class=StreamingResponse,
+    summary="The whole filtered claim list as a file, for the session's analyst",
+    responses={
+        **UNAUTHENTICATED_RESPONSE,
+        **FRAUD_ANALYTICS_FORBIDDEN_RESPONSE,
+        **EXPORT_TOO_LARGE_RESPONSE,
+        **EXPORT_DOWNLOAD_RESPONSE,
+    },
+)
+async def export_drill_claims(
+    ctx: CallerContextDep,
+    db: DbDep,
+    filters: DrillFiltersDep,
+    format: ExportFormatParam,  # noqa: A002 - the wire's own name; see `ExportFormatParam`
+) -> StreamingResponse:
+    """Every row of the claim list this query string describes — all of its pages.
+
+    ## Twenty-six parameters, and not one of them is a scope
+
+    The same twenty-five facets `/dashboard/claims` declares — literally the same,
+    through `_drill_filters` — plus the format. **Not a cursor**, and its absence
+    is the whole difference between this route and its sibling: a cursor names a
+    page, and this route's answer is the *list*. `drill_through.select` returns
+    the entire ranked population, which is what AC 2's "every page of them, not
+    the pages that happen to be loaded" asks for.
+
+    There is nowhere in this signature to put an employer, a user or an "as"
+    (AD-7), and `?scopeAll=true` remains an unknown parameter FastAPI ignores.
+
+    ## This endpoint is gated where `/dashboard/claims` is not
+
+    That is the one place in this file where a route and its neighbour answer the
+    same query string with different access rules, so it is argued rather than
+    inherited. The list is ungated because it shows claims the session can
+    already open one at a time and its rows name nobody. **An export is not the
+    same act.** It moves PHI out of the system (NFR-5) — which is why it is the
+    one read on this console that writes an audit row at all — and it is a
+    capability of the analyst *workspace* rather than a view of a payload. A
+    handler entitled to read her queue is not thereby entitled to extract it, and
+    a supervisor's entitlement to oversee is not an entitlement to take a copy
+    home.
+
+    The `filter[handlerId]` capability check stays as well, unchanged and above
+    the document loads: asking about somebody else's book is oversight whichever
+    shape the answer arrives in. It is unreachable behind the analyst gate today
+    — an analyst carries the oversight capability — and it stays because a gate
+    that depends on which role happens to hold which capability is a gate one
+    rules change from being wrong.
+
+    ## Three documents, loaded here
+
+    `derivation_thresholds` decides the band on every row and five of the facets'
+    populations, `priority_weights` decides the ordering the file is written in,
+    and `export_limits` decides how much of it may leave. All three are loaded
+    here and handed down so the service stays a composition of scope and
+    parameters — `portfolio_summary`'s rule.
+    """
+    # **Before the three document loads, not after them** — `fraud`'s note.
+    # Deliberately the *service's* function rather than a copy of the condition:
+    # two spellings of one allowlist is how a future `UserRole` gets admitted by
+    # one of them.
+    try:
+        require_fraud_analytics_access(ctx)
+    except FraudAnalyticsNotPermitted as exc:
+        raise _fraud_forbidden(exc) from exc
+    if filters.handler_id is not None and filters.handler_id != ctx.user_id:
+        try:
+            require_benchmarks_access(ctx)
+        except BenchmarksNotPermitted as exc:
+            raise _forbidden(exc) from exc
+    thresholds = await thresholds_for(db)
+    weights = await weights_for(db)
+    limits = await export_limits_for(db)
+    try:
+        table = await export_claims(db, ctx, thresholds, weights, limits, filters, format)
+    except ExportTooLarge as exc:
+        raise _export_too_large(exc) from exc
+    except FraudAnalyticsNotPermitted as exc:  # pragma: no cover - the gate answered first
+        # Belt and braces, and cheap — `fraud`'s note. Unreachable today.
+        raise _fraud_forbidden(exc) from exc
+    return _download(table, format)
+
+
+@router.get(
+    _FRAUD_EXPORT,
+    response_class=StreamingResponse,
+    summary="The fraud band distribution or the SIU pipeline as a file",
+    responses={
+        **UNAUTHENTICATED_RESPONSE,
+        **FRAUD_ANALYTICS_FORBIDDEN_RESPONSE,
+        **EXPORT_TOO_LARGE_RESPONSE,
+        **EXPORT_DOWNLOAD_RESPONSE,
+    },
+)
+async def export_fraud_panel(
+    ctx: CallerContextDep,
+    db: DbDep,
+    segmentation: SegmentationDep,
+    table: Annotated[
+        FraudExportTable,
+        Query(description="Which of the section's two charts is exported."),
+    ],
+    format: ExportFormatParam,  # noqa: A002 - the wire's own name; see `ExportFormatParam`
+) -> StreamingResponse:
+    """One of the Fraud section's two charts, exactly as it is drawn.
+
+    ## Twelve parameters, and not one of them is a scope
+
+    The workspace's ten `filter[…]` dimensions through `_segmentation` — the same
+    dependency `/dashboard/fraud` takes, so the export and the chart cannot come
+    to describe different populations — plus the chart and the format. Both are
+    closed enums, so `table=redFlags` is a 422 before the service runs, which is
+    also how the one deliberately unexportable surface on this page refuses: the
+    red-flag view is model output (AD-10), and a CSV strips the labelling and the
+    timestamp that keep it from reading as fact.
+
+    `table` has no default. Which of two charts a click meant is not a question
+    this API should answer on the caller's behalf.
+
+    ## One fold, two targets
+
+    `fraud.panel_of` accumulates the band distribution and the SIU pipeline in a
+    single pass over one caseload, so this route serves both from one scoped read
+    rather than being split in two. Which one is written is decided by
+    `_EXPORT_TARGETS` and never by a conditional in the service.
+
+    ## Two documents, loaded here
+
+    `derivation_thresholds` — the block all three fraud derivations are built
+    from — and `export_limits`. Both handed down.
+    """
+    try:
+        require_fraud_analytics_access(ctx)
+    except FraudAnalyticsNotPermitted as exc:
+        raise _fraud_forbidden(exc) from exc
+    thresholds = await thresholds_for(db)
+    limits = await export_limits_for(db)
+    try:
+        built = await export_fraud(
+            db,
+            ctx,
+            thresholds,
+            limits,
+            segmentation,
+            _EXPORT_TARGETS[(_FRAUD_EXPORT, table)],
+            format,
+        )
+    except ExportTooLarge as exc:
+        raise _export_too_large(exc) from exc
+    except FraudAnalyticsNotPermitted as exc:  # pragma: no cover - the gate answered first
+        raise _fraud_forbidden(exc) from exc
+    return _download(built, format)
+
+
+@router.get(
+    _FRAUD_RATES_EXPORT,
+    response_class=StreamingResponse,
+    summary="The three flagged-claim rate breakdowns as a file",
+    responses={
+        **UNAUTHENTICATED_RESPONSE,
+        **FRAUD_ANALYTICS_FORBIDDEN_RESPONSE,
+        **EXPORT_TOO_LARGE_RESPONSE,
+        **EXPORT_DOWNLOAD_RESPONSE,
+    },
+)
+async def export_fraud_rate_breakdowns(
+    ctx: CallerContextDep,
+    db: DbDep,
+    segmentation: SegmentationDep,
+    format: ExportFormatParam,  # noqa: A002 - the wire's own name; see `ExportFormatParam`
+    injury_type_sort: Annotated[
+        FraudRateSort,
+        Query(
+            alias="sort[injuryType]",
+            description="The order the injury-type breakdown is exported in.",
+        ),
+    ] = FraudRateSort.rate_desc,
+    employer_sort: Annotated[
+        FraudRateSort,
+        Query(
+            alias="sort[employer]", description="The order the employer breakdown is exported in."
+        ),
+    ] = FraudRateSort.rate_desc,
+    handler_sort: Annotated[
+        FraudRateSort,
+        Query(alias="sort[handler]", description="The order the handler breakdown is exported in."),
+    ] = FraudRateSort.rate_desc,
+) -> StreamingResponse:
+    """All three rate tables in one file, each in the order it is being read in.
+
+    ## Fourteen parameters, and not one of them is a scope
+
+    `/dashboard/fraud/rates`' own thirteen — ten dimensions and three sorts,
+    declared here exactly as they are declared there — plus the format. The three
+    sorts travel because a table exported while the analyst is reading it in
+    `label_asc` has to come out in `label_asc`: an export that silently reverted
+    to the default order would be the one place on this surface where the file
+    and the screen disagree, and it would look like a tidy-up.
+
+    They also reach the audit row, beside the facets, for `record_export`'s
+    reason: `sort[employer]=claims_desc` produces a different file from the same
+    filter set, and a row recording only the facets would say the two exports
+    were the same.
+
+    ## One file, three breakdowns
+
+    A `dimension` column distinguishes them, which is what a rectangular file has
+    instead of three sheets. Each breakdown is truncated exactly as its card is —
+    the injury-type table at the eight types with the most claims, the other two
+    uncut — because the rows arrive from `fraud.rates_of` already cut, and a fold
+    that exported the whole tail would be publishing a set the card never showed.
+
+    ## Two documents, loaded here
+
+    `derivation_thresholds` and `export_limits`, both handed down.
+    """
+    try:
+        require_fraud_analytics_access(ctx)
+    except FraudAnalyticsNotPermitted as exc:
+        raise _fraud_forbidden(exc) from exc
+    thresholds = await thresholds_for(db)
+    limits = await export_limits_for(db)
+    # Built field by field, like every response model in this file and for the
+    # same reason: the mapping from the route's three parameters to the service's
+    # three fields is the place a renamed table should fail to compile.
+    sorts = FraudRateSorts(
+        injury_type=injury_type_sort,
+        employer=employer_sort,
+        handler=handler_sort,
+    )
+    try:
+        table = await export_fraud_rates(db, ctx, thresholds, limits, sorts, segmentation, format)
+    except ExportTooLarge as exc:
+        raise _export_too_large(exc) from exc
+    except FraudAnalyticsNotPermitted as exc:  # pragma: no cover - the gate answered first
+        raise _fraud_forbidden(exc) from exc
+    return _download(table, format)
+
+
+@router.get(
+    _TRENDS_EXPORT,
+    response_class=StreamingResponse,
+    summary="Every point of every trend series as a file",
+    responses={
+        **UNAUTHENTICATED_RESPONSE,
+        **FRAUD_ANALYTICS_FORBIDDEN_RESPONSE,
+        **TREND_RANGE_RESPONSE,
+        **EXPORT_TOO_LARGE_RESPONSE,
+        **EXPORT_DOWNLOAD_RESPONSE,
+    },
+)
+async def export_trend_series(  # noqa: PLR0913 - a window, a split, the filter and a format
+    ctx: CallerContextDep,
+    db: DbDep,
+    settings: SettingsDep,
+    segmentation: SegmentationDep,
+    format: ExportFormatParam,  # noqa: A002 - the wire's own name; see `ExportFormatParam`
+    grain: Annotated[
+        TrendGrain,
+        Query(description="How wide one bucket is."),
+    ] = TrendGrain.month,
+    anchor: Annotated[
+        TrendAnchor,
+        Query(
+            description=(
+                "Which date a claim is bucketed by — the claim's FNOL date or the "
+                "date of injury. Never both, and never a third column."
+            )
+        ),
+    ] = TrendAnchor.fnol,
+    cohort: Annotated[
+        TrendCohort,
+        Query(
+            description=(
+                "The single dimension each metric is split by, or `none`. Not a "
+                "filter: a cohort split partitions the population rather than "
+                "narrowing it."
+            )
+        ),
+    ] = TrendCohort.none,
+    from_date: Annotated[
+        date | None,
+        Query(
+            alias="from",
+            description=(
+                "The first day the window covers; its whole bucket is included. "
+                "Omitted, the window is `defaultBuckets` ending in `to`'s bucket."
+            ),
+        ),
+    ] = None,
+    to_date: Annotated[
+        date | None,
+        Query(
+            alias="to",
+            description=(
+                "The last day the window covers; its whole bucket is included. "
+                "Omitted, the window ends in the bucket `asOf` falls in."
+            ),
+        ),
+    ] = None,
+) -> StreamingResponse:
+    """The five series over the requested window, one row per point.
+
+    ## Sixteen parameters, and not one of them is a scope
+
+    `/dashboard/trends`' own fifteen, declared here exactly as they are declared
+    there, plus the format. `from` and `to` are aliased because `from` is a
+    Python keyword — the wire name and the parameter name are one string
+    everywhere else in this file and this is the one place the language will not
+    allow it.
+
+    ## Long form, not the chart's shape
+
+    One row per (series, bucket), with `metric`, `cohortKey` and the bucket's own
+    boundaries on every row. A wide table with one column per period would read
+    like the chart and would have a different header every time the grain or the
+    window moved, so no two exports of this section could be appended to each
+    other. `lowConfidence` and `partial` travel beside the value they qualify,
+    because a mean over two claims and a half-finished month are exactly the
+    facts a spreadsheet strips and a reader then leans on (NFR-3).
+
+    ## Two caps apply, and they bound different things
+
+    The window refusals are the chart route's, unchanged: an inverted range is
+    `/problems/trend-range-invalid` and a window wider than `maxBuckets` is
+    `/problems/trend-range-too-wide`, both decided from the parameters and
+    `trend_periods` alone, before any read. `export_limits.maxRows` then bounds
+    how many rows may *leave*. A request can be inside one and outside the other:
+    twenty-four monthly buckets across five metrics and four cohorts is a legible
+    chart and a large file.
+
+    ## Three documents, loaded here
+
+    `derivation_thresholds` for the severity cohort's band edges, `trend_periods`
+    for the window and its cap, `export_limits` for the row cap. All three handed
+    down.
+    """
+    try:
+        require_fraud_analytics_access(ctx)
+    except FraudAnalyticsNotPermitted as exc:
+        raise _fraud_forbidden(exc) from exc
+    thresholds = await thresholds_for(db)
+    periods = await trend_periods_for(db)
+    limits = await export_limits_for(db)
+    try:
+        # Every argument keyword, and `from_date`/`to_date` are why: two adjacent
+        # optional dates would transpose silently and invert a window.
+        table = await export_trends(
+            db,
+            ctx,
+            thresholds,
+            periods,
+            settings,
+            limits,
+            segmentation,
+            format,
+            grain=grain,
+            anchor=anchor,
+            cohort=cohort,
+            from_date=from_date,
+            to_date=to_date,
+        )
+    except TrendRangeInvalid as exc:
+        raise _trend_range_invalid(exc) from exc
+    except TrendRangeTooWide as exc:
+        raise _trend_range_too_wide(exc) from exc
+    except ExportTooLarge as exc:
+        raise _export_too_large(exc) from exc
+    except FraudAnalyticsNotPermitted as exc:  # pragma: no cover - the gate answered first
+        raise _fraud_forbidden(exc) from exc
+    return _download(table, format)
+
+
+@router.get(
+    _FINANCIALS_EXPORT,
+    response_class=StreamingResponse,
+    summary="The money breakdown or the cost-driver comparison as a file",
+    responses={
+        **UNAUTHENTICATED_RESPONSE,
+        **FRAUD_ANALYTICS_FORBIDDEN_RESPONSE,
+        **EXPORT_TOO_LARGE_RESPONSE,
+        **EXPORT_DOWNLOAD_RESPONSE,
+    },
+)
+async def export_financials_table(
+    ctx: CallerContextDep,
+    db: DbDep,
+    segmentation: SegmentationDep,
+    table: Annotated[
+        FinancialExportTable,
+        Query(description="Which of the section's two exportable surfaces is exported."),
+    ],
+    format: ExportFormatParam,  # noqa: A002 - the wire's own name; see `ExportFormatParam`
+    group_by: Annotated[
+        BreakdownDimension,
+        Query(
+            alias="groupBy",
+            description=(
+                "Which of the ten segmentation dimensions the money is broken "
+                "down by. The members are the `filter[…]` facet names themselves, "
+                "so a group's key is what its own drill-through filters on."
+            ),
+        ),
+    ] = DEFAULT_BREAKDOWN,
+) -> StreamingResponse:
+    """The Financial section's breakdown, or both cost-driver pairs.
+
+    ## Thirteen parameters, and not one of them is a scope
+
+    `/dashboard/financials`' own eleven — the ten dimensions and `groupBy` —
+    plus the surface and the format. `groupBy` reaches the cost-driver export as
+    well, where it changes nothing about the rows and is still recorded in the
+    audit row: the row says what was *asked*, and two requests that differ only
+    in a parameter one of them ignores are still two different requests.
+
+    **Money leaves as integer cents in `*_cents` columns**, which
+    `export.ExportColumn` enforces structurally rather than by convention. The
+    formatting `web/src/lib/money.ts` does stays in the browser — this is the
+    payload made rectangular, not the screen made textual — and it is also what
+    keeps that module the only division by a hundred in the build.
+
+    ## One fold, two targets
+
+    `decomposition.decomposition_of` accumulates the portfolio totals, the
+    breakdown groups and all four cohorts in one pass, so both surfaces come from
+    one scoped read. The **Totals tiles are not a third target**: `KpiCard` wraps
+    its body in a `<Link>`, so a control inside one would be invalid markup, and
+    all three figures already travel on every row of the breakdown export.
+
+    ## Two documents, loaded here
+
+    `derivation_thresholds` and `export_limits`. `reserve_bands` is the *other*
+    route's document, and it is loaded there.
+    """
+    try:
+        require_fraud_analytics_access(ctx)
+    except FraudAnalyticsNotPermitted as exc:
+        raise _fraud_forbidden(exc) from exc
+    thresholds = await thresholds_for(db)
+    limits = await export_limits_for(db)
+    try:
+        built = await export_financials(
+            db,
+            ctx,
+            thresholds,
+            limits,
+            segmentation,
+            _EXPORT_TARGETS[(_FINANCIALS_EXPORT, table)],
+            format,
+            dimension=group_by,
+        )
+    except ExportTooLarge as exc:
+        raise _export_too_large(exc) from exc
+    except FraudAnalyticsNotPermitted as exc:  # pragma: no cover - the gate answered first
+        raise _fraud_forbidden(exc) from exc
+    return _download(built, format)
+
+
+@router.get(
+    _ADEQUACY_EXPORT,
+    response_class=StreamingResponse,
+    summary="The reserve adequacy verdict distribution as a file",
+    responses={
+        **UNAUTHENTICATED_RESPONSE,
+        **FRAUD_ANALYTICS_FORBIDDEN_RESPONSE,
+        **EXPORT_TOO_LARGE_RESPONSE,
+        **EXPORT_DOWNLOAD_RESPONSE,
+    },
+)
+async def export_financial_reserve_adequacy(
+    ctx: CallerContextDep,
+    db: DbDep,
+    segmentation: SegmentationDep,
+    format: ExportFormatParam,  # noqa: A002 - the wire's own name; see `ExportFormatParam`
+) -> StreamingResponse:
+    """Epic 3's verdicts, counted over the segmented book, as five rows.
+
+    ## Eleven parameters, and not one of them is a scope
+
+    The same ten dimensions its sibling takes, plus the format. There is no
+    control: a distribution over a closed five-member vocabulary has nothing to
+    group by and nothing to sort.
+
+    All five verdicts are written, including those no claim in the segment
+    reached — `ReserveAdequacy`'s zero-fill, which matters more in a file than on
+    a donut: a three-row spreadsheet cannot be told from a five-row one with two
+    rows lost, and "no claim in this segment is under-reserved" is the single
+    most valuable thing this export can say.
+
+    ## Three scoped reads, and the number is guarded
+
+    The claims, then the weeks and the bills in bulk — `decomposition
+    .reserve_adequacy`'s own shape, inherited rather than re-implemented, which
+    is also what makes AC 2's "never a re-derivation" true of the file.
+    `tests/test_dataset_export.py` counts them so a fourth cannot appear quietly.
+
+    ## Three documents, loaded here
+
+    `derivation_thresholds` builds the segmentation's two band computers,
+    `reserve_bands` decides the verdict, `export_limits` bounds the file.
+    """
+    try:
+        require_fraud_analytics_access(ctx)
+    except FraudAnalyticsNotPermitted as exc:
+        raise _fraud_forbidden(exc) from exc
+    thresholds = await thresholds_for(db)
+    bands = await reserve_bands_for(db)
+    limits = await export_limits_for(db)
+    try:
+        table = await export_reserve_adequacy(
+            db, ctx, thresholds, bands, limits, segmentation, format
+        )
+    except ExportTooLarge as exc:
+        raise _export_too_large(exc) from exc
+    except FraudAnalyticsNotPermitted as exc:  # pragma: no cover - the gate answered first
+        raise _fraud_forbidden(exc) from exc
+    return _download(table, format)

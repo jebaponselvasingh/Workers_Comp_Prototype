@@ -45,6 +45,7 @@
  * who aims at the bar should not have to discover that the chip beneath it is
  * the control.
  */
+import type { ReactNode } from "react";
 import { Bar, BarChart, Cell, LabelList, ResponsiveContainer, XAxis, YAxis } from "recharts";
 
 import { ChartFrame } from "./ChartFrame";
@@ -72,6 +73,7 @@ interface Datum {
 export function DistributionBars<ItemT>({
   testId,
   title,
+  action,
   series,
   keyOf,
   label,
@@ -88,6 +90,15 @@ export function DistributionBars<ItemT>({
 }: {
   testId: string;
   title: string;
+  /**
+   * A control for the heading row — passed straight to `ChartFrame`.
+   *
+   * Forwarded rather than interpreted, which is the whole of this component's
+   * relationship to it: the frame owns the header's layout and its no-reflow
+   * reservation, and a wrapper that positioned the action itself would be a
+   * second opinion about where a control goes on a surface it does not draw.
+   */
+  action?: ReactNode;
   /** The server's series, or `undefined` while it is unknown. */
   series:
     | {
@@ -228,6 +239,7 @@ export function DistributionBars<ItemT>({
     <ChartFrame
       testId={testId}
       title={title}
+      action={action}
       height={CHART_HEIGHT.bars}
       isLoading={isLoading}
       isError={isError}

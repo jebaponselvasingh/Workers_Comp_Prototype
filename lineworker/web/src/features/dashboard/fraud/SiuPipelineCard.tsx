@@ -49,9 +49,11 @@ import {
   drillHref,
   isFiltered,
   NO_MATCHING_CLAIMS,
+  toSegmentationParams,
   withSegmentation,
   type DrillFilters,
 } from "../drill/filters";
+import { ExportControl } from "../export/ExportControl";
 
 /**
  * The stage bars' copy — the settlement donut's words, restated here.
@@ -108,6 +110,20 @@ export function SiuPipelineCard({
       <DistributionBars
         testId="siu-pipeline-stage"
         title="SIU pipeline by stage"
+        // **One control for both charts**, on the first of them. The two are one
+        // fold and one file: `siu_pipeline_table_of` writes the stage rows and
+        // the handler rows into one table with a `dimension` column, because a
+        // rectangular file has no second sheet and two controls would be two
+        // downloads of one answer. The first chart carries it because that is
+        // where a reader's eye reaches the section.
+        action={
+          <ExportControl
+            testId="siu-pipeline"
+            label="the SIU pipeline"
+            path="/dashboard/fraud/export"
+            params={{ ...toSegmentationParams(segmentation), table: "siuPipeline" }}
+          />
+        }
         series={data?.siuByStage}
         keyOf={(item) => item.key}
         label={(item) => STAGE_LABEL[item.key as Stage] ?? item.key}

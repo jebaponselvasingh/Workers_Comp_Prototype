@@ -14,7 +14,30 @@ import { vi } from "vitest";
  * immediately makes them unobservable, and a test that cannot see the
  * skeleton cannot tell a skeleton from a zero.
  */
-export type StubRoute = { status: number; body: unknown } | "pending";
+export type StubRoute = { status: number; body: unknown } | StubFile | "pending";
+
+/**
+ * A stubbed route that answers a **file** rather than JSON (Story 7.5).
+ *
+ * The export routes are the first in this API whose 200 body is not a document,
+ * and `respond` below has always `JSON.stringify`d — so a stub returning
+ * `{status: 200, body: "a,b\n1,2"}` would hand the client a *quoted* CSV and
+ * `parseAs: "blob"` would faithfully save the quotes. A second shape rather than
+ * a flag on the first, so a route cannot claim to be both.
+ *
+ * `filename` becomes the `Content-Disposition` the client reads the download's
+ * name off, and it is settable because a test's whole subject may be that name:
+ * a proxy that strips the header is the case the hook's fallback exists for, and
+ * a stub with no `filename` is how that case is reached.
+ */
+export interface StubFile {
+  status: number;
+  /** The file's bytes, as text. */
+  file: string;
+  /** The name the server suggests, or omitted to stub a stripped header. */
+  filename?: string;
+  contentType?: string;
+}
 
 /**
  * A route that may answer differently depending on what was asked.
@@ -23,8 +46,18 @@ export type StubRoute = { status: number; body: unknown } | "pending";
  * and `?filter=all` are two different server answers, and "changing the
  * filter refetches rather than narrowing a cached list" (AD-1) is only
  * observable if the stub can tell the two requests apart.
+ *
+ * **The function may answer with a promise** (Story 7.5), which is a decision
+ * about *time* rather than about the URL and is why it is a second return type
+ * rather than a second field. `"pending"` covers "never settles" and a plain
+ * route covers "settles at once"; neither can express "settles when the test
+ * says so", and a test whose whole subject is two requests in flight together —
+ * both busy, then one refused and one succeeding, in an order the test chooses —
+ * has no other way to hold the first request open while the second completes. A
+ * `Promise<StubRoute>` the test resolves is the smallest thing that expresses
+ * it, and it changes nothing for the callers that return a route directly.
  */
-export type StubRouteFor = StubRoute | ((url: string) => StubRoute);
+export type StubRouteFor = StubRoute | ((url: string) => StubRoute | Promise<StubRoute>);
 
 export interface StubRoutes {
   me?: StubRoute;
@@ -104,6 +137,24 @@ export interface StubRoutes {
    * `groupBy=icd10`.
    */
   financials?: StubRouteFor;
+  /**
+   * The six `…/export` routes (Story 7.5) — **one entry for all of them**.
+   *
+   * A `StubRouteFor` and a single entry, which is the one place this interface
+   * collapses six routes rather than naming them. The reason is that the
+   * function form is handed the **whole URL**, path included, so one stub can
+   * tell `/dashboard/claims/export` from `/dashboard/financials/export` *and*
+   * `?table=bands` from `?table=siuPipeline` *and* `?format=csv` from
+   * `?format=xlsx` — which is every distinction a test of this feature draws.
+   * Six near-identical entries would be six places to remember when a seventh
+   * export route arrives.
+   *
+   * Matched **before** every `/api/dashboard/…` branch below, and that ordering
+   * is routing rather than readability: `/api/dashboard/claims/export` contains
+   * `/api/dashboard/claims`, and every other export path contains its own
+   * sibling's, so the read routes would answer every download.
+   */
+  exports?: StubRouteFor;
   /**
    * `GET /dashboard/financials/reserve-adequacy` (Story 7.4) — the distribution.
    *
@@ -3052,6 +3103,24 @@ export const SEEDED_PERSONAS = {
   },
 };
 
+/**
+ * A file response, with the two headers a browser download actually reads.
+ *
+ * `Content-Disposition` is what `useExport` names the saved file from, and the
+ * media type is what a real browser would use to decide it is not a page. Both
+ * are set here rather than left to the caller, so eight stubbed routes cannot
+ * disagree about what a download looks like.
+ */
+function respondFile(route: StubFile): Response {
+  const headers: Record<string, string> = {
+    "content-type": route.contentType ?? "text/csv; charset=utf-8",
+  };
+  if (route.filename !== undefined) {
+    headers["content-disposition"] = `attachment; filename="${route.filename}"`;
+  }
+  return new Response(route.file, { status: route.status, headers });
+}
+
 function respond(status: number, body: unknown): Response {
   return new Response(status === 204 ? null : JSON.stringify(body), {
     status,
@@ -4537,13 +4606,17 @@ export const COPILOT_THREAD_BUSY = {
 };
 
 function answer(route: StubRoute): Promise<Response> {
-  return route === "pending"
-    ? pending()
-    : Promise.resolve(respond(route.status, route.body));
+  if (route === "pending") return pending();
+  // Discriminated on the presence of `file`, not on a `kind` tag: the two shapes
+  // are structurally exclusive and a tag would be a third thing to keep in step.
+  if ("file" in route) return Promise.resolve(respondFile(route));
+  return Promise.resolve(respond(route.status, route.body));
 }
 
-function answerFor(route: StubRouteFor, url: string): Promise<Response> {
-  return answer(typeof route === "function" ? route(url) : route);
+async function answerFor(route: StubRouteFor, url: string): Promise<Response> {
+  // `await` on a non-promise is a no-op, so the two return shapes of the
+  // function form converge here rather than at every branch of `stubApi`.
+  return answer(typeof route === "function" ? await route(url) : route);
 }
 
 
@@ -6721,6 +6794,45 @@ export const RESERVE_ADEQUACY_EMPTY = {
   },
 };
 
+/**
+ * The default export answer: a small CSV with the server's own header shape.
+ *
+ * Two data rows rather than none, so a test that counts them has something to
+ * count, and the header is the claim export's first three columns rather than
+ * invented names — a fixture whose columns no route produces cannot be compared
+ * against the e2e suite's oracle, which is the only check each has of the other.
+ *
+ * The filename is the shape `export.filename_for` composes: product, target,
+ * day. Deliberately no filter set in it, because that is the rule the server
+ * follows and a fixture that broke it would make a test of the download's name
+ * pass against a name the server would never send.
+ */
+export const EXPORT_FILE = {
+  status: 200,
+  file: "claim_id,stage,status\r\nWC-20017,treatment,ch_approved\r\nWC-20018,settled,settled_closed\r\n",
+  filename: "lineworker-claims-2026-08-22.csv",
+};
+
+/**
+ * The over-the-cap refusal, as the server sends it (Story 7.5, AC 4).
+ *
+ * A problem document rather than a file, which is the whole point of having it:
+ * `ExportControl` renders `detail` inline at the control, so the fixture has to
+ * carry the sentence a reader would actually see — including the cap and the row
+ * count, which are the two numbers that make the refusal actionable.
+ */
+export const EXPORT_TOO_LARGE = {
+  status: 422,
+  body: {
+    type: "/problems/export-too-large",
+    title: "Unprocessable Content",
+    status: 422,
+    detail:
+      "That export would contain 74210 rows and this deployment caps an export at 50000; " +
+      "narrow the filters and try again.",
+  },
+};
+
 export function stubApi(routes: StubRoutes): void {
   // Story 6.4: each install starts a fresh recording, so a test never reads the
   // previous one's runs. `length = 0` rather than a reassignment, because the
@@ -6759,6 +6871,14 @@ export function stubApi(routes: StubRoutes): void {
         }
         if (url.includes("/api/glossary")) {
           return answer(routes.glossary ?? GLOSSARY_TERMS);
+        }
+        // Story 7.5's six, **before every `/api/dashboard/…` branch below**, and
+        // the ordering is routing rather than readability: each export path
+        // contains its own sibling's read path (`/api/dashboard/claims/export`
+        // contains `/api/dashboard/claims`), so the reads would answer every
+        // download. One branch for six routes — see `StubRoutes.exports`.
+        if (url.includes("/export")) {
+          return answerFor(routes.exports ?? EXPORT_FILE, url);
         }
         if (url.includes("/api/dashboard/summary")) {
           return answer(routes.dashboardSummary ?? DASHBOARD_SUMMARY);

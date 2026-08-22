@@ -106,12 +106,12 @@ development_status:
   epic-6-retrospective: optional
 
   # Epic 7: Analyst Workspace
-  epic-7: in-progress
+  epic-7: done
   7-1-fraud-analytics-workspace: done
   7-2-trend-cohort-analytics: done
   7-3-segmentation-universal-drill-down: done
   7-4-financial-decomposition: done
-  7-5-dataset-chart-export: ready-for-dev
+  7-5-dataset-chart-export: done
   epic-7-retrospective: optional
 
   # Epic 8: Production Hardening & Compliance Operations

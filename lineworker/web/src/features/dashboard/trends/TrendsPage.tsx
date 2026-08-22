@@ -67,10 +67,12 @@ import {
   drillHref,
   isFiltered,
   RISK_LABEL_BY_BAND,
+  toSegmentationParams,
   withSegmentation,
   type DrillFilters,
   type FilterKey,
 } from "../drill/filters";
+import { ExportControl } from "../export/ExportControl";
 import { pickOption, useSegmentation } from "../segmentation/useSegmentation";
 
 import { TrendChartCard } from "./TrendChartCard";
@@ -548,9 +550,32 @@ export function TrendsPage() {
       // surfaces were readable; here there is one answer and it is this one.
       aria-busy={trends.isPending || isRefreshing}
     >
-      <h2 className="mb-[13px] font-display text-[15px] font-bold text-text">
-        Trend &amp; cohort analytics
-      </h2>
+      {/* The section header, with the export on its right. **One control for
+          five charts**, because they are one query and one file: the export is
+          long-form — one row per (series, bucket) with a `metric` column — so
+          five controls would be five downloads of slices of one answer, and a
+          reader wanting one metric filters a column. */}
+      <div className="mb-[13px] flex flex-wrap items-start justify-between gap-2">
+        <h2 className="font-display text-[15px] font-bold text-text">
+          Trend &amp; cohort analytics
+        </h2>
+        <ExportControl
+          testId="trend-analytics"
+          label="the trend series"
+          path="/dashboard/trends/export"
+          // The **asked-for** window rather than the drawn one, `shown`'s own
+          // rule: while a new grain is in flight the charts still show the
+          // previous answer, and a file taken then has to be the question the
+          // reader just asked rather than the one they are about to stop
+          // looking at.
+          params={{
+            ...toSegmentationParams(segmentation),
+            grain: shown.grain,
+            anchor: shown.anchor,
+            cohort: shown.cohort,
+          }}
+        />
+      </div>
 
       {/* Announced rather than only drawn, `FraudPage`'s rule: an analyst using
           a screen reader gets one polite sentence when the series land, instead

@@ -58,6 +58,7 @@ RESERVE_BANDS_KEY = "reserve_bands"
 WORKLIST_ACTIONS_KEY = "worklist_actions"
 HANDLER_PERFORMANCE_KEY = "handler_performance"
 TREND_PERIODS_KEY = "trend_periods"
+EXPORT_LIMITS_KEY = "export_limits"
 
 
 class RuleParameterError(ValueError):
@@ -1434,3 +1435,78 @@ async def trend_periods_for(db: AsyncSession, as_of: date | None = None) -> Tren
     """Load and validate the trend window parameters effective on `as_of`."""
     document = await load(db, TREND_PERIODS_KEY, as_of)
     return TrendPeriods.of(document, evaluate(document))
+
+
+@dataclass(frozen=True)
+class ExportLimits:
+    """How much of a book one export request may extract (Story 7.5).
+
+    One parameter, and a document of its own rather than a field on
+    `DerivationThresholds` — `TrendPeriods`' argument, which this block is the
+    nearest sibling of. That block is the single argument every registered
+    derivation is **built** from; this number reaches no derivation at all.
+
+    **What it bounds is the answer, not the work.** `services/worklist/export.py`
+    re-runs the fold its sibling chart already ran, over the caller's whole
+    scoped book, so the read, the projection and the fold cost exactly what the
+    screen costs whatever this number is. What scales with `max_rows` is the
+    table — rows built, encoded, streamed and opened in a spreadsheet — and, more
+    to the point, how many claims one authenticated session can carry out of the
+    console in one gesture. `trend_periods.maxBuckets` makes the identical
+    argument about a chart's point count, and the O(scope) fold behind both is
+    `deferred-work.md`'s open question rather than either parameter's.
+
+    **The unit is rows of the exported table, never claims**, which is what lets
+    one number govern all eight targets. Six of them export *aggregate* rows: a
+    claim list of fifty thousand claims and a breakdown of fifty thousand groups
+    are the same size of file and the same quantity of egress, and eight
+    per-target caps would be eight parameters that agree today and drift the
+    first time one of them is retuned.
+
+    **It is a rules-tier parameter rather than a `Settings` field**, which is the
+    one decision here that goes against the story file's own Dev Notes. AD-8
+    gives JDM "weights, thresholds, bands, **caps**", and the Epic 7 context
+    states outright that export row caps are versioned rules-tier parameters. A
+    number deciding how much PHI leaves the system (NFR-5) has a compliance owner
+    who must be able to retune it with an effective date rather than a deploy —
+    which is exactly what pydantic-settings cannot offer and what a
+    `rule_document` row is.
+
+    `version` is carried for `HandlerPerformance`' reason: the refusal quotes the
+    cap, so a reader of a 422 can tell which document decided it.
+    """
+
+    version: int
+    max_rows: int
+
+    def __post_init__(self) -> None:
+        # **Zero is the interesting refusal, and it is refused rather than
+        # clamped.** The cap is applied as `len(rows) > max_rows`, so a zero
+        # would refuse every export that exists — the empty one included — and
+        # the section would answer 422 to every click with a message quoting a
+        # limit nobody could satisfy. That is not a tuning of the feature; it is
+        # a request to retire it, which is a deployment decision rather than a
+        # value to set. `TrendPeriods` refuses a zero bucket window on the
+        # identical argument and `HandlerPerformance` refuses all-three-zero
+        # blend weights on it.
+        #
+        # A **one** is legal and is left legal on purpose: "one row per export"
+        # is unfriendly and coherent, and an operator who means it can say it.
+        # The line between the two is whether the value describes a capability
+        # that still exists.
+        if self.max_rows < 1:
+            raise RuleParameterError(
+                f"maxRows must be at least 1, got {self.max_rows} — zero refuses every "
+                "export including the empty one, which retires the feature rather than "
+                "capping it"
+            )
+
+    @classmethod
+    def of(cls, document: LoadedDocument, result: dict[str, Any]) -> "ExportLimits":
+        return cls(version=document.version, max_rows=_integer(document, result, "maxRows"))
+
+
+async def export_limits_for(db: AsyncSession, as_of: date | None = None) -> ExportLimits:
+    """Load and validate the export row cap effective on `as_of`."""
+    document = await load(db, EXPORT_LIMITS_KEY, as_of)
+    return ExportLimits.of(document, evaluate(document))

@@ -45,9 +45,11 @@ import {
   drillHref,
   isFiltered,
   NO_MATCHING_CLAIMS,
+  toSegmentationParams,
   withSegmentation,
   type DrillFilters,
 } from "../drill/filters";
+import { ExportControl } from "../export/ExportControl";
 
 /** The unknown-value glyph, `HandlerBenchmarkTable`'s. */
 const EM_DASH = "—";
@@ -107,6 +109,18 @@ export function FraudDistributionCard({
     <DistributionDonut
       testId="fraud-band-distribution"
       title="Fraud score distribution"
+      // The arcs, as three rows. `toSegmentationParams` on the filter the *page*
+      // handed down rather than a second read of the URL, `DashboardPage`'s
+      // composition rule: the caption, the drill target and the file all
+      // describe one narrowing or none of them do.
+      action={
+        <ExportControl
+          testId="fraud-band-distribution"
+          label="the fraud score distribution"
+          path="/dashboard/fraud/export"
+          params={{ ...toSegmentationParams(segmentation), table: "bands" }}
+        />
+      }
       series={data?.byBand}
       label={bandLabels(data?.fraudBandHighMin, data?.fraudBandMedMin)}
       fill={FRAUD_BAND_FILL}

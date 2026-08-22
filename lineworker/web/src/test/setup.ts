@@ -106,6 +106,28 @@ afterEach(() => {
 ;
 }
 
+/**
+ * Fifth jsdom gap (Story 7.5): **no object URLs.**
+ *
+ * jsdom implements neither `URL.createObjectURL` nor `URL.revokeObjectURL`, so
+ * the one line that turns a downloaded blob into something an `<a download>` can
+ * point at throws — and `useExport` is the only code in the app that needs it.
+ * Without these stubs every export test would fail on a browser API rather than
+ * on anything about exporting.
+ *
+ * No-ops returning a fixed string rather than a fake blob registry, for the
+ * `ResizeObserver` stub's reason: the tests assert what was *requested* and what
+ * the control says afterwards — never that a file reached a filesystem, which is
+ * the browser's business and the e2e suite's to check (it downloads a real one
+ * and parses it).
+ *
+ * Assigned unconditionally rather than behind an `in` check, because jsdom does
+ * define `URL` — it is the two static methods that are missing, so a guard on
+ * the constructor would test the wrong thing.
+ */
+URL.createObjectURL = () => "blob:lineworker/export";
+URL.revokeObjectURL = () => {};
+
 const NodeRequest = globalThis.Request;
 
 function withDocumentBase(input: RequestInfo | URL): RequestInfo | URL {

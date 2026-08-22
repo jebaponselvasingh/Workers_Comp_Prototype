@@ -52,10 +52,12 @@ import {
   isFiltered,
   NO_MATCHING_CLAIMS,
   toFilterKey,
+  toQueryParams,
   withSegmentation,
   type DrillFilters,
   type DrillOrigin,
 } from "../drill/filters";
+import { ExportControl } from "../export/ExportControl";
 import { KpiCard, KpiCardSkeleton } from "../KpiCard";
 import { pickOption, useSegmentation } from "../segmentation/useSegmentation";
 
@@ -127,13 +129,27 @@ function FlaggedClaims({ segmentation }: { segmentation: DrillFilters }) {
         >
           Flagged claims
         </h3>
-        <Link
-          data-testid="fraud-flagged-view-all"
-          to={drillHref(filters)}
-          className="rounded text-[11px] font-semibold text-steel hover:underline focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none"
-        >
-          View all →
-        </Link>
+        <div className="flex items-center gap-3">
+          {/* **The whole list, not the eight rows on screen.** This card is an
+              entry point and deliberately has no "Show more", so the file it
+              exports is the one thing here that is not a preview: the server
+              returns every page of the filtered ranking. That is AC 2's "every
+              page of them, not the pages that happen to be loaded" arriving on
+              the surface where the difference is most visible. */}
+          <ExportControl
+            testId="fraud-flagged-claims"
+            label="the flagged claim list"
+            path="/dashboard/claims/export"
+            params={toQueryParams(filters)}
+          />
+          <Link
+            data-testid="fraud-flagged-view-all"
+            to={drillHref(filters)}
+            className="rounded text-[11px] font-semibold text-steel hover:underline focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none"
+          >
+            View all →
+          </Link>
+        </div>
       </div>
 
       {list.isError ? (

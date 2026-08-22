@@ -1,6 +1,6 @@
 # Story 7.5: Dataset & Chart Export
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -93,10 +93,51 @@ No UX-DR covers export (the Epic 7 gap). Borrow: UX-DR11 (non-blocking toasts fo
 
 ### Agent Model Used
 
-<!-- filled by dev-story -->
+claude-opus-5[1m] (bmad-dev-auto)
 
 ### Debug Log References
 
+Spec: [spec-7-5-dataset-chart-export.md](spec-7-5-dataset-chart-export.md). Baseline `9420a67`.
+Review pass 2026-08-22: 18 patches (1 high, 3 medium, 14 low), 3 deferred, 2 rejected; no intent
+gap and no spec loopback.
+
 ### Completion Notes List
 
+- **The XLSX library is `xlsxwriter`**, pinned `>=3.2.9,<3.3`, chosen over `openpyxl` on the AD-11
+  posture: `{"in_memory": True}` writes no temp file, where openpyxl's write-only mode spools
+  worksheet XML through `tempfile`. The narrow range is the `py.typed` window that makes the
+  `[[tool.mypy.overrides]]` block honest.
+- **The row cap is a rules-tier JDM document (`export_limits.maxRows`, 50 000), not a pydantic
+  setting**, against this file's own Dev Note. AD-8 gives JDM "caps" and the Epic 7 context states
+  outright that export row caps are versioned rules-tier parameters; `trend_periods.maxBuckets` is
+  the working precedent, down to the refusal naming the cap.
+- **Eight export targets over six routes.** The red-flag frequency card is deliberately not
+  exportable (AD-10 cached model output, whose labelling a CSV strips) and neither are the financial
+  Totals tiles (`KpiCard` wraps its body in a `<Link>`).
+- **Nothing streams from the database.** The row count is known before the first byte because
+  `drill_through.select` returns the complete ranked list, which is what lets the audit row carry a
+  real count and still precede the body — a chunked body cannot carry problem+json after its headers
+  flush, and a request-scoped session is closed by the time a body iterator runs.
+- **CSV escapes formula leads and XLSX does not**, which is the one place the two renderers
+  deliberately disagree: `write_string` already forces a string cell.
+- Five entries added to `deferred-work.md` at implementation and three more at review.
+
 ### File List
+
+**Created** — `server/rules/documents/export_limits.v1.jdm.json`,
+`server/data/versions/20260822_0048_export_limits.py`, `server/services/worklist/export.py`,
+`server/tests/test_dataset_export.py`,
+`web/src/features/dashboard/export/{ExportControl.tsx,ExportControl.test.tsx}`,
+`e2e/stories/7-5-dataset-chart-export.spec.ts`.
+
+**Modified** — `server/rules/parameters.py`, `server/services/audit/__init__.py`,
+`server/services/worklist/{__init__,drill_through}.py`, `server/api/routers/dashboard.py`,
+`server/pyproject.toml`, `server/uv.lock`,
+`server/tests/{seed_fixture,test_drill_through,test_rules_engine,test_derivations}.py`,
+`web/src/api/{dashboard.ts,schema.d.ts}`,
+`web/src/features/dashboard/charts/{ChartFrame,DistributionBars,DistributionDonut}.tsx`,
+`web/src/features/dashboard/fraud/{FraudPage,FraudDistributionCard,SiuPipelineCard,FraudRateTables}.tsx`,
+`web/src/features/dashboard/financial/{BreakdownCard,CostDriverCard,ReserveAdequacyCard}.tsx`,
+`web/src/features/dashboard/{trends/TrendsPage,drill/DrillClaimsPage}.tsx`,
+`web/src/features/queue/noDerivation.test.ts`, `web/src/test/{api-mock,setup}.ts`,
+`e2e/fixtures/seed.ts`, `_bmad-output/implementation-artifacts/deferred-work.md`.

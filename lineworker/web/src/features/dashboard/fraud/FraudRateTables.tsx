@@ -70,7 +70,14 @@ import { formatBasisPoints } from "@/lib/rate";
 
 import type { DrillFilters } from "../drill/filters";
 
-import { drillHref, isFiltered, NO_MATCHING_CLAIMS, withSegmentation } from "../drill/filters";
+import {
+  drillHref,
+  isFiltered,
+  NO_MATCHING_CLAIMS,
+  toSegmentationParams,
+  withSegmentation,
+} from "../drill/filters";
+import { ExportControl } from "../export/ExportControl";
 
 /** How many placeholder rows are held open while a request is in flight. */
 const SKELETON_ROWS = 6;
@@ -491,12 +498,34 @@ export function FraudRateTables({
       aria-labelledby="fraud-rates-heading"
       className="mb-[14px]"
     >
-      <h2
-        id="fraud-rates-heading"
-        className="mb-2 font-display text-[10.5px] font-bold tracking-[0.4px] text-muted-text uppercase"
-      >
-        Flagged-claim rates
-      </h2>
+      {/* The section header, with the export on its right — `BreakdownCard`'s
+          slot shape. **One control for three tables**, because they are one
+          request and one file: the export carries a `dimension` column and all
+          three breakdowns, in the orders they are being read in, so three
+          controls would be three downloads of overlapping subsets of one answer. */}
+      <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
+        <h2
+          id="fraud-rates-heading"
+          className="font-display text-[10.5px] font-bold tracking-[0.4px] text-muted-text uppercase"
+        >
+          Flagged-claim rates
+        </h2>
+        <ExportControl
+          testId="fraud-rates"
+          label="the flagged-claim rates"
+          path="/dashboard/fraud/rates/export"
+          // The three orders travel with the filter, so the file comes out in
+          // the order the tables are being read in — an export that silently
+          // reverted to the default would be the one place on this surface where
+          // the file and the screen disagree.
+          params={{
+            ...toSegmentationParams(segmentation),
+            "sort[injuryType]": sorts.injuryType,
+            "sort[employer]": sorts.employer,
+            "sort[handler]": sorts.handler,
+          }}
+        />
+      </div>
 
       <div className="grid gap-[10px] lg:grid-cols-3">
         <RateTable

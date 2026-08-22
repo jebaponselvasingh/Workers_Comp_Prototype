@@ -39,6 +39,7 @@ const FOOTNOTE_ROW = "mt-1 h-[13px] text-[9.5px] leading-[13px]";
 export function ChartFrame({
   testId,
   title,
+  action,
   height,
   isLoading,
   isError,
@@ -51,6 +52,26 @@ export function ChartFrame({
   /** `data-testid` stem; the heading gets `${testId}-heading`. */
   testId: string;
   title: string;
+  /**
+   * A control drawn on the right of the heading row — the export affordance, and
+   * nothing else so far (Story 7.5).
+   *
+   * **Its row is reserved in all four states**, which is `FOOTNOTE_ROW`'s
+   * argument arriving at the other end of the surface: the heading row is drawn
+   * whether or not there is an action in it, so a control that appeared only once
+   * its data landed would grow the section by a line under the reader's cursor —
+   * on a dashboard whose queries resolve independently, which is exactly the
+   * reflow the fixed-height body exists to prevent (NFR-3). Here the reservation
+   * is free: the heading already occupies the row, and `justify-between` puts the
+   * action at its far end without changing its height.
+   *
+   * It is deliberately **not** hidden while the chart is loading or failed. An
+   * export of a surface whose request failed is a request the server will answer
+   * on its own terms — the two are independent, and disabling a control because
+   * a *different* query is in flight is the workspace-wide busy state NFR-3 rules
+   * out. What the control disables is itself, while its own request is running.
+   */
+  action?: ReactNode;
   /** The reserved body height in pixels — one of `CHART_HEIGHT`'s two. */
   height: number;
   isLoading: boolean;
@@ -86,12 +107,18 @@ export function ChartFrame({
       aria-busy={isLoading}
       className="flex flex-col rounded-lg border border-border bg-surface p-3"
     >
-      <h3
-        id={`${testId}-heading`}
-        className="mb-2 font-display text-[10.5px] font-bold tracking-[0.4px] text-muted-text uppercase"
-      >
-        {title}
-      </h3>
+      {/* The heading row. `justify-between` and `items-start` rather than a grid,
+          so a surface with no action draws exactly what it drew before and one
+          with an action puts it at the far end without moving the title. */}
+      <div className="mb-2 flex items-start justify-between gap-2">
+        <h3
+          id={`${testId}-heading`}
+          className="font-display text-[10.5px] font-bold tracking-[0.4px] text-muted-text uppercase"
+        >
+          {title}
+        </h3>
+        {action}
+      </div>
 
       {/* The reserved box. Every branch below draws inside this one element, so
           the four states cannot disagree about how tall the surface is. */}

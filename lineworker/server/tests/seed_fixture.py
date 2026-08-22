@@ -2453,3 +2453,287 @@ def expected_financial_breakdown(
         "truncated": len(grouped) > limit,
         "limit": limit,
     }
+
+
+# --- Story 7.5: the exported tables, restated independently ----------------
+#
+# **This block restates the FILE, not the fold.** The two are different claims
+# and only one of them belongs here.
+#
+# What the export must be right about is *rendering*: which columns exist, in
+# what order, with what names, and what each value looks like once it is a cell
+# rather than a JSON member. So `expected_claim_export` below writes out
+# thirty-six column names and thirty-six cell expressions, from the seed file and
+# from this file's own restatements of the derivations — a genuinely second
+# implementation of what a downloaded row says.
+#
+# What the export must *not* be is a second fold, and that is why the two
+# aggregate oracles below deliberately **reuse** the Story 7.1 and 7.4 blocks
+# rather than restating them. The whole claim of this story is that an exported
+# figure cannot differ from the figure on the card it was exported from, so the
+# oracle for the card *is* the oracle for the export, projected into rows. A
+# second restatement here would create two oracles for one number, free to
+# disagree with each other, and a test built on it could go green while the file
+# and the screen were both wrong in the same way. The reuse is the assertion.
+#
+# What is reused for the claim export is likewise the narrowest possible set:
+# `claims_for` (scope), `_drill_matches` (the drill vocabulary, restated once in
+# the Story 5.5 block), `expected_score` and `days_open` (the queue's scorer and
+# age, restated once in the Story 2.1 block), `queue_flags`, `risk_band`,
+# `fraud_band`, `fraud_flagged`, `siu_review`, `age_band` and `recovery_token`.
+# Every one of those is already an independent restatement of exactly the rule
+# the corresponding column publishes, and restating any of them a second time
+# would be pretending this console has two of that rule.
+#
+# **Every cell is a string here**, including the numbers, because a CSV field is
+# a string and the point of this oracle is what the *file* holds. The XLSX half
+# is asserted against the CSV in the test rather than against a second oracle —
+# a spreadsheet whose cells equal the CSV's cells is the property, and two
+# oracles would be two chances to encode the same mistake.
+
+#: The claim export's header, written out — never read off the service's tuple.
+#:
+#: Thirty-six names in one order, and both halves matter: a header a consumer
+#: joins on is a contract, and an oracle that imported the contract from the code
+#: under test could not notice a column being renamed, reordered or dropped.
+#:
+#: Twenty-eight stored columns (the drill projection, which is what
+#: `select_drill_rows` already loads under the caller's scope), then the seven
+#: derived values the ranking was computed with, then the score it ranked on.
+#: `reserve_verdict` is deliberately absent: it is loaded only when
+#: `filter[reserveVerdict]` is set, so a column for it would be blank on almost
+#: every export and a blank a consumer cannot tell from an answer is worse than
+#: an absent column.
+EXPORT_CLAIM_COLUMNS: tuple[str, ...] = (
+    "claim_id",
+    "stage",
+    "status",
+    "return_status",
+    "severity_score",
+    "days_open",
+    "injury_type",
+    "worker_name",
+    "employer_short_name",
+    "surgery_required",
+    "litigation_flag",
+    "fraud_flag",
+    "fraud_score",
+    "employer_id",
+    "handler_id",
+    "handler_name",
+    "state",
+    "osha_recordable",
+    "froi_date",
+    "doi",
+    "disability",
+    "sector",
+    "region",
+    "icd",
+    "age",
+    "gender",
+    "reserve_cents",
+    "recovery",
+    "risk_band",
+    "fraud_band",
+    "age_group",
+    "fraud_flagged",
+    "siu_review",
+    "rtw_blocked",
+    "payment_due",
+    "priority_score",
+)
+
+#: The fraud band export's header, written out for `EXPORT_CLAIM_COLUMNS`' reason.
+EXPORT_FRAUD_BAND_COLUMNS: tuple[str, ...] = ("fraud_band", "claims")
+
+#: The money breakdown export's header, likewise.
+EXPORT_BREAKDOWN_COLUMNS: tuple[str, ...] = (
+    "dimension",
+    "key",
+    "label",
+    "claim_count",
+    "paid_cents",
+    "reserve_cents",
+    "projected_cents",
+)
+
+
+def export_cell(value: Any) -> str:
+    """One value as the file spells it — this file's own rendering rules.
+
+    Four branches, restated from the story's "a data product, not a UI" ruling
+    rather than read off the service:
+
+    - `None` is the **empty field**. Not `"null"`, not `"None"`, and above all
+      not `0`: a mean over nothing is not zero, and a CSV that said so would be
+      the line drawn through zero the Trends section refuses, saved to disk.
+    - `bool` **before** `int`, because `True` is an `int` in Python and would
+      otherwise render as `1`. The words are `true`/`false` — the API's spelling
+      and the query string's, so a boolean in a file and a boolean in a URL are
+      one word.
+    - `date` is ISO-8601. The seed already holds ISO strings, so this branch is
+      reached only by a caller that passed a real `date`; it is here because the
+      *rule* is ISO rather than because this file has a date object to convert.
+    - everything else is `str(...)`.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, date):
+        return value.isoformat()
+    return str(value)
+
+
+def expected_claim_export(
+    persona_name: str,
+    role: str,
+    as_of: date | None = None,
+    **filters: Any,
+) -> dict[str, Any]:
+    """`{columns, rowCount, rows}` for the claim export under one filter set.
+
+    **The rows are the whole filtered population in ranked order**, which is the
+    property AC 2 turns on and the reason this is not built on top of
+    `expected_drill_claims`' `pages`: the export has no page, and an oracle that
+    reproduced the paging would be agreeing with a shape the file does not have.
+    The ordering rule is that block's, restated in one line because it is one
+    line — descending score, then claim id — over `expected_score`, which is the
+    Story 2.1 block's independent restatement of the scorer.
+
+    Filters arrive as snake_case keyword arguments matching the *drill*
+    vocabulary (`severity_band=...`, `sector=...`), and an unknown one raises
+    rather than being ignored: an oracle that silently dropped a facet would
+    agree with an implementation that had dropped the same one.
+
+    `days_open` and `priority_score` both move with `as_of`, which is why it is a
+    parameter here rather than a clock read inside: a test comparing a file
+    against this oracle has to be able to name the day both were computed for.
+    """
+    today = as_of or datetime.now(UTC).date()
+    employers = {row["name"]: row for row in seed()["employers"]}
+    employees = _employees_by_id()
+
+    visible = [
+        claim
+        for claim in claims_for(persona_name, role)
+        if all(_drill_matches(claim, key, value) for key, value in filters.items())
+    ]
+    ordered = sorted(visible, key=lambda c: (-expected_score(c, today), c["claim_id"]))
+
+    def row_of(claim: dict[str, Any]) -> list[str]:
+        employer = employers[claim["employer"]]
+        employee = employees[claim["employee_id"]]
+        flags = queue_flags(claim)
+        return [
+            export_cell(value)
+            for value in (
+                claim["claim_id"],
+                claim["stage"],
+                claim["status"],
+                claim["return_status"],
+                claim["severity_score"],
+                days_open(claim, today),
+                claim["injury_type"],
+                employee["name"],
+                employer["short_name"],
+                claim["surgery_required"],
+                claim["litigation_flag"],
+                claim["fraud_flag"],
+                claim["fraud_score"],
+                _employer_id(claim["employer"]),
+                handler_id_of(claim["handler"]),
+                claim["handler"],
+                claim["state"],
+                claim["osha_recordable"],
+                claim["froi_date"],
+                claim["doi"],
+                claim["disability"],
+                employer["sector"],
+                claim["region"],
+                claim["icd"],
+                employee["age"],
+                employee["gender"],
+                claim["reserve"],
+                recovery_token(claim["recovery"]),
+                risk_band(claim["severity_score"]),
+                fraud_band(claim["fraud_score"]),
+                age_band(employee["age"]),
+                fraud_flagged(claim),
+                siu_review(claim),
+                flags["rtw_blocked"],
+                flags["payment_due"],
+                expected_score(claim, today),
+            )
+        ]
+
+    return {
+        "columns": list(EXPORT_CLAIM_COLUMNS),
+        "rowCount": len(ordered),
+        "rows": [row_of(claim) for claim in ordered],
+    }
+
+
+def expected_fraud_band_export(persona_name: str, role: str) -> dict[str, Any]:
+    """`{columns, rowCount, rows}` for the fraud band distribution export.
+
+    **Built on `expected_fraud_panel` rather than on a second fold**, which is
+    this block's banner argument arriving where it does the most work: the file
+    has to hold the arcs the donut drew, so the oracle for the donut projected
+    into rows *is* the oracle for the file. Restating the band tally here would
+    be a second implementation of one rule, free to disagree with the first, and
+    a test built on it could pass while the card and the file were both wrong.
+
+    **All three bands, including one no claim reached**, because the panel is
+    zero-filled and the file has to be: a two-row spreadsheet cannot be told from
+    a three-row one that lost a row, and "no claim in this book scored high" is
+    the most valuable thing this export can say.
+    """
+    items = expected_fraud_panel(persona_name, role)["byBand"]["items"]
+    return {
+        "columns": list(EXPORT_FRAUD_BAND_COLUMNS),
+        "rowCount": len(items),
+        "rows": [[export_cell(item["key"]), export_cell(item["count"])] for item in items],
+    }
+
+
+def expected_breakdown_export(
+    persona_name: str,
+    role: str,
+    dimension: str,
+    limit: int,
+    **filters: str,
+) -> dict[str, Any]:
+    """`{columns, rowCount, rows}` for the money breakdown export.
+
+    `expected_fraud_band_export`'s reuse argument, over the figures where it
+    matters most: money is where an oracle that agrees with the implementation
+    does the most damage, and `expected_financial_breakdown` is already this
+    file's second implementation of what each group sums. Projecting it into rows
+    is what makes "the file holds the bars" an assertion rather than a hope.
+
+    **Cut at `limit`, because the card is** — the twelve groups the bars draw,
+    never the whole segment. An oracle that expected the untruncated set would be
+    describing a file whose caption ("top 12 of 34") it contradicted.
+
+    `label` is `None` for nine of the ten dimensions and renders as the empty
+    field; only an employer id carries a name, because only an id is not already
+    the string a reader reads.
+    """
+    breakdown = expected_financial_breakdown(persona_name, role, dimension, limit, **filters)
+    return {
+        "columns": list(EXPORT_BREAKDOWN_COLUMNS),
+        "rowCount": len(breakdown["items"]),
+        "rows": [
+            [
+                export_cell(dimension),
+                export_cell(group["key"]),
+                export_cell(group["label"]),
+                export_cell(group["claimCount"]),
+                export_cell(group["totals"]["paidCents"]),
+                export_cell(group["totals"]["reserveCents"]),
+                export_cell(group["totals"]["projectedCents"]),
+            ]
+            for group in breakdown["items"]
+        ],
+    }

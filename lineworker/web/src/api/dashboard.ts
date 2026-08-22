@@ -12,7 +12,12 @@
  * known separately, which is what lets two card captions quote a rule number
  * without the SPA holding one.
  */
-import { keepPreviousData, useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+} from "@tanstack/react-query";
 
 import {
   toFilterKey,
@@ -857,5 +862,176 @@ export function useReserveAdequacy(segmentation: DrillFilters) {
       return data!;
     },
     staleTime: 30_000,
+  });
+}
+
+/**
+ * The six export routes, read off the generated document.
+ *
+ * `Extract<keyof paths, …>` rather than a hand-written union, which is the whole
+ * of `client.ts`'s "nothing in `web/` may hand-roll a fetch" applied to a route
+ * *name*: a renamed or removed export endpoint is a type error at every call
+ * site here, where a string literal would be a 404 in front of an analyst. The
+ * template pattern is what keeps the six in and the twenty-odd read routes out
+ * without listing either.
+ */
+export type ExportPath = Extract<keyof paths, `${string}/export`>;
+
+/** CSV or XLSX — the server's own closed enum, read off one of the six. */
+export type ExportFormat = NonNullable<
+  paths["/dashboard/claims/export"]["get"]["parameters"]["query"]
+>["format"];
+
+/**
+ * A surface's current query, as the wire spells it.
+ *
+ * `null` is admitted alongside `undefined` because that is what the generated
+ * query types hold: an unset `filter[…]` is `T | null` on every one of the six
+ * routes, and a params type that refused it would make every call site strip
+ * nulls out of `toSegmentationParams`' own output — reimplementing, badly, the
+ * thing `openapi-fetch` already does with them.
+ */
+/**
+ * What one export asks for: a route, that route's own query, and a format.
+ *
+ * `params` is the surface's *current* request — the same object its read hook
+ * sends — so the file and the screen describe one question. It is deliberately
+ * not typed per path: the six query shapes differ, and a discriminated union
+ * would push six generic parameters through `useMutation`, which takes one
+ * variable type. What the union above already guarantees is the part that
+ * matters (the route exists); what the server guarantees is the rest, with a 422
+ * for a parameter it does not declare — and the parameter *set* of each route is
+ * pinned by `test_dataset_export.py`'s six allowlists rather than by this type.
+ */
+export type ExportParams = Record<string, string | number | boolean | null | undefined>;
+
+export interface ExportRequest {
+  path: ExportPath;
+  params: ExportParams;
+  format: ExportFormat;
+}
+
+/**
+ * The filename the server named, or `null` if it named none.
+ *
+ * `Content-Disposition` is the authority because the server composes the name —
+ * product, target, day, and deliberately no filter set (AD-11 keeps
+ * claim-adjacent detail out of a string that travels into tickets and proxy
+ * logs). Parsed with a narrow regex rather than a full RFC 6266 parser: the only
+ * producer is `_download`, which writes a quoted ASCII name, and a parser that
+ * handled `filename*=UTF-8''…` would be handling a case this API does not
+ * produce.
+ */
+function filenameFrom(response: Response): string | null {
+  const header = response.headers.get("content-disposition");
+  const match = header === null ? null : /filename="([^"]+)"/.exec(header);
+  return match === null ? null : match[1];
+}
+
+/**
+ * How long an object URL is left alive after its download has been started.
+ *
+ * A delay rather than an immediate revoke and rather than none at all, which is
+ * the trade `save` below argues. Long enough that a browser which has only
+ * *scheduled* the download has certainly begun reading the blob; short enough
+ * that a session exporting one surface after another does not accumulate live
+ * copies of PHI-bearing files in memory for the length of a workday.
+ */
+const REVOKE_AFTER_MS = 60_000;
+
+/**
+ * Hand the browser a file it just downloaded.
+ *
+ * Object URL → anchor → click → revoke, which is the only way a `fetch`ed blob
+ * becomes a file in a folder. It has to be a `fetch` rather than a plain link
+ * for the reason `client.ts` gives: a bare `<a href="/api/…/export">` would be a
+ * request outside the generated client, so a renamed route would 404 silently
+ * and a 403 would render the problem+json document *as a page*.
+ *
+ * **The revoke is deferred, and revoking in the same tick was a bug rather than
+ * a tightening.** `anchor.click()` does not download the file, it *starts* one:
+ * WebKit and Firefox both read the blob asynchronously after the handler
+ * returns, so `URL.revokeObjectURL(url)` on the next line pulls the bytes out
+ * from under a download that has not finished — and the failure is silent in the
+ * worst possible way, because the request already succeeded. `useExport`
+ * resolves, `ExportControl` toasts "Exported the cost breakdown", and the audit
+ * row stands as the compliance record of a file that arrived truncated or not at
+ * all. The larger the export, the likelier it is: exactly the case the row cap
+ * exists for.
+ *
+ * The URL is still revoked, on a timer, because the alternative — leaving it to
+ * the page's lifetime — is a copy of a PHI-bearing file that any script on the
+ * page can still read for as long as the tab is open.
+ */
+function save(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  // Appended before clicking: Firefox ignores a click on a detached anchor.
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => {
+    URL.revokeObjectURL(url);
+  }, REVOKE_AFTER_MS);
+}
+
+/**
+ * The one export mutation, for every surface in the analyst workspace (Story 7.5).
+ *
+ * **A mutation rather than a query, and it is not a mutation of server state.**
+ * `api/auth.ts:45` is the only `useMutation` idiom in this app and this is the
+ * second: what makes it one is that it is *imperative* — it happens because
+ * somebody clicked, exactly once, and its result is a file rather than something
+ * to render. A `useQuery` would fetch on mount, cache the bytes under a key
+ * (AD-9 says export payloads are not server state) and re-download on a refetch,
+ * which is three wrong behaviours for the price of one.
+ *
+ * **Nothing here reads the query cache.** The request carries a filter spec and
+ * the server produces the rows under the caller's re-resolved scope (AD-1,
+ * AD-7); the browser's only contribution is the click and the save. That is the
+ * prohibition the whole story rests on — a CSV assembled from the rows already
+ * in TanStack Query is one `.map().join()` away, and it would be a file whose
+ * scope was decided by whatever the browser happened to hold.
+ *
+ * `parseAs: "blob"` because the body is a file rather than JSON; without it
+ * `openapi-fetch` would hand back a parsed object and there would be nothing to
+ * save. The `Content-Disposition` name is preferred over a locally composed one
+ * for `filenameFrom`'s reason, and the fallback exists only so a proxy that
+ * strips the header downgrades to a plausible name rather than to `download`.
+ *
+ * A refusal throws an `ApiError` carrying the problem document (`client.ts`'s
+ * middleware), which `ExportControl` renders inline at the control — never as a
+ * toast, because `toast.tsx` says failures belong where the reader can act on
+ * them.
+ */
+export function useExport() {
+  return useMutation({
+    mutationFn: async (request: ExportRequest): Promise<string> => {
+      const { data, response } = await api.GET(
+        // One cast, at the boundary, and it is about `openapi-fetch`'s generics
+        // rather than about the route: `GET` infers its query type from a single
+        // literal path, so a union of six resolves the parameter type to `never`.
+        // The route name is still checked — `ExportPath` is a subset of
+        // `keyof paths` — which is the guarantee that matters.
+        request.path as "/dashboard/claims/export",
+        {
+          params: {
+            query: { ...request.params, format: request.format } as NonNullable<
+              paths["/dashboard/claims/export"]["get"]["parameters"]["query"]
+            >,
+          },
+          parseAs: "blob",
+        },
+      );
+      // `data` is typed `string` because the OpenAPI document describes the body
+      // as `format: binary`, which the generator has no better TypeScript for;
+      // `parseAs: "blob"` is what decides the runtime type.
+      const blob = data as unknown as Blob;
+      const filename = filenameFrom(response) ?? `lineworker-export.${request.format}`;
+      save(blob, filename);
+      return filename;
+    },
   });
 }

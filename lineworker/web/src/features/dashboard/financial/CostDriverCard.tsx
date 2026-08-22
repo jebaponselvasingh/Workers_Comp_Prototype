@@ -42,10 +42,12 @@ import { formatCents } from "@/lib/money";
 import {
   drillHref,
   NO_MATCHING_CLAIMS,
+  toSegmentationParams,
   withSegmentation,
   type DrillFilters,
   type FilterKey,
 } from "../drill/filters";
+import { ExportControl } from "../export/ExportControl";
 
 /** The unknown-value glyph, `HandlerBenchmarkTable`'s. */
 const EM_DASH = "—";
@@ -186,12 +188,27 @@ export function CostDriverCard({
       aria-busy={isLoading}
       className="rounded-lg border border-border bg-surface p-3"
     >
-      <h3
-        id={`${testId}-heading`}
-        className="mb-2 font-display text-[10.5px] font-bold tracking-[0.4px] text-muted-text uppercase"
-      >
-        {title}
-      </h3>
+      {/* The heading row with the control on its right — `FraudRateTables`' slot
+          shape, and `ChartFrame`'s no-reflow rule applied by hand because this
+          card draws its own frame. **One control on each of the two cards and one
+          file behind both**: `decomposition_of` folds surgery and litigation in
+          one pass, so the export carries all four cohorts and either card's
+          button downloads the pair-of-pairs. Two buttons for one answer is the
+          honest arrangement when the two cards are two views of one fold. */}
+      <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
+        <h3
+          id={`${testId}-heading`}
+          className="font-display text-[10.5px] font-bold tracking-[0.4px] text-muted-text uppercase"
+        >
+          {title}
+        </h3>
+        <ExportControl
+          testId={testId}
+          label="the cost-driver comparison"
+          path="/dashboard/financials/export"
+          params={{ ...toSegmentationParams(segmentation), table: "costDrivers" }}
+        />
+      </div>
 
       {isLoading ? (
         <div data-testid={`${testId}-skeleton`} aria-hidden className="flex gap-[10px]">
