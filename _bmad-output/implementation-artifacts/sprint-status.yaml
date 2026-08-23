@@ -1,5 +1,5 @@
 # generated: 2026-08-09
-# last_updated: 2026-08-22
+# last_updated: 2026-08-23
 # project: Workers_Comp_Prototype
 # project_key: NOKEY
 # tracking_system: file-system
@@ -43,7 +43,7 @@
 #   the dev agent to skim prior stories' Dev Agent Records for learnings before implementing
 
 generated: 2026-08-09
-last_updated: 2026-08-22
+last_updated: 2026-08-23
 project: Workers_Comp_Prototype
 project_key: NOKEY
 tracking_system: file-system
@@ -118,6 +118,6 @@ development_status:
   epic-8: in-progress
   8-1-phi-purge-cascade-retention: done
   8-2-database-audit-log-hardening: done
-  8-3-encrypted-backups-restore-drill: ready-for-dev
+  8-3-encrypted-backups-restore-drill: done
   8-4-complete-quality-operations-gate: ready-for-dev
   epic-8-retrospective: optional
