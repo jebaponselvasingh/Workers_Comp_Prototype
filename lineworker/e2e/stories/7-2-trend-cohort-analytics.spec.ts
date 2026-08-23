@@ -471,9 +471,23 @@ test.describe("@story:7-2 @epic:7 trend and cohort analytics", () => {
     // …and across a genuine refetch, which is the half a cached round-trip
     // cannot show: a reload throws away every slot the browser was holding, so
     // the hues below are the ones the *server* re-derived from the vocabulary.
+    //
+    // **The reload is itself the refetch, and there is deliberately no
+    // `reselect` after it** (amended by Story 8.4, the first run of AD-15's
+    // full-suite floor, which is what caught this). Story 7.3 moved these
+    // controls into `useSegmentation` — `TrendsPage` now derives `cohort` from
+    // the *URL* rather than from component state — so the reload comes back
+    // already on `cohort=disability`, having re-asked the server for it. A
+    // `selectOption("disability")` on a control that is already `disability`
+    // fires no change event, issues no request, and the `waitForResponse` inside
+    // `reselect` timed out after thirty seconds. `reselect`'s own docstring
+    // states the precondition it broke: only usable for a selector set this page
+    // has not asked for. Asserting straight after `trendsSettled` proves exactly
+    // what this paragraph claims — the fills below survived a full client
+    // teardown and were re-derived server-side from the vocabulary.
     await page.reload();
     await trendsSettled(page);
-    await reselect(page, "trend-cohort", "disability", "cohort=disability");
+    await expect(byTestId(page, "trend-cohort")).toHaveValue("disability");
     expect(await lineFills(page, "trend-paid")).toEqual(
       disability.card["trend-paid"].lines.map((line) => line.fill),
     );

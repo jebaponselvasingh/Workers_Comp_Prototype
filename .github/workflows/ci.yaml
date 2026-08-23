@@ -1,10 +1,35 @@
-# LINEWORKER CI gate (Story 1.1, AD-15).
+# LINEWORKER CI gate (Story 1.1, completed by Story 8.4 — AD-15).
 #
 # Provider choice: GitHub Actions — the repo is GitHub-hosted; the CI provider
 # is a conventional default, not architecture-pinned (see Story 1.1 Project
-# Structure Notes). All four jobs are configured as required checks for merge
-# to main (repo settings). Merge to main additionally runs the full e2e suite;
-# the sprint-status ↔ e2e/stories bijection lint lands with a later story.
+# Structure Notes).
+#
+# ## Five jobs, and all five must be required checks for merge to `main`
+#
+# Branch protection lives in GitHub repository settings and cannot be created,
+# read or applied from this working tree. `.github/required-checks.yml` is the
+# reviewable record of what that configuration must say, and
+# `server/tests/test_required_checks.py` holds it and this file's `jobs:` list in
+# **set equality, both ways** — so a sixth job added here and not declared there
+# fails the build, and a declared check naming no job fails it too. What stays
+# manual is typing the names into the settings page; what stopped being manual
+# is knowing what the list should contain.
+#
+# ## Two stages, which is now this file's organising idea
+#
+# * **Pull request** — every job below runs, with `e2e` narrowed to the PR's
+#   declared story spec(s) plus the `@smoke` set (AD-15). The narrowing is
+#   derived from the branch name and the PR labels and can only ever *narrow*:
+#   a PR from which no story key is derivable runs the full suite instead, and
+#   a derive step that produced neither answer now fails the job rather than
+#   skipping both run steps and reporting green.
+# * **Merge to `main`** — every job below runs, with `e2e` running the **full**
+#   suite. That is the permanent regression floor the roadmap's hardening phase
+#   installs: after Story 8.4 every future change ships against every spec, and
+#   specs are amended, never deleted.
+#
+# The sprint-status ↔ `e2e/stories` bijection lint that this header used to
+# defer to "a later story" landed with Story 8.4 and runs in the `server` job.
 
 name: ci
 
@@ -12,6 +37,16 @@ on:
   push:
     branches: [main]
   pull_request:
+
+# Read-only, and stated rather than inherited. An unstated `permissions:` block
+# takes the repository's default, which is a privilege nobody argued for in an
+# epic about hardening — and the default is settable elsewhere, so this file
+# would not record what these jobs can do. Nothing here writes: no job pushes a
+# commit, opens an issue, publishes a package or comments on a PR. The one thing
+# that leaves a runner is `actions/upload-artifact`, which uses its own scoped
+# token rather than this one.
+permissions:
+  contents: read
 
 defaults:
   run:
@@ -52,6 +87,24 @@ jobs:
       # migrations job covering it too.
       - name: log PHI lint
         run: uv run python -m scripts.lint_log_phi
+        working-directory: lineworker/server
+      # AD-15's sprint-status ↔ e2e/stories bijection (Story 8.4). Beside the
+      # PHI lint for the same reason it is beside ruff: a whole-tree static
+      # check whose failure names a file and a key.
+      #
+      # **In this job rather than in `e2e`, deliberately.** The thing it catches
+      # is a story whose spec was never written or was renamed — and `e2e`'s own
+      # derive step is blind to exactly that: it only counts a story key whose
+      # spec file exists, so a missing spec contributes no grep term, the smoke
+      # set runs, and the job goes green having tested nothing about the story
+      # the PR is for. The lint has to run somewhere that does not depend on the
+      # file it is looking for. It is also cheap and deterministic, and it wants
+      # to fail on the PR that renames a story rather than after the merge.
+      #
+      # It also runs in `pytest` via tests/test_story_spec_lint.py, which is what
+      # keeps the migrations job covering it too.
+      - name: story spec bijection lint
+        run: uv run python -m scripts.lint_story_specs
         working-directory: lineworker/server
       - run: uv run pytest
         working-directory: lineworker/server
@@ -255,6 +308,13 @@ jobs:
           PG_TLS_DIR: /tmp/tls
           BACKUP_AGE_RECIPIENT: age1ci0000000000000000000000000000000000000000000000000000000
           BACKUP_REMOTE: /tmp/offhost
+          # Story 8.4 put `${...:?}` guards on the two database credentials, so
+          # the prod render now refuses to produce a document without them —
+          # which is the point, and which means this step has to supply dummies
+          # exactly as it already does for the TLS directories. They are never
+          # dereferenced: `config` interpolates and does not connect.
+          POSTGRES_PASSWORD: ci-not-a-real-password
+          APP_DB_PASSWORD: ci-not-a-real-password-either
         run: |
           docker compose --profile backup -f deploy/compose.yaml config \
             --format json > /tmp/dev.json
@@ -354,6 +414,121 @@ jobs:
           sys.exit(1 if failures else 0)
           '
 
+      # --- Story 8.4: the prod profile, finished ---------------------------
+      #
+      # Three properties the story added, all of them invisible in the file text
+      # for the same reason the two assertions above are: they are consequences
+      # of a *merge*, and the merged document is what runs.
+      - name: the prod profile restarts, pins its pg_hba, and publishes nothing else
+        run: |
+          python3 -c '
+          import json, sys
+          failures = []
+          prod = json.load(open("/tmp/prod.json"))["services"]
+          if not prod:
+              failures.append("the rendered prod document has no services at all — "
+                              "this check would otherwise pass by iterating nothing")
+          for name, service in sorted(prod.items()):
+              # A production stack with no restart policy does not survive a host
+              # reboot: every container stays down until somebody notices, which
+              # for the backup job means a silently missed night.
+              #
+              # Bound to locals rather than inlined into the f-strings: this whole
+              # block is a single-quoted shell argument, so a double quote inside
+              # a nested subscript has to be backslash-escaped, and the escape is
+              # a literal backslash by the time python parses it. That is a
+              # SyntaxError the step reports as a crashing check rather than as a
+              # failing one, which is the worst kind of green.
+              restart = service.get("restart")
+              ports = service.get("ports")
+              if restart != "unless-stopped":
+                  failures.append(f"{name}: restart is {restart!r}, expected "
+                                  "unless-stopped in the prod profile")
+              # AD-5, from the other side of check_model_ports.py: web is the sole
+              # ingress, so nothing else may publish anything.
+              if name != "web" and ports:
+                  failures.append(f"{name}: publishes {ports} in prod; web is "
+                                  "the only service with an ingress")
+          postgres = prod.get("postgres", {})
+          mounts = [v.get("source", "") for v in postgres.get("volumes", [])]
+          if not any(m.endswith("pg_hba.prod.conf") for m in mounts):
+              failures.append("the prod postgres does not mount pg_hba.prod.conf — without "
+                              "it the network records stay `host` and a client that omits "
+                              "TLS is still accepted on the link 8.2 encrypted")
+          # …and the additive half is not enough. The two mounts collapse into one
+          # only because they share a container path, so compose keys them the same
+          # and the later file wins. Change either target and BOTH mount, with the
+          # effective client-auth policy decided by mount order rather than by the
+          # overlay — which reads as correct in every text assertion in the suite.
+          if any(m.endswith("postgres/pg_hba.conf") for m in mounts):
+              failures.append("the rendered prod profile mounts BOTH pg_hba.conf and "
+                              "pg_hba.prod.conf. They are supposed to collide on one "
+                              "container path so the prod file replaces the dev one; if "
+                              "both survive the merge, the target paths have diverged and "
+                              "which policy is live depends on mount order")
+          for failure in failures:
+              print(f"::error::{failure}")
+          if failures:
+              sys.exit(1)
+          print("ok:", len(prod), "prod services, each restarting, only web publishing")
+          '
+      # The guards themselves, driven rather than read. A `${VAR:?}` that was
+      # written `${VAR:-}` by a later edit still renders — silently, with the
+      # dev password baked into a production cluster — and every text assertion
+      # in the server suite would still pass. The only way to know the guard is
+      # a guard is to unset the variable and watch the render fail.
+      - name: the prod render refuses to produce a document without its credentials
+        env:
+          TLS_CERT_DIR: /tmp/tls
+          PG_TLS_DIR: /tmp/tls
+          BACKUP_AGE_RECIPIENT: age1ci0000000000000000000000000000000000000000000000000000000
+          BACKUP_REMOTE: /tmp/offhost
+        run: |
+          set -u
+          # The variables are DERIVED from the overlay, not listed here. A
+          # hardcoded pair drove two of the six `${…:?}` guards and left the other
+          # four — the TLS directories and the two backup knobs — never exercised,
+          # while the step's own name claimed the render refuses without its
+          # credentials.
+          guarded_vars=$(grep -o '\${[A-Z_][A-Z0-9_]*:?' deploy/compose.prod.yaml \
+                         | sed 's/^\${//; s/:?$//' | sort -u)
+          if [ -z "$guarded_vars" ]; then
+            echo "::error::no \${VAR:?} guards found in deploy/compose.prod.yaml at all. \
+          This step derives its own subject from that file and has just derived nothing."
+            exit 1
+          fi
+          echo "driving guards: $(echo "$guarded_vars" | tr '\n' ' ')"
+          failed=0
+          for guarded in $guarded_vars; do
+            # Two passes per variable: unset, and set-but-empty. `${VAR:?}` refuses
+            # both; `${VAR?}` — one character different — accepts the empty string
+            # and would render a production stack with a blank database password.
+            for mode in unset empty; do
+              # Every guarded variable set to something, except the one under test.
+              for name in $guarded_vars; do
+                export "$name=ci-not-a-real-value"
+              done
+              if [ "$mode" = unset ]; then unset "$guarded"; else export "$guarded="; fi
+              if output=$(docker compose -f deploy/compose.yaml -f deploy/compose.gpu.yaml \
+                   -f deploy/compose.prod.yaml config 2>&1); then
+                echo "::error::the prod profile rendered with $guarded $mode. Its \
+          \${$guarded:?} guard is missing or written \${$guarded?}, so a production \
+          stack would come up on a published default or a blank value."
+                failed=1
+              # Match compose's own wording rather than the bare name: an unrelated
+              # render failure whose message happens to contain the variable name
+              # would otherwise be read as the guard firing.
+              elif ! printf '%s' "$output" | grep -q "required variable $guarded"; then
+                echo "::error::the prod render failed with $guarded $mode, but not on that \
+          variable's guard: $(printf '%s' "$output" | head -1)"
+                failed=1
+              else
+                echo "ok: $guarded $mode -> render refused on its own guard"
+              fi
+            done
+          done
+          exit "$failed"
+
   e2e:
     name: playwright story specs + smoke
     runs-on: ubuntu-latest
@@ -380,6 +555,19 @@ jobs:
       # count when a matching spec file exists; if none is derivable the
       # FULL suite runs instead — the gate can narrow, never go vacuous.
       # Story-tag grep is anchored (\b) so @story:1-1 never matches 1-10.
+      #
+      # **`mode` is decided before anything is derived and written on the way
+      # out, unconditionally (Story 8.4).** It used to be echoed from inside the
+      # two branches of the `if` below, which made it possible — with one edit,
+      # a third branch, an early `return`, or a rename of `$GITHUB_OUTPUT` — for
+      # this step to succeed while emitting no `mode` at all. Both run steps
+      # below are `if:`-gated on that value, so neither would run, and the job
+      # would report green having executed no Playwright at all. That is the
+      # precise shape AD-15 calls a gate passing vacuously, and it is the shape
+      # Story 8.3's review found in a posture test, so it is closed here rather
+      # than argued about: `mode` starts at `full` (the safe answer — run
+      # everything), narrows only on evidence, and is written once at the end.
+      # The guard step after this one refuses anything else.
       - name: derive story grep (PR)
         if: github.event_name == 'pull_request'
         id: story
@@ -388,26 +576,72 @@ jobs:
           HEAD_REF: ${{ github.head_ref }}
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ' ') }}
         run: |
+          mode=full
+          pattern=""
           candidates=$(printf '%s %s' "$HEAD_REF" "$PR_LABELS" | grep -oE '[0-9]+-[0-9]+' | sort -u || true)
           keys=""
           for k in $candidates; do
             if ls stories/"$k"-*.spec.ts >/dev/null 2>&1; then keys="$keys $k"; fi
           done
           if [ -n "$keys" ]; then
-            pattern=""
             for k in $keys; do pattern="${pattern}@story:${k}\\b|"; done
-            echo "grep=${pattern}@smoke\\b" >> "$GITHUB_OUTPUT"
-            echo "mode=story" >> "$GITHUB_OUTPUT"
+            pattern="${pattern}@smoke\\b"
+            mode=story
             echo "Derived story keys:$keys"
           else
-            echo "mode=full" >> "$GITHUB_OUTPUT"
             echo "No story key derivable from branch/labels — running the FULL e2e suite."
           fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "grep=$pattern" >> "$GITHUB_OUTPUT"
+      # The guard, and it is not belt-and-braces: it is the only thing standing
+      # between "both run steps were skipped" and a green tick. A skipped step is
+      # a *success* in GitHub Actions, so the failure it protects against has no
+      # symptom — the job is green, the required check passes, and no Playwright
+      # process ever started.
+      #
+      # PR-only, because on a push to `main` this step's producer never runs and
+      # `mode` is legitimately empty; the full-suite step below is gated on the
+      # event rather than on `mode` there, so nothing can be skipped into
+      # silence. The `case` was run with all four inputs before shipping —
+      # `story` and `full` pass, an empty `mode` and an unrecognised one both
+      # print the `::error::` and exit 1 — because a guard nobody has watched
+      # fire is a guard nobody knows the shape of.
+      - name: the e2e stage picked a suite to run (AD-15)
+        if: github.event_name == 'pull_request'
+        env:
+          MODE: ${{ steps.story.outputs.mode }}
+        run: |
+          case "$MODE" in
+            story|full)
+              echo "e2e mode: $MODE"
+              ;;
+            *)
+              echo "::error::the e2e job derived mode '$MODE', which is neither 'story' nor" \
+                   "'full'. Both run steps are gated on it, so both would be skipped and this" \
+                   "job would report success having run no specs at all (AD-15: a gate that" \
+                   "can pass vacuously is not a gate)."
+              exit 1
+              ;;
+          esac
       - name: run story + smoke specs (PR)
         if: github.event_name == 'pull_request' && steps.story.outputs.mode == 'story'
         run: npx playwright test --grep "${{ steps.story.outputs.grep }}"
         working-directory: lineworker/e2e
-      - name: run full e2e suite (main / PR fallback)
+      # **The merge-to-main stage (AD-15), stated as such.** `github.event_name
+      # == 'push'` is `on.push.branches: [main]` — this workflow is triggered by
+      # a push to no other branch — so this step *is* the full-suite floor the
+      # hardening phase installs: every spec in `e2e/stories`, `workers: 1`,
+      # `fullyParallel: false`, a fresh drop/migrate/seed per spec file, against
+      # the e2e compose profile with the deterministic model stub.
+      #
+      # It reads as a fallback because the PR branch shares it, and it is not
+      # one. The two conditions are two different claims: on a PR, "no story key
+      # was derivable, so narrow to nothing and run everything"; on a push to
+      # `main`, "this is the regression floor and narrowing is not an option".
+      # Said here because a future edit that made the fallback cheaper — running
+      # only `@smoke` when no key is derivable, say — would silently take the
+      # merge stage with it.
+      - name: run full e2e suite (merge to main; PR with no derivable story key)
         if: github.event_name == 'push' || (github.event_name == 'pull_request' && steps.story.outputs.mode == 'full')
         run: npx playwright test
         working-directory: lineworker/e2e

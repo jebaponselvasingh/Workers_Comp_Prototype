@@ -19,9 +19,29 @@
 # ## What is here
 #
 # TLS at the nginx ingress, TLS on the API-to-Postgres connection, and the
-# pgaudit posture restated with `ssl=on` added. Nothing else: `ollama` is the
-# GPU overlay's, and `api`'s model and tracing configuration is identical in
-# every profile and stays in the base file.
+# pgaudit posture restated with `ssl=on` added (Story 8.2); and, since Story
+# 8.4 finished the profile: a `restart:` policy on every service, `${…:?}`
+# guards on both database credentials, explicit values for the settings whose
+# defaults key off `ENV`, the `hostssl`-only `pg_hba` mounted over the dev one,
+# and a verified TLS connection for the backup job. `api`'s model and tracing
+# configuration is identical in every profile and stays in the base file.
+#
+# **`ollama` appears here now, and only for its `restart:` policy.** The
+# header above still holds — the GPU *reservation* is `compose.gpu.yaml`'s and
+# stays there — but "survive a host reboot" is a deployment fact rather than a
+# hardware one, and a prod host with no NVIDIA card runs this profile without
+# the GPU overlay at all. Putting the policy in the overlay that may not be
+# applied would give that deployment four services that come back after a
+# reboot and one that does not.
+#
+# ## The boot runbook
+#
+# `deploy/DEPLOYMENT.md` is the procedure this file is the configuration for:
+# prerequisites, the volume-encryption pre-flight compose cannot enforce, which
+# variables must be set, the exact `up` command, health verification and smoke.
+# It also carries § 8, the deliberately-not-built registry. A deployment
+# assembled from this file alone will miss the encryption prerequisite, which
+# is the one requirement here that no `${…:?}` guard can fail on.
 #
 # ## Certificates
 #
@@ -69,6 +89,32 @@ name: lineworker
 
 services:
   web:
+    # ## `restart: unless-stopped`, on this and on every other service
+    #
+    # Stated once here and repeated without argument on the other four, because
+    # it is one decision. No profile in this repository carried a restart policy
+    # before Story 8.4, which means the default — `no` — applied: a container
+    # that exits for any reason stays exited, and a host reboot leaves the whole
+    # stack down until somebody notices and runs `up` again. That is survivable
+    # on a laptop and is not a production posture; a claims console that is down
+    # from a 03:00 kernel update until the first handler logs in at 08:00 has
+    # had a five-hour outage nobody was told about.
+    #
+    # **`unless-stopped` rather than `always`**, and the difference is the one
+    # case that matters: `always` restarts a container the operator deliberately
+    # stopped as soon as the daemon comes back, so `docker compose stop
+    # postgres` before a maintenance window silently undoes itself on the next
+    # daemon restart. `unless-stopped` restarts everything that was running and
+    # respects an explicit stop, which is the behaviour every runbook step in
+    # `deploy/DEPLOYMENT.md` and `deploy/RESTORE-DRILL.md` assumes.
+    #
+    # Deliberately **not** in the dev base: `docker compose up` on a laptop
+    # should leave nothing behind that starts itself again after a reboot, and
+    # a crash-looping container in dev is a thing you want to stay crashed so
+    # you can read why. `server/tests/test_deploy_ops_posture.py` asserts both
+    # directions — present in prod, absent everywhere else — so neither half can
+    # drift into the other.
+    restart: unless-stopped
     # **`!override`, and it is load-bearing.** Compose *appends* port lists
     # across files rather than replacing them, so without it the merged
     # document publishes 8080:80 *as well as* 443 — a prod stack answering
@@ -99,6 +145,8 @@ services:
       start_period: 5s
 
   api:
+    # See `web` above for the whole argument; one decision, five services.
+    restart: unless-stopped
     environment:
       # **`ENV: prod` is deliberately NOT set here, and its absence is asserted
       # by `server/tests/test_deploy_tls_posture.py`.** `api/app.py::create_app`
@@ -129,14 +177,38 @@ services:
       # renames the parameter to `ssl` for the asyncpg engines and leaves it
       # alone for psycopg — one spelling here, two drivers there.
       #
-      # The credential interpolation is the base file's, character for
-      # character: this overlay adds a query parameter and nothing else. It is
-      # deliberately *not* upgraded to a `:?` guard here — a prod stack running
-      # on the synthetic dev password is a real hazard, and it is the prod
-      # profile's completion (Story 8.4) rather than a transport-encryption
-      # change smuggling in a second unrelated refusal.
-      DATABASE_URL: postgresql://lineworker_app:${APP_DB_PASSWORD:-lineworker_app_dev}@postgres:5432/lineworker?sslmode=verify-full
-      ALEMBIC_DATABASE_URL: postgresql://lineworker:${POSTGRES_PASSWORD:-lineworker_dev}@postgres:5432/lineworker?sslmode=verify-full
+      # ## The credentials are guarded, not defaulted (Story 8.4)
+      #
+      # Story 8.2 left these as the base file's interpolation, character for
+      # character, and said in as many words that upgrading them belonged to
+      # the prod profile's completion rather than to a transport-encryption
+      # change. This is that completion.
+      #
+      # `${APP_DB_PASSWORD:-lineworker_app_dev}` in a prod render is the
+      # sharpest hazard this file had: a deployment that forgot the variable
+      # got a stack that *came up*, initialised its database with a password
+      # published in this repository, and served the claim book behind it. The
+      # failure is invisible — every healthcheck passes — and it is discovered
+      # by whoever tries the default first. A `:?` guard fails
+      # `docker compose config` instead, before an image is pulled, naming the
+      # variable; that is the earliest and loudest point available.
+      #
+      # Both, not just the app role: `ALEMBIC_DATABASE_URL` is the schema
+      # owner, which is a strictly larger credential than the one uvicorn
+      # holds, and Story 8.1 made the api exercise it daily for the audit
+      # redaction sweep rather than only at boot.
+      #
+      # The message is the whole of the operator's context at that moment —
+      # compose prints it and nothing else — so it says what the variable is
+      # for and where to read about it rather than "required".
+      DATABASE_URL: postgresql://lineworker_app:${APP_DB_PASSWORD:?APP_DB_PASSWORD must be set for a prod render — it is the password of the lineworker_app role uvicorn connects as, and the dev default is published in this repository. See deploy/.env.example and deploy/DEPLOYMENT.md section 3}@postgres:5432/lineworker?sslmode=verify-full
+      ALEMBIC_DATABASE_URL: postgresql://lineworker:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set for a prod render — it is the schema owner and the bootstrap superuser, and the dev default is published in this repository. See deploy/.env.example and deploy/DEPLOYMENT.md section 3}@postgres:5432/lineworker?sslmode=verify-full
+      # The third place the app password is rendered, and the one that is easy
+      # to miss because it lives in the *base* file: the entrypoint reconciles
+      # the `lineworker_app` role against this value on every boot, so leaving
+      # it at the dev default here would have set the role's password back to
+      # the published one on the first restart, whatever the URLs above said.
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?APP_DB_PASSWORD must be set for a prod render — the api reconciles the lineworker_app role to this value on every boot}
       # The CA arrives through the environment rather than through the URL and
       # that is not a style choice: asyncpg has no keyword for `sslrootcert`
       # and reads it from PGSSLROOTCERT (asyncpg/connect_utils.py), while
@@ -144,6 +216,41 @@ services:
       # both drivers obey. `Settings` refuses the file parameters in a URL
       # outright, naming this variable.
       PGSSLROOTCERT: /etc/postgresql/tls/ca.crt
+      # ## Every setting whose default keys off `ENV`, set explicitly (Story 8.4)
+      #
+      # This overlay renders `ENV: dev` — see the argument above, which has not
+      # changed — so a profile named prod runs a process that believes it is a
+      # development stack. That is tolerable for behaviour nobody derives from
+      # it and intolerable for behaviour somebody does, and `config.py` has
+      # exactly two properties that derive from `settings.env`. Both are set
+      # here rather than inherited from a flag that is telling the wrong story.
+      #
+      # The list is two items today and was re-derived from `config.py` rather
+      # than copied from a spec: `grep 'self.env is'` finds `cookie_secure`
+      # (`:737`) and `scheduler_runs` (`:731`) and nothing else. A third
+      # `env`-keyed default added later and not set here is the drift this
+      # block invites, which is why `test_deploy_ops_posture.py` asserts the
+      # count from the source rather than from a list of names.
+      #
+      # **`SESSION_COOKIE_SECURE: "true"` is the one that is a security
+      # control, not a tidy-up.** `cookie_secure` defaults to `env is Env.prod`,
+      # i.e. **false** under this overlay — so the session cookie behind a TLS
+      # ingress with HSTS would be sent without the `Secure` attribute, and a
+      # browser that could be induced to make one plaintext request to the host
+      # would send it in the clear. The `308` and the HSTS header in
+      # `nginx/tls.conf` make that hard; the attribute makes it impossible, and
+      # it is one line.
+      SESSION_COOKIE_SECURE: "true"
+      # `scheduler_runs` defaults to `env is not Env.e2e`, so under `ENV: dev`
+      # it already resolves to **true**, which is the value prod wants: the
+      # payment batch and the Story 8.1 retention sweep must run. It is stated
+      # anyway, for the reason the postgres `command:` list is stated in full —
+      # a value this deployment depends on should not be a default that happens
+      # to fall the right way under a flag the file itself admits is wrong. If
+      # the IdP decision lands and `ENV: prod` goes back in, this line is
+      # already correct; without it, the day `ENV` changes is the day somebody
+      # has to work out which behaviours moved.
+      SCHEDULER_ENABLED: "true"
     volumes:
       # **One file, not the directory.** The api verifies a chain and needs
       # `ca.crt` for it; `server.key` in the same directory is the database's
@@ -154,7 +261,25 @@ services:
       # secret store. `server/tests/test_deploy_tls_posture.py` asserts it.
       - ${PG_TLS_DIR:?PG_TLS_DIR must point at the host directory holding the Postgres server certificate, key and ca.crt}/ca.crt:/etc/postgresql/tls/ca.crt:ro
 
+  ollama:
+    # **The only key this service has in this file, and the only one it should
+    # get.** `compose.gpu.yaml` owns the device reservation and its header
+    # argues that a second place to configure this service is drift; that
+    # argument is about *hardware*, and a restart policy is not hardware. A
+    # prod host with no NVIDIA card runs `compose.yaml + compose.prod.yaml`
+    # with no GPU overlay at all, and putting the policy there would give that
+    # deployment four services that survive a reboot and one that does not.
+    #
+    # Model tags stay `${CHAT_MODEL}` / `${EMBEDDING_MODEL}` from the base file
+    # and no port is published in this profile or any other (AD-5) — re-checked
+    # here rather than restated, because restating either would be the drift
+    # the GPU overlay's header is actually about. `.github/scripts/
+    # check_model_ports.py` renders this profile and fails on a `ports:` key.
+    restart: unless-stopped
+
   postgres:
+    # See `web` above for the whole argument; one decision, five services.
+    restart: unless-stopped
     # The base file's hardening list, restated in full and extended with three
     # TLS flags. Restated rather than appended because compose *replaces* a
     # `command:` rather than merging it — an overlay carrying only the TLS
@@ -212,10 +337,54 @@ services:
       - ssl_cert_file=/etc/postgresql/tls/server.crt
       - -c
       - ssl_key_file=/etc/postgresql/tls/server.key
+    environment:
+      # The bootstrap superuser and schema owner. Guarded here for the reason
+      # `api`'s two URLs are guarded above, and this is the interpolation that
+      # actually *creates* the role: the official image reads POSTGRES_PASSWORD
+      # only when it initialises an empty data directory, so a first prod boot
+      # that fell back to the dev default would bake the published password
+      # into the cluster and changing it afterwards needs an `ALTER ROLE`
+      # rather than an edit to this file.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set for a prod render — it initialises the schema-owner role on the first boot and the dev default is published in this repository. See deploy/.env.example and deploy/DEPLOYMENT.md section 3}
     volumes:
       - ${PG_TLS_DIR:?PG_TLS_DIR must point at the host directory holding the Postgres server certificate, key and ca.crt}:/etc/postgresql/tls:ro
+      # ## The prod `pg_hba`, mounted over the dev one (Story 8.4)
+      #
+      # Same container path, same `-c hba_file=` flag, different file — the
+      # move `nginx/tls.conf` already makes over the baked `default.conf`
+      # above, for the same reason: compose keys volume merging on the
+      # *container* path, so the later file's mount replaces the base's rather
+      # than joining it, and the image and the flag are untouched.
+      #
+      # **What differs is `host` → `hostssl` on every non-loopback record.**
+      # `ssl=on` in the `command:` above *permits* TLS; it refuses nothing. A
+      # client that simply omits `sslmode` — the api if a query parameter were
+      # ever dropped from its URL, `psql` from a shell in any container on the
+      # network, the backup job's replication connection — is accepted in
+      # plaintext, and the only thing standing between the claim book and the
+      # wire is a string surviving in two environment variables.
+      # `deferred-work.md` records that gap twice (Story 8.2 review, Story 8.3
+      # review) and names this profile's completion as its owner.
+      #
+      # **A second file rather than an edit to the first**, because one file
+      # cannot be two policies: dev and e2e have no certificates at all, so
+      # `hostssl` there would refuse every connection and break `docker compose
+      # up` on every laptop and the whole e2e gate with it. That is exactly why
+      # Story 8.3 shipped `host` records and left this half here.
+      #
+      # `server/tests/test_deploy_ops_posture.py` holds the two files to each
+      # other — same records, same order, same methods, differing only in the
+      # `host`/`hostssl` keyword — so neither can quietly become the other, and
+      # asserts the mount appears in this profile and in no other.
+      - ./postgres/pg_hba.prod.conf:/etc/postgresql/pg_hba.conf:ro
 
   backup:
+    # See `web` above for the whole argument; one decision, five services. It
+    # matters most here: this is the only service whose job is a schedule, so a
+    # container that stayed down after a reboot would not fail — it would
+    # simply stop taking backups, and the healthcheck that would have said so
+    # is inside the container that is not running.
+    restart: unless-stopped
     # A base backup of a real database takes minutes, and compose's default
     # stop timeout is ten seconds — so `down` during the nightly window used to
     # SIGKILL the run, which skips every trap and leaves the plaintext staging
@@ -263,6 +432,34 @@ services:
       # in the postgres `command:` above is what stops its failure mode from
       # becoming a database outage.
       BACKUP_WAL: "on"
+      # ## The one connection that carries a byte-for-byte copy (Story 8.4)
+      #
+      # The base file's default composes the owner credentials with **no
+      # `sslmode`**, which under the `hostssl` records this profile now mounts
+      # would simply be refused — and before them was silently accepted in
+      # plaintext. `pg_basebackup` and `pg_receivewal` between them move the
+      # entire data directory and every subsequent write across this link; if
+      # any connection in this stack has to be verified rather than
+      # encrypted-if-offered, it is this one.
+      #
+      # `verify-full`, matching both api URLs, for the reason stated at length
+      # above: `require` encrypts and authenticates nothing, so it defeats a
+      # passive listener and not an impostor that has joined the compose
+      # network — and an impostor this connection trusts receives the schema
+      # owner's password and can answer a base-backup request with anything it
+      # likes.
+      #
+      # The password is guarded the same way `api`'s is; the default in the
+      # base file interpolates `${POSTGRES_PASSWORD:-lineworker_dev}` inside a
+      # URL, which is the one place the dev fallback would have survived into a
+      # prod render without being visible as a fallback at all.
+      BACKUP_DATABASE_URL: postgresql://lineworker:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set for a prod render — the backup job connects as the schema owner and the dev default is published in this repository}@postgres:5432/lineworker?sslmode=verify-full
+      # libpq reads the CA from this variable, exactly as the api's asyncpg and
+      # psycopg engines do — `pg_basebackup`, `pg_dump` and `pg_receivewal` are
+      # all libpq clients, so one mechanism covers all three and there is no
+      # `sslrootcert=` in the URL for the same reason there is none in the
+      # api's (`Settings` refuses the file parameters outright, naming this).
+      PGSSLROOTCERT: /etc/postgresql/tls/ca.crt
     volumes:
       # **One file, read-only, from the host secret store** — the same
       # least-privilege shape as the api's `ca.crt` mount above and for a
@@ -278,3 +475,13 @@ services:
       # `BatchMode=yes`, which is deliberate — a nightly job that can sit at a
       # prompt is a nightly job that silently stops.
       - ${BACKUP_SSH_KEY_FILE:-/dev/null}:/etc/lineworker/backup-ssh/id_backup:ro
+      # **One file, again, and for the third time in this file the same
+      # argument** (Story 8.4). `verify-full` on the URL above needs the
+      # authority that signed the database's certificate and needs nothing else
+      # from `${PG_TLS_DIR}`; `server.key` in that directory is the database's
+      # private key, and this container already holds a credential that can
+      # read every PHI store and an SSH key to another host. Handing it the key
+      # that signs Postgres's certificate as well would let a foothold here
+      # impersonate the database to the api — which is the exposure
+      # `verify-full` exists to close, undone by a shorter mount line.
+      - ${PG_TLS_DIR:?PG_TLS_DIR must point at the host directory holding the Postgres server certificate, key and ca.crt}/ca.crt:/etc/postgresql/tls/ca.crt:ro

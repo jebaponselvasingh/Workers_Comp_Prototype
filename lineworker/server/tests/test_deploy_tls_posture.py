@@ -28,6 +28,7 @@ words rather than about the merged document; the mitigation is that the words
 being checked are the ones an operator reads in review.
 """
 
+import re
 from pathlib import Path
 from typing import Final
 
@@ -282,9 +283,9 @@ def test_the_postgres_tls_flags_are_in_the_prod_profile_and_nowhere_else() -> No
 
 
 def test_the_prod_profile_reaches_postgres_over_verified_tls() -> None:
-    """AC 3's API half: both URLs, and the CA through the environment.
+    """AC 3's API half: every URL, and the CA through the environment.
 
-    `verify-full` rather than `require` on both, because `require` encrypts and
+    `verify-full` rather than `require`, because `require` encrypts and
     verifies nothing — it defeats a passive listener and not an impostor that
     has joined the compose network. `PGSSLROOTCERT` rather than a `sslrootcert`
     URL parameter because asyncpg has no keyword for it and reads it from the
@@ -292,12 +293,31 @@ def test_the_prod_profile_reaches_postgres_over_verified_tls() -> None:
     refuses every other query parameter outright, naming `PGSSLROOTCERT` for
     this one), and because psycopg honours the same name — one mechanism, both
     drivers.
+
+    **Derived from the file rather than counted.** This assertion was
+    `count(…) == 2` for the two api URLs, and Story 8.4 added a third database
+    URL to this overlay — the backup job's, which under the `hostssl` records
+    that story mounts is refused outright without it. A fixed count fails on the
+    URL being *added*, which is the wrong direction: the rule is "every
+    connection string in this overlay is verified", so every one of them is
+    found and checked and a fourth is covered on the day it appears.
     """
     prod = directives("compose.prod.yaml")
-    assert prod.count("sslmode=verify-full") == 2, (
-        "deploy/compose.prod.yaml must carry sslmode=verify-full on BOTH DATABASE_URL "
-        "and ALEMBIC_DATABASE_URL — the migration connection is as much a PHI channel "
-        "as the runtime one."
+    # To end of line, not `\S+`: a `${VAR:?message}` guard puts spaces inside
+    # the URL, so a non-whitespace match stops at the first word of the message
+    # and every URL then looks unverified. Found by this test failing against a
+    # file that was correct — the same class of mistake `directives` exists for.
+    urls = re.findall(r"^\s*\w+:\s*(postgresql://.*)$", prod, re.MULTILINE)
+    assert len(urls) >= 3, (
+        f"deploy/compose.prod.yaml carries {len(urls)} database URLs; the overlay restates "
+        "at least DATABASE_URL, ALEMBIC_DATABASE_URL and BACKUP_DATABASE_URL. A missing one "
+        "means the base file's unencrypted default survived into the prod render."
+    )
+    unverified = [url for url in urls if "sslmode=verify-full" not in url]
+    assert unverified == [], (
+        f"deploy/compose.prod.yaml carries {unverified} without sslmode=verify-full. The "
+        "migration connection and the backup connection are as much PHI channels as the "
+        "runtime one — the backup's carries a byte-for-byte copy of the database."
     )
     assert "PGSSLROOTCERT: /etc/postgresql/tls/ca.crt" in prod
     assert "sslrootcert=" not in prod, (
@@ -321,6 +341,13 @@ def test_the_api_container_gets_the_ca_and_not_the_databases_private_key() -> No
 
     Asserted in both directions: the narrow mount is present, and the directory
     mount appears exactly once in the file, which is postgres's.
+
+    Story 8.4 added a **second** single-file CA mount, for `backup` — its
+    connection now carries `sslmode=verify-full` and needs an authority to
+    verify against, and it is the container that also holds an SSH key to
+    another host, so the argument above applies to it more sharply rather than
+    less. The count assertion below is unchanged and still says what it always
+    said: however many services need `ca.crt`, exactly one gets the directory.
     """
     prod = directives("compose.prod.yaml")
     assert "/ca.crt:/etc/postgresql/tls/ca.crt:ro" in prod, (

@@ -221,6 +221,20 @@ configuration rather than a stock database that happens to pass.
 Every story ships `e2e/stories/<story-key>.spec.ts`; a story is not done until
 its spec passes against the freshly reset e2e stack.
 
+That correspondence is a **lint**, not a convention (AD-15): every non-backlog
+key in `sprint-status.yaml` must have exactly one spec file, every spec file
+must have a key, and each spec's `@story:` tag must match its own filename —
+matched anchored, so `1-3` never claims `1-30`'s spec. It runs in CI beside the
+PHI lint and takes no arguments:
+
+```sh
+cd server && uv run python -m scripts.lint_story_specs
+```
+
+A renamed story whose spec was not renamed with it is otherwise a silent hole in
+the gate: the suite stays green and the story it was supposed to cover is no
+longer covered by anything.
+
 ## Backups and restore
 
 The `backup` container (`deploy/backup/`) owns the whole disaster-recovery
@@ -257,6 +271,38 @@ in `deploy/.env.example`.
 actually executed. Read § 6 before restoring into production: a restored backup
 resurrects PHI that the Story 8.1 purge cascade removed, and the mitigation is
 bounded retention plus re-running the purge — never purge-aware filtering.
+
+## Production deployment
+
+**`deploy/DEPLOYMENT.md` is the boot runbook**, and it records a boot that was
+actually executed. Clean host → prerequisites → volume-encryption pre-flight →
+secrets → `up` → health verification → smoke, plus § 8, the registry of what
+this system deliberately does not build and what reopens each decision.
+
+```sh
+# Render first — every interpolation, every overlay, no images, no volumes.
+docker compose -f deploy/compose.yaml -f deploy/compose.prod.yaml config >/dev/null
+# Then boot (add -f deploy/compose.gpu.yaml on a host with the NVIDIA toolkit).
+docker compose -f deploy/compose.yaml -f deploy/compose.prod.yaml up -d
+```
+
+The prod overlay is `compose.yaml` plus TLS at both boundaries, `restart:
+unless-stopped` on every service, always-on backups, a `hostssl`-only
+`pg_hba`, and `${…:?}` guards on six variables that have no safe default —
+including both database passwords, whose dev values are published in this
+repository. A render that misses one fails naming it.
+
+Two things the runbook carries that no file here can enforce: the host-level
+volume encryption (§ 2 — compose cannot express it, and an unencrypted host
+produces a stack that looks perfectly healthy) and the fact that the Postgres
+certificate must be issued for the name `postgres` rather than for the
+deployment's hostname (§ 1 — the likeliest first-deployment failure this profile
+has).
+
+`ENV=prod` is **refused** by the api while persona login is the authentication
+mechanism, so the prod overlay renders `ENV: dev` and sets the settings that
+would derive from it explicitly. `DEPLOYMENT.md § 8` names the identity-provider
+decision that lifts this, with its trigger.
 
 ## Documentation
 

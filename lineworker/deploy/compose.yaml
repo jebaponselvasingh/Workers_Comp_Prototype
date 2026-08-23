@@ -8,11 +8,16 @@
 # Ollama arrived with Story 6.1 (below, no ports: — AD-5); the backup job
 # with Epic 8.
 #
-# **First boot downloads models.** The `ollama` service pulls CHAT_MODEL and
-# EMBEDDING_MODEL before it reports healthy, and `api` waits for that — so
-# the first `up` on a clean machine takes as long as several gigabytes over
-# your connection. Subsequent boots are instant: the models live in the
-# `ollama-models` volume. See deploy/.env.example.
+# **First boot downloads models, and the rest of the stack no longer waits
+# for it** (Story 8.4, AD-14). The `ollama` service pulls CHAT_MODEL and
+# EMBEDDING_MODEL before it reports healthy, which on a clean machine takes
+# as long as several gigabytes over your connection — but `api` depends on it
+# with `service_started`, so postgres, api and web come up immediately and the
+# console serves the queue and a claim while the pull runs. The AI routes
+# report `ai_unavailable` until ollama is healthy, and on a host that cannot
+# reach the registry at all they keep reporting it and nothing else breaks.
+# Subsequent boots are instant: the models live in the `ollama-models` volume.
+# See deploy/.env.example.
 
 name: lineworker
 
@@ -106,12 +111,34 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      # `service_healthy`, and ollama's healthcheck is "the models are pulled"
-      # rather than "the server answered" — so the api never starts against a
-      # model server that is up but has nothing loaded. That distinction is the
-      # whole reason the entrypoint below writes a readiness file.
+      # **`service_started`, not `service_healthy` (Story 8.4, AD-14).**
+      #
+      # Story 6.1 wrote `service_healthy` here with this argument: ollama's
+      # healthcheck means "the models are pulled" rather than "the server
+      # answered", so the api never starts against a model server that is up
+      # and has nothing loaded. The healthcheck still means exactly that — the
+      # entrypoint below still writes its readiness file only after both pulls
+      # succeed, and that is still the AI-availability signal. What changed is
+      # that it is no longer a **gate on the console**.
+      #
+      # AD-14 says startup gating orders boot and never creates a hard runtime
+      # or boot dependency on the model server, and Story 6.6 built the seam
+      # that makes an outage reportable rather than fatal
+      # (`agents/degradation.py` translates unavailability at the model object,
+      # so `create_app` has no boot-time dependency on Ollama at all). A
+      # `service_healthy` condition on a two-model pull defeats both on the one
+      # occasion it matters most: a fresh host with no route to the model
+      # registry, where the pull cannot succeed, the 30-minute `start_period`
+      # below runs out, and a claims console that needs no model to show a
+      # queue never starts. The claim screens are not an AI feature.
+      #
+      # Ordering is preserved — ollama is still created and started before the
+      # api — and readiness is demoted from a gate to a signal: `docker compose
+      # ps` reports ollama unhealthy while it pulls, and the AI routes answer
+      # `ai_unavailable` until it is done. That is the degradation path this
+      # system already has, used for the case it was built for.
       ollama:
-        condition: service_healthy
+        condition: service_started
     healthcheck:
       test:
         - CMD
@@ -189,7 +216,23 @@ services:
         touch /tmp/ollama-ready
         wait $$server
     healthcheck:
-      test: ["CMD-SHELL", "test -f /tmp/ollama-ready"]
+      # **Two conditions, and they answer two different questions (Story 8.4).**
+      #
+      # `ollama list` reaches the container's own HTTP API — it is a client
+      # call to `http://127.0.0.1:11434`, made with a binary that is
+      # unconditionally in this image, which is what makes AC 2's "every
+      # container exposes a health endpoint" literally true of this service and
+      # not merely true by analogy. The marker file keeps the check's *meaning*
+      # unchanged: it is written only after both pulls succeed, so healthy
+      # still means "models are loaded" and not "a process is listening".
+      #
+      # Both, rather than replacing one with the other, because each alone is
+      # wrong. The endpoint probe alone reports a model server that is up and
+      # has nothing to serve — the exact failure Story 6.1's comment above was
+      # written about. The marker alone would go on passing against a server
+      # that had died after writing it, since a file does not stop existing
+      # when the process that touched it exits.
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 && test -f /tmp/ollama-ready"]
       interval: 10s
       timeout: 5s
       retries: 5

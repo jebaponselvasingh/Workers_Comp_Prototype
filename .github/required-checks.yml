@@ -1,0 +1,86 @@
+# The checks that must be required for merge to `main` (Story 8.4, AD-15).
+#
+# ## What this file is, and what it is not
+#
+# **Branch protection is configured in GitHub repository settings, not here.**
+# Nothing in this repository can create, read or apply a protection rule, and
+# nothing in CI reads this file at run time. It is the *reviewable record of
+# what that configuration must say* — the list somebody opens the settings page
+# with, and the list a reviewer can disagree with in a pull request.
+#
+# It is worth having anyway, because the alternative is a claim about a settings
+# page. Story 8.4's job was to confirm that every element of the NFR-7 gate is a
+# required check; the only honest artifact for "required" would otherwise have
+# been a sentence in a runbook, and a sentence does not fail when somebody adds
+# a sixth job and forgets to require it. `server/tests/test_required_checks.py`
+# holds this list and `.github/workflows/ci.yaml`'s job list in **set equality,
+# both ways**: a job added to the workflow and not declared here fails the
+# build, and a check declared here with no such job fails it too. So the
+# *completeness* of the list is mechanical even though the *enforcement* stays
+# manual. What remains genuinely unenforceable is recorded in
+# `_bmad-output/implementation-artifacts/deferred-work.md` rather than implied
+# away — see `deploy/DEPLOYMENT.md § 8`.
+#
+# ## Names, not job keys
+#
+# GitHub matches a required status check by the **name of the check run**, which
+# is a job's `name:` when it has one and its key when it does not. Every job in
+# `ci.yaml` sets `name:`, so these are the strings the settings page expects,
+# character for character. The `job:` key is carried beside each one so the test
+# can point at the thing to change and so a rename of either half is a two-line
+# diff a reviewer reads as one change.
+#
+# ## Applying it
+#
+#   Settings → Branches → Branch protection rules → `main`
+#     ☑ Require status checks to pass before merging
+#     ☑ Require branches to be up to date before merging
+#     Status checks: every `name:` below, and nothing else
+#
+# "and nothing else" is not tidiness. A required check that no workflow produces
+# is a merge that can never complete, and it is indistinguishable on the
+# settings page from one that is simply waiting.
+
+required_checks:
+  - job: server
+    name: server lint+typecheck+pytest
+    reason: >-
+      ruff, mypy, the AD-11 log-PHI lint, the AD-15 sprint-status/spec bijection
+      lint, and the pure-Python pytest suite. The cheapest, fastest and broadest
+      of the five; a PR that cannot pass this one has nothing worth booting a
+      stack for.
+
+  - job: web
+    name: web lint+typecheck+vitest
+    reason: >-
+      eslint, tsc, Vitest, and the generated-OpenAPI-client drift check. The
+      drift check is the half that must be required rather than merely present:
+      `src/api/schema.d.ts` is committed, so a changed endpoint signature is a
+      runtime surprise in the SPA and in nothing else.
+
+  - job: migrations
+    name: alembic upgrade against fresh DB
+    reason: >-
+      NFR-7's "clean `alembic upgrade head` against a fresh Postgres 18 +
+      pgvector", now spanning every migration from 1.2 to 8.2 — and, since the
+      hand-maintained file list was dropped, the only job in which any
+      `requires_db` module runs at all. Not requiring it would leave every
+      DB-backed test skipping silently in a green build.
+
+  - job: compose
+    name: compose config (AD-5 port posture)
+    reason: >-
+      The only thing in the build that renders the merged compose documents.
+      AD-5's hardest rule is a negative — the model server publishes no port, in
+      any profile — and a negative is what nobody notices going missing; the
+      same job is what proves `ports: !override` and `profiles: !override []`
+      are spelled correctly, which no text assertion can.
+
+  - job: e2e
+    name: playwright story specs + smoke
+    reason: >-
+      AD-15's story gate itself: the PR's declared story spec(s) plus the
+      `@smoke` set on a pull request, and the full `e2e/` suite on merge to
+      `main`. This is the check the whole convention rests on, and it is the one
+      whose absence would be least visible — the other four would still be
+      green.
