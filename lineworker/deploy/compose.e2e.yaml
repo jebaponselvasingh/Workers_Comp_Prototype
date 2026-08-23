@@ -72,6 +72,13 @@ services:
       LANGCHAIN_TRACING_V2: "false"
       LANGSMITH_OTEL_ENABLED: "false"
       LANGCHAIN_OTEL_ENABLED: "false"
+    volumes:
+      # The blob volume, read-write here and read-only in `backup` — the dev
+      # profile's mount, at the same container path, so the two profiles teach
+      # the same habit (Story 8.3). A bind mount rather than a named volume for
+      # this file's usual reason: the e2e stack keeps no state between runs, and
+      # `e2e/.tmp/` is what the Playwright process can read from the host.
+      - ../e2e/.tmp/blobs:/var/lib/lineworker/blobs
     depends_on:
       postgres:
         condition: service_healthy
@@ -149,18 +156,101 @@ services:
       - log_rotation_size=0
       - -c
       - log_truncate_on_rotation=on
+      - -c
+      - max_slot_wal_keep_size=2GB
+      - -c
+      - hba_file=/etc/postgresql/pg_hba.conf
     environment:
       POSTGRES_USER: lineworker
       POSTGRES_PASSWORD: lineworker_e2e_stack
       POSTGRES_DB: lineworker
     volumes:
       - ./e2e-init:/docker-entrypoint-initdb.d:ro
+      # Client authentication, pointed at by `-c hba_file=` above. Mounted
+      # rather than baked or appended for the reason that file argues at
+      # length: an `initdb` hook applies only when the data directory is
+      # created, so the record permitting the backup container's replication
+      # connection would never appear on a `pgdata` volume that already exists,
+      # and the drift would be invisible (Story 8.3).
+      - ./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U lineworker -d lineworker"]
       interval: 5s
       timeout: 5s
       retries: 10
       start_period: 10s
+
+  backup:
+    # A base backup of a real database takes minutes, and compose's default
+    # stop timeout is ten seconds — so `down` during the nightly window used to
+    # SIGKILL the run, which skips every trap and leaves the plaintext staging
+    # directory behind (both `entrypoint.sh` and `backup.sh` now sweep it, but
+    # not having written it is better). Five minutes lets a run reach its own
+    # signal handler, write `status.json` as a failure, and remove its plaintext
+    # before the kernel takes over.
+    stop_grace_period: 300s
+    build:
+      context: ./backup
+    image: lineworker/backup:pg18
+    # The same service, the same image and the same mechanism as dev and prod —
+    # Story 8.2's anti-drift rule, applied to the backup pipeline. What differs
+    # is confined to what must: no WAL receiver, no scheduler, and a destination
+    # and status directory the Playwright process can read from the host.
+    # `server/tests/test_backup_posture.py` fails when the three profiles
+    # disagree about anything else.
+    #
+    # `profiles: ["backup"]` so `up -d --build --wait` never waits on it. That
+    # is not a workaround: this service in this profile is a **one-shot** job
+    # driven by `e2e/stories/8-3-…spec.ts` through
+    # `compose("run", "--rm", "backup", "once")`, and `run` starts a service
+    # regardless of its profiles. A backup container left running here would
+    # hold a replication slot against a database every spec file drops the
+    # schema of.
+    profiles: ["backup"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      BACKUP_DATABASE_URL: postgresql://lineworker:lineworker_e2e_stack@postgres:5432/lineworker
+      # **A real age recipient, committed in the clear, for which no identity
+      # exists in this repository, on any developer's machine, or anywhere
+      # else.** It was minted by `age-keygen` inside a throwaway container whose
+      # private half was never written to a file and whose container is gone.
+      # That is not a shortcut — it is the property being demonstrated. The spec
+      # asserts that the shipped artifact is `age` ciphertext and is *not* a
+      # plaintext `PGDMP` dump; it never decrypts anything, because nothing
+      # could. If a future story needs a decrypting e2e assertion it must mint a
+      # throwaway keypair at run time (as `tests/test_backup_restore.py` does)
+      # rather than commit an identity here.
+      BACKUP_AGE_RECIPIENT: age1nc2t7reyk8r44l8n8aqtz35uryvr3hwqnle67v3aww39nwk4fg5qt6pywe
+      # "Off-host" is a local scratch directory under the same bind mount, so
+      # the spec can assert the run really landed at the destination. The
+      # transport is not exercised — see `deploy/RESTORE-DRILL.md`, which says
+      # so rather than implying an SSH copy was proven — but the `rsync`
+      # invocation, the per-run directory layout and the remote prune all are.
+      BACKUP_REMOTE: /var/lib/lineworker/backup/offhost
+      BACKUP_AT: "02:30"
+      BACKUP_KEEP_RUNS: "3"
+      BACKUP_MAX_AGE_HOURS: "26"
+      # **Off, and this is the one place it is.** `pg_receivewal` holds a
+      # physical replication slot, and this profile's database has its schema
+      # dropped and re-migrated before every spec file. A slot here would be
+      # abandoned by construction the moment the one-shot container exited.
+      BACKUP_WAL: "off"
+      BACKUP_SSH_KEY: /etc/lineworker/backup-ssh/id_backup
+    volumes:
+      # Bind mounts, not named volumes: the Playwright process reads
+      # `status.json` and the shipped artifact's first bytes straight off the
+      # host filesystem, which is the only way a spec can see inside a container
+      # that publishes nothing. `lineworker/.gitignore` ignores `e2e/.tmp/`.
+      - ../e2e/.tmp/backup:/var/lib/lineworker/backup
+      - ../e2e/.tmp/blobs:/var/lib/lineworker/blobs:ro
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck.sh"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   model-stub:
     build:

@@ -27,6 +27,11 @@ web/openapi.json
 e2e/test-results/
 e2e/playwright-report/
 e2e/blob-report/
+# Bind-mount target for the e2e backup container (Story 8.3): its status file,
+# artifacts and off-host scratch directory, which the Playwright process reads
+# from the host. Encrypted claim data, written by a container running as root —
+# it must never be committed and must never be assumed to be gone.
+e2e/.tmp/
 
 # OS / editor
 .DS_Store

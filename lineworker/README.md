@@ -139,6 +139,7 @@ library:
 docker build -t lineworker/postgres:pg18-pgaudit deploy/postgres
 docker run -d --name lw-test-pg -e POSTGRES_USER=lineworker \
   -e POSTGRES_PASSWORD=test -e POSTGRES_DB=lineworker -p 55432:5432 \
+  -v "$PWD/deploy/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro" \
   lineworker/postgres:pg18-pgaudit postgres \
   -c shared_preload_libraries=pgaudit -c pgaudit.log=ddl,role \
   -c pgaudit.log_catalog=off -c pgaudit.log_parameter=off \
@@ -148,10 +149,18 @@ docker run -d --name lw-test-pg -e POSTGRES_USER=lineworker \
   -c log_parameter_max_length=0 -c log_parameter_max_length_on_error=0 \
   -c logging_collector=on -c log_destination=stderr -c log_directory=log \
   -c log_filename=postgresql-%a.log -c log_rotation_age=1d \
-  -c log_rotation_size=0 -c log_truncate_on_rotation=on
+  -c log_rotation_size=0 -c log_truncate_on_rotation=on \
+  -c max_slot_wal_keep_size=2GB -c hba_file=/etc/postgresql/pg_hba.conf
 cd server && MIGRATION_TEST_DATABASE_URL=\
 postgresql://lineworker:test@localhost:55432/lineworker uv run pytest
 ```
+
+The `pg_hba.conf` mount and the last two flags arrived with Story 8.3:
+`tests/test_backup_restore.py` runs the shipped backup image against this
+database, and `pg_basebackup` opens a physical replication connection that the
+official image's `host all all all` record does not match. Without the mount
+that module fails with "no pg_hba.conf entry for replication connection" — a
+database that is not the deployment's, rather than a bug in the test.
 
 **The whole flag list, not an abbreviation of it.** Two of these are not at the
 value PostgreSQL ships — `pgaudit.log_catalog` defaults to `on` and
@@ -211,6 +220,43 @@ configuration rather than a stock database that happens to pass.
 
 Every story ships `e2e/stories/<story-key>.spec.ts`; a story is not done until
 its spec passes against the freshly reset e2e stack.
+
+## Backups and restore
+
+The `backup` container (`deploy/backup/`) owns the whole disaster-recovery
+pipeline: a nightly `pg_basebackup` + `pg_dump` + a tar of the blob volume, each
+encrypted with `age` **before** anything is copied off-host, plus a
+continuously-streaming `pg_receivewal`. One dump covers every PHI-class store —
+relational, embeddings, checkpoints, insight cache, audit log — because there is
+one database (AD-3).
+
+It is **profile-gated in dev and e2e** so a clean checkout still comes up with
+nothing configured, and always-on in prod:
+
+```sh
+docker compose --profile backup -f deploy/compose.yaml up -d   # scheduler
+docker compose -f deploy/compose.yaml run --rm backup once     # one run, now
+```
+
+Health is derived from the container's own last run — unhealthy when it failed,
+or when there has been no success within `BACKUP_MAX_AGE_HOURS` of the later of
+(last success, container start):
+
+```sh
+docker compose -f deploy/compose.yaml ps                       # healthy / unhealthy
+docker compose -f deploy/compose.yaml exec -T backup \
+    cat /var/lib/lineworker/backup/status.json
+```
+
+Two variables have no default and the prod overlay refuses to render without
+them: `BACKUP_AGE_RECIPIENT` (the `age` public key — **the identity that
+decrypts it must not be on this host**) and `BACKUP_REMOTE`. Both are documented
+in `deploy/.env.example`.
+
+**`deploy/RESTORE-DRILL.md` is the runbook**, and it records a drill that was
+actually executed. Read § 6 before restoring into production: a restored backup
+resurrects PHI that the Story 8.1 purge cascade removed, and the mitigation is
+bounded retention plus re-running the purge — never purge-aware filtering.
 
 ## Documentation
 

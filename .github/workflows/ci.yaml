@@ -108,6 +108,18 @@ jobs:
     # `tests/test_pgaudit_posture.py` asserts — so those four tests run here
     # rather than skipping, and this job covers the whole AD-11 database
     # posture instead of only the schema.
+    #
+    # **Story 8.3 adds two flags and a mount.** `tests/test_backup_restore.py`
+    # runs the shipped backup image against this database, and `pg_basebackup`
+    # opens a *physical replication* connection — which the official image's
+    # `host all all all` record does not match, because PostgreSQL treats
+    # `replication` as a distinct pseudo-database. So the committed
+    # `deploy/postgres/pg_hba.conf` is mounted and named by `-c hba_file=`,
+    # exactly as every compose profile does it, and `max_slot_wal_keep_size`
+    # joins the list because `test_backup_posture.py` asserts the profiles agree
+    # about it. Without the mount that module fails with "no pg_hba.conf entry
+    # for replication connection", which would be a database that is not the
+    # deployment's rather than a bug in the test.
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -120,7 +132,9 @@ jobs:
           docker build -t lineworker/postgres:pg18-pgaudit deploy/postgres
           docker run -d --name lw-ci-pg \
             -e POSTGRES_USER=lineworker -e POSTGRES_PASSWORD=ci -e POSTGRES_DB=lineworker \
-            -p 5432:5432 lineworker/postgres:pg18-pgaudit postgres \
+            -p 5432:5432 \
+            -v "$PWD/deploy/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro" \
+            lineworker/postgres:pg18-pgaudit postgres \
             -c shared_preload_libraries=pgaudit \
             -c pgaudit.log=ddl,role \
             -c pgaudit.log_catalog=off \
@@ -139,7 +153,9 @@ jobs:
             -c log_filename=postgresql-%a.log \
             -c log_rotation_age=1d \
             -c log_rotation_size=0 \
-            -c log_truncate_on_rotation=on
+            -c log_truncate_on_rotation=on \
+            -c max_slot_wal_keep_size=2GB \
+            -c hba_file=/etc/postgresql/pg_hba.conf
           # Bounded, for compose.yaml's `ollama` entrypoint reason: an
           # unbounded wait on a container that died before it listened spins
           # until the job's own timeout with nothing saying why. Sixty tries at
@@ -222,16 +238,51 @@ jobs:
         # `command:` all merge into a document that would start. The two
         # directories are dummy paths: `config` interpolates them and never
         # looks for them.
+        #
+        # **`--profile backup` on the dev, gpu and e2e renders (Story 8.3).**
+        # Those three gate the backup service behind a profile so that a clean
+        # checkout still runs `docker compose up` with nothing configured — which
+        # means that without the flag the service is absent from the rendered
+        # document and every assertion below about it passes vacuously. The prod
+        # render deliberately does **not** carry the flag: that profile clears
+        # the gate with `profiles: !override []`, and the whole point of the
+        # assertion further down is that the service is there without one.
+        #
+        # The two backup variables are dummies for the same reason the two TLS
+        # directories are: `config` interpolates them and never looks at them.
         env:
           TLS_CERT_DIR: /tmp/tls
           PG_TLS_DIR: /tmp/tls
+          BACKUP_AGE_RECIPIENT: age1ci0000000000000000000000000000000000000000000000000000000
+          BACKUP_REMOTE: /tmp/offhost
         run: |
-          docker compose -f deploy/compose.yaml config --format json > /tmp/dev.json
-          docker compose -f deploy/compose.yaml -f deploy/compose.gpu.yaml config \
-            --format json > /tmp/gpu.json
-          docker compose -f deploy/compose.e2e.yaml config --format json > /tmp/e2e.json
+          docker compose --profile backup -f deploy/compose.yaml config \
+            --format json > /tmp/dev.json
+          docker compose --profile backup -f deploy/compose.yaml -f deploy/compose.gpu.yaml \
+            config --format json > /tmp/gpu.json
+          docker compose --profile backup -f deploy/compose.e2e.yaml config \
+            --format json > /tmp/e2e.json
           docker compose -f deploy/compose.yaml -f deploy/compose.gpu.yaml \
             -f deploy/compose.prod.yaml config --format json > /tmp/prod.json
+      # The clean-checkout promise, asserted rather than trusted (Story 1.1,
+      # restated by Story 8.3). Rendering the dev profile with **no** variables
+      # and **no** profile flag must succeed and must not contain the backup
+      # service: if it did, `docker compose up` on a laptop with no `.env` would
+      # start a container that refuses its own configuration and sits in a failed
+      # state, which is the one thing the profile gate exists to prevent.
+      - name: a clean checkout renders without the backup service
+        run: |
+          docker compose -f deploy/compose.yaml config --format json > /tmp/clean.json
+          python3 -c '
+          import json, sys
+          services = json.load(open("/tmp/clean.json"))["services"]
+          if "backup" in services:
+              print("::error::the backup service is present in a bare `docker compose -f "
+                    "deploy/compose.yaml config`. It must stay behind `profiles: [\"backup\"]` "
+                    "so a clean checkout with no .env still comes up.")
+              sys.exit(1)
+          print("ok: clean render has", len(services), "services and no backup")
+          '
       # The e2e profile is asserted from the other direction: it must run the
       # deterministic stub and must NOT declare a real model server, or specs
       # would wait on inference and a CI runner would download gigabytes.
@@ -267,6 +318,40 @@ jobs:
                     "misspelled and compose has appended the dev mapping.")
               sys.exit(1)
           print("ok: prod web publishes 443 and 80 only")
+          '
+      # Story 8.3, and the same class of check for the same reason: a YAML tag
+      # compose does not recognise is *ignored*, not rejected. `profiles:
+      # !overide []` — one letter — leaves the inherited `["backup"]` in place,
+      # `server/tests/test_backup_posture.py`'s string assertion still passes,
+      # and a prod stack silently stops taking backups until somebody remembers
+      # `--profile backup`. The rendered document is the only place the
+      # difference shows and this job is the only thing that renders it.
+      #
+      # The port assertion is here rather than in `check_model_ports.py` because
+      # that script is about the model server. This container holds a connection
+      # that can read the whole claim book and a directory of encrypted copies of
+      # it; a published port on it is a worse mistake than a published Ollama.
+      - name: the backup service is enabled in prod and publishes nothing anywhere
+        run: |
+          python3 -c '
+          import json, sys
+          failures = []
+          prod = json.load(open("/tmp/prod.json"))["services"]
+          if "backup" not in prod:
+              failures.append("the rendered prod profile has no backup service — "
+                              "`profiles: !override []` has been dropped or misspelled, "
+                              "so backups run only when somebody remembers --profile backup")
+          for name in ("dev", "gpu", "e2e", "prod"):
+              services = json.load(open(f"/tmp/{name}.json"))["services"]
+              backup = services.get("backup")
+              if backup is None:
+                  failures.append(f"{name}: no backup service in the rendered document")
+                  continue
+              if backup.get("ports"):
+                  failures.append(f"{name}: backup publishes " + str(backup["ports"]))
+          for failure in failures:
+              print(f"::error::{failure}")
+          sys.exit(1 if failures else 0)
           '
 
   e2e:

@@ -203,6 +203,10 @@ services:
       - -c
       - log_truncate_on_rotation=on
       - -c
+      - max_slot_wal_keep_size=2GB
+      - -c
+      - hba_file=/etc/postgresql/pg_hba.conf
+      - -c
       - ssl=on
       - -c
       - ssl_cert_file=/etc/postgresql/tls/server.crt
@@ -210,3 +214,67 @@ services:
       - ssl_key_file=/etc/postgresql/tls/server.key
     volumes:
       - ${PG_TLS_DIR:?PG_TLS_DIR must point at the host directory holding the Postgres server certificate, key and ca.crt}:/etc/postgresql/tls:ro
+
+  backup:
+    # A base backup of a real database takes minutes, and compose's default
+    # stop timeout is ten seconds — so `down` during the nightly window used to
+    # SIGKILL the run, which skips every trap and leaves the plaintext staging
+    # directory behind (both `entrypoint.sh` and `backup.sh` now sweep it, but
+    # not having written it is better). Five minutes lets a run reach its own
+    # signal handler, write `status.json` as a failure, and remove its plaintext
+    # before the kernel takes over.
+    stop_grace_period: 300s
+    # ## The prod delta (Story 8.3)
+    #
+    # ### The profile gate is cleared, and this is the one place it is
+    #
+    # `compose.yaml` gates the backup service behind `profiles: ["backup"]` so
+    # that Story 1.1's "a clean checkout just works" promise survives a service
+    # that has no safe default recipient. On a real deployment that gate is
+    # exactly wrong: backups that run only when somebody remembers a flag are
+    # the backups this story exists to replace. `!override` on a *sequence*
+    # replaces it rather than appending to it — the same tag and the same reason
+    # as `web.ports` above — and an empty list means "no profile", so the
+    # service starts with the rest of the stack under a plain `up -d`.
+    #
+    # Verified rather than assumed: `docker compose -f compose.yaml -f
+    # compose.gpu.yaml -f compose.prod.yaml config` lists `backup` with no
+    # `--profile` flag, while `docker compose -f compose.yaml config` does not.
+    # `server/tests/test_backup_posture.py` asserts the tag is present, and CI's
+    # compose job asserts the *rendered* prod document actually contains the
+    # service — the text check catches deletion, the render catches a
+    # misspelled tag that compose would silently ignore.
+    profiles: !override []
+    environment:
+      # **The two variables with no safe default, guarded the way Story 8.2
+      # guards TLS_CERT_DIR and PG_TLS_DIR.** `${…:?}` fails the render with a
+      # message naming the variable, rather than starting a container that
+      # refuses at its config stage three layers down at 02:30. The recipient in
+      # particular cannot have a default: any value shipped in this file would
+      # be a public key whose identity somebody else holds, and a backup
+      # encrypted to it is a backup this deployment cannot read and somebody
+      # else can.
+      BACKUP_AGE_RECIPIENT: ${BACKUP_AGE_RECIPIENT:?BACKUP_AGE_RECIPIENT must be the age public key backups are encrypted to; generate with age-keygen and keep the identity file OFF this host}
+      BACKUP_REMOTE: ${BACKUP_REMOTE:?BACKUP_REMOTE must be the off-host destination, either user@host:/path over SSH or an absolute path on a separate mounted filesystem}
+      # On in prod, and it is what the recovery-point objective rests on. The
+      # nightly dump alone is a 24-hour RPO; base + streamed WAL is roughly the
+      # unflushed tail of the current segment. `deploy/RESTORE-DRILL.md`
+      # Procedure B is the half that uses it, and `max_slot_wal_keep_size=2GB`
+      # in the postgres `command:` above is what stops its failure mode from
+      # becoming a database outage.
+      BACKUP_WAL: "on"
+    volumes:
+      # **One file, read-only, from the host secret store** — the same
+      # least-privilege shape as the api's `ca.crt` mount above and for a
+      # sharper reason: this is a private key. Mounting the directory that holds
+      # it would hand the container every other key in the operator's SSH
+      # store. The default is `/dev/null`, so a deployment whose BACKUP_REMOTE
+      # is a mounted filesystem rather than an SSH host renders and runs without
+      # inventing a key it does not need — `backup.sh` tests the file's *size*,
+      # so an empty mount is "no key was supplied" rather than a second variable
+      # that has to agree with this one.
+      #
+      # The key must be passphrase-less: `backup.sh` runs ssh with
+      # `BatchMode=yes`, which is deliberate — a nightly job that can sit at a
+      # prompt is a nightly job that silently stops.
+      - ${BACKUP_SSH_KEY_FILE:-/dev/null}:/etc/lineworker/backup-ssh/id_backup:ro

@@ -88,6 +88,21 @@ services:
       LANGCHAIN_TRACING_V2: "false"
       LANGSMITH_OTEL_ENABLED: "false"
       LANGCHAIN_OTEL_ENABLED: "false"
+    volumes:
+      # The blob volume, read-write here and read-only in `backup` (Story 8.3).
+      #
+      # `services/blobstore.VolumeBlobStore` has existed since Story 2.5 with no
+      # setting, no volume and no bytes — `document.blob_key` and
+      # `photo.blob_key` are NULL on all 856 seeded rows — and the
+      # MinIO-versus-mounted-volume decision is still Deferred. This mount does
+      # not decide it. What it does is give the store that exists today a
+      # canonical location, which two things need: `scripts/purge_claim.py
+      # --blob-root` (Story 8.1) refuses a path that is not an existing
+      # directory, and the backup job has to tar *something* from the day it
+      # ships. A backup that covered only the stores that had bytes in them on
+      # the day it was written would silently stop being complete the first time
+      # a real PDF landed, which is the failure this story exists to close.
+      - blobdata:/var/lib/lineworker/blobs
     depends_on:
       postgres:
         condition: service_healthy
@@ -237,6 +252,34 @@ services:
     # the DDL record stops flowing into whatever collects container output.
     # `docker compose exec postgres cat /var/lib/postgresql/18/docker/log/
     # postgresql-$(date +%a).log` is how you read it.
+    #
+    # ## Two more flags, added by Story 8.3
+    #
+    # **`max_slot_wal_keep_size=2GB`** is the bound that stops an abandoned
+    # replication slot from filling the data volume. The backup container holds
+    # a physical slot so `pg_receivewal` can stream a replayable archive; a slot
+    # with nobody consuming it — the backup container stopped, the host it
+    # copies to unreachable for a week — pins every WAL segment since the
+    # consumer's last position, for ever, by design. Without this bound the WAL
+    # receiver's failure mode is a `pgdata` volume that fills and a database that
+    # stops accepting writes, which is a far worse outage than the missed backup
+    # it would have been protecting. With it, Postgres invalidates the slot,
+    # `pg_receivewal` fails loudly, `status.json` records the gap and the
+    # database keeps serving. 2 GB is roughly a day of this system's write
+    # volume and is a knob only in the sense that a deployment writing much more
+    # should raise it; it is not in `.env.example` because the number is a
+    # property of the database's disk, not of the backup schedule.
+    #
+    # **`hba_file=/etc/postgresql/pg_hba.conf`** points client authentication at
+    # the committed file mounted below, which adds exactly one record to the
+    # image's default: a physical replication connection over the internal
+    # network. The official image appends `host all all all scram-sha-256`, and
+    # `all` in the database column does not match a replication connection — so
+    # without this, `pg_basebackup` and `pg_receivewal` from the backup
+    # container fail with "no pg_hba.conf entry for replication connection". No
+    # role and no grant changes; `deploy/postgres/pg_hba.conf` argues the whole
+    # thing at length, including why an `initdb` hook would not have worked on
+    # the pre-existing `pgdata` volume.
     command:
       - postgres
       - -c
@@ -277,12 +320,23 @@ services:
       - log_rotation_size=0
       - -c
       - log_truncate_on_rotation=on
+      - -c
+      - max_slot_wal_keep_size=2GB
+      - -c
+      - hba_file=/etc/postgresql/pg_hba.conf
     environment:
       POSTGRES_USER: lineworker
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lineworker_dev}
       POSTGRES_DB: lineworker
     volumes:
       - pgdata:/var/lib/postgresql
+      # Client authentication, pointed at by `-c hba_file=` above. Mounted
+      # rather than baked or appended for the reason that file argues at
+      # length: an `initdb` hook applies only when the data directory is
+      # created, so the record permitting the backup container's replication
+      # connection would never appear on a `pgdata` volume that already exists,
+      # and the drift would be invisible (Story 8.3).
+      - ./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U lineworker -d lineworker"]
       interval: 5s
@@ -290,8 +344,144 @@ services:
       retries: 10
       start_period: 10s
 
+  backup:
+    # A base backup of a real database takes minutes, and compose's default
+    # stop timeout is ten seconds — so `down` during the nightly window used to
+    # SIGKILL the run, which skips every trap and leaves the plaintext staging
+    # directory behind (both `entrypoint.sh` and `backup.sh` now sweep it, but
+    # not having written it is better). Five minutes lets a run reach its own
+    # signal handler, write `status.json` as a failure, and remove its plaintext
+    # before the kernel takes over.
+    stop_grace_period: 300s
+    build:
+      context: ./backup
+    image: lineworker/backup:pg18
+    # ## The `bak` container the deployment view has named since Story 1.1
+    #
+    # One container owning the whole pipeline: `pg_basebackup` + `pg_dump` + a
+    # tar of the blob volume, each `age`-encrypted **before** anything is copied
+    # off-host, plus a continuously-streaming `pg_receivewal` so the archive is
+    # replayable rather than decorative. `deploy/backup/backup.sh` argues the
+    # ordering; `deploy/RESTORE-DRILL.md` is the runbook and records the drill
+    # that was actually executed against it.
+    #
+    # ### `profiles: ["backup"]`, and it is Story 1.1's promise
+    #
+    # "`docker compose -f deploy/compose.yaml up` on a clean checkout just
+    # works" is a standing commitment, and a clean checkout has no `.env`,
+    # therefore no `BACKUP_AGE_RECIPIENT` — so an always-on backup service would
+    # start, refuse its configuration, and leave every `up` on every laptop with
+    # a container in a failed state. Profile-gated, it does not start unless
+    # somebody asks for it:
+    #
+    #     docker compose --profile backup -f deploy/compose.yaml up -d
+    #     docker compose -f deploy/compose.yaml run --rm backup once
+    #
+    # (`run` starts a one-off container for a service regardless of its
+    # profiles, which is why the one-shot form needs no flag.) The **prod**
+    # overlay clears the gate with `profiles: !override []`, so on a real
+    # deployment the service is always on and no operator has to remember a
+    # flag — verified against `docker compose config`, not assumed.
+    #
+    # ### No `ports:`, in this profile or any other
+    #
+    # The same rule `postgres` and `ollama` keep. This container holds a
+    # connection that can read the entire claim book and a directory of
+    # encrypted copies of it; there is nothing it could usefully publish and a
+    # great deal it must not. CI asserts the absence in every rendered profile.
+    #
+    # ### AD-3: one stream covers the whole instance
+    #
+    # `pg_dump -Fc` of database `lineworker` carries the relational entities,
+    # `claim_embedding` and the `knowledge_*` vectors, the vendored LangGraph
+    # checkpoint tables, `ai_insight` and `audit_event` in one artifact. That is
+    # the load-bearing rationale of the single-database decision, and it is why
+    # there is exactly one backup service here rather than one per store. The
+    # blob volume is the only PHI-class store outside Postgres, so it is the
+    # only thing tarred separately — mounted **read-only** here, read-write on
+    # `api`, because this job reads and never writes (AD-12).
+    #
+    # ### AD-11: encrypted before it leaves the host
+    #
+    # `age -r $BACKUP_AGE_RECIPIENT` runs before `rsync`, always, and the
+    # identity that could decrypt any of it is not on this host, not in this
+    # image and not in version control. Compromising the backup host — the exact
+    # scenario an off-host backup exists to survive — therefore yields no
+    # ability to read a single backup, past or future.
+    profiles: ["backup"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # The owner role, which already holds REPLICATION in this deployment (it
+      # is the bootstrap superuser the image creates), and which this job uses
+      # read-only. No new role, no new grant: AD-4's posture is untouched, and
+      # the story's data note says so in as many words. The default composes the
+      # same credentials `api`'s ALEMBIC_DATABASE_URL uses, so a deployment that
+      # changed POSTGRES_PASSWORD does not have to remember to change this too.
+      BACKUP_DATABASE_URL: ${BACKUP_DATABASE_URL:-postgresql://lineworker:${POSTGRES_PASSWORD:-lineworker_dev}@postgres:5432/lineworker}
+      # **Deliberately empty by default.** There is no safe default for a
+      # recipient: any value shipped here would be a public key somebody else
+      # holds the identity for. Empty means `backup.sh` refuses at its config
+      # stage, *before* `pg_dump` runs, so an unconfigured deployment produces
+      # no plaintext artifact rather than one it then fails to encrypt. The prod
+      # overlay upgrades this to a `${…:?}` guard that fails the render.
+      BACKUP_AGE_RECIPIENT: ${BACKUP_AGE_RECIPIENT:-}
+      # A directory inside the backup volume by default, which is an off-host
+      # destination in shape and not in fact — enough to exercise the whole
+      # pipeline on a laptop, and named in `.env.example` as the one thing a
+      # real deployment must change. The SSH form is `user@host:/path`.
+      BACKUP_REMOTE: ${BACKUP_REMOTE:-/var/lib/lineworker/backup/offhost}
+      BACKUP_AT: ${BACKUP_AT:-02:30}
+      BACKUP_KEEP_RUNS: ${BACKUP_KEEP_RUNS:-7}
+      BACKUP_MAX_AGE_HOURS: ${BACKUP_MAX_AGE_HOURS:-26}
+      # On in dev, on in prod, off in e2e — and the difference is confined to
+      # what must differ. The e2e profile drives one-shot runs from a spec and
+      # never leaves a container up, so a replication slot there would be an
+      # abandoned slot by construction.
+      BACKUP_WAL: ${BACKUP_WAL:-on}
+      # Fixed container path; the host path is the knob, and only the prod
+      # overlay mounts anything onto it. `backup.sh` tests the file's *size*, so
+      # the absence of a key is the absence of bytes rather than a second
+      # variable to keep in step.
+      BACKUP_SSH_KEY: /etc/lineworker/backup-ssh/id_backup
+    volumes:
+      - backupdata:/var/lib/lineworker/backup
+      # Read-only, and that is the AD-12 write-owner note as a mount option: the
+      # backup job reads the whole instance and the blob volume and writes
+      # nothing to either.
+      - blobdata:/var/lib/lineworker/blobs:ro
+    # AC 3's entire binding surface. There is no monitoring integration and no
+    # alerting — both deferred by decision — so "a failed nightly run surfaces
+    # non-silently" means this container goes `unhealthy` in `docker compose ps`
+    # beside every other service, for a run that failed *and* for a scheduler
+    # that quietly stopped. `deploy/backup/healthcheck.sh` carries the rule.
+    #
+    # `interval: 60s` because the thing being measured moves once a day; a
+    # ten-second poll would be twenty thousand reads of a file that changes
+    # once. `start_period` is short for the same reason the window is measured
+    # from container start: a fresh container with no run yet is healthy by
+    # design, so there is nothing to wait for.
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck.sh"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
 volumes:
   pgdata:
   # Pulled models. Named rather than anonymous so `docker compose down` keeps
   # them and only `down -v` re-downloads.
   ollama-models:
+  # The backup job's state and artifacts: `artifacts/<runId>/`, the WAL spool,
+  # `status.json` and the container-start marker. Named, so `docker compose
+  # down` keeps the backups and only `down -v` destroys them — which is exactly
+  # the distinction the restore drill rests on.
+  backupdata:
+  # The `BlobStore` volume (Story 8.3, Design Note 5). Empty today and mounted
+  # anyway: read-write on `api` at the path `scripts/purge_claim.py --blob-root`
+  # wants, read-only on `backup`, and tarred into the artifact set from birth.
+  # Declaring it does not settle the deferred MinIO-versus-volume decision; it
+  # gives the implementation that already exists a location.
+  blobdata:
