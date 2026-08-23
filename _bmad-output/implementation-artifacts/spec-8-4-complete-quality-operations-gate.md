@@ -3,6 +3,7 @@ title: 'Story 8.4 — Complete Quality & Operations Gate'
 type: 'feature'
 created: '2026-08-23'
 baseline_revision: 'fbb94b498678c9315edb74b6bc3df78494c43063'
+final_revision: '7aa1e4c77fc9d53278a0590a561836f0afce4f60'
 status: 'done'
 review_loop_iteration: 0
 followup_review_recommended: true # twenty-two findings were patched and most changed behaviour rather than prose: the documented boot command would have reported a failed deployment on the very host AD-14 exists for, the certificate prerequisites demanded a file the recipe never produced, and the bijection lint exited 0 while a tracked story had no spec. What a follow-up should read is whether the lint's hand-rolled tracker parse now has any remaining shape it drops silently rather than only the four review named; whether scoping @story: tags to describe titles lost a case the whole-file scan caught; and whether the generalised guard-driving CI step — which now derives its own variable list from the overlay it tests — can still go hollow if that grep stops matching
