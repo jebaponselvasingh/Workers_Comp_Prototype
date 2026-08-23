@@ -3,9 +3,10 @@ title: 'Story 8.3 — Encrypted Backups & Restore Drill'
 type: 'feature'
 created: '2026-08-23'
 baseline_revision: '66bb4dbeb075cf1e9df0d8c31d551282469fcb2e'
-status: 'in-review'
+final_revision: '4afadd22f657a62c2939335d2e803639a3f7ea00'
+status: 'done'
 review_loop_iteration: 0
-followup_review_recommended: false
+followup_review_recommended: true # twenty-six findings were patched and most changed behaviour rather than prose: a SIGKILL used to leave an unencrypted claim book on disk, the documented blob-restore step could not work in any profile, the port-posture test was vacuous in all three, the SSH host-key pin was not a pin, an unshippable WAL archive would have filled the database's own volume, and a failed off-host copy was never retried. What a follow-up should read is whether the three overlapping plaintext sweeps plus `stop_grace_period` actually close every disorderly-exit path or merely the ones review named; whether the ten-minute UTC scheduler window and the `flock` interact correctly when a `once` run overlaps the nightly window; and whether the new WAL-spool ceiling can drop a segment a *successful* run was about to ship, since it now fires before the copy rather than after it
 context:
   - '{project-root}/_bmad-output/implementation-artifacts/8-3-encrypted-backups-restore-drill.md'
   - '{project-root}/_bmad-output/implementation-artifacts/epic-8-context.md'
@@ -185,3 +186,41 @@ warnings: ['oversized']
 
 **Manual checks (if no CLI):**
 - Off-host transfer over SSH cannot be exercised here (no remote host, no key in VCS): dev, e2e and the executed drill all point `BACKUP_REMOTE` at a local directory, which exercises the same `rsync` invocation without the transport. The SSH form is documented in `.env.example` and asserted only as configuration — state this limitation in the drill document rather than implying the transport was proven.
+
+## Auto Run Result
+
+Status: done
+
+### What was implemented
+
+The `backup` container the architecture's deployment view has named since day one and that no story had built. One nightly run takes `pg_basebackup -Ft -z -X stream`, `pg_dump -Fc`, `pg_dumpall --globals-only` and a tar of the blob volume; encrypts each with `age` to `BACKUP_AGE_RECIPIENT` **before** anything is copied; writes a `manifest.json` of names, sizes and ciphertext checksums; `rsync`s every unshipped run off-host; retires shipped WAL; prunes to `BACKUP_KEEP_RUNS` at both ends; and writes `status.json`, which its own healthcheck reads. `pg_receivewal` streams WAL continuously in prod, bounded server-side by `max_slot_wal_keep_size` and locally by a spool ceiling. `deploy/RESTORE-DRILL.md` documents both recovery procedures and records a drill that was executed.
+
+### Files changed
+
+- `lineworker/deploy/backup/{Dockerfile,backup.sh,entrypoint.sh,healthcheck.sh}` — new: the image (PG 18 client tooling + `age` + `rsync`), one run, the scheduler and WAL supervisor, and the health contract.
+- `lineworker/deploy/postgres/pg_hba.conf` — new: the client-authentication policy, because the official image's `host all all all` record does not match a physical replication connection.
+- `lineworker/deploy/RESTORE-DRILL.md` — new: prerequisites, the status-file contract, RPO numbers, Procedures A and B, the verification checklist, the operational caveats, and the executed drill.
+- `lineworker/deploy/compose{,.e2e,.prod}.yaml` — the `backup` service (profile-gated in dev/e2e, always on in prod), `backupdata`/`blobdata` volumes, `stop_grace_period`, and `max_slot_wal_keep_size` + `hba_file` on postgres in all three.
+- `lineworker/deploy/.env.example` — the Story 8.3 section: two live required knobs, the rest commented at their defaults.
+- `lineworker/server/tests/test_backup_posture.py` — new, 26 tests: what the deploy files say.
+- `lineworker/server/tests/test_backup_restore.py` — new, 4 tests: what the shipped container does, including a decrypt-and-restore round trip.
+- `lineworker/e2e/stories/8-3-encrypted-backups-restore-drill.spec.ts` — new: a real backup against the live e2e stack, `@smoke` on the happy path.
+- `.github/workflows/ci.yaml`, `lineworker/server/tests/conftest.py`, `lineworker/README.md`, `lineworker/.gitignore` — profile-aware compose renders and posture assertions, the test-database recipe, an ops section, and the e2e scratch directory.
+- `_bmad-output/implementation-artifacts/deferred-work.md` — 15 entries.
+
+### Review findings
+
+26 patched (6 high, 14 medium, 6 low), 3 deferred, 1 rejected, 0 spec loopbacks. The highs: a SIGKILL left an unencrypted claim book on disk; the documented blob-restore command could not work in any profile; the no-published-port test was vacuous in all three; the SSH host-key pin was not a pin; an unshippable WAL archive would have filled the database's own volume; a failed off-host copy was never retried. Every one is listed in the Review Triage Log above.
+
+### Verification performed
+
+- `ruff check`/`format --check` over `server` and `deploy`, `mypy --strict`, `scripts.lint_log_phi` — all clean.
+- `pytest` against a PG 18 container started with the documented recipe: **3426 passed, 1 skipped** (the skip is pre-existing and data-conditional).
+- Compose: bare dev render with the backup service **absent**; `--profile backup` renders; prod renders with the service enabled and no ports; prod **refuses** to render when either required variable is unset.
+- `npm run typecheck` in `e2e`; `@story:8-3` passes against the freshly reset stack; the full `@smoke` set — **40 passed**.
+- The WAL path exercised by hand end to end: receiver starts and takes a slot; killed, detected within the loop, restarted with backoff; seven completed segments encrypted and shipped while the `.partial` stayed behind; the spool ceiling dropped six segments under a deliberately failing copy and recorded `wal_dropped: 6`; the next successful run logged `shipping_backlog` and delivered the run whose copy had failed.
+- **The restore drill, executed**: a seeded and mutated stack backed up, destroyed with `down -v`, restored from the encrypted artifacts alone, and verified — all 34 tables identical, the audit fingerprint unchanged, the blob marker back, 115 grants and 5 RLS policies restored, and the console driven in a browser against the restored data before any reset.
+
+### Residual risks
+
+The drill ran against the e2e profile, so TLS, the GPU overlay and the real Ollama container were not part of it, and the SSH transport has never been exercised anywhere — dev, e2e, the pytest round trip and the drill all point `BACKUP_REMOTE` at a local directory. Procedure B (point-in-time recovery from base + WAL) is documented and has never been executed. Nothing but the container's own healthcheck reads `status.json`. The healthcheck learns of a dead WAL receiver up to sixty seconds late. All are in `deferred-work.md` with the evidence.
