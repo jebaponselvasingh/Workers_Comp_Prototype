@@ -193,7 +193,10 @@ This document provides the complete epic and story breakdown for LINEWORKER — 
 - FR-AN-4: Epic 7 — 9-dimension segmentation
 - FR-AN-5: Epic 7 — Financial analytics (paid/reserve/incurred)
 - FR-AN-6: Epic 7 — Dataset and chart export
-- NFR-5/7/8 closure: Epic 8 — Purge cascade, backups + restore drill, pgaudit, health checks, full CI gate
+- NFR-7 closure: Epic 8 — full CI gate
+- NFR-5/8 configuration: Epic 8 — purge cascade, backups + restore drill, pgaudit, health checks
+- NFR-4 closure: Epic 9 Story 9.6 — sourced per-jurisdiction statutory forms and rate schedules, fatality indicator. **NFR-4 is claimed by no epic 1–8 and is unmet on all three counts** (forms, figures, effective dates); its own text makes validation a pre-go-live obligation
+- NFR-5/8 closure in substance: Epic 9 Stories 9.1–9.4 — prod profile bootable as prod, credentials out of process state, TLS enforced not permitted, purge cascade complete, DR executed
 
 ## Epic List
 
@@ -226,8 +229,12 @@ Analysts go deeper than oversight — fraud workspace with SIU pipeline, time-se
 **FRs covered:** FR-AN-1..6
 
 ### Epic 8: Production Hardening & Compliance Operations
-The organization can run this on real PHI — purge cascade with audit redact-in-place, encrypted off-host backups with a documented restore drill, pgaudit, health checks, and the complete CI gate. Closes NFR-5/7/8; per-write audit and encryption are built into Epics 1–7 as they go.
+The organization can run this on real PHI — purge cascade with audit redact-in-place, encrypted off-host backups with a documented restore drill, pgaudit, health checks, and the complete CI gate. Closes NFR-7; per-write audit and encryption are built into Epics 1–7 as they go. NFR-5 and NFR-8 are *configured* here and closed in substance by Epic 9 (see Sprint Change Proposal 2026-08-24).
 **FRs covered:** — (NFR closure)
+
+### Epic 9: Deferred Debt Resolution & Go-Live Readiness
+The organization can deploy this on real PHI in a real jurisdiction — the prod profile actually boots as prod, credentials leave process state, the purge cascade actually purges, disaster recovery is executed rather than documented, and statutory content is sourced per jurisdiction. Resolves the 245 conscious deferrals Epics 1–8 recorded in `deferred-work.md`, in production-risk order. Closes NFR-4 and closes NFR-5/NFR-8 in substance.
+**FRs covered:** — (NFR closure + recorded debt)
 
 ## Epic 1: Secure Login & Scoped Console Foundation
 
@@ -1113,7 +1120,9 @@ So that offline analysis and audit requests are self-service.
 
 ## Epic 8: Production Hardening & Compliance Operations
 
-The organization can run this on real PHI — one purge cascade with audit redact-in-place, PHI-safe database auditing, encrypted off-host backups with a proven restore drill, and the complete CI/operations gate. Per-write audit and encryption were built into Epics 1–7 as they went; this epic delivers the compliance capabilities that stand alone. Closes NFR-5, NFR-7, NFR-8.
+The organization can run this on real PHI — one purge cascade with audit redact-in-place, PHI-safe database auditing, encrypted off-host backups with a proven restore drill, and the complete CI/operations gate. Per-write audit and encryption were built into Epics 1–7 as they went; this epic delivers the compliance capabilities that stand alone. Closes NFR-7.
+
+**NFR-5 and NFR-8 are configured here and closed in substance by Epic 9.** Corrected 2026-08-24 by Sprint Change Proposal `sprint-change-proposal-2026-08-24.md`: the prod profile has never booted as `ENV=prod` (`api/app.py` refuses it, so `compose.prod.yaml` renders `ENV: dev`), TLS to Postgres is permitted rather than enforced, the purge cascade leaves PHI in `audit_event` free-text diffs, and the off-host transport NFR-8 names has never been exercised anywhere. Leaving those two NFRs marked closed here would tell the next reader the obligations are met.
 
 ### Story 8.1: PHI Purge Cascade & Retention
 
@@ -1200,3 +1209,418 @@ So that every future change ships against the same bar.
 **Given** the deferred-decision registry
 **When** deployment docs are read
 **Then** each deferred item (IdP, MinIO, scheduler mechanism, observability stack, Ollama queueing) is listed with its reopening trigger, so operations knows what is intentionally not built
+
+## Epic 9: Deferred Debt Resolution & Go-Live Readiness
+
+The organization can deploy this on real PHI in a real jurisdiction. Epics 1–8 delivered every capability and recorded 245 conscious deferrals in `_bmad-output/implementation-artifacts/deferred-work.md`; this epic resolves them in production-risk order, and closes the three NFRs that Epic 8 configured but did not achieve. Every story ends by writing a `resolution:` block into each register entry it answers — the register's exit criterion is that no entry lacks one. Closes NFR-4, and closes NFR-5 and NFR-8 in substance.
+
+**Source:** Sprint Change Proposal `_bmad-output/planning-artifacts/sprint-change-proposal-2026-08-24.md` (approved 2026-08-24).
+
+**Go-live gate:** Stories 9.1, 9.2, 9.3, 9.4 and 9.6. Nothing ships to real PHI in a real jurisdiction until those five are `done`.
+
+**Blocking decisions (not dev work):** Story 9.13's product/placement decisions are owned by the PM and gate 9.6, 9.10 and 9.12. The scheduler mechanism (in-process vs worker container) is owned by the Architect and gates 9.4, 9.5 and 9.7 — its reopening trigger has fired.
+
+### Story 9.1: The Prod Profile Actually Boots As Prod
+
+As an operations engineer,
+I want `ENV=prod` to be a bootable, CI-exercised configuration,
+So that "the prod compose starts the full stack" is a fact rather than a rendering.
+
+**Acceptance Criteria:**
+
+**Given** `api/app.py`'s `ENV=prod` boot refusal
+**When** the prod prerequisites it guards are supplied
+**Then** the api boots under `ENV: prod` and `compose.prod.yaml` sets `ENV: prod` rather than inheriting `dev`
+**And** the two `env`-keyed defaults currently overridden explicitly are driven from the real value
+
+**Given** the two locally-built image tags
+**When** `docker compose pull` runs against the prod profile
+**Then** `lineworker/postgres:pg18-pgaudit` and `lineworker/backup:pg18` resolve from a registry, and an air-gapped deploy has a documented image-transfer path
+
+**Given** a least-privilege or managed Postgres
+**When** migration 0050 runs
+**Then** `CREATE EXTENSION pgaudit` either succeeds without superuser or fails with a message naming the actual cause
+
+**Given** CI
+**When** a push lands
+**Then** the prod profile is booted and health-verified in a job, `concurrency:` cancels superseded runs, `ollama`'s `start_period` is a budget rather than a wall, and the bijection lint additionally reconciles `sprint-status.yaml` against `epics.md`
+
+**Given** the GPU overlay and NFR-5's at-rest encryption
+**When** neither can be exercised on the CI host
+**Then** the deployment runbook records the exact manual verification, its executed date, and the host class required — no unevidenced claim survives in prose
+
+**Given** `docs/Architecture-LINEWORKER.md § 8`
+**When** read
+**Then** its CI bullet states the AD-15 gate as shipped (Playwright, story specs, `@smoke`, merge-to-main full suite, bijection lint)
+
+**Given** this file's own front matter, which names `docs/BRD-Workers-Comp-Console.md (git HEAD)` as the acting PRD
+**When** that path is resolved
+**Then** it exists — the BRD was deleted in commit `99f8171` (2026-08-09), the same day all 40 story files were batch-created, so every story since was built against a requirements document not in the working tree
+**And** it is either restored to `docs/` from `git show 99f8171^:docs/BRD-Workers-Comp-Console.md` or the front matter is amended to name what is actually of record
+
+### Story 9.2: Credential, Transport & Privilege Hardening
+
+As a compliance officer,
+I want no credential readable from process state and no TLS that a client can decline,
+So that NFR-5's "encrypted in transit" is enforced rather than permitted.
+
+**Acceptance Criteria:**
+
+**Given** `pg_dump`, `pg_basebackup` and the long-lived `pg_receivewal`
+**When** the backup container runs
+**Then** no database password appears in any argv — `docker top` and `/proc` on the host reveal nothing — and the container runs as a non-root user
+
+**Given** the `pg_hba.conf` records this project ships
+**When** a client connects without TLS
+**Then** the connection is refused (`hostssl`, not `host`), including the records Story 8.3 added
+
+**Given** the `audit_redactor` role
+**When** the migration grants it and the api later assumes it
+**Then** membership is granted to the role that actually assumes it rather than to `CURRENT_USER`, and the grant does not depend on every profile's owner being a superuser
+**And** the daily assumption window is narrowed so a compromise of the api process does not reach redaction rights for the whole day
+
+**Given** the PHI blocked-value processor
+**When** a PHI value reaches a log call — including through a foreign stdlib record's message body
+**Then** it is blocked, counted, and the counter is exposed where an operator can alert on it
+
+### Story 9.3: The Purge Cascade Actually Purges
+
+As a compliance officer,
+I want a purge that leaves no PHI and no unrelated damage,
+So that AD-11's single cascade is true in both directions.
+
+**Acceptance Criteria:**
+
+**Given** `notes.py`, `meetings.py` and `emails.py` copying free text into `audit_event.after`
+**When** a note, meeting or email is purged
+**Then** its PHI does not survive in the audit diff — either the diffs stop carrying bodies or the cascade redacts them by entity
+
+**Given** `export.*` audit rows
+**When** a claim is purged
+**Then** the rows recording that claim's data leaving the system are reachable and redactable by claim, not only by age and actor
+
+**Given** the cascade's two connections and two transactions
+**When** the process dies between their commits
+**Then** no state exists in which the redaction landed and its `redact` events did not
+
+**Given** `purge_user`
+**When** it runs
+**Then** it does not delete diary notes, meetings or email logs attached to claims that are not being purged, and does not redact claim-field edits on claims outside the purge set
+
+**Given** an in-flight copilot run and a concurrent claim edit
+**When** a purge commits
+**Then** neither can re-introduce PHI after the cascade has passed — checkpoint writes and post-`_redact` diffs are both fenced
+
+**Given** two `document` or `photo` rows sharing one `blob_key`
+**When** one claim is purged
+**Then** the other claim's binary survives, enforced by the schema rather than by convention
+
+**Given** the AD-11 ownership guard
+**When** a delete is written against a table object or composed by an f-string
+**Then** the guard sees it
+
+**Given** the retention floor and `audit_event.before`/`after` predicates
+**When** configured and queried
+**Then** the floor is driven from a `current_setting()` GUC rather than baked into the RLS policy, and no predicate is defeated by a JSONB column holding the JSON scalar `null` in place of SQL NULL
+
+### Story 9.4: Disaster Recovery Proven, Not Documented
+
+As a claims organization,
+I want every documented recovery path to have been executed at least once,
+So that NFR-8's restore drill covers what would actually be used.
+
+**Acceptance Criteria:**
+
+**Given** the off-host SSH transport
+**When** a nightly run completes
+**Then** it has shipped over SSH to a real remote in at least one exercised environment — not a local directory standing in for one
+
+**Given** Procedure B (point-in-time recovery from base + WAL)
+**When** the drill document claims it
+**Then** it has been executed and its duration, steps and verification are recorded, as Procedure A's are
+
+**Given** a restore into a cluster that is missing the roles the grants name
+**When** an automated test runs
+**Then** it restores into a *different* cluster and fails on that class of defect, rather than pinning it by an artifact-content assertion
+
+**Given** the WAL spool ceiling and the nightly copy
+**When** a database produces more WAL than `BACKUP_MAX_SPOOL_SEGMENTS` between two runs
+**Then** the copy runs before the ceiling prunes, so no segment the night's copy would have shipped is lost
+
+**Given** a failed nightly run, a died WAL receiver, or a flapping stream
+**When** it happens
+**Then** it is visible outside the container's own healthcheck; `wal_restarts` distinguishes now from months ago; the receiver's death is detected without waiting on the scheduler loop; and a missed window is caught up rather than skipped
+
+**Given** a completed restore
+**When** the system comes back
+**Then** re-running the purge is tracked, prompted or verified rather than left as an untracked manual step
+
+### Story 9.5: Session Lifecycle & Revocation Policy
+
+As a security owner,
+I want the single-session question decided and enforced,
+So that a discarded token is not replayable for its full TTL.
+
+**Acceptance Criteria:**
+
+**Given** the multi-device-versus-single-session policy
+**When** decided by an owner
+**Then** it is written down, and `POST /auth/login` enforces it — including revoking the session presented in its own request cookie
+
+**Given** expired session rows
+**When** the scheduler runs
+**Then** they are reaped on a schedule rather than only "on contact" in `resolve_session`
+
+**Given** an idle SPA past `expires_at`
+**When** the user has not navigated
+**Then** it notices — by periodic revalidation or a refresh-on-focus policy consistent with the decided session lifetime
+
+### Story 9.6: Validated Statutory Content (NFR-4)
+
+As a claims handler,
+I want the statutory content on screen to be my jurisdiction's, sourced and current,
+So that NFR-4's "validated before go-live" clause is satisfied.
+
+**Acceptance Criteria:**
+
+**Given** a fatal claim
+**When** its path is classified
+**Then** a schema-level fatality indicator drives Path C — not a severity/outcome proxy that no real claim can meet — and the handler sees the AFF-1, C-64 and C-65
+
+**Given** `path_required_form` keyed on path alone
+**When** a claim is filed under one of fifteen plants across a dozen states
+**Then** the forms shown are that jurisdiction's, from validated per-state references, and no NY WCB / FNSB placeholder is presented as a real form
+
+**Given** `state_rate_schedule`
+**When** a new benefit year's figures arrive
+**Then** the table holds them — the unique constraint is `(state_code, effective_date)` and `rate_for_state` selects with `effective_date <= as_of ORDER BY effective_date DESC LIMIT 1`
+**And** the seeded figures are replaced with sourced per-jurisdiction rates carrying their real effective dates
+
+### Story 9.7: Read Paths That Write, & The Actor They Name
+
+As an auditor,
+I want every audit row to name the actor who caused it and every GET to be a read,
+So that AD-4's record is honest and the api can be served from a replica.
+
+**Acceptance Criteria:**
+
+**Given** `materialize_schedule` running under the reading caller
+**When** a supervisor or analyst opens a case file
+**Then** no audit row names them as the actor of a write they did not make — the refresh runs under the system actor Story 3.4 built, on the scheduler Story 3.4 hooked, or not on the read path at all
+
+**Given** `GET /claims/{id}`, `GET /claims/{id}/financials` and the six export routes
+**When** they are called
+**Then** none performs a durable non-idempotent write, or the exception is stated in AD-12 with its replica consequence
+
+**Given** an export audit row designated the compliance record of PHI egress
+**When** the file's delivery is questioned
+**Then** the row can answer whether it was delivered
+
+**Given** the payment batch and the daily audit sweep
+**When** an operator asks "did Tuesday's batch run?"
+**Then** a last-run timestamp and run history answer it without grepping logs
+**And** the audit sweep is batched rather than two unbatched full-table scans of the largest table in the schema, registered serially
+
+### Story 9.8: Paging Correctness & Real Pagination
+
+As any console user,
+I want a page walk that cannot skip a row and a list envelope that does not lie,
+So that no figure I read is an artefact of paging.
+
+**Acceptance Criteria:**
+
+**Given** the worklist and drill-through offset cursors
+**When** a claim leaves the population between two page requests
+**Then** no row is silently skipped — the cursor is keyset, not offset
+
+**Given** a resumed walk
+**When** page two is fetched
+**Then** deadline-driven actions are not computed against an `as_of` up to `MAX_CURSOR_AGE` old, and every date-sensitive payload publishes the `asOf` it resolved (extending Story 7.2's pattern to the queue, the worklist and the drill-through)
+
+**Given** `PriorityClaimsTable` and `DrillClaimsPage`
+**When** the base query refetches onto a different first cursor
+**Then** `expanded` resets, no page-two fetch fires without a user click, and a failed *refetch* does not replace already-walked rows with an error alert
+
+**Given** `GET /api/glossary`, `/personas` and `list_meetings`
+**When** they answer
+**Then** `nextCursor` and `total` mean what the Lists convention says — `total` from a `COUNT(*)` or dropped, `LIMIT` applied, filter/sort parameters present, and `list_meetings` not recounting the whole book per page
+
+**Given** the "Show more" path on the stage-grouped queue
+**When** one group's next page is requested
+**Then** the other three groups are not computed and discarded — via the `groups` filter parameter Story 5.4 recommended
+
+**Given** a claim-verdict facet derived from a written table
+**When** a concurrent single-claim read rewrites it mid-walk
+**Then** the cursor can pin it
+
+### Story 9.9: Deploy-Skew Survival & Contract Hygiene
+
+As a user mid-deploy,
+I want an unknown enum to degrade a chip rather than unmount the pane,
+So that a rolling deploy is not an outage.
+
+**Acceptance Criteria:**
+
+**Given** every `Record<Enum, …>` label map in the console
+**When** the server sends a member the cached bundle predates
+**Then** the value degrades to a designed fallback — no `TypeError`, no unmounted case file — under one policy decided once for the whole SPA (fallbacks, cache-busting, or a version handshake)
+
+**Given** `TimelineTag`
+**When** any tag renders
+**Then** a UI-owned label map covers the full set including `edit`, `document` and `compliance`, matching `STAGE_LABEL` / `DISABILITY_LABEL` / `COMM_STATUS_LABEL`
+
+**Given** the generated client check in CI
+**When** `openapi.json` drifts
+**Then** the build fails — the file is in version control rather than gitignored
+
+**Given** `ApiModel`
+**When** a request carries an unknown field or a snake_case alias
+**Then** the project's decided `extra` policy applies, uniformly across every endpoint
+
+**Given** one rule value with two wire names and `rulesVersion` naming different documents on different routes of one dashboard
+**When** a client reads them
+**Then** each rule value has one wire name and each version field names the document it versions
+**And** published thresholds no component reads are removed
+
+**Given** `lineworker/web`
+**When** a diff is reviewed
+**Then** a formatter and a `format` script exist, so reflow is not a third of the diff
+**And** `noDerivation.test.ts`'s known limits (prop-rename blindness, `===` absent from the operator set, the three age edges excluded from `DERIVED_FIELDS`) are either closed or recorded as accepted with their consequence stated
+
+### Story 9.10: The O(scope) Fold Push-Down
+
+As an analyst with a real portfolio,
+I want aggregate cost proportional to the answer, not to my whole book,
+So that the dashboard survives a portfolio larger than 100 claims.
+
+**Acceptance Criteria:**
+
+**Given** the eight recorded O(scope) fold endpoints — queue, portfolio charts, priority claims, drill-through, fraud panel and its three rate breakdowns, trends, financial decomposition, and the six export routes
+**When** any is called
+**Then** its dominant per-claim Python fold is pushed into SQL, or the cost is bounded by the answer's size, or the endpoint's ceiling is documented with the portfolio size at which it fails
+
+**Given** the case file, the console's most-fetched payload
+**When** it is served
+**Then** the three per-request reads Stories 3.1 and 3.2 added are amortised, and the reference tables behind them are cached in a way that survives their becoming effective-dated
+
+**Given** the copilot panel and the narrating quick actions
+**When** the panel opens or an action runs
+**Then** the full `claim_detail` assembly is not run to render one greeting sentence, and no action reads it twice
+**And** the three scoped queries plus saver read issued per run and per history fetch are answered by one join
+
+**Given** the embedding and probe clients
+**When** they call Ollama
+**Then** connections pool rather than building a fresh `httpx.AsyncClient` per call
+**And** the model-availability poll does not run for a supervisor who never opens the copilot
+
+**Given** Recharts 3's dependency graph
+**When** the production bundle is built
+**Then** the full Redux runtime, ten d3 packages and `react-is@17.0.2` inside a React 19.2 app are either justified in writing or removed
+**And** `uv.lock`'s `zen-engine` transitive set has had one deliberate supply-chain read
+
+**Given** an empty book and a scoped ANN search
+**When** either runs
+**Then** no `IN ()` child read is issued that cannot return a row, and pgvector's HNSW post-filtering does not return fewer than `k` neighbours than the caller's book actually holds
+
+### Story 9.11: The AD-12 Mark-Stale Wiring & RAG Loose Ends
+
+As the architecture's owner,
+I want AD-12's mark-stale obligation actually wired,
+So that an embedding cannot silently describe a claim as it used to be.
+
+**Acceptance Criteria:**
+
+**Given** the five AD-4 commands that write embedding source fields — `update_claim_fields`, `add_additional_injury`, `remove_additional_injury`, `update_claim_severity`, `update_comp_rate_override`
+**When** each commits
+**Then** it calls `services/rag`'s mark-stale command in the same transaction, or the embedding source set is documented as excluding every field those commands write
+
+**Given** the constrained-hardware dev pairing the architecture verifies
+**When** `nomic-embed-text` is used for embeddings
+**Then** its 768 dimensions are not written into a `vector(1024)` column — the column, the model, or the pairing changes
+
+**Given** `search_knowledge` and the labour-law corpus
+**When** implemented and tested but unreachable from the browser
+**Then** either an HTTP surface exists or the corpus and its search are removed from the shipped image
+
+**Given** the chat model pulled and served with no application caller
+**When** a developer runs their first `up`
+**Then** they do not download several gigabytes for a model this build never speaks to
+
+**Given** the initial embedding pass
+**When** a fresh environment is seeded
+**Then** a non-e2e trigger exists
+
+**Given** the copilot's staleness disclosure
+**When** it discloses
+**Then** it reads `embedding_staleness_threshold` rather than reusing `insight_staleness_disclosure_days`
+
+**Given** a copilot resume whose caller has lost scope on the drafted claim
+**When** it resumes
+**Then** the proposal is discarded and audited as the spec's I/O matrix promises, rather than wedging the thread
+**And** `create_document` bumps `claim.version` so the letter save is idempotent under replay
+**And** the spec's I/O matrix agrees with the shipped checkpoint sweep
+
+### Story 9.12: Correction Paths For PHI-Class Rows
+
+As a claims handler,
+I want to correct a mistake without destroying its audit thread,
+So that "delete and re-add" stops being the documented fix.
+
+**Acceptance Criteria:**
+
+**Given** a meeting with a mistyped date, a diary note with a typo, and a secondary injury with the wrong body part
+**When** the handler corrects any of them
+**Then** an update command exists with `expected_version` CAS, and the audit reads as one correction rather than two unrelated events
+
+**Given** `delete_meeting`'s audit `before` diff
+**When** it is written
+**Then** `claim_business_id` is not taken from a row read before the DELETE
+
+**Given** a `payment_scheduled` or `paid` week that survives a schedule shortening past it
+**When** the Bills tab renders
+**Then** the orphan is flagged and the heading does not read "4-week schedule shown" above five rows
+
+**Given** `reviewed`, `confirmed` and `osha_logged` completions
+**When** one is set in error
+**Then** it can be cleared, as the prototype's `confirmDocument` toggles
+**And** a seam row carries the story's disabled control with its tooltip rather than only a disabled deep link
+
+**Given** the payment-approval sheet and the meeting scheduler
+**When** an action succeeds
+**Then** both use the toast primitive Story 4.3 shipped, closing UX-DR11 on the two surfaces that asked for it
+**And** a past meeting nobody ticked does not render identically to a completed one while still offering "✓ Done"
+**And** a hung POST leaves the scheduler with an exit
+
+**Given** `MeetingParticipant`, now the shared stakeholder vocabulary for emails
+**When** the code is read
+**Then** its name matches its role (`Stakeholder`)
+
+### Story 9.13: Product & Placement Decisions Register
+
+As a product owner,
+I want the decisions this codebase deliberately refused to make on my behalf,
+So that a person with standing decides them.
+
+**Acceptance Criteria:**
+
+**Given** the ~28 register entries that name a product, clinical, actuarial or architectural-placement decision
+**When** this story runs
+**Then** each is presented as a decision with its options, its cost, and the surfaces it moves — and each receives a recorded decision with an owner and a date
+
+**Given** the money-basis decisions
+**When** decided
+**Then** the "Total incurred" label (paid vs paid-plus-reserve, now on four figures across the KPI cards and the decomposition surface), the Total Paid basis (which excludes $335,985 of `status = paid` bills and expenses the Bills tab shows), and the line-item-versus-`paid_*`-column reconciliation (a measured 13× gap on WC-20051, 40px apart on one tab) are each settled with their consequences applied consistently across every surface
+
+**Given** the clinical and lifecycle decisions
+**When** decided
+**Then** TTD-versus-TPD for a recovered worker, whether a secondary injury's severity moves the claim's risk band and priority score, which of the two body-part vocabularies is canonical, whether clinical edits are permitted after settlement, and whether the calendar may mark an unapproved week `paid` are each settled
+
+**Given** the placement decisions AD-8 and AD-10 leave open
+**When** decided
+**Then** the rule "which tier owns this value" is written down once — covering `SCHEDULE_WEEKS`/`MIN_WEEKS`/`MAX_WEEKS`, the comp rate's 0–150% domain, `DIARY_CHECK_IN_DAYS`, the SIU 60 threshold, `export_limits.maxRows`, `pageLimit`'s home, and whether the reserve check joins the AD-10 registry
+**And** the seed-migration rule ("seeds of derived data go through the generator; seeds of vocabularies are frozen") is written as a rule rather than re-argued per file
+
+**Given** the demo-data decisions
+**When** decided
+**Then** the two hash-bucket derivations driving checklist triggers, the absent document and photo bytes with no ingest path anywhere in Epics 1–8, `photo.source` as an unparseable provenance sentence, and the scheduler mechanism (in-process versus worker container — now blocking three separate deferrals) are each settled
+**And** whether a narrowed analyst is demonstrated at HTTP level is decided rather than declined a fifth time
