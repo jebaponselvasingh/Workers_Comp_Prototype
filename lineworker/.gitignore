@@ -23,6 +23,10 @@ web/openapi.json
 *.env
 !*.env.example
 
+# Machine-local compose overrides — a developer's own port remaps and the like.
+# Never a documented profile: compose.yaml/.gpu/.prod/.e2e are the committed set.
+deploy/compose.localport.yaml
+
 # E2E artifacts
 e2e/test-results/
 e2e/playwright-report/
