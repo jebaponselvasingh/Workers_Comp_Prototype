@@ -3,6 +3,7 @@ title: 'Story 9.8: Paging Correctness & Real Pagination'
 type: 'bugfix'
 created: '2026-08-25'
 baseline_revision: 'e0a7668db1bdb25bf7a1a57bf6198a168c7e755c'
+final_revision: '75f78243beba94d0e0495caceb3cb2f038ce133d'
 status: 'done'
 review_loop_iteration: 0
 followup_review_recommended: true
