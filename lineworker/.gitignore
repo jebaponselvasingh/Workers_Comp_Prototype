@@ -26,6 +26,12 @@ web/openapi.json
 # Machine-local compose overrides — a developer's own port remaps and the like.
 # Never a documented profile: compose.yaml/.gpu/.prod/.e2e are the committed set.
 deploy/compose.localport.yaml
+# Its nginx half: default.conf plus Basic Auth, for briefly exposing the dev
+# stack through a tunnel, and the credential file that gates it. The htpasswd
+# is a secret; the conf is a copy of a committed file with one machine's
+# circumstances baked in. Neither belongs in the repo.
+deploy/nginx/local-share.conf
+deploy/nginx/.htpasswd-local
 
 # E2E artifacts
 e2e/test-results/
