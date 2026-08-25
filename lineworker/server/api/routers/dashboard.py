@@ -905,6 +905,15 @@ class PriorityClaimsResponse(ApiModel):
     `nextCursor` is null exactly when the worklist is finished — never "null
     because this page came back short", which would strand a tail the caption has
     already told the reader is there.
+
+    **`asOf` is the day these rows were aged against** (Story 9.8) — the field
+    `/dashboard/trends` publishes, on the payload that needs it most. The Next
+    Best Action column is a column of deadlines, generated against a date; page
+    one resolves it to today and every later page reuses the day the cursor
+    pinned, so a walk resumed from a cursor up to `MAX_CURSOR_AGE` old shows
+    actions aged against a week-old date. That was already true and unstated. It
+    is an **output only**: this endpoint accepts no `asOf` input, because a
+    caller who could choose the day could choose the ranking.
     """
 
     items: list[PriorityClaimRowResponse]
@@ -916,6 +925,7 @@ class PriorityClaimsResponse(ApiModel):
     med_risk_severity_min: int
     fraud_flag_score_min: int
     rules_version: int
+    as_of: date
 
 
 @router.get(
@@ -1045,6 +1055,7 @@ async def worklist(
         med_risk_severity_min=page.med_risk_severity_min,
         fraud_flag_score_min=page.fraud_flag_score_min,
         rules_version=page.rules_version,
+        as_of=page.as_of,
     )
 
 
@@ -1208,6 +1219,13 @@ class DrillClaimsResponse(ApiModel):
     `nextCursor` is null exactly when the list is finished — never "null because
     this page came back short", which would strand a tail `total` has already
     told the reader is there.
+
+    **`asOf` is the day these rows were aged against** (Story 9.8) — the field
+    `/dashboard/trends` publishes. Page one resolves it to today; a cursor page
+    reuses the day the cursor pinned, so `daysOpen` and `priorityScore` on page
+    three may be computed against a date up to `MAX_CURSOR_AGE` in the past.
+    That was already true and unstated. It is an **output only**: this endpoint
+    accepts no `asOf` input.
     """
 
     items: list[DrillClaimRowResponse]
@@ -1219,6 +1237,7 @@ class DrillClaimsResponse(ApiModel):
     age_younger_min: int
     age_older_min: int
     age_oldest_min: int
+    as_of: date
 
 
 async def _drill_filters(  # noqa: PLR0913 - one parameter per published facet; see below
@@ -1785,6 +1804,7 @@ async def drill_claims(
         age_younger_min=thresholds.age_younger_min,
         age_older_min=thresholds.age_older_min,
         age_oldest_min=thresholds.age_oldest_min,
+        as_of=page.as_of,
     )
 
 

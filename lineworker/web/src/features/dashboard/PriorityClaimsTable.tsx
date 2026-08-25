@@ -360,13 +360,37 @@ export function PriorityClaimsTable({
   const [expanded, setExpanded] = useState(false);
   const queryClient = useQueryClient();
   const firstCursor = data?.nextCursor ?? null;
-  const pages = usePriorityClaimPages(firstCursor, expanded);
 
-  // Gated on `expanded` rather than merely on whether the entry has data: an
+  // **An expansion belongs to the cursor it was opened against** (Story 9.8).
+  //
+  // The infinite query is keyed on `firstCursor`. When the base query refetches
+  // onto a different one — a staleness refetch, a window refocus, an
+  // invalidation after an edit — the component swings onto a fresh, empty cache
+  // entry while `expanded` is still `true`, and `enabled: expanded && …` fires a
+  // page-two request the supervisor never clicked. There is no `useEffect` and
+  // no `IntersectionObserver` here; the eager fetch is the cache key moving
+  // underneath a boolean that outlived it.
+  //
+  // Adjusting state during render rather than in an effect, which is React's
+  // documented way to reset state on a prop change: the re-render happens before
+  // anything commits, so no effect from the discarded pass runs and no request
+  // goes out. `isExpanded` is the value read *this* pass, so the hook below sees
+  // `false` immediately rather than one render later.
+  const [expandedFor, setExpandedFor] = useState<string | null>(firstCursor);
+  const cursorMoved = expandedFor !== firstCursor;
+  if (cursorMoved) {
+    setExpandedFor(firstCursor);
+    setExpanded(false);
+  }
+  const isExpanded = expanded && !cursorMoved;
+
+  const pages = usePriorityClaimPages(firstCursor, isExpanded);
+
+  // Gated on `isExpanded` rather than merely on whether the entry has data: an
   // expansion that expired (the base query refetched onto a new first cursor)
   // leaves its pages in the cache, and rendering them would show rows the
   // supervisor never asked to see, cut from a ranking that no longer applies.
-  const extra: PriorityClaimRow[] = expanded
+  const extra: PriorityClaimRow[] = isExpanded
     ? (pages.data?.pages.flatMap((page) => page.items) ?? [])
     : [];
   // Deduped by claim id, because the two sources can overlap: the base query
@@ -379,7 +403,7 @@ export function PriorityClaimsTable({
   // once it has answered. `hasNextPage` is false while the first fetch is in
   // flight, so reading it too early unmounts the button on the click that
   // triggered it, and its disabled and "Loading…" states become unreachable.
-  const hasMore = expanded && pages.isSuccess ? pages.hasNextPage : firstCursor !== null;
+  const hasMore = isExpanded && pages.isSuccess ? pages.hasNextPage : firstCursor !== null;
 
   function reload() {
     // Three steps, and each is needed — `StageGroup.reload`'s argument, over
@@ -427,10 +451,19 @@ export function PriorityClaimsTable({
         </Link>
       </h3>
 
-      {isError ? (
+      {isError && rows.length === 0 ? (
         // Inline, never a dialog (NFR-3), and in place of the table rather than
         // above an empty one: a headless table reads as "nothing in this
         // portfolio needs attention", which is a different and much quieter lie.
+        //
+        // **`rows.length === 0` is Story 9.8's addition, and it is the whole
+        // fix.** TanStack retains the last successful `data` through a failed
+        // refetch, so this branch used to replace rows the supervisor had
+        // already walked — up to a whole worklist — with one sentence, and
+        // destroy the accumulated pages with them. A refetch that fails while
+        // there is something on screen is a *warning*; only a load that has
+        // produced nothing at all is a full-height alert. The inline warning
+        // below the table is the other half.
         <p
           role="alert"
           data-testid="priority-claims-error"
@@ -498,6 +531,22 @@ export function PriorityClaimsTable({
             </table>
           </div>
 
+          {isError && (
+            // The non-destructive half of the pair above (Story 9.8): the base
+            // query failed while rows are on screen, so the rows stay and this
+            // says the figures may be behind. `role="alert"` because it appears
+            // after a state a reader was not watching for; below the table
+            // rather than above it, so nothing shifts under the pointer of
+            // somebody mid-scroll.
+            <p
+              role="alert"
+              data-testid="priority-claims-stale"
+              className="px-1 py-2 text-[11px] text-error"
+            >
+              ⚠ These rows could not be refreshed and may be out of date.
+            </p>
+          )}
+
           {pages.isError ? (
             <>
               <p
@@ -526,7 +575,7 @@ export function PriorityClaimsTable({
                   // The first click turns the infinite query on, which fetches
                   // `initialPageParam` — the cursor the section already holds.
                   // Later clicks ask it for one more.
-                  if (!expanded) setExpanded(true);
+                  if (!isExpanded) setExpanded(true);
                   else void pages.fetchNextPage();
                 }}
                 className="w-full border-t border-border px-1 py-2 text-[11px] font-semibold text-steel hover:bg-surface-2 disabled:opacity-60"

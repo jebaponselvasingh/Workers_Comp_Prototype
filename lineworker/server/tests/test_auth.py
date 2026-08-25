@@ -18,6 +18,7 @@ from fastapi import APIRouter
 from api import create_app
 from api.deps import CallerContextDep
 from api.errors import PROBLEM_CONTENT_TYPE
+from api.routers.auth import DEFAULT_PERSONA_PAGE_LIMIT
 from config import Settings
 from data.context import AllEmployers
 from data.models import Session
@@ -86,12 +87,26 @@ def empty_session_table(seeded_db_url: str) -> None:
 
 
 async def test_personas_groups_the_seed_by_role(seeded_db_url: str) -> None:
+    """**Amended by Story 9.8**: `total` and `nextCursor` mean something now.
+
+    `total` was `len(items)` — a number that agreed with itself whatever
+    happened to `app_user` — and `nextCursor` was structurally null because the
+    read had no `LIMIT`. Both are real: the count is a `COUNT(*)` over the same
+    predicate the page applies, and the cursor is null here because the seeded
+    directory fits inside the default page rather than because it can never be
+    anything else (`test_a_limit_cuts_the_picker_and_the_total_still_counts_
+    the_table` is the other half).
+
+    The assertions are unchanged in *value* and stronger in meaning: ten
+    personas exist, and one unparameterised read returns all of them.
+    """
     async with make_client(seeded_db_url) as client:
         resp = await client.get("/personas")
 
     assert resp.status_code == 200
     body = resp.json()
     assert body["total"] == 10
+    assert len(body["items"]) == 10
     assert body["nextCursor"] is None  # camelCase boundary is live
 
     by_role: dict[str, list[str]] = {}
@@ -128,6 +143,164 @@ async def test_personas_endpoint_exposes_no_scope_data(seeded_db_url: str) -> No
 async def test_personas_is_reachable_without_a_session(seeded_db_url: str) -> None:
     async with make_client(seeded_db_url) as client:
         assert (await client.get("/personas")).status_code == 200
+
+
+# --- Story 9.8: the picker is genuinely paged, and still pre-auth --------
+
+
+async def test_the_seeded_personas_fit_inside_the_default_page(seeded_db_url: str) -> None:
+    """The guard that keeps `usePersonas`' single unparameterised read complete.
+
+    The SPA fetches the picker once with no parameters and partitions it in the
+    browser. `DEFAULT_PERSONA_PAGE_LIMIT` is deliberately far above the seeded
+    directory so that read still returns everybody — and this is what makes that
+    a property rather than a hope: a migration that adds personas past the
+    default fails here rather than quietly hiding somebody's login.
+    """
+    async with make_client(seeded_db_url) as client:
+        body = (await client.get("/personas")).json()
+
+    assert body["total"] < DEFAULT_PERSONA_PAGE_LIMIT
+    assert len(body["items"]) == body["total"]
+    assert body["nextCursor"] is None
+
+
+async def test_a_limit_cuts_the_picker_and_the_total_still_counts_the_table(
+    seeded_db_url: str,
+) -> None:
+    """The distinction `total = len(items)` could not express."""
+    async with make_client(seeded_db_url) as client:
+        body = (await client.get("/personas", params={"limit": 3})).json()
+
+    assert len(body["items"]) == 3
+    assert body["total"] == 10
+    assert body["nextCursor"] is not None
+
+
+async def test_a_cursor_walk_visits_every_persona_exactly_once_without_a_session(
+    seeded_db_url: str,
+) -> None:
+    """Paging this endpoint needed neither a session nor a scope decision.
+
+    That was the open question the register recorded — a ten-row public picker
+    looked like the wrong place to improvise pagination machinery — and the
+    answer is that a keyset over stored identity columns knows nothing about who
+    is asking. The walk below never logs in.
+
+    A page size that does not divide ten, deliberately: an exact divisor is the
+    case where an off-by-one in the "is there more?" test produces a phantom
+    empty final page and nothing notices.
+    """
+    walked: list[int] = []
+    async with make_client(seeded_db_url) as client:
+        cursor: str | None = None
+        while True:
+            params: dict[str, Any] = {"limit": 4}
+            if cursor is not None:
+                params["cursor"] = cursor
+            resp = await client.get("/personas", params=params)
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            walked.extend(item["id"] for item in body["items"])
+            cursor = body["nextCursor"]
+            if cursor is None:
+                break
+
+    assert len(walked) == 10
+    assert len(walked) == len(set(walked))
+    assert walked == sorted(walked)
+
+
+async def test_a_role_facet_narrows_the_page_and_the_count_together(
+    seeded_db_url: str,
+) -> None:
+    """`filter[role]` is the facet the SPA does in the browser today.
+
+    `total` is counted through the same predicate the page applies, so it
+    describes the filtered list rather than the directory behind it.
+    """
+    async with make_client(seeded_db_url) as client:
+        body = (await client.get("/personas", params={"filter[role]": "handler"})).json()
+
+    assert body["total"] == 6
+    assert {item["role"] for item in body["items"]} == {"handler"}
+
+
+async def test_the_role_facet_cannot_surface_the_machine_actor(seeded_db_url: str) -> None:
+    """The picker's exclusion is a predicate the facet is `AND`-ed into.
+
+    `app_user` gained a `system` row — the identity the payment batch audits
+    under — and it is `scope_all`, which makes it the widest account in the
+    system. `filter[role]` can only ever narrow what `LOGIN_ROLES` already
+    permits, so the parameter cannot be the way to it however it is spelled;
+    naming it is a 422 from FastAPI's own validator before any of that, because
+    the published facet is `LoginRole` and the machine actor is not a member —
+    the same shape `filter[stage]=banana` produces on the drill-through.
+    """
+    async with make_client(seeded_db_url) as client:
+        resp = await client.get("/personas", params={"filter[role]": "system"})
+
+    assert resp.status_code == 422
+    # And the row is absent from every page of an unfiltered walk.
+    async with make_client(seeded_db_url) as client:
+        body = (await client.get("/personas", params={"limit": 200})).json()
+    assert all(item["role"] != "system" for item in body["items"])
+
+
+async def test_a_cursor_replayed_under_a_different_role_facet_is_refused(
+    seeded_db_url: str,
+) -> None:
+    """A position in a filtered list is not a position in the whole one.
+
+    Served rather than refused, this would page the whole picker from a key cut
+    from a subset — skipping personas with a 200 and nothing on screen to say
+    so.
+    """
+    async with make_client(seeded_db_url) as client:
+        cursor = (
+            await client.get("/personas", params={"limit": 2, "filter[role]": "handler"})
+        ).json()["nextCursor"]
+        resp = await client.get("/personas", params={"limit": 2, "cursor": cursor})
+
+    assert resp.status_code == 400
+    assert resp.json()["type"] == "/problems/invalid-cursor"
+
+
+@pytest.mark.parametrize(
+    "cursor",
+    [
+        "not-base64-at-all!!",
+        "e30",
+        # A forged page size past the route's ceiling. On this endpoint the
+        # cursor's own bounds are the *only* validation a pre-auth caller passes.
+        "eyJrIjpbMSwxXSwibCI6MTAwMDAwLCJzIjoiaWQiLCJyIjpudWxsfQ",
+        # A role the picker does not list — the machine actor, through the one
+        # door left.
+        "eyJrIjpbMSwxXSwibCI6MiwicyI6ImlkIiwiciI6InN5c3RlbSJ9",
+        # A string key under the integer ordering.
+        "eyJrIjpbIngiLDFdLCJsIjoyLCJzIjoiaWQiLCJyIjpudWxsfQ",
+        # An integer past what an `integer` column holds, in both members of the
+        # key: `{"k":[2**63, 2**63],"l":2,"s":"id","r":null}`. Right type, right
+        # shape, decodes cleanly — and then reaches asyncpg as a row-value
+        # comparison parameter out of range for `app_user.id`, which raises
+        # `DataError`: not a `ValueError`, not in this decoder's except tuple,
+        # and therefore a **500** before the int32 bound. This endpoint answers
+        # before a session exists, so this decoder is the only validator that
+        # forged integer ever passes.
+        "eyJrIjpbOTIyMzM3MjAzNjg1NDc3NTgwOCw5MjIzMzcyMDM2ODU0Nzc1ODA4XSwibCI6MiwicyI6ImlkIiwiciI6bnVsbH0",
+    ],
+)
+async def test_a_forged_persona_cursor_is_a_400_rather_than_a_500_or_a_page_one(
+    seeded_db_url: str, cursor: str
+) -> None:
+    """Never a silent page one, and never a 500 — on the one paged endpoint that
+    answers before a session exists, so its decoder is the whole of its input
+    validation."""
+    async with make_client(seeded_db_url) as client:
+        resp = await client.get("/personas", params={"cursor": cursor})
+
+    assert resp.status_code == 400, resp.text
+    assert resp.json()["type"] == "/problems/invalid-cursor"
 
 
 # --- session lifecycle -------------------------------------------------

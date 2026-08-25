@@ -165,13 +165,30 @@ class MeetingListResponse(ApiModel):
     in "📅 Today's Meetings (N)". A total that shrank when the page did would
     misdescribe the list, which is `StageGroupResponse`'s argument.
 
-    `upcomingCount` is the extra member Story 4.2 added, and it is deliberately
-    *not* affected by `day`. See its field description.
+    **It is null on a cursor page** (Story 9.8), which is the Lists convention's
+    optional member rather than a divergence from it: the SPA reads the count
+    from the first page and keeps it, so recounting the whole diary on every
+    "Show more" bought a number nothing rendered. `EmailLogListResponse` shipped
+    this first and named this endpoint as the one still to do it.
+
+    `upcomingCount` is the extra member Story 4.2 added. It is deliberately *not*
+    affected by `day`, and — unlike `total` — it is present on **every** page:
+    the greeting that renders it sits beside a list the reader is paging, so a
+    value that vanished on page two would empty a sentence mid-scroll. See its
+    field description.
     """
 
     items: list[MeetingResponse]
     next_cursor: str | None = None
-    total: int
+    total: int | None = Field(
+        default=None,
+        description=(
+            "The size of the list the caller asked for — **present on the "
+            "first page only**, null on any page fetched with a `cursor`. Read "
+            "it from the first page and keep it; do not count `items`. When "
+            "`day` is set it describes that day's list."
+        ),
+    )
     upcoming_count: int = Field(
         description=(
             "Server-derived. How many of the caller's meetings are still "

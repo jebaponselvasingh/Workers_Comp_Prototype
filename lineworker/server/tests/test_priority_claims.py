@@ -233,7 +233,9 @@ def priority_claim(
 def ranked_ids(caseload: Sequence[PriorityClaim], cap: int = 30) -> tuple[list[str], int]:
     """`rank` over the seeded blocks, reduced to the ids and the population size."""
     members, total = rank(caseload, SEEDED_THRESHOLDS, SEEDED_WEIGHTS, cap)
-    return [claim.claim_id for claim, _flags in members], total
+    # Three-tuples since Story 9.8: `rank` carries each member's score, because
+    # the cursor now resumes after `order_key` rather than at a row count.
+    return [claim.claim_id for claim, _flags, _score in members], total
 
 
 def test_a_claim_in_active_treatment_is_in_the_population() -> None:
@@ -539,10 +541,17 @@ ACTION_PARAMS = WorklistActions(
 
 
 def a_cursor(**changes: Any) -> Cursor:
-    """A well-formed cursor, with named fields replaced."""
+    """A well-formed cursor, with named fields replaced.
+
+    **Amended by Story 9.8**: the position is a `(score, claim_id)` key rather
+    than an offset. Every test built on this helper is asserting something about
+    the *other* fields — the three rule versions, the page size, the date — and
+    the substitution keeps them doing exactly that.
+    """
     return replace(
         Cursor(
-            offset=10,
+            last_score=118.0,
+            last_claim_id="WC-0010",
             limit=10,
             weights_version=1,
             thresholds_version=5,
@@ -563,8 +572,13 @@ def test_a_cursor_round_trips() -> None:
         "not-base64-at-all!!",
         # Valid base64 of JSON that is not a cursor.
         "e30",
-        # A position that cannot exist.
-        encode_cursor(a_cursor(offset=-1)),
+        # A position that cannot exist. Since Story 9.8 that means a
+        # non-finite score rather than a negative offset: `NaN` compares false
+        # against everything, so `bisect_right` would resume wherever its
+        # probes landed rather than where the ordering says — a silently wrong
+        # page, which is exactly what this story removes.
+        encode_cursor(a_cursor(last_score=float("nan"))),
+        encode_cursor(a_cursor(last_score=float("inf"))),
         # A forged page size past the route's ceiling. This is the *only* way a
         # page size could be smuggled into this endpoint — it declares no
         # `limit` parameter at all — so leaving it unbounded here would be
@@ -584,18 +598,61 @@ def test_a_cursor_that_does_not_describe_this_list_is_refused(raw: str) -> None:
         decode_cursor(raw, TODAY)
 
 
-def test_a_cursor_carrying_an_infinite_offset_is_refused_rather_than_crashing() -> None:
+def test_a_cursor_carrying_an_infinite_page_size_is_refused_rather_than_crashing() -> None:
     """`json` accepts the literal `Infinity` and `int(float("inf"))` raises
     `OverflowError`, which is **not** a `ValueError` — the defect that escaped
     the queue's decoder as a 500 rather than the 400 this function exists to
-    produce. `ArithmeticError` in the except tuple is what catches it."""
+    produce. `ArithmeticError` in the except tuple is what catches it.
+
+    **Amended by Story 9.8**: the field carrying the infinity moved from the
+    offset (`o`, which no longer exists) to the page size (`l`). The property is
+    unchanged and is asserted on a field that still goes through `int(...)`.
+    """
     forged = (
-        base64.urlsafe_b64encode(b'{"o":Infinity,"l":10,"v":1,"t":5,"a":2,"d":"2026-08-18"}')
+        base64.urlsafe_b64encode(
+            b'{"k":[10.0,"WC-0010"],"l":Infinity,"v":1,"t":5,"a":2,"d":"2026-08-18"}'
+        )
         .decode()
         .rstrip("=")
     )
     with pytest.raises(InvalidCursor):
         decode_cursor(forged, TODAY)
+
+
+def test_a_cursor_predating_the_keyset_change_is_refused() -> None:
+    """AC 1: an offset-shaped cursor is refused, never silently reinterpreted.
+
+    A cursor minted before Story 9.8 carries `o` and no `k`. Reading the offset
+    as a key would resume at an arbitrary position; falling back to page one
+    would re-append rows the caller already has. Both are silent, which is why
+    the only acceptable answer is the 400 the route turns this into.
+    """
+    stale = (
+        base64.urlsafe_b64encode(b'{"o":10,"l":10,"v":1,"t":5,"a":2,"d":"2026-08-18"}')
+        .decode()
+        .rstrip("=")
+    )
+    with pytest.raises(InvalidCursor):
+        decode_cursor(stale, TODAY)
+
+
+def test_a_malformed_resumption_key_is_refused() -> None:
+    """Every part of `k` is checked rather than coerced.
+
+    A string score or an integer claim id would reach the tuple comparison
+    inside `bisect_right` and raise `TypeError` from inside a dashboard read —
+    a 500 — rather than the 400 a forged cursor deserves.
+    """
+    for key in (5, [10.0], [10.0, "WC-0010", 3], ["10.0", "WC-0010"], [True, "WC-0010"], [10.0, 5]):
+        forged = (
+            base64.urlsafe_b64encode(
+                json.dumps({"k": key, "l": 10, "v": 1, "t": 5, "a": 2, "d": "2026-08-18"}).encode()
+            )
+            .decode()
+            .rstrip("=")
+        )
+        with pytest.raises(InvalidCursor):
+            decode_cursor(forged, TODAY)
 
 
 # --- plumbing -----------------------------------------------------------
@@ -791,7 +848,7 @@ async def test_the_order_is_the_queues_ordering_over_the_same_claims(
     )
 
     assert [row.claim_id for row in aggregate.items] == [
-        claim.claim_id for claim, _flags in members
+        claim.claim_id for claim, _flags, _score in members
     ][: len(aggregate.items)]
     assert aggregate.total == total
 
@@ -963,7 +1020,26 @@ async def test_a_scoped_supervisors_book_fits_one_page_with_no_cursor(
     [
         pytest.param(lambda _p: "not-base64-at-all!!", id="not-base64"),
         pytest.param(lambda _p: "e30", id="valid-base64-not-a-cursor"),
-        pytest.param(lambda _p: encode_cursor(a_cursor(offset=10_000)), id="offset-past-the-end"),
+        # **Amended by Story 9.8.** Its predecessor forged `offset=10_000`,
+        # which the offset cursor refused as "a position past the end". A key
+        # past the end is not a forgery — it is a walk whose remaining rows have
+        # all left the list, and it is answered with an empty final page (see
+        # `test_a_key_past_the_end_is_an_ended_walk_rather_than_a_refusal` in
+        # `test_queue_assembly.py`). What replaces it here is a key that could
+        # not have come from any page: a non-finite score, which decodes cleanly
+        # and would make `bisect_right` resume wherever its probes landed.
+        pytest.param(
+            lambda _p: encode_cursor(a_cursor(last_score=float("nan"))),
+            id="non-finite-score",
+        ),
+        pytest.param(
+            lambda _p: (
+                base64.urlsafe_b64encode(b'{"o":10,"l":10,"v":1,"t":5,"a":2,"d":"2026-08-18"}')
+                .decode()
+                .rstrip("=")
+            ),
+            id="offset-shaped-cursor-from-before-the-keyset-change",
+        ),
         pytest.param(
             lambda _p: encode_cursor(a_cursor(as_of=utc_today() + timedelta(days=1))),
             id="dated-in-the-future",
@@ -976,12 +1052,12 @@ async def test_a_scoped_supervisors_book_fits_one_page_with_no_cursor(
         pytest.param(
             lambda _p: (
                 base64.urlsafe_b64encode(
-                    b'{"o":Infinity,"l":10,"v":1,"t":5,"a":2,"d":"2026-08-18"}'
+                    b'{"k":[10.0,"WC-0010"],"l":Infinity,"v":1,"t":5,"a":2,"d":"2026-08-18"}'
                 )
                 .decode()
                 .rstrip("=")
             ),
-            id="infinite-offset",
+            id="infinite-page-size",
         ),
     ],
 )
@@ -1331,6 +1407,11 @@ async def test_the_response_is_camel_case_and_carries_nothing_else(
         "medRiskSeverityMin",
         "fraudFlagScoreMin",
         "rulesVersion",
+        # Story 9.8: the day these rows were aged against — `/dashboard/trends`'
+        # field, on the payload whose Next Best Action column is a column of
+        # deadlines. Named here rather than allowed through, because the point
+        # of this assertion is that a field cannot appear without a decision.
+        "asOf",
     }
     assert set(payload["items"][0]) == ROW_KEYS
     # Business ids on the wire, never surrogates (the ID convention).
@@ -1533,3 +1614,153 @@ def test_a_cap_below_one_is_refused_by_the_pure_ranker() -> None:
     """
     with pytest.raises(ValueError, match="cap must be at least 1"):
         rank([], SEEDED_THRESHOLDS, SEEDED_WEIGHTS, 0)
+
+
+# --- Story 9.8: keyset resumption and the published `asOf` ---------------
+
+
+@requires_db
+async def test_a_claim_leaving_the_population_mid_walk_skips_nobody(
+    seeded_db_url: str,
+) -> None:
+    """AC 1, and the defect this story exists to remove.
+
+    A full walk is taken first, to establish the ranking as **this database**
+    holds it. Then the walk is repeated: page one is read, a claim ranked at the
+    very top is settled and stripped of its litigation and fraud flags — which
+    removes it from the population, since `qualifies_for_worklist` is treatment
+    ∪ fraud-flagged ∪ litigation — and the walk continues from the cursor page
+    one handed back.
+
+    Under the offset this cursor used to carry, every claim below the departure
+    would have slid up one and page two would have started one row late: exactly
+    one claim served on page one, absent from page two, and never seen again.
+    Under a key the walk resumes after a *row*, so the survivors either side of
+    the departure are each walked once.
+
+    **The baseline is the endpoint's own first walk rather than the seed
+    oracle**, deliberately. Earlier tests in this module supersede rule
+    documents and mutate rows, so the oracle's ranking is not this database's by
+    the time this test runs — and the property under test is a relationship
+    between two walks of one list, not a claim about the seed. The oracle's job
+    is done by `test_the_order_is_story_2_1s_ordering_over_the_same_claims`.
+
+    The mutation is undone in a `finally`, because this module's
+    `seeded_db_url` is module-scoped and a settled claim left behind would be a
+    trap for whatever test is added after this one.
+    """
+    async with make_client(seeded_db_url) as client:
+        await login_as(client, *BLINE)
+
+        baseline: list[str] = []
+        cursor: str | None = None
+        while True:
+            params = {} if cursor is None else {"cursor": cursor}
+            page = (await client.get(WORKLIST, params=params)).json()
+            baseline.extend(row["claimId"] for row in page["items"])
+            cursor = page["nextCursor"]
+            if cursor is None:
+                break
+
+        first = (await client.get(WORKLIST)).json()
+        assert first["nextCursor"] is not None, "the seeded worklist must page"
+        page_one = [row["claimId"] for row in first["items"]]
+        # The top-ranked claim: as far above the page boundary as this list
+        # goes, so the slide an offset would suffer is maximal.
+        departing = page_one[0]
+
+        engine = create_async_engine(
+            seeded_db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        )
+        try:
+            async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+                before = (
+                    await session.execute(
+                        sa.text(
+                            "SELECT stage::text, litigation_flag, fraud_flag FROM claim "
+                            "WHERE claim_id = :cid"
+                        ),
+                        {"cid": departing},
+                    )
+                ).one()
+                await session.execute(
+                    sa.text(
+                        "UPDATE claim SET stage = 'settled', litigation_flag = false, "
+                        "fraud_flag = false WHERE claim_id = :cid"
+                    ),
+                    {"cid": departing},
+                )
+                await session.commit()
+
+            walked = list(page_one)
+            cursor = first["nextCursor"]
+            while cursor is not None:
+                page = (await client.get(WORKLIST, params={"cursor": cursor})).json()
+                walked.extend(row["claimId"] for row in page["items"])
+                cursor = page["nextCursor"]
+                assert len(walked) < 200, "the walk is not terminating"
+        finally:
+            async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+                await session.execute(
+                    sa.text(
+                        "UPDATE claim SET stage = CAST(:stage AS stage), "
+                        "litigation_flag = :lit, fraud_flag = :fraud WHERE claim_id = :cid"
+                    ),
+                    {"cid": departing, "stage": before[0], "lit": before[1], "fraud": before[2]},
+                )
+                await session.commit()
+            await engine.dispose()
+
+    survivors = [claim_id for claim_id in baseline if claim_id != departing]
+
+    # Nothing repeated.
+    assert len(walked) == len(set(walked))
+    # The claim that left was served exactly once — on the page it was still on.
+    assert walked.count(departing) == 1
+    # Every claim that never left is present, in the baseline ranking. Compared
+    # as a *subsequence* of the walk rather than as the whole of it, because two
+    # other things legitimately appear in `walked`: `departing` itself, and the
+    # claim the cap promoted into the list behind it. Neither is a skip. What
+    # the offset got wrong was a survivor going *missing*, and that is exactly
+    # what this equality would catch.
+    assert [claim_id for claim_id in walked if claim_id in set(survivors)] == survivors
+
+
+@requires_db
+async def test_the_payload_publishes_the_day_it_aged_the_claims_against(
+    seeded_db_url: str,
+) -> None:
+    """AC 2, and the field is the *aged-on* day rather than today.
+
+    Page one resolves it to today. A cursor page reuses the day the cursor
+    pinned — which is what makes page two a page of the list page one was — so a
+    walk resumed from a week-old cursor generates its Next Best Action column, a
+    column of deadlines, against a week-old date. That was already true and
+    unstated; a test oracle can now read the server's clock off the response
+    instead of guessing at its own, which is the whole reason
+    `deferred-work.md` has wanted this field since Story 2.1.
+    """
+    pages = await walk(seeded_db_url, *BLINE)
+
+    assert pages[0]["asOf"] == utc_today().isoformat()
+    # Every page of one walk states the same day: page two aged against a
+    # different one would be a page of a different ranking.
+    assert {page["asOf"] for page in pages} == {utc_today().isoformat()}
+
+
+@requires_db
+async def test_the_endpoint_does_not_accept_as_of_as_an_input(seeded_db_url: str) -> None:
+    """`asOf` is published, never accepted (the story's Never list).
+
+    A caller who could choose the day could choose the ranking — `days_open`
+    feeds the score — so the parameter stays exactly one-directional. Asserted
+    against the published contract rather than by sending one, because an
+    unknown query parameter is silently ignored and a passing "it had no
+    effect" test would keep passing if somebody declared it.
+    """
+    async with make_client(seeded_db_url) as client:
+        await login_as(client, *BLINE)
+        schema = (await client.get("/openapi.json")).json()
+
+    operation = schema["paths"]["/dashboard/priority-claims"]["get"]
+    assert {p["name"] for p in operation.get("parameters", [])} == {"cursor"}

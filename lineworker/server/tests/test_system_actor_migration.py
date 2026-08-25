@@ -114,7 +114,10 @@ async def test_exactly_one_system_actor_exists(db: AsyncSession) -> None:
 
 
 async def test_the_picker_offers_only_personas(db: AsyncSession) -> None:
-    personas = await list_personas(db)
+    # `limit` is required since Story 9.8 made the picker genuinely paged; a
+    # number well past the seeded directory keeps this a statement about *every*
+    # persona rather than about a page of them.
+    personas = await list_personas(db, limit=200)
     assert personas, "the picker is empty"
     assert all(persona["role"] in LOGIN_ROLES for persona in personas)
     assert all(persona["name"] != SYSTEM_ACTOR_NAME for persona in personas)

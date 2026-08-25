@@ -180,19 +180,28 @@ class StageGroupResponse(ApiModel):
 
 
 class StageGroupsResponse(ApiModel):
-    """The four groups, always all four.
+    """The four groups — all four, unless the request named fewer.
 
     Named fields rather than a map keyed by stage: the four stages are the
     contract (the SPA renders four sections in this order whatever the data
-    says), and a map would let a response omit one — which the client would
-    have to render as either "empty" or "unknown", two very different
-    things.
+    says), and a map would let a response omit one silently — which the
+    client would have to render as either "empty" or "unknown", two very
+    different things.
+
+    **A field is `null` exactly when `groups` did not ask for it** (Story
+    9.8), and that is the distinction the named fields buy. `null` is "you
+    did not ask"; a present group with `items: []` and `total: 0` is "there
+    is nothing in this stage", which is a message the console owes the user
+    honestly (NFR-3). Without the `groups` parameter every field is present,
+    which is every call the SPA made before this story and every initial
+    load after it. Only the "Show more" path narrows, and it narrows to the
+    one group it is walking.
     """
 
-    intake: StageGroupResponse
-    investigation: StageGroupResponse
-    treatment: StageGroupResponse
-    settled: StageGroupResponse
+    intake: StageGroupResponse | None = None
+    investigation: StageGroupResponse | None = None
+    treatment: StageGroupResponse | None = None
+    settled: StageGroupResponse | None = None
 
 
 class ClaimQueueResponse(ApiModel):
@@ -215,6 +224,21 @@ class ClaimQueueResponse(ApiModel):
     is what lets the pane tell "no claims in your caseload" from "no claims
     match this filter" (NFR-3) without holding an unfiltered copy of the
     caseload to compare against.
+
+    **Both totals survive `groups`.** They are counted over the whole scored
+    book rather than summed from the groups on this payload, so a narrowed
+    "Show more" response still states how big the caller's queue is — which is
+    the number the pane's chips and its two empty-state sentences are drawn
+    from, and which must not change because a client asked for one section.
+
+    **`asOf` is the day these cards were aged against** (Story 9.8), the field
+    `/dashboard/trends` already publishes. Page one resolves it to today; a
+    cursor page reuses the day the cursor pinned, so a queue left open across
+    UTC midnight, or resumed from a cursor up to a week old, publishes
+    `daysOpen` values and an ordering computed against a date the caller can
+    now read rather than guess at. It is an **output only**: this endpoint
+    accepts no `asOf` input, because a caller who could choose the day could
+    choose the ranking.
     """
 
     groups: StageGroupsResponse
@@ -222,6 +246,7 @@ class ClaimQueueResponse(ApiModel):
     thresholds_version: int
     unfiltered_total: int
     filtered_total: int
+    as_of: date
 
 
 def _card(card: QueueCard) -> ClaimCardResponse:
@@ -251,18 +276,30 @@ def _group(group: StageGroup) -> StageGroupResponse:
     )
 
 
+def _group_or_none(result: ClaimQueue, stage: Stage) -> StageGroupResponse | None:
+    """One group's page, or `None` when the request did not ask for that stage.
+
+    `.get` rather than `[]`: since Story 9.8 the service returns only the groups
+    `groups` named, and a `KeyError` here would turn a narrowed request into a
+    500 on the handler's most-used screen.
+    """
+    group = result.groups.get(stage)
+    return None if group is None else _group(group)
+
+
 def _queue(result: ClaimQueue) -> ClaimQueueResponse:
     return ClaimQueueResponse(
         groups=StageGroupsResponse(
-            intake=_group(result.groups[Stage.intake]),
-            investigation=_group(result.groups[Stage.investigation]),
-            treatment=_group(result.groups[Stage.treatment]),
-            settled=_group(result.groups[Stage.settled]),
+            intake=_group_or_none(result, Stage.intake),
+            investigation=_group_or_none(result, Stage.investigation),
+            treatment=_group_or_none(result, Stage.treatment),
+            settled=_group_or_none(result, Stage.settled),
         ),
         rules_version=result.rules_version,
         thresholds_version=result.thresholds_version,
         unfiltered_total=result.unfiltered_total,
         filtered_total=result.filtered_total,
+        as_of=result.as_of,
     )
 
 
@@ -285,7 +322,25 @@ async def queue(
     ] = QueueFilter.all,
     stage: Annotated[
         Stage | None,
-        Query(description="Which group `cursor` addresses. Never narrows the response."),
+        Query(
+            description=(
+                "Which group `cursor` addresses. It does **not** narrow the "
+                "response — use `groups` for that."
+            )
+        ),
+    ] = None,
+    groups: Annotated[
+        list[Stage] | None,
+        Query(
+            description=(
+                "Which stage groups to return. Omit for all four (the initial "
+                "load). Naming one group is how a 'Show more' asks for the "
+                "group it is walking without paying to rank and serialise the "
+                "other three; a group not named is **absent** from `groups`, "
+                "never an empty one. `unfilteredTotal` and `filteredTotal` are "
+                "unaffected and still describe the whole queue."
+            )
+        ),
     ] = None,
     cursor: Annotated[
         str | None,
@@ -300,7 +355,25 @@ async def queue(
         ),
     ] = None,
 ) -> ClaimQueueResponse:
-    """The caller's queue. Filter and page it; you cannot re-scope it."""
+    """The caller's queue. Filter, narrow and page it; you cannot re-scope it.
+
+    **`stage` and `groups` are two different parameters and neither is the
+    other.** `stage` names which group a `cursor` addresses — the cursor records
+    it and the service refuses a mismatch — and it narrows nothing. `groups`
+    (Story 9.8) names which groups to compute and return, and it narrows
+    exactly that: an unnamed group is absent from the payload rather than
+    empty, so "you did not ask" and "there is nothing in this stage" stay
+    distinguishable (NFR-3). A "Show more" sends both, naming the same stage in
+    each; an initial load sends neither.
+
+    This docstring's predecessor, and `stage`'s own description, promised that
+    the response is *never* narrowed. That promise was made for the initial
+    load, where a response with three blank groups really is indistinguishable
+    from a caseload with nothing in them, and it was never revisited for the
+    paging path — where the same endpoint serves a request that wants one group
+    and discards three. `groups` is the narrowing made explicit rather than
+    inferred, which is what keeps the honest half of the old promise intact.
+    """
     # Specific to one persona's book, so it must never be served to another
     # from a cache upstream — the same reason `/me` and `/stats/*` say so.
     response.headers["Cache-Control"] = "no-store"
@@ -310,6 +383,7 @@ async def queue(
             ctx,
             queue_filter=queue_filter,
             stage=stage,
+            groups=groups,
             cursor=cursor,
             limit=limit,
         )

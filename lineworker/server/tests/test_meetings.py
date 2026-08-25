@@ -749,6 +749,10 @@ async def test_the_day_filter_narrows_the_page_and_its_total_but_not_the_count(
 
     assert filtered.total == 2
     assert {item.meeting_date for item in filtered.items} == {day}
+    # Both reads are first pages, so both carry a count — Story 9.8 makes
+    # `total` null only on a *cursor* page. Narrowed for mypy, which cannot see
+    # that from here.
+    assert whole.total is not None
     assert filtered.total < whole.total
     assert filtered.upcoming_count == whole.upcoming_count
 
@@ -894,6 +898,7 @@ async def test_the_two_renderings_of_the_upcoming_rule_agree(db: AsyncSession) -
 
     page = await list_meetings(db, ctx, limit=MAX_PAGE_LIMIT, as_of=TODAY)
     assert page.total == len(page.items), "the whole book has to fit one page for this count"
+    assert page.next_cursor is None
 
     in_python = sum(1 for item in page.items if item.status is MeetingStatus.upcoming)
     assert page.upcoming_count == in_python
@@ -904,10 +909,12 @@ async def test_paging_visits_every_meeting_exactly_once(db: AsyncSession) -> Non
     """The keyset cursor, walked to exhaustion.
 
     `total` is the whole list rather than the page, so it is also what the walk
-    is checked against.
+    is checked against — read from the **first** page, which since Story 9.8 is
+    the only page that carries it.
     """
     ctx = await context_for(db, *KAYA)
     first = await list_meetings(db, ctx, limit=1, as_of=TODAY)
+    assert first.total is not None, "the first page always counts the book"
 
     seen = [item.id for item in first.items]
     cursor = first.next_cursor
@@ -917,6 +924,74 @@ async def test_paging_visits_every_meeting_exactly_once(db: AsyncSession) -> Non
         cursor = page.next_cursor
 
     assert len(seen) == len(set(seen)) == first.total
+
+
+@requires_db
+async def test_the_book_is_counted_on_the_first_page_only(db: AsyncSession) -> None:
+    """Story 9.8 — `list_email_logs`' line, on the list whose entry that one cites.
+
+    This read recounted the whole diary on every "Show more" while `useMeetings`
+    takes `total` from `pages[0]` and keeps it, so every page but the first paid
+    for a number nothing rendered. `EmailLogPage`'s docstring named this list as
+    the one still to do it and left it alone deliberately; this is that.
+
+    `upcomingCount` is the deliberate contrast and is asserted beside it: it is
+    present on **every** page, because the greeting that renders it sits above a
+    list the reader is paging and a value that vanished on page two would empty
+    a sentence mid-scroll. Two counts, two rules, one envelope.
+    """
+    ctx = await context_for(db, *KAYA)
+    first = await list_meetings(db, ctx, limit=1, as_of=TODAY)
+    assert first.next_cursor is not None, "the diary must page for this to mean anything"
+
+    second = await list_meetings(db, ctx, cursor=first.next_cursor, as_of=TODAY)
+
+    assert first.total is not None
+    assert second.total is None
+    assert second.upcoming_count == first.upcoming_count
+
+
+@requires_db
+async def test_a_cursor_page_issues_no_whole_book_count(db: AsyncSession) -> None:
+    """The saving, asserted rather than assumed.
+
+    Counting the statements rather than trusting the field to be `None`: a
+    `total` computed and then thrown away would satisfy the test above and would
+    buy nothing, which is the whole point of the change.
+    `test_the_aggregate_takes_exactly_five_scoped_reads` counts this way for the
+    same reason.
+    """
+    ctx = await context_for(db, *KAYA)
+    first = await list_meetings(db, ctx, limit=1, as_of=TODAY)
+    assert first.next_cursor is not None
+
+    statements: list[str] = []
+    original_execute = db.execute
+    original_scalar = db.scalar
+
+    async def counting_execute(statement: Any, *args: Any, **kwargs: Any) -> Any:
+        statements.append(str(statement))
+        return await original_execute(statement, *args, **kwargs)
+
+    async def counting_scalar(statement: Any, *args: Any, **kwargs: Any) -> Any:
+        statements.append(str(statement))
+        return await original_scalar(statement, *args, **kwargs)
+
+    # Both doors: the page read goes through `execute` and the counts through
+    # `scalar`, and a test that watched only one would report zero counts and
+    # pass for the wrong reason.
+    db.execute = counting_execute  # type: ignore[method-assign]
+    db.scalar = counting_scalar  # type: ignore[method-assign]
+    try:
+        await list_meetings(db, ctx, cursor=first.next_cursor, as_of=TODAY)
+    finally:
+        db.execute = original_execute  # type: ignore[method-assign]
+        db.scalar = original_scalar  # type: ignore[method-assign]
+
+    # One `count(*)` survives on a cursor page — `upcoming_count`, which is
+    # every page's by design. The one that has gone is the unconditional recount
+    # of the whole diary beside it.
+    assert sum("count(*)" in text.lower() for text in statements) == 1
 
 
 @requires_db

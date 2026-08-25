@@ -127,7 +127,7 @@ development_status:
   # Resolves the 245 deferrals recorded in deferred-work.md, in production-risk order.
   # GO-LIVE GATE: 9-1, 9-2, 9-3, 9-4, 9-6 — nothing ships to real PHI until these are done.
   # BLOCKED ON DECISIONS: 9-13 (PM) gates 9-6/9-10/9-12; the scheduler mechanism (Architect) gates 9-4/9-5/9-7.
-  epic-9: backlog
+  epic-9: in-progress
   9-1-prod-profile-boots-as-prod: backlog
   9-2-credential-transport-privilege-hardening: backlog
   9-3-purge-cascade-actually-purges: backlog
@@ -135,7 +135,7 @@ development_status:
   9-5-session-lifecycle-revocation-policy: backlog
   9-6-validated-statutory-content: backlog
   9-7-read-paths-that-write: backlog
-  9-8-paging-correctness-real-pagination: backlog
+  9-8-paging-correctness-real-pagination: review
   9-9-deploy-skew-survival-contract-hygiene: backlog
   9-10-o-scope-fold-push-down: backlog
   9-11-mark-stale-wiring-rag-loose-ends: backlog

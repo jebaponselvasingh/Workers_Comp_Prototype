@@ -102,13 +102,36 @@ export function DrillClaimsPage() {
 
   const [expanded, setExpanded] = useState(false);
   const firstCursor = list.data?.nextCursor ?? null;
-  const pages = useDrillClaimPages(filters, firstCursor, expanded);
 
-  // Gated on `expanded` rather than merely on whether the entry has data: an
+  // **An expansion belongs to the cursor it was opened against** (Story 9.8) —
+  // `PriorityClaimsTable`'s fix, on the identical pair of hooks.
+  //
+  // The infinite query is keyed on `firstCursor`. When the base query refetches
+  // onto a different one, the component swings onto a fresh, empty cache entry
+  // while `expanded` is still `true`, and `enabled: expanded && …` fires a
+  // page-two request nobody clicked. `moveTo` already resets on a *filter*
+  // change, which is the same hazard reached through the URL; this closes the
+  // half the URL cannot see.
+  //
+  // Adjusting state during render rather than in an effect, React's documented
+  // reset-on-prop-change: the re-render happens before anything commits, so no
+  // effect from the discarded pass runs and no request goes out. `isExpanded` is
+  // the value read *this* pass, so the hook below sees `false` immediately.
+  const [expandedFor, setExpandedFor] = useState<string | null>(firstCursor);
+  const cursorMoved = expandedFor !== firstCursor;
+  if (cursorMoved) {
+    setExpandedFor(firstCursor);
+    setExpanded(false);
+  }
+  const isExpanded = expanded && !cursorMoved;
+
+  const pages = useDrillClaimPages(filters, firstCursor, isExpanded);
+
+  // Gated on `isExpanded` rather than merely on whether the entry has data: an
   // expansion that expired (the base query refetched onto a new first cursor)
   // leaves its pages in the cache, and rendering them would show claims the
   // supervisor never asked to see, cut from a ranking that no longer applies.
-  const extra: DrillClaimRow[] = expanded
+  const extra: DrillClaimRow[] = isExpanded
     ? (pages.data?.pages.flatMap((page) => page.items) ?? [])
     : [];
   const rows = dedupe([...(list.data?.items ?? []), ...extra]);
@@ -117,7 +140,7 @@ export function DrillClaimsPage() {
   // once it has answered. `hasNextPage` is false while the first fetch is in
   // flight, so reading it too early unmounts the button on the click that
   // triggered it, and its disabled and "Loading…" states become unreachable.
-  const hasMore = expanded && pages.isSuccess ? pages.hasNextPage : firstCursor !== null;
+  const hasMore = isExpanded && pages.isSuccess ? pages.hasNextPage : firstCursor !== null;
 
   // The server's echo where there is one, and the URL only where there can
   // never be one. A refused request (a stale link whose enum value moved:
@@ -246,10 +269,19 @@ export function DrillClaimsPage() {
         onClearAll={() => moveTo(new URLSearchParams())}
       />
 
-      {list.isError ? (
+      {list.isError && rows.length === 0 ? (
         // Inline, never a dialog (NFR-3), and in place of the list rather than
         // above an empty one: a headless list reads as "no claims match", which
         // is a different and much quieter lie than a failure.
+        //
+        // **`rows.length === 0` is Story 9.8's addition, and it is the whole
+        // fix.** TanStack retains the last successful `data` through a failed
+        // refetch, so this branch used to replace claims the supervisor had
+        // already walked — this list is uncapped, so that can be hundreds —
+        // with one sentence. A refetch that fails while there is something on
+        // screen is a *warning*; only a load that has produced nothing at all
+        // is a full-height alert. The inline warning below the list is the
+        // other half.
         <p
           role="alert"
           data-testid="drill-error"
@@ -299,6 +331,20 @@ export function DrillClaimsPage() {
             ))}
           </ul>
 
+          {list.isError && (
+            // The non-destructive half of the pair above (Story 9.8): the base
+            // query failed while claims are on screen, so they stay and this
+            // says the list may be behind. Below the list rather than above it,
+            // so nothing shifts under the pointer of somebody mid-scroll.
+            <p
+              role="alert"
+              data-testid="drill-stale"
+              className="px-1 py-2 text-[11px] text-error"
+            >
+              ⚠ These claims could not be refreshed and may be out of date.
+            </p>
+          )}
+
           {pages.isError ? (
             <>
               <p
@@ -327,7 +373,7 @@ export function DrillClaimsPage() {
                   // The first click turns the infinite query on, which fetches
                   // `initialPageParam` — the cursor the page already holds.
                   // Later clicks ask it for one more.
-                  if (!expanded) setExpanded(true);
+                  if (!isExpanded) setExpanded(true);
                   else void pages.fetchNextPage();
                 }}
                 className="w-full border-t border-border px-1 py-2 text-[11px] font-semibold text-steel hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-brand focus-visible:outline-none disabled:opacity-60"

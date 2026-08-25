@@ -394,6 +394,67 @@ test("Show more appends the next page the server hands back", async () => {
   expect(screen.queryByTestId("queue-group-treatment-more")).not.toBeInTheDocument();
 });
 
+test("the incremental page names its group; the initial load names none (Story 9.8)", async () => {
+  // The narrowing is invisible in the response — a group computed and discarded
+  // and a group never computed produce the same bytes — so the request is the
+  // only place it can be asserted. Both halves in one test because they are one
+  // contract: the initial load must stay unnarrowed, or "no claims in this
+  // stage" becomes indistinguishable from "you did not ask" (NFR-3), and the
+  // "Show more" must narrow, or the server ranks, marks and serialises four
+  // groups to deliver one.
+  renderPane({
+    claimsQueue: (url) => (url.includes("cursor=") ? CLAIM_QUEUE_PAGE_TWO : CLAIM_QUEUE_PAGED),
+  });
+  await waitFor(() => expect(screen.getAllByTestId("queue-card")).toHaveLength(1));
+
+  expect(queueRequests()[0]).not.toContain("groups=");
+
+  await userEvent.click(screen.getByTestId("queue-group-treatment-more"));
+  await waitFor(() => expect(screen.getAllByTestId("queue-card")).toHaveLength(2));
+
+  const incremental = queueRequests()[1];
+  expect(incremental).toContain("groups=treatment");
+  // `stage` travels with it and is a different parameter: it names the group the
+  // *cursor* addresses, which the server compares against the cursor's own
+  // record. A request that sent one and not the other would either be refused or
+  // silently unnarrowed.
+  expect(incremental).toContain("stage=treatment");
+});
+
+test("a narrowed page that omits the group it asked for ends the walk", async () => {
+  // Every field of `groups` is optional in the generated types — that is what
+  // makes a narrowed response expressible at all — so the client may not assert
+  // that the group it named came back. It used to (`data!.groups[stage]!`),
+  // which would put `undefined` into the page list and reach `getNextPageParam`
+  // as a TypeError thrown *inside* the query: the group would render as a failed
+  // fetch with no reason attached. An absent group is read as an ended walk
+  // instead — no more rows came back, so there are no more rows to show.
+  const withoutItsGroup = {
+    status: 200,
+    body: {
+      ...CLAIM_QUEUE_PAGE_TWO.body,
+      groups: Object.fromEntries(
+        Object.entries(CLAIM_QUEUE_PAGE_TWO.body.groups).filter(
+          ([stage]) => stage !== "treatment",
+        ),
+      ),
+    },
+  };
+  renderPane({
+    claimsQueue: (url) => (url.includes("cursor=") ? withoutItsGroup : CLAIM_QUEUE_PAGED),
+  });
+  await waitFor(() => expect(screen.getAllByTestId("queue-card")).toHaveLength(1));
+
+  await userEvent.click(screen.getByTestId("queue-group-treatment-more"));
+
+  await waitFor(() =>
+    expect(screen.queryByTestId("queue-group-treatment-more")).not.toBeInTheDocument(),
+  );
+  // The card the first page delivered is still on screen — the walk ended, it
+  // did not fail.
+  expect(screen.getAllByTestId("queue-card")).toHaveLength(1);
+});
+
 test("a group the server says is complete offers no Show more", async () => {
   renderPane({ claimsQueue: CLAIM_QUEUE });
 

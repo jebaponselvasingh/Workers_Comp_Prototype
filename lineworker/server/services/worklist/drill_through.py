@@ -106,10 +106,13 @@ population and every one of it is reachable by paging.
 
 import base64
 import binascii
+import hashlib
 import json
-from collections.abc import Callable, Mapping, Sequence
+from bisect import bisect_right
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, fields, replace
 from datetime import date
+from math import isfinite
 from typing import Any, Final
 
 import sqlalchemy as sa
@@ -621,6 +624,12 @@ class DrillClaims:
     against. They ride along unrendered, as the sibling dashboard payloads' do:
     it is what makes a stored or forwarded response self-describing, and the
     only thing a client wanting to invalidate on a rules change could key on.
+
+    **`as_of` is the day these rows were aged against** (Story 9.8) —
+    `/dashboard/trends`' field verbatim. Page one resolves it to today; every
+    later page reuses the day the cursor pinned, so a walk paused overnight
+    publishes `daysOpen` values and a `priorityScore` computed against a date up
+    to `MAX_CURSOR_AGE` in the past. That was already true and simply unstated.
     """
 
     items: tuple[DrillRow, ...]
@@ -629,6 +638,7 @@ class DrillClaims:
     applied_filters: tuple[AppliedFilter, ...]
     rules_version: int
     thresholds_version: int
+    as_of: date
 
 
 # --- the predicate table ------------------------------------------------
@@ -845,17 +855,36 @@ def _filter_payload(filters: DrillFilters) -> dict[str, str | int | bool]:
 class Cursor:
     """Where a page ended, and everything that decided where that was.
 
-    `priority_claims.Cursor`'s shape, widened by the one thing this list has and
-    that one does not: **the filter set**.
+    `priority_claims.Cursor`'s shape, widened by the two things this list has and
+    that one does not: **the filter set**, and **the facet no rule version can
+    pin**.
+
+    **The position is a key, not an offset** (Story 9.8) — `priority_claims.
+    Cursor`'s change, for its reason, on the same total order. `last_score` and
+    `last_claim_id` are `priority.order_key` for the last row served, and the
+    next page resumes strictly after it. A claim that leaves the filtered
+    population between two requests no longer slides the window and skips its
+    neighbour. The score is still computed exactly once, in Python (AD-2): the
+    resumption is a `bisect_right` into the already-ranked list, never a SQL
+    `ORDER BY` and never a stored rank.
+
+    **What the key fixes and what it does not.** A claim *leaving* the filtered
+    population is handled — nothing below it moves, so nothing is skipped. A
+    claim whose **order key changes** mid-walk is not: an edit that raises a
+    severity score moves it from below the caller's key to above it, and page
+    two resumes strictly after that key, so it is never served and the walk ends
+    one row short of the `total` beside it. Narrower than the offset's defect,
+    which lost a row on *any* departure, and recorded in `deferred-work.md`
+    rather than implied away here.
 
     **Compared.**
 
-    - `filters` — a cursor is an *offset* into a ranking, and an offset into a
+    - `filters` — a cursor is a position in a ranking, and a position in a
       different ranking is a different place. Replaying page one's cursor under
-      `filter[stage]=settled` would page into the settled list at the offset the
-      unfiltered list ended at, silently skipping or repeating claims with
-      nothing on screen to say so. `test_claims_queue.py` already refuses this
-      for the queue's single filter; this is that ruling on a set.
+      `filter[stage]=settled` would resume the settled list after a key cut from
+      the unfiltered one, silently skipping claims with nothing on screen to say
+      so. `test_claims_queue.py` already refuses this for the queue's single
+      filter; this is that ruling on a set.
     - `weights_version` (`priority_weights`) decides the ordering and the marker.
     - `thresholds_version` (`derivation_thresholds`) decides the band on every
       row *and* the populations behind `filter[severityBand]`,
@@ -871,13 +900,44 @@ class Cursor:
       other drill URL the read this route conditionalises, which is the whole
       argument of the block in `drill_through_claims`.
 
-    **What no version field can pin.** The verdict is derived from
-    `payment_schedule_week.status`, which `reserve_check_for_claim` *writes* on
-    a single-claim read, so a claim can leave the `light` bucket between two
-    pages with no document having changed. That is the ordinary hazard every
-    facet over mutable columns carries — a stage edited between pages moves a
-    claim out of `filter[stage]=treatment` the same way — and it is why `total`
-    and the marker are recomputed per request rather than carried.
+    **What no version field can pin — and what `verdict_digest` does about it**
+    (Story 9.8). The verdict is derived from `payment_schedule_week.status`,
+    which `reserve_check_for_claim` *writes* on a single-claim read, so a claim
+    can leave the `light` bucket between two pages with no document having
+    changed. Removing that write is **Story 9.7**'s and is not attempted here;
+    what this cursor can do is make the walk *detect* it.
+
+    **Two digests, because one cannot tell the two apart.** `population_digest`
+    fingerprints the claim ids the *other* twenty-four facets left standing —
+    the population the verdict facet partitions. `verdict_digest` fingerprints
+    the ids the verdict predicate then selected out of it. A page is refused
+    only when the first is **unchanged** and the second is not: the population
+    the walk is being cut from is the one it was cut from, and inside it a claim
+    has changed buckets. That is a verdict rewrite and nothing else.
+
+    Deliberately narrower than "every facet over a mutable column", and the
+    second digest is what keeps it narrow. A stage edited between two pages
+    moves a claim out of `filter[stage]=treatment`, a settlement moves it out of
+    a status facet, a reassignment moves it out of the caller's scope
+    altogether: each changes the population, and each is *not* refused — it is
+    the I/O matrix's "row leaves population mid-walk", the keyset already walks
+    the survivors correctly, and refusing every page whose population moved
+    would make a busy book unwalkable and blame the reserve verdicts for an edit
+    somebody else made. The verdict is the one facet whose population a **read**
+    rewrites — nobody edited anything, so there is no user action a refusal
+    could be blamed on and no way for the caller to tell it happened. That
+    asymmetry is the whole argument for pinning this facet and nothing else.
+
+    What that costs, stated: when the population *has* moved, a verdict rewrite
+    in the same interval is not detected. There is no cheap way to have both —
+    telling "this claim's bucket changed" from "this claim left" for a claim
+    that is simply absent needs the previous id set, which is unbounded (this
+    list has no cap) and would be a token whose size a caller could inflate with
+    one query parameter. Between a pin that is silent when the book moved and a
+    pin that cries "the reserve verdicts were recomputed" every time anything
+    else did, the first is the one that is never wrong when it fires.
+
+    Hashes rather than the id sets themselves, for that same size reason.
 
     Both versions are compared against what is effective **today**, which is why
     `drill_through_claims` resolves nothing at the cursor's own date: a
@@ -895,40 +955,94 @@ class Cursor:
     could be smuggled in — the defect Story 5.4 shipped and corrected.
     """
 
-    offset: int
+    last_score: float
+    last_claim_id: str
     limit: int
     filters: DrillFilters
     weights_version: int
     thresholds_version: int
     as_of: date
     bands_version: int | None = None
+    population_digest: str | None = None
+    verdict_digest: str | None = None
+
+    @property
+    def resume_after(self) -> tuple[float, str]:
+        """The `order_key` value the next page resumes strictly after.
+
+        `priority_claims.Cursor.resume_after`, verbatim and for its reason: the
+        score is stored un-negated so the encoded JSON shows the number the
+        payload published, and negated here because that is the sort form.
+        """
+        return (-self.last_score, self.last_claim_id)
 
 
 def encode_cursor(cursor: Cursor) -> str:
     """Base64url of a compact JSON object, unpadded — `queue.encode_cursor`'s form.
 
     Opaque by intent rather than by encryption, for that function's reason: it
-    carries no claim data and nothing a caller could use to widen their scope
-    (scope is never in a request — AD-7), so obscurity is doing no security
-    work. What the encoding buys is that clients treat it as a token to hand
-    back rather than an offset to increment.
+    carries nothing a caller could use to widen their scope (scope is never in a
+    request — AD-7), so obscurity is doing no security work. What the encoding
+    buys is that clients treat it as a token to hand back rather than a position
+    to increment.
+
+    **Since Story 9.8 it does carry one claim's business id** — the last row of
+    the page just served, as half of the resumption key. That is not a widening:
+    it is a claim the caller was handed a moment earlier, under the repository's
+    scope filter, and it is already on their screen and in the `claimId` of every
+    row beside it. A caller substituting somebody else's id gets a position in
+    *their own* ranked list and no row they could not already read.
     """
     payload = json.dumps(
         {
-            "o": cursor.offset,
+            # `k`, not `o`. The rename is the compatibility break, deliberately:
+            # a pre-9.8 cursor carries `o` and no `k`, so it fails the `KeyError`
+            # branch in `decode_cursor` rather than being read as a position it
+            # does not name.
+            "k": [cursor.last_score, cursor.last_claim_id],
             "l": cursor.limit,
             "f": _filter_payload(cursor.filters),
             "v": cursor.weights_version,
             "t": cursor.thresholds_version,
             "d": cursor.as_of.isoformat(),
-            # Absent rather than null when no verdict facet was set, so the
-            # cursors every existing drill URL mints stay byte-identical to the
-            # ones they minted before this story.
+            # Absent rather than null when no verdict facet was set, so a drill
+            # URL that never asks about reserve adequacy carries neither of the
+            # two members that facet costs.
             **({} if cursor.bands_version is None else {"b": cursor.bands_version}),
+            **({} if cursor.population_digest is None else {"p": cursor.population_digest}),
+            **({} if cursor.verdict_digest is None else {"g": cursor.verdict_digest}),
         },
         separators=(",", ":"),
     )
     return base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
+
+
+def _resume_key(raw: object) -> tuple[float, str]:
+    """A cursor's `k` member back into `(score, claim_id)`, or a refusal.
+
+    `priority_claims._resume_key`'s checks, restated here rather than imported:
+    each service owns its own codec (this module already holds its own
+    `encode_cursor`, `decode_cursor` and coercion table beside four siblings that
+    do the same), and a shared parser would be the first thread of the
+    `pagination` module this codebase has deliberately not written.
+
+    Every part is checked rather than coerced, because a cursor is unsigned
+    base64 JSON: the member must be a two-element array; the score must be a
+    finite real number — `bool` refused explicitly as `_as_int` refuses it, and
+    `NaN` refused because every comparison against it is false and would make
+    `bisect_right` resume wherever the probes landed; the claim id must be a
+    string, because a mixed-type tuple comparison raises rather than orders.
+    """
+    if not isinstance(raw, list | tuple) or len(raw) != 2:
+        raise TypeError("the cursor's resumption key is not a two-element array")
+    score, claim_id = raw
+    if isinstance(score, bool) or not isinstance(score, int | float):
+        raise TypeError(f"the cursor's score is {type(score).__name__}, not a number")
+    if not isfinite(score):
+        raise ValueError("the cursor's score is not a finite number")
+    if not isinstance(claim_id, str):
+        raise TypeError(f"the cursor's claim id is {type(claim_id).__name__}, not a string")
+    return (float(score), claim_id)
 
 
 def decode_cursor(raw: str, as_of: date | None = None) -> Cursor:
@@ -953,6 +1067,13 @@ def decode_cursor(raw: str, as_of: date | None = None) -> Cursor:
       year 3000 ranks by arithmetic nobody asked for, and "reload from the first
       page" is the truthful answer.
 
+    - `k` is the resumption key, and `_resume_key` refuses anything that is not
+      a finite number beside a string — `NaN` most sharply, because every
+      comparison against it is false and `bisect_right` would then resume
+      wherever the probe sequence landed. Since Story 9.8 this key replaces the
+      offset, so **a cursor issued before that change carries no `k`** and is
+      refused here.
+
     The filter set is rebuilt through `DrillFilters(**…)`, so a forged cursor
     naming a facet that does not exist, or a value the field's type cannot hold,
     is a `TypeError`/`ValueError` here rather than a filter nothing applies.
@@ -963,8 +1084,10 @@ def decode_cursor(raw: str, as_of: date | None = None) -> Cursor:
     try:
         padded = raw + "=" * (-len(raw) % 4)
         data = json.loads(base64.urlsafe_b64decode(padded.encode()))
+        last_score, last_claim_id = _resume_key(data["k"])
         cursor = Cursor(
-            offset=int(data["o"]),
+            last_score=last_score,
+            last_claim_id=last_claim_id,
             limit=int(data["l"]),
             filters=_filters_of(data["f"]),
             weights_version=int(data["v"]),
@@ -976,6 +1099,12 @@ def decode_cursor(raw: str, as_of: date | None = None) -> Cursor:
             # is refused a layer up, where the facet and the field are compared
             # together.
             bands_version=None if data.get("b") is None else int(data["b"]),
+            # Same `.get` and the same reason as `b` two lines up: both digests
+            # are minted only alongside `filter[reserveVerdict]`, and a forged
+            # *absent* one is refused a layer up, where the facet and the fields
+            # are compared together.
+            population_digest=None if data.get("p") is None else _as_str(data["p"]),
+            verdict_digest=None if data.get("g") is None else _as_str(data["g"]),
         )
     except (
         AttributeError,
@@ -987,8 +1116,6 @@ def decode_cursor(raw: str, as_of: date | None = None) -> Cursor:
         UnicodeDecodeError,
     ) as exc:
         raise InvalidCursor("The pagination cursor is not readable.") from exc
-    if cursor.offset < 0:
-        raise InvalidCursor("The pagination cursor names a negative position.")
     if not MIN_PAGE_LIMIT <= cursor.limit <= MAX_PAGE_LIMIT:
         raise InvalidCursor(
             f"The pagination cursor names a page size of {cursor.limit}; "
@@ -1411,6 +1538,70 @@ def select(
     return ranked, len(ranked)
 
 
+def _order_key(entry: RankedClaim) -> tuple[float, str]:
+    """One ranked claim, through `priority.order_key`. The symbol, not the shape.
+
+    `bisect_right` needs exactly the key `select` sorted by, and writing
+    `(-score, claim_id)` here would be a second spelling of the ordering — the
+    failure `order_key`'s own docstring exists to prevent, since two spellings
+    agree on every score and can disagree on every tie with nothing to say so.
+
+    Called O(log n) times per page, only on the entries the search probes, so
+    rebuilding the narrow projection costs nothing beside the O(scope) fold.
+    """
+    return order_key((_queue_claim(entry.claim), entry.priority_score))
+
+
+def _id_digest(claim_ids: Iterable[str]) -> str:
+    """A short, stable fingerprint of a set of claim ids.
+
+    Sorted before hashing, so the digest describes a *set* and not an ordering —
+    a re-rank under an unchanged population must not read as a re-partition,
+    because the two have different answers (one is walked through, the other is
+    refused).
+
+    Truncated to sixteen hex characters. This is not a security boundary: the
+    cursor is unsigned and a caller who wanted a stale page could simply forge
+    the whole token. What it has to be is *stable and cheap* — a collision would
+    mean one rewritten bucket walked as though it had not moved, and 64 bits over
+    a population of at most a few thousand claim ids is far past the point where
+    that is the least likely thing to go wrong on this path.
+    """
+    return hashlib.sha256("\n".join(sorted(claim_ids)).encode()).hexdigest()[:16]
+
+
+def _population_digest(population: Sequence[DrillClaim]) -> str:
+    """The claims the *other* twenty-four facets left standing.
+
+    Half of the verdict pin, and the half that says what is **not** pinned. The
+    reserve-verdict facet partitions this set; everything else — the stage
+    facet, the status facet, the caller's own scope — decides what is in it. Two
+    pages cut from the same population can be compared bucket for bucket; two
+    pages cut from different ones cannot, and the honest answer there is to walk
+    on rather than to blame the reserve verdicts for somebody's stage edit.
+
+    See `Cursor` for the full argument, including what this arrangement gives
+    up.
+    """
+    return _id_digest(claim.claim_id for claim in population)
+
+
+def _verdict_digest(ranked: Sequence[RankedClaim]) -> str:
+    """Which claims the verdict predicate selected out of that population.
+
+    The facet's own partition — the ids `filter[reserveVerdict]` left standing
+    inside `_population_digest`'s set — and **not** a fingerprint of the list
+    the caller sees. The two are the same ids (`population` has already been
+    narrowed by the other facets before the verdict predicate runs), and the
+    distinction is entirely in what they are compared against: this digest means
+    something only beside a `population_digest` that matched, which is what makes
+    a difference here a claim that changed bucket rather than a claim that left.
+
+    See `Cursor` for why this facet is pinned and no other is.
+    """
+    return _id_digest(entry.claim.claim_id for entry in ranked)
+
+
 def _row(entry: RankedClaim, marker: bool) -> DrillRow:
     """One ranked claim as the queue card draws it.
 
@@ -1615,8 +1806,13 @@ async def drill_through_claims(
         population = without_reserve_verdict(caseload, filters, thresholds)
         verdicts = await reserve_checks_for_claims(db, ctx, population, bands=bands)
         bands_version: int | None = bands.version
+        # The set the verdict facet partitions, fingerprinted before it is
+        # partitioned — the other half of the pin below, and the half that keeps
+        # it from firing at a stage edit. See `Cursor`.
+        population_digest: str | None = _population_digest(population)
     else:
         bands_version = None
+        population_digest = None
 
     ranked, total = select(population, filters, thresholds, weights, verdicts)
     # Over the whole filtered list, before the page is cut — `priority_markers`'
@@ -1625,36 +1821,87 @@ async def drill_through_claims(
     # fourth claim sprout one.
     markers = priority_markers([entry.priority_score for entry in ranked], weights)
 
-    offset = decoded.offset if decoded is not None else 0
-    # A cursor is only ever issued for an offset that has rows behind it, so an
-    # offset at or past the end describes a list this one is not. The
-    # alternative — an empty page beside a non-zero `total` and a null
-    # `nextCursor` — reads as a list that is simultaneously populated and
-    # finished, which a client can only render as a lie. `queue._page`'s rule.
-    if offset > 0 and offset >= total:
+    # **The one facet a read can rewrite** — see `Cursor`. Computed after the
+    # fold, over the population the facet left standing, and only when the facet
+    # is set: a drill URL that never asks about reserve adequacy pays nothing for
+    # this.
+    #
+    # **What is pinned, exactly.** The refusal fires only when the population is
+    # the same one the cursor was cut from (`population_digest`) *and* the
+    # partition the verdict facet made of it is not (`verdict_digest`). That
+    # conjunction is the whole point: a claim that changed bucket moves the
+    # second digest alone, and that is a re-partition by somebody else's *read*,
+    # with no edit anyone could point at and nothing on screen to say so.
+    #
+    # **What is not pinned.** Anything that moves the population itself — a
+    # stage edit, a settlement, a reassignment out of the caller's scope. Those
+    # move both digests, this refusal stays silent, and the keyset walks the
+    # survivors, which is the I/O matrix's "row leaves population mid-walk → no
+    # error expected". Refusing them under this message would also be a lie:
+    # nothing about the reserve verdicts was recomputed. The cost of the
+    # conjunction — a verdict rewrite that shares an interval with a population
+    # change goes undetected — is argued in `Cursor`.
+    #
+    # Removing the write itself is Story 9.7's; detecting it is this one's.
+    digest = _verdict_digest(ranked) if filters.reserve_verdict is not None else None
+    # A cursor this route minted under the verdict facet carries **both**
+    # digests. One arriving with either missing is forged, and taking it on trust
+    # would be the way past the pin: an absent `population_digest` never equals
+    # the one computed here, so the conjunction below would wave it through.
+    if (
+        decoded is not None
+        and filters.reserve_verdict is not None
+        and (decoded.population_digest is None or decoded.verdict_digest is None)
+    ):
         raise InvalidCursor(
-            f"That page starts at {offset} but the list now holds {total} claims; "
-            "reload the list from the first page."
+            "That page carries no reserve-verdict pin and this list is bucketed by "
+            "one; reload the list from the first page."
         )
-    window = range(offset, min(offset + page_size, total))
+    if (
+        decoded is not None
+        and decoded.population_digest == population_digest
+        and decoded.verdict_digest != digest
+    ):
+        raise InvalidCursor(
+            "The reserve verdicts behind that page have been recomputed since it "
+            "was cut; reload the list from the first page."
+        )
+
+    # **Keyset, after the fold** — Story 9.8. `ranked` is already sorted by
+    # `priority.order_key`, so resuming is a binary search for the first entry
+    # strictly after the key the last page ended on. `bisect_right` rather than
+    # `bisect_left`, because the cursor names a row that was *served*.
+    start = 0 if decoded is None else bisect_right(ranked, decoded.resume_after, key=_order_key)
+    window = range(start, min(start + page_size, total))
 
     return DrillClaims(
         items=tuple(_row(ranked[index], markers[index]) for index in window),
         # Null only when the list is finished — never "null because this page
         # came back short", which would strand a tail the count has already told
         # the reader is there.
+        #
+        # "Finished" is now `start + page_size >= total` over a *keyset* start,
+        # which also answers the case the offset version had to raise on: every
+        # claim below the cursor's key having left the list is a walk that has
+        # genuinely ended, and an empty final page beside a truthful `total` says
+        # so. Under offsets that same state was a lie — a list simultaneously
+        # populated and finished — because the offset described a length the list
+        # no longer had.
         next_cursor=(
             None
-            if offset + page_size >= total
+            if start + page_size >= total
             else encode_cursor(
                 Cursor(
-                    offset=offset + page_size,
+                    last_score=ranked[window[-1]].priority_score,
+                    last_claim_id=ranked[window[-1]].claim.claim_id,
                     limit=page_size,
                     filters=filters,
                     weights_version=weights.version,
                     thresholds_version=thresholds.version,
                     as_of=aged_on,
                     bands_version=bands_version,
+                    population_digest=population_digest,
+                    verdict_digest=digest,
                 )
             )
         ),
@@ -1662,6 +1909,10 @@ async def drill_through_claims(
         applied_filters=_applied(filters, caseload),
         rules_version=weights.version,
         thresholds_version=thresholds.version,
+        # `aged_on`, not `today`: the field answers "what day were these rows
+        # computed against?", and on every page but the first that is the day the
+        # cursor pinned.
+        as_of=aged_on,
     )
 
 

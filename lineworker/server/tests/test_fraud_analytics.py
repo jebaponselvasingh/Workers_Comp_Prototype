@@ -2389,7 +2389,11 @@ def test_the_new_facet_values_survive_a_cursor_round_trip() -> None:
     filters = DrillFilters(fraud_band=FraudBand.high, siu_review=True)
     token = encode_cursor(
         Cursor(
-            offset=0,
+            # A key rather than an offset since Story 9.8; this test is about
+            # the *filter set* surviving the round trip, and the position is
+            # only here because a cursor needs one.
+            last_score=0.0,
+            last_claim_id="WC-0001",
             limit=50,
             filters=filters,
             weights_version=1,
@@ -2402,7 +2406,8 @@ def test_the_new_facet_values_survive_a_cursor_round_trip() -> None:
 
     forged = encode_cursor(
         Cursor(
-            offset=0,
+            last_score=0.0,
+            last_claim_id="WC-0001",
             limit=50,
             filters=DrillFilters(),
             weights_version=1,

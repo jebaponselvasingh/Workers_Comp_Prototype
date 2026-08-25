@@ -53,7 +53,12 @@ import { useSelectedClaim } from "./useSelectedClaim";
 export function firstClaimIdOf(queue: ClaimQueue | undefined): string | null {
   if (!queue) return null;
   for (const stage of STAGE_ORDER) {
-    const first = queue.groups[stage].items[0];
+    // `?.` since Story 9.8: a group is absent when the request named `groups`
+    // and left it out. `useClaimQueue` never does — the pane's read is the
+    // unnarrowed one, and only `useStageGroupPages` narrows — so in practice
+    // all four are here. Reading it optionally rather than asserting keeps this
+    // helper honest if a second caller ever hands it a narrowed payload.
+    const first = queue.groups[stage]?.items[0];
     if (first) return first.claimId;
   }
   return null;
@@ -156,19 +161,29 @@ export function QueuePane({
           <span className="font-semibold">{FILTER_OPTIONS[0].label}</span> to see everything.
         </p>
       ) : (
-        STAGE_ORDER.map((stage) => (
-          <StageGroup
-            key={stage}
-            stage={stage}
-            group={queue.data.groups[stage]}
-            filter={filter}
-            expanded={expandedStages.has(stage)}
-            onExpand={onExpandStage}
-            onCollapse={onCollapseStage}
-            selectedClaimId={selectedClaimId}
-            onSelect={select}
-          />
-        ))
+        STAGE_ORDER.map((stage) => {
+          // Absent only when the request narrowed with `groups` (Story 9.8),
+          // and the pane's read never does — `useClaimQueue` sends no `groups`
+          // parameter precisely so that "no claims in this stage" stays
+          // distinguishable from "you did not ask" (NFR-3). Skipped rather than
+          // asserted: a section that cannot be drawn truthfully is not drawn,
+          // which is the rule the three empty states above already follow.
+          const group = queue.data.groups[stage];
+          if (!group) return null;
+          return (
+            <StageGroup
+              key={stage}
+              stage={stage}
+              group={group}
+              filter={filter}
+              expanded={expandedStages.has(stage)}
+              onExpand={onExpandStage}
+              onCollapse={onCollapseStage}
+              selectedClaimId={selectedClaimId}
+              onSelect={select}
+            />
+          );
+        })
       )}
     </section>
   );

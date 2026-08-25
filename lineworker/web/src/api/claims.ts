@@ -71,7 +71,33 @@ export function useClaimQueue(filter: QueueFilter) {
  * subscribes to the entry and reads whatever is in it, which is what lets a
  * second reader of the same group see the pages the queue pane fetched
  * without fetching anything itself.
+ *
+ * **`groups` names the one group this hook reads** (Story 9.8). It used to send
+ * only `stage` — which tells the server which group the *cursor* addresses and
+ * narrows nothing — so every "Show more" had the server rank, mark and
+ * serialise all four groups, and this function then kept one and threw three
+ * away. At the seeded page size that is up to two hundred fully-derived cards
+ * to deliver fifty. `useClaimQueue` above deliberately sends neither parameter:
+ * the initial load wants all four, and a response with three groups silently
+ * blank would be indistinguishable from a caseload with nothing in them.
+ *
+ * Both parameters are sent, naming the same stage, because they answer
+ * different questions: `stage` is compared against the cursor, `groups` decides
+ * what comes back.
  */
+/**
+ * One "Show more" page: the rows, and the cursor for the page after it.
+ *
+ * Deliberately narrower than `StageGroup`. `total` is the size of the whole
+ * filtered group and belongs to the base query — it is what the chip beside the
+ * stage header reads — so leaving it out of this type means the end-of-walk
+ * page below has no count to invent.
+ */
+type StageGroupPage = Pick<StageGroup, "items" | "nextCursor">;
+
+/** No rows, no next cursor: the walk this group was on has nothing further. */
+const END_OF_WALK: StageGroupPage = { items: [], nextCursor: null };
+
 export function useStageGroupPages(
   filter: QueueFilter,
   stage: Stage,
@@ -81,16 +107,29 @@ export function useStageGroupPages(
   return useInfiniteQuery({
     queryKey: queryKeys.claims.queuePages(filter, stage, firstCursor),
     initialPageParam: firstCursor,
-    queryFn: async ({ pageParam }): Promise<StageGroup> => {
+    queryFn: async ({ pageParam }): Promise<StageGroupPage> => {
       const { data } = await api.GET("/claims/queue", {
-        params: { query: { filter, stage, cursor: pageParam ?? undefined } },
+        params: {
+          query: { filter, stage, groups: [stage], cursor: pageParam ?? undefined },
+        },
       });
-      // Only this group's page is read. The response carries all four
-      // groups (every one of them truthful — the server refuses to blank
-      // the others), but the caller asked about one.
-      return data!.groups[stage];
+      // The one group this request asked for. The others are **absent** rather
+      // than empty — the server distinguishes "you did not ask" from "there is
+      // nothing in this stage" — so the group named in `groups` is the group
+      // that comes back, which the endpoint guarantees.
+      //
+      // Guaranteed, and still not asserted with a `!`. Every field of `groups`
+      // is optional in the generated types (that is what makes a narrowed
+      // response expressible at all), so a payload that ever came back without
+      // this stage would put `undefined` into the page list and reach
+      // `getNextPageParam` as a TypeError thrown *inside* the query — an error
+      // state the pane renders as a failed fetch with no reason attached.
+      // Reading an absent group as an ended walk is the honest fallback: no
+      // more rows came back, so there are no more rows to show, and the "Show
+      // more" button retires instead of the group breaking.
+      return data!.groups[stage] ?? END_OF_WALK;
     },
-    getNextPageParam: (last: StageGroup) => last.nextCursor ?? undefined,
+    getNextPageParam: (last: StageGroupPage) => last.nextCursor ?? undefined,
     enabled: enabled && firstCursor !== null,
     staleTime: 15_000,
   });

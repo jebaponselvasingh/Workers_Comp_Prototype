@@ -1,10 +1,11 @@
 import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, expect, test, vi } from "vitest";
 
 import { createQueryClient } from "@/api/queryClient";
+import { queryKeys } from "@/api/queryKeys";
 import {
   DRILL_CLAIMS,
   DRILL_CLAIMS_AGE_BAND,
@@ -16,6 +17,7 @@ import {
 } from "@/test/api-mock";
 
 import { DrillClaimsPage } from "./DrillClaimsPage";
+import { toFilterKey } from "./filters";
 
 /**
  * Story 5.5 AC 1 and AC 4 — the list renders what arrived, and the URL is the
@@ -46,6 +48,33 @@ function renderList(
       </QueryClientProvider>
     </MemoryRouter>,
   );
+}
+
+/**
+ * The same render, with the query client handed back (Story 9.8).
+ *
+ * The two cases at the foot of this file are about what happens when the
+ * **base query refetches** — onto a new first cursor, or onto a failure — and a
+ * refetch is something only the cache can start. `createQueryClient` sets
+ * `refetchOnWindowFocus: false` and a 30-second `staleTime`, so there is no
+ * event a test could dispatch to provoke one honestly; invalidating the key the
+ * page reads is the same thing the app does after an edit.
+ */
+function renderListWithClient(
+  routes: Parameters<typeof stubApi>[0],
+  entry = "/dashboard/claims?filter%5BseverityBand%5D=high",
+) {
+  stubApi(routes);
+  const client = createQueryClient();
+  render(
+    <MemoryRouter initialEntries={[entry]}>
+      <QueryClientProvider client={client}>
+        <DrillClaimsPage />
+        <LocationProbe />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  );
+  return client;
 }
 
 /** The address bar, as an element — what a chip's ✕ has to move. */
@@ -365,4 +394,116 @@ test("a back control returns to the dashboard", async () => {
     "href",
     "/dashboard",
   );
+});
+
+
+// --- Story 9.8: the two paging surfaces the SPA got wrong ---------------
+
+/**
+ * `DRILL_CLAIMS` with a **different** first cursor and nothing else changed.
+ *
+ * `PriorityClaimsTable.test.tsx`'s fixture and its reason: a re-cut page one is
+ * the ordinary outcome of a base refetch, and holding the rows still is what
+ * makes the test about the cursor moving rather than about the rows changing.
+ */
+const DRILL_CLAIMS_RECUT = {
+  status: 200,
+  body: { ...DRILL_CLAIMS.body, nextCursor: "drill-cursor-page-2-recut" },
+};
+
+/** The one filter set every test in this file renders under.
+ *
+ * Built through `toFilterKey` rather than spelled out, for the reason that
+ * function exists: the cache key, the URL and the request all come from one
+ * serialisation, so a test that wrote the string by hand would be a second
+ * spelling free to drift from the one the page uses.
+ */
+const FILTER_KEY = toFilterKey({ severityBand: "high" });
+
+test("a base refetch onto a new first cursor resets the expansion and fetches nothing", async () => {
+  const user = userEvent.setup();
+  const cursorsRequested: string[] = [];
+  let baseReads = 0;
+  const client = renderListWithClient({
+    drillClaims: (url) => {
+      const cursor = new URL(url, "http://test").searchParams.get("cursor");
+      if (cursor !== null) {
+        cursorsRequested.push(cursor);
+        return DRILL_CLAIMS_PAGE_TWO;
+      }
+      baseReads += 1;
+      return baseReads === 1 ? DRILL_CLAIMS : DRILL_CLAIMS_RECUT;
+    },
+  });
+
+  await screen.findAllByTestId("queue-card");
+  await user.click(screen.getByTestId("drill-more"));
+  await waitFor(() => {
+    expect(screen.getAllByTestId("queue-card")).toHaveLength(
+      DRILL_CLAIMS.body.items.length + DRILL_CLAIMS_PAGE_TWO.body.items.length,
+    );
+  });
+  expect(cursorsRequested).toHaveLength(1);
+
+  await act(async () => {
+    await client.invalidateQueries({ queryKey: queryKeys.dashboard.drillClaims(FILTER_KEY) });
+  });
+
+  // The accumulated pages go: they were cut from a ranking that no longer
+  // applies, and `moveTo` already resets on a *filter* change for the same
+  // reason. This is the half the URL cannot see.
+  await waitFor(() => {
+    expect(screen.getAllByTestId("queue-card")).toHaveLength(DRILL_CLAIMS.body.items.length);
+  });
+
+  // And no page two of the *new* list was fetched. Asserted as "not the new
+  // cursor" rather than as a call count, because `drillClaimPages` is a sub-key
+  // of `drillClaims`, so invalidating the base also refetches the still-active
+  // pages entry under its **old** cursor — pre-existing, and discarded with the
+  // entry.
+  expect(cursorsRequested).not.toContain(DRILL_CLAIMS_RECUT.body.nextCursor);
+  expect(new Set(cursorsRequested)).toEqual(new Set([DRILL_CLAIMS.body.nextCursor]));
+  expect(await screen.findByTestId("drill-more")).toBeVisible();
+});
+
+test("a failed base refetch keeps the walked claims behind an inline warning", async () => {
+  const user = userEvent.setup();
+  let baseReads = 0;
+  const client = renderListWithClient({
+    drillClaims: (url) => {
+      if (url.includes("cursor=")) return DRILL_CLAIMS_PAGE_TWO;
+      baseReads += 1;
+      // 404 rather than a 5xx: `createQueryClient` never retries below 500.
+      return baseReads === 1 ? DRILL_CLAIMS : { status: 404, body: {} };
+    },
+  });
+
+  await screen.findAllByTestId("queue-card");
+  await user.click(screen.getByTestId("drill-more"));
+  const walked = DRILL_CLAIMS.body.items.length + DRILL_CLAIMS_PAGE_TWO.body.items.length;
+  await waitFor(() => {
+    expect(screen.getAllByTestId("queue-card")).toHaveLength(walked);
+  });
+
+  await act(async () => {
+    await client.invalidateQueries({ queryKey: queryKeys.dashboard.drillClaims(FILTER_KEY) });
+  });
+
+  const warning = await screen.findByTestId("drill-stale");
+  expect(warning).toHaveAttribute("role", "alert");
+  // The claims stay. This list is uncapped, so the branch that used to replace
+  // them could discard hundreds of rows a supervisor had walked.
+  expect(claimIds()).toHaveLength(walked);
+  expect(screen.queryByTestId("drill-error")).toBeNull();
+});
+
+test("a first load that fails with nothing on screen still gets the full alert", async () => {
+  // The other side of the branch above: the full-height alert is correct when
+  // it destroys nothing, and a headless list would read as "no claims match" —
+  // the quieter lie the original branch was written against.
+  renderList({ drillClaims: { status: 404, body: {} } });
+
+  expect(await screen.findByTestId("drill-error")).toBeVisible();
+  expect(screen.queryByTestId("drill-stale")).toBeNull();
+  expect(screen.queryAllByTestId("queue-card")).toHaveLength(0);
 });

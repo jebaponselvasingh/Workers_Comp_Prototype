@@ -309,7 +309,24 @@ export interface paths {
         };
         /**
          * The session persona's claim queue, grouped by stage and ranked
-         * @description The caller's queue. Filter and page it; you cannot re-scope it.
+         * @description The caller's queue. Filter, narrow and page it; you cannot re-scope it.
+         *
+         *     **`stage` and `groups` are two different parameters and neither is the
+         *     other.** `stage` names which group a `cursor` addresses — the cursor records
+         *     it and the service refuses a mismatch — and it narrows nothing. `groups`
+         *     (Story 9.8) names which groups to compute and return, and it narrows
+         *     exactly that: an unnamed group is absent from the payload rather than
+         *     empty, so "you did not ask" and "there is nothing in this stage" stay
+         *     distinguishable (NFR-3). A "Show more" sends both, naming the same stage in
+         *     each; an initial load sends neither.
+         *
+         *     This docstring's predecessor, and `stage`'s own description, promised that
+         *     the response is *never* narrowed. That promise was made for the initial
+         *     load, where a response with three blank groups really is indistinguishable
+         *     from a caseload with nothing in them, and it was never revisited for the
+         *     paging path — where the same endpoint serves a request that wants one group
+         *     and discards three. `groups` is the narrowing made explicit rather than
+         *     inferred, which is what keeps the honest half of the old promise intact.
          */
         get: operations["queue_claims_queue_get"];
         put?: never;
@@ -2142,18 +2159,26 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Every WC glossary term, in display order
+         * WC glossary terms, in display order, paged
          * @description Deliberately without `Cache-Control: no-store`.
          *
          *     `/me` and `/stats/*` set it because their payloads are specific to one
          *     persona's identity or scope, and a cache upstream serving one
          *     supervisor's caseload to another would be a scope leak. Nothing about
-         *     this response is caller-specific: every authenticated session gets
-         *     byte-identical bytes, there is no PHI in them, and the worst a shared
-         *     cache could do is serve the industry's definition of "FNOL" to someone
-         *     who had not logged in. Marking it `no-store` anyway would say the
-         *     payload was sensitive, which is a claim the next reader would have to
-         *     disprove.
+         *     this response is caller-specific: every authenticated session asking the
+         *     same question gets byte-identical bytes, there is no PHI in them, and the
+         *     worst a shared cache could do is serve the industry's definition of "FNOL"
+         *     to someone who had not logged in. Marking it `no-store` anyway would say
+         *     the payload was sensitive, which is a claim the next reader would have to
+         *     disprove. That stays true with the three parameters Story 9.8 added: they
+         *     are part of the request, so they are part of the cache key, and none of
+         *     them names a persona.
+         *
+         *     **The cursor's `sort` and `filter[abbreviation]` are compared, never
+         *     reused.** A caller who changes either is asking a different question, and
+         *     a position in one ordering is not a position in another — see `Cursor`.
+         *     `limit` is *reused* when the request omits one and compared when it does
+         *     not, `queue.py`'s division on every list in this console.
          */
         get: operations["glossary_glossary_get"];
         put?: never;
@@ -2205,7 +2230,26 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Personas available to log in as */
+        /**
+         * Personas available to log in as, paged
+         * @description The login picker — still reachable with no session, now genuinely paged.
+         *
+         *     **Paging this endpoint needed neither a session nor a scope decision**,
+         *     which was the open question: the position is a keyset over stored identity
+         *     columns, so nothing here knows or records who is asking. The cursor carries
+         *     the request's own shape and a position in rows this endpoint publishes in
+         *     full; there is nothing in it a caller could not read off the response.
+         *
+         *     **`filter[role]` narrows what `LOGIN_ROLES` already permits and can never
+         *     widen it.** The machine actor is excluded by a predicate this parameter is
+         *     `AND`-ed into, not by a default this parameter could replace — see
+         *     `_persona_scope` — and a cursor naming `system` is refused in the decoder
+         *     rather than answered with an empty page, so "no such personas" and "you may
+         *     not ask about those" do not look alike from outside.
+         *
+         *     Raises 400 `/problems/invalid-cursor` for a cursor that does not describe a
+         *     position in this list. Never a silent page one.
+         */
         get: operations["personas_personas_get"];
         put?: never;
         post?: never;
@@ -3056,8 +3100,28 @@ export interface components {
          *     is what lets the pane tell "no claims in your caseload" from "no claims
          *     match this filter" (NFR-3) without holding an unfiltered copy of the
          *     caseload to compare against.
+         *
+         *     **Both totals survive `groups`.** They are counted over the whole scored
+         *     book rather than summed from the groups on this payload, so a narrowed
+         *     "Show more" response still states how big the caller's queue is — which is
+         *     the number the pane's chips and its two empty-state sentences are drawn
+         *     from, and which must not change because a client asked for one section.
+         *
+         *     **`asOf` is the day these cards were aged against** (Story 9.8), the field
+         *     `/dashboard/trends` already publishes. Page one resolves it to today; a
+         *     cursor page reuses the day the cursor pinned, so a queue left open across
+         *     UTC midnight, or resumed from a cursor up to a week old, publishes
+         *     `daysOpen` values and an ordering computed against a date the caller can
+         *     now read rather than guess at. It is an **output only**: this endpoint
+         *     accepts no `asOf` input, because a caller who could choose the day could
+         *     choose the ranking.
          */
         ClaimQueueResponse: {
+            /**
+             * Asof
+             * Format: date
+             */
+            asOf: string;
             /** Filteredtotal */
             filteredTotal: number;
             groups: components["schemas"]["StageGroupsResponse"];
@@ -3624,6 +3688,13 @@ export interface components {
          *     `nextCursor` is null exactly when the list is finished — never "null because
          *     this page came back short", which would strand a tail `total` has already
          *     told the reader is there.
+         *
+         *     **`asOf` is the day these rows were aged against** (Story 9.8) — the field
+         *     `/dashboard/trends` publishes. Page one resolves it to today; a cursor page
+         *     reuses the day the cursor pinned, so `daysOpen` and `priorityScore` on page
+         *     three may be computed against a date up to `MAX_CURSOR_AGE` in the past.
+         *     That was already true and unstated. It is an **output only**: this endpoint
+         *     accepts no `asOf` input.
          */
         DrillClaimsResponse: {
             /** Ageoldermin */
@@ -3634,6 +3705,11 @@ export interface components {
             ageYoungerMin: number;
             /** Appliedfilters */
             appliedFilters: components["schemas"]["AppliedFilterResponse"][];
+            /**
+             * Asof
+             * Format: date
+             */
+            asOf: string;
             /** Items */
             items: components["schemas"]["DrillClaimRowResponse"][];
             /** Nextcursor */
@@ -4449,11 +4525,22 @@ export interface components {
         Gender: "female" | "male" | "other";
         /**
          * GlossaryList
-         * @description The `{items, nextCursor, total}` envelope (Lists convention).
+         * @description The `{items, nextCursor, total}` envelope (Lists convention), for real.
          *
-         *     `nextCursor` is structurally always null: the glossary is one fixed
-         *     page. The envelope is here so the generated client sees one list shape
-         *     across the whole API, the same reasoning `PersonaList` records.
+         *     **`nextCursor` is non-null exactly while terms remain beyond `items`** —
+         *     never "null because this page came back short". Before Story 9.8 it was
+         *     structurally always null and the docstring here said so, which made the
+         *     envelope a shape borrowed for consistency rather than a contract.
+         *
+         *     **`total` is the size of the whole list being paged**, from a `COUNT(*)`
+         *     over the same filter, never `len(items)`. The old value agreed with itself
+         *     whatever happened to the table, so the moment a `LIMIT` appeared it would
+         *     have changed meaning from "terms that exist" to "terms on this page" with
+         *     no test able to see it — the hazard the 1.6 register entry recorded
+         *     verbatim. Present on every page rather than the first only (unlike
+         *     `EmailLogListResponse`): this is a 25-row reference table, and a field that
+         *     appeared and vanished would be a shape every client has to branch on for no
+         *     saving worth measuring.
          */
         GlossaryList: {
             /** Items */
@@ -4464,6 +4551,23 @@ export interface components {
             total: number;
         };
         /**
+         * GlossarySort
+         * @description The orderings `?sort=` may name. Lowercase snake_case, per conventions.
+         *
+         *     Three, not "any column": every option here has to be paired with a total
+         *     order and tested as one, and a `sort` parameter that accepted an arbitrary
+         *     column name would be both an unbounded contract and a place for a caller to
+         *     name something that is not a column.
+         *
+         *     `sort_order` is the default and is the prototype's display sequence — FNOL
+         *     first, then the acronym cluster, then the manufacturing hazards. The two
+         *     alphabetical options exist because a glossary is a reference list and "find
+         *     me the A's" is what a reader does with one; they are not what the panel
+         *     renders.
+         * @enum {string}
+         */
+        GlossarySort: "sort_order" | "abbreviation" | "term";
+        /**
          * GlossaryTermResponse
          * @description One term. No `id` and no `sortOrder` on the wire.
          *
@@ -4471,6 +4575,12 @@ export interface components {
          *     a surrogate key nothing links to would be an invitation to link to it,
          *     which is exactly the `glossary_term`↔`claim` join this story is not
          *     building.
+         *
+         *     `sortOrder` stays off the wire for the same reason after Story 9.8, even
+         *     though it is now half of every cursor's resumption key. The cursor is
+         *     opaque and the client hands it back unchanged; publishing the column would
+         *     invite a client to compute the next position itself, which is the "token,
+         *     not a key to increment" contract every cursor in this console relies on.
          */
         GlossaryTermResponse: {
             /** Abbreviation */
@@ -4935,6 +5045,29 @@ export interface components {
             /** Personaid */
             personaId: number;
         };
+        /**
+         * LoginRole
+         * @description The roles `/personas` will list — the wire type of `filter[role]`.
+         *
+         *     A separate enum rather than `UserRole` on the query parameter, so a request
+         *     naming the machine actor is a **422 from FastAPI's own validator**, before
+         *     any handler runs and in exactly the shape `filter[stage]=banana` already
+         *     produces on the drill-through. Typing the parameter as `UserRole` would have
+         *     made `?filter[role]=system` a well-formed request answered with an empty
+         *     page — and an empty page is the shape a caller probes with, so "no such
+         *     personas" and "you may not ask about those" would look identical from
+         *     outside. `decode_persona_cursor` refuses the same value inside a cursor;
+         *     this is the same refusal on the other door.
+         *
+         *     The import-time check below is what stops the two lists drifting: `LOGIN_ROLES`
+         *     is the *enforcement* (it is `AND`-ed into every persona query, so the facet
+         *     can only narrow what it already permits) and this is the vocabulary the API
+         *     publishes for it. A role added to one and not the other fails the process
+         *     rather than shipping a facet nobody can ask for, or a 422 on a role the
+         *     picker lists.
+         * @enum {string}
+         */
+        LoginRole: "handler" | "supervisor" | "analyst";
         /** Me */
         Me: {
             /** Id */
@@ -4970,16 +5103,28 @@ export interface components {
          *     in "📅 Today's Meetings (N)". A total that shrank when the page did would
          *     misdescribe the list, which is `StageGroupResponse`'s argument.
          *
-         *     `upcomingCount` is the extra member Story 4.2 added, and it is deliberately
-         *     *not* affected by `day`. See its field description.
+         *     **It is null on a cursor page** (Story 9.8), which is the Lists convention's
+         *     optional member rather than a divergence from it: the SPA reads the count
+         *     from the first page and keeps it, so recounting the whole diary on every
+         *     "Show more" bought a number nothing rendered. `EmailLogListResponse` shipped
+         *     this first and named this endpoint as the one still to do it.
+         *
+         *     `upcomingCount` is the extra member Story 4.2 added. It is deliberately *not*
+         *     affected by `day`, and — unlike `total` — it is present on **every** page:
+         *     the greeting that renders it sits beside a list the reader is paging, so a
+         *     value that vanished on page two would empty a sentence mid-scroll. See its
+         *     field description.
          */
         MeetingListResponse: {
             /** Items */
             items: components["schemas"]["MeetingResponse"][];
             /** Nextcursor */
             nextCursor?: string | null;
-            /** Total */
-            total: number;
+            /**
+             * Total
+             * @description The size of the list the caller asked for — **present on the first page only**, null on any page fetched with a `cursor`. Read it from the first page and keep it; do not count `items`. When `day` is set it describes that day's list.
+             */
+            total?: number | null;
             /**
              * Upcomingcount
              * @description Server-derived. How many of the caller's meetings are still ahead — the whole book, **independent of `day`**, judged by the same registered rule that decides each item's `status`. The greeting reads it directly; do not count `items` to reproduce it.
@@ -5552,11 +5697,19 @@ export interface components {
         };
         /**
          * PersonaList
-         * @description The `{items, nextCursor, total?}` envelope (Lists convention).
+         * @description The `{items, nextCursor, total?}` envelope (Lists convention), for real.
          *
-         *     The persona list is a fixed ten rows, so `nextCursor` is structurally
-         *     always null — the envelope is here so the generated client sees one
-         *     list shape across the whole API, not because this list will ever page.
+         *     It used to say the list was "a fixed ten rows, so `nextCursor` is
+         *     structurally always null — the envelope is here so the generated client sees
+         *     one list shape across the whole API, not because this list will ever page".
+         *     Story 9.8 made the shape a contract instead of a costume: `nextCursor` is
+         *     non-null exactly while personas remain beyond `items`, and `total` is a
+         *     `COUNT(*)` over the list being paged rather than `len(items)`.
+         *
+         *     Nothing here is scope. `total` counts the rows this picker publishes in
+         *     full — every one of them is in `items` on an unparameterised read — so it
+         *     discloses nothing the payload does not already carry, which is the property
+         *     an unauthenticated endpoint has to keep.
          */
         PersonaList: {
             /** Items */
@@ -5566,6 +5719,22 @@ export interface components {
             /** Total */
             total: number;
         };
+        /**
+         * PersonaSort
+         * @description The orderings `?sort=` may name on the picker. Lowercase, per conventions.
+         *
+         *     Two, not "any column": every option has to be paired with a total order and
+         *     tested as one, and a `sort` that accepted an arbitrary column name would be
+         *     an unbounded contract on a **pre-auth** endpoint — the one place in this API
+         *     where an unbounded contract is reachable without a session.
+         *
+         *     `id` is the default and is the seed order the picker has always rendered.
+         *     `name` exists because the Lists convention names `sort` and because a
+         *     directory of people sorted alphabetically is what a picker becomes the
+         *     moment there are more than a screenful; it is not what the SPA sends.
+         * @enum {string}
+         */
+        PersonaSort: "id" | "name";
         /**
          * PhotoResponse
          * @description One card of the incident-photo grid (Story 2.6, AC 1).
@@ -5953,8 +6122,22 @@ export interface components {
          *     `nextCursor` is null exactly when the worklist is finished — never "null
          *     because this page came back short", which would strand a tail the caption has
          *     already told the reader is there.
+         *
+         *     **`asOf` is the day these rows were aged against** (Story 9.8) — the field
+         *     `/dashboard/trends` publishes, on the payload that needs it most. The Next
+         *     Best Action column is a column of deadlines, generated against a date; page
+         *     one resolves it to today and every later page reuses the day the cursor
+         *     pinned, so a walk resumed from a cursor up to `MAX_CURSOR_AGE` old shows
+         *     actions aged against a week-old date. That was already true and unstated. It
+         *     is an **output only**: this endpoint accepts no `asOf` input, because a
+         *     caller who could choose the day could choose the ranking.
          */
         PriorityClaimsResponse: {
+            /**
+             * Asof
+             * Format: date
+             */
+            asOf: string;
             /** Cap */
             cap: number;
             /** Fraudflagscoremin */
@@ -6974,19 +7157,28 @@ export interface components {
         };
         /**
          * StageGroupsResponse
-         * @description The four groups, always all four.
+         * @description The four groups — all four, unless the request named fewer.
          *
          *     Named fields rather than a map keyed by stage: the four stages are the
          *     contract (the SPA renders four sections in this order whatever the data
-         *     says), and a map would let a response omit one — which the client would
-         *     have to render as either "empty" or "unknown", two very different
-         *     things.
+         *     says), and a map would let a response omit one silently — which the
+         *     client would have to render as either "empty" or "unknown", two very
+         *     different things.
+         *
+         *     **A field is `null` exactly when `groups` did not ask for it** (Story
+         *     9.8), and that is the distinction the named fields buy. `null` is "you
+         *     did not ask"; a present group with `items: []` and `total: 0` is "there
+         *     is nothing in this stage", which is a message the console owes the user
+         *     honestly (NFR-3). Without the `groups` parameter every field is present,
+         *     which is every call the SPA made before this story and every initial
+         *     load after it. Only the "Show more" path narrows, and it narrows to the
+         *     one group it is walking.
          */
         StageGroupsResponse: {
-            intake: components["schemas"]["StageGroupResponse"];
-            investigation: components["schemas"]["StageGroupResponse"];
-            settled: components["schemas"]["StageGroupResponse"];
-            treatment: components["schemas"]["StageGroupResponse"];
+            intake?: components["schemas"]["StageGroupResponse"] | null;
+            investigation?: components["schemas"]["StageGroupResponse"] | null;
+            settled?: components["schemas"]["StageGroupResponse"] | null;
+            treatment?: components["schemas"]["StageGroupResponse"] | null;
         };
         /**
          * StepperStepResponse
@@ -8557,8 +8749,10 @@ export interface operations {
             query?: {
                 /** @description One of the eight operational filters; unknown values are refused. */
                 filter?: components["schemas"]["QueueFilter"];
-                /** @description Which group `cursor` addresses. Never narrows the response. */
+                /** @description Which group `cursor` addresses. It does **not** narrow the response — use `groups` for that. */
                 stage?: components["schemas"]["Stage"] | null;
+                /** @description Which stage groups to return. Omit for all four (the initial load). Naming one group is how a 'Show more' asks for the group it is walking without paying to rank and serialise the other three; a group not named is **absent** from `groups`, never an empty one. `unfilteredTotal` and `filteredTotal` are unaffected and still describe the whole queue. */
+                groups?: components["schemas"]["Stage"][] | null;
                 /** @description An opaque `nextCursor` from a previous response. */
                 cursor?: string | null;
                 /** @description Page size per group; defaults to the rules document's. */
@@ -12380,7 +12574,16 @@ export interface operations {
     };
     glossary_glossary_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description An opaque `nextCursor` from a previous response. */
+                cursor?: string | null;
+                /** @description Page size; defaults to 100. */
+                limit?: number | null;
+                /** @description One term's abbreviation, matched as the exact stored string — no trimming, case-folding or prefix match. The panel's live search is a client-side rendering of a list it already holds and does not use this. */
+                "filter[abbreviation]"?: string | null;
+                /** @description Which ordering to page. Defaults to the display order. */
+                sort?: components["schemas"]["GlossarySort"];
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -12394,6 +12597,24 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GlossaryList"];
+                };
+            };
+            /** @description The pagination cursor is unreadable, or belongs to a different sort or filter (RFC 9457 problem document). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
                 };
             };
             /** @description No valid session (RFC 9457 problem document). */
@@ -12412,6 +12633,15 @@ export interface operations {
                         /** Type */
                         type: string;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -12478,7 +12708,16 @@ export interface operations {
     };
     personas_personas_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description An opaque `nextCursor` from a previous response. */
+                cursor?: string | null;
+                /** @description Page size; defaults to 100. */
+                limit?: number | null;
+                /** @description One of the three login roles. The SPA partitions the picker by role in the browser today; this is the server-side facet the Lists convention specifies. The machine actor is not a member of this enum, so naming it is a 422 rather than an empty page. */
+                "filter[role]"?: components["schemas"]["LoginRole"] | null;
+                /** @description Which ordering to page. Defaults to the seeded order. */
+                sort?: components["schemas"]["PersonaSort"];
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -12492,6 +12731,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PersonaList"];
+                };
+            };
+            /** @description The pagination cursor is unreadable, or belongs to a different sort or role filter (RFC 9457 problem document). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        /** Detail */
+                        detail: string;
+                        /** Status */
+                        status: number;
+                        /** Title */
+                        title: string;
+                        /** Type */
+                        type: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

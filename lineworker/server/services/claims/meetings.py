@@ -209,16 +209,30 @@ class MeetingPage:
     counted rows the caller did not ask for would be a number about a different
     question.
 
-    `upcoming_count` is the opposite: **always the whole book, never the
-    filtered day** (Story 4.2). It is the greeting's "📅 N upcoming meetings —
-    see below / Meetings tab", which is a statement about the diary, and it
-    rides this envelope so that the Notes sub-tab makes *one* request rather
-    than a second one purely to count.
+    **`total` is `None` on a cursor page** (Story 9.8), which is the Lists
+    convention's optional member (`{items, nextCursor, total?}`) rather than a
+    divergence from it. This list recounted the whole book on every "Show more"
+    while `useMeetings` reads the count from `pages[0]` alone, so every page but
+    the first paid for a number nothing rendered. `list_email_logs` shipped the
+    fix first and its docstring deliberately left this one alone — "that is
+    shipped, tested behaviour and belongs with whoever next has a reason to open
+    it". This story is that reason.
+
+    On the first page it is the size of the whole list the caller asked for,
+    exactly as before.
+
+    `upcoming_count` is the opposite in **both** respects: it is always the
+    whole book, never the filtered day (Story 4.2), and it is counted on every
+    page rather than the first. It is the greeting's "📅 N upcoming meetings —
+    see below / Meetings tab", a statement about the diary that the Notes
+    sub-tab renders beside a list it is *also* paging, so a value that vanished
+    on page two would empty the greeting mid-scroll. Two counts on one envelope
+    with two different rules, because they answer two different questions.
     """
 
     items: tuple[MeetingView, ...]
     next_cursor: str | None
-    total: int
+    total: int | None
     upcoming_count: int
 
 
@@ -749,7 +763,12 @@ async def list_meetings(
         limit=page_size + 1,
         day=day,
     )
-    total = await claim_repo.count_meetings(db, ctx, day=day)
+    # **First page only** (Story 9.8) — `list_email_logs`' line, on the list
+    # whose register entry that one cites. The SPA reads `total` from `pages[0]`
+    # and keeps it, so a recount on every "Show more" bought a number nothing
+    # rendered. `upcoming_count` below is deliberately *not* conditional: see
+    # `MeetingPage`.
+    total = None if decoded is not None else await claim_repo.count_meetings(db, ctx, day=day)
     # The rule, in SQL, from the one module that owns it (AD-10) — never a
     # second `>=` written here beside the Python classifier three lines down.
     upcoming = await claim_repo.count_meetings_matching(

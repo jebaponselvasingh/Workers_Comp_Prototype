@@ -56,7 +56,8 @@ from rules.parameters import (
     thresholds_for,
     weights_for,
 )
-from services.derivations import RiskBand
+from services.derivations import RiskBand, utc_today
+from services.financials.reserve import ReserveVerdict
 from services.worklist import priority
 from services.worklist.drill_through import (
     FILTER_KEYS,
@@ -530,8 +531,16 @@ def test_every_facet_has_a_predicate_and_every_predicate_has_a_facet() -> None:
 
 
 def _cursor(**overrides: Any) -> Cursor:
+    """A well-formed cursor, with named fields replaced.
+
+    **Amended by Story 9.8**: the position is a `(score, claim_id)` key rather
+    than an offset. Every test built on this helper asserts something about the
+    *other* members — the filter set, the two rule versions, the page size, the
+    date — and the substitution keeps them doing exactly that.
+    """
     base = Cursor(
-        offset=50,
+        last_score=137.5,
+        last_claim_id="WC-0050",
         limit=50,
         filters=DrillFilters(severity_band=RiskBand.high),
         weights_version=1,
@@ -565,17 +574,43 @@ def _forged(payload: dict[str, Any]) -> str:
             base64.urlsafe_b64encode(b'{"hello":1}').decode().rstrip("="), id="not-a-cursor"
         ),
         pytest.param(
-            _forged({"o": -1, "l": 50, "f": {}, "v": 1, "t": 5, "d": TODAY.isoformat()}),
-            id="negative-offset",
+            # **Amended by Story 9.8**: a position that cannot exist is now a
+            # non-finite score rather than a negative offset. `NaN` compares
+            # false against everything, so `bisect_right` would resume wherever
+            # its probes landed — a silently wrong page.
+            _forged(
+                {
+                    "k": [float("nan"), "WC-0001"],
+                    "l": 50,
+                    "f": {},
+                    "v": 1,
+                    "t": 5,
+                    "d": TODAY.isoformat(),
+                }
+            ),
+            id="non-finite-score",
         ),
         pytest.param(
-            _forged({"o": 0, "l": 10_000, "f": {}, "v": 1, "t": 5, "d": TODAY.isoformat()}),
+            _forged({"o": 50, "l": 50, "f": {}, "v": 1, "t": 5, "d": TODAY.isoformat()}),
+            id="offset-shaped-cursor-from-before-the-keyset-change",
+        ),
+        pytest.param(
+            _forged(
+                {
+                    "k": [1.0, "WC-0001"],
+                    "l": 10_000,
+                    "f": {},
+                    "v": 1,
+                    "t": 5,
+                    "d": TODAY.isoformat(),
+                }
+            ),
             id="page-size-past-the-ceiling",
         ),
         pytest.param(
             _forged(
                 {
-                    "o": 0,
+                    "k": [1.0, "WC-0001"],
                     "l": 50,
                     "f": {},
                     "v": 1,
@@ -588,7 +623,7 @@ def _forged(payload: dict[str, Any]) -> str:
         pytest.param(
             _forged(
                 {
-                    "o": 0,
+                    "k": [1.0, "WC-0001"],
                     "l": 50,
                     "f": {},
                     "v": 1,
@@ -599,27 +634,59 @@ def _forged(payload: dict[str, Any]) -> str:
             id="older-than-the-maximum-age",
         ),
         pytest.param(
-            _forged({"o": 0, "l": 50, "f": {"banana": True}, "v": 1, "t": 5, "d": "2026-08-18"}),
+            _forged(
+                {
+                    "k": [1.0, "WC-0001"],
+                    "l": 50,
+                    "f": {"banana": True},
+                    "v": 1,
+                    "t": 5,
+                    "d": "2026-08-18",
+                }
+            ),
             id="filter-that-does-not-exist",
         ),
         pytest.param(
-            _forged({"o": 0, "l": 50, "f": {"stage": "banana"}, "v": 1, "t": 5, "d": "2026-08-18"}),
+            _forged(
+                {
+                    "k": [1.0, "WC-0001"],
+                    "l": 50,
+                    "f": {"stage": "banana"},
+                    "v": 1,
+                    "t": 5,
+                    "d": "2026-08-18",
+                }
+            ),
             id="enum-value-that-does-not-exist",
         ),
         pytest.param(
             _forged(
-                {"o": 0, "l": 50, "f": {"employer_id": "3"}, "v": 1, "t": 5, "d": "2026-08-18"}
+                {
+                    "k": [1.0, "WC-0001"],
+                    "l": 50,
+                    "f": {"employer_id": "3"},
+                    "v": 1,
+                    "t": 5,
+                    "d": "2026-08-18",
+                }
             ),
             id="id-smuggled-as-a-string",
         ),
         pytest.param(
             _forged(
-                {"o": 0, "l": 50, "f": {"litigation": "false"}, "v": 1, "t": 5, "d": "2026-08-18"}
+                {
+                    "k": [1.0, "WC-0001"],
+                    "l": 50,
+                    "f": {"litigation": "false"},
+                    "v": 1,
+                    "t": 5,
+                    "d": "2026-08-18",
+                }
             ),
             id="boolean-smuggled-as-a-string",
         ),
         pytest.param(
-            _forged({"o": 0, "l": 50, "f": [], "v": 1, "t": 5, "d": "2026-08-18"}),
+            _forged({"k": [1.0, "WC-0001"], "l": 50, "f": [], "v": 1, "t": 5, "d": "2026-08-18"}),
             id="filter-set-that-is-not-an-object",
         ),
     ],
@@ -636,13 +703,19 @@ def test_a_cursor_that_does_not_describe_this_list_is_refused(raw: str) -> None:
         decode_cursor(raw, TODAY)
 
 
-def test_a_cursor_carrying_an_infinite_offset_is_refused_rather_than_crashing() -> None:
+def test_a_cursor_carrying_an_infinite_page_size_is_refused_rather_than_crashing() -> None:
     """`json` accepts the literal `Infinity` and `int(float("inf"))` raises
     `OverflowError`, which is not a `ValueError` — the defect that escaped the
     queue as a 500.
+
+    **Amended by Story 9.8**: the field carrying the infinity moved from the
+    offset, which no longer exists, to the page size. Same property, on a field
+    that still goes through `int(...)`.
     """
     forged = (
-        base64.urlsafe_b64encode(b'{"o":Infinity,"l":50,"f":{},"v":1,"t":5,"d":"2026-08-18"}')
+        base64.urlsafe_b64encode(
+            b'{"k":[1.0,"WC-0001"],"l":Infinity,"f":{},"v":1,"t":5,"d":"2026-08-18"}'
+        )
         .decode()
         .rstrip("=")
     )
@@ -1159,27 +1232,96 @@ async def test_a_cursor_minted_under_a_different_filter_set_is_refused(
             base64.urlsafe_b64encode(b'{"nope":true}').decode().rstrip("="), id="not-a-cursor"
         ),
         pytest.param(
-            _forged({"o": 10_000, "l": 50, "f": {}, "v": 1, "t": 5, "d": "2026-08-18"}),
-            id="offset-past-the-end",
+            # **Amended by Story 9.8.** Its predecessor forged `offset=10_000`,
+            # refused as "a position past the end". A key past the end is not a
+            # forgery — it is a walk whose remaining rows have all left the
+            # list, and it is answered with an empty final page. What replaces
+            # it is a key no page could have minted: a non-finite score.
+            _forged(
+                {
+                    "k": [float("nan"), "WC-0001"],
+                    "l": 50,
+                    "f": {},
+                    "v": 1,
+                    "t": 5,
+                    "d": "2026-08-18",
+                }
+            ),
+            id="non-finite-score",
         ),
         pytest.param(
-            _forged({"o": 50, "l": 50, "f": {}, "v": 99, "t": 5, "d": "2026-08-18"}),
+            # AC 1's headline compatibility break, over HTTP. The payload is the
+            # shape this route minted *before* Story 9.8 — an `o` and no `k` —
+            # so the refusal is `decode_cursor`'s missing-key branch and not a
+            # version comparison that happens to fail beside it. A payload
+            # carrying a well-formed `k` would decode cleanly and prove nothing
+            # about the offset contract.
+            _forged({"o": 10, "l": 50, "f": {}, "v": 1, "t": 5, "d": "2026-08-18"}),
+            id="offset-shaped-cursor-from-before-the-keyset-change",
+        ),
+        pytest.param(
+            _forged(
+                {
+                    "k": [1.0, "WC-0001"],
+                    "l": 50,
+                    "f": {},
+                    "v": 99,
+                    "t": 5,
+                    "d": "2026-08-18",
+                }
+            ),
             id="superseded-priority-weights",
         ),
         pytest.param(
-            _forged({"o": 50, "l": 50, "f": {}, "v": 1, "t": 99, "d": "2026-08-18"}),
+            _forged(
+                {
+                    "k": [1.0, "WC-0001"],
+                    "l": 50,
+                    "f": {},
+                    "v": 1,
+                    "t": 99,
+                    "d": "2026-08-18",
+                }
+            ),
             id="superseded-derivation-thresholds",
         ),
         pytest.param(
-            _forged({"o": 50, "l": 10, "f": {}, "v": 1, "t": 5, "d": "2026-08-18"}),
+            _forged(
+                {
+                    "k": [1.0, "WC-0001"],
+                    "l": 10,
+                    "f": {},
+                    "v": 1,
+                    "t": 5,
+                    "d": "2026-08-18",
+                }
+            ),
             id="page-size-the-rules-no-longer-publish",
         ),
         pytest.param(
-            _forged({"o": 50, "l": 50, "f": {}, "v": 1, "t": 5, "d": "2020-01-01"}),
+            _forged(
+                {
+                    "k": [1.0, "WC-0001"],
+                    "l": 50,
+                    "f": {},
+                    "v": 1,
+                    "t": 5,
+                    "d": "2020-01-01",
+                }
+            ),
             id="older-than-the-maximum-age",
         ),
         pytest.param(
-            _forged({"o": 50, "l": 50, "f": {}, "v": 1, "t": 5, "d": "2099-01-01"}),
+            _forged(
+                {
+                    "k": [1.0, "WC-0001"],
+                    "l": 50,
+                    "f": {},
+                    "v": 1,
+                    "t": 5,
+                    "d": "2099-01-01",
+                }
+            ),
             id="dated-in-the-future",
         ),
     ],
@@ -1254,6 +1396,11 @@ async def test_the_response_is_camel_case_and_carries_nothing_else(
         "ageYoungerMin",
         "ageOlderMin",
         "ageOldestMin",
+        # Story 9.8: the day these rows were aged against —
+        # `/dashboard/trends`' field. Named rather than allowed through,
+        # because the point of this assertion is that a field cannot appear
+        # without a decision.
+        "asOf",
     }
     assert set(payload["items"][0]) == ROW_KEYS
     # Business ids on the wire, never surrogates (the ID convention).
@@ -1607,3 +1754,344 @@ async def test_the_aggregate_takes_exactly_one_scoped_read(db: AsyncSession) -> 
 
     assert len(executed) == 1, executed
     assert executed[0].startswith("SELECT")
+
+
+# --- Story 9.8: keyset resumption, the verdict pin, and `asOf` -----------
+
+
+@requires_db
+async def test_a_claim_leaving_the_list_mid_walk_skips_nobody(seeded_db_url: str) -> None:
+    """AC 1, on the uncapped list.
+
+    A full walk establishes the ranking this database holds. The walk is then
+    repeated: page one is read, a claim ranked at the very top is moved out of
+    the filtered population, and the walk continues from the cursor page one
+    handed back.
+
+    Under the offset this cursor used to carry, every claim below the departure
+    would have slid up one and page two would have started one row late —
+    exactly one claim skipped, with a 200 and nothing on screen to say so.
+
+    The narrowing is `filter[litigation]=false` — the widest facet the seeded
+    book has, so the list is long enough to page at the document's fifty — and
+    the departure is a stage edit into a stage the *keyset* has to walk past.
+    Removing a claim from the ranking is what the offset could not survive; it
+    does not matter which facet did it.
+
+    The mutation is undone in a `finally`: `seeded_db_url` is module-scoped, and
+    a re-staged claim left behind would be a trap for whatever is added after
+    this test.
+    """
+    params = query_of(litigation=False)
+    async with make_client(seeded_db_url) as client:
+        await login_as(client, *BLINE)
+
+        baseline: list[str] = []
+        cursor: str | None = None
+        while True:
+            page = (
+                await client.get(
+                    DRILL, params={**params, **({} if cursor is None else {"cursor": cursor})}
+                )
+            ).json()
+            baseline.extend(row["claimId"] for row in page["items"])
+            cursor = page["nextCursor"]
+            if cursor is None:
+                break
+        assert len(baseline) > 50, "the list must page for this to mean anything"
+
+        first = (await client.get(DRILL, params=params)).json()
+        assert first["nextCursor"] is not None
+        page_one = [row["claimId"] for row in first["items"]]
+        departing = page_one[0]
+
+        engine = create_async_engine(
+            seeded_db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        )
+        try:
+            async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+                previous = (
+                    await session.execute(
+                        sa.text("SELECT litigation_flag FROM claim WHERE claim_id = :cid"),
+                        {"cid": departing},
+                    )
+                ).scalar_one()
+                await session.execute(
+                    sa.text("UPDATE claim SET litigation_flag = true WHERE claim_id = :cid"),
+                    {"cid": departing},
+                )
+                await session.commit()
+
+            walked = list(page_one)
+            cursor = first["nextCursor"]
+            while cursor is not None:
+                page = (await client.get(DRILL, params={**params, "cursor": cursor})).json()
+                walked.extend(row["claimId"] for row in page["items"])
+                cursor = page["nextCursor"]
+                assert len(walked) < 500, "the walk is not terminating"
+        finally:
+            async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+                await session.execute(
+                    sa.text("UPDATE claim SET litigation_flag = :lit WHERE claim_id = :cid"),
+                    {"cid": departing, "lit": previous},
+                )
+                await session.commit()
+            await engine.dispose()
+
+    survivors = [claim_id for claim_id in baseline if claim_id != departing]
+
+    assert len(walked) == len(set(walked))
+    assert walked.count(departing) == 1
+    # Every claim that never left, in the baseline ranking. This list has no
+    # cap, so unlike the worklist nothing is promoted in behind the departure —
+    # the walk is the survivors plus the one claim that was already served.
+    assert [claim_id for claim_id in walked if claim_id in set(survivors)] == survivors
+
+
+@requires_db
+async def test_a_verdict_rewritten_mid_walk_refuses_the_page_rather_than_skipping(
+    db: AsyncSession, seeded_db_url: str
+) -> None:
+    """The I/O matrix's reserve-verdict row, and the one facet a *read* rewrites.
+
+    `ReserveVerdict` is derived on every read from `payment_schedule_week.
+    status`, which `GET /claims/{id}` rewrites through `materialize_schedule`.
+    Removing that write is **Story 9.7**'s and is not attempted here; what this
+    cursor can do is carry a pin so the walk *detects* the change.
+
+    Two calls, one mutation between them, and **two controls**. The first: the
+    same cursor is accepted when nothing moved, without which this would pass
+    against a service that refused every cursor on this facet. The second is
+    what makes the assertion about *verdicts* rather than about the book moving
+    — the identical mutation, in the identical interval, is replayed against a
+    walk with **no** `filter[reserveVerdict]`, and that walk continues. So the
+    refusal below is the facet's pin firing and not a population check dressed
+    up as one.
+
+    **Why the mutation cannot be mistaken for a population change** (Story 9.8's
+    review). `reserve` is not one of the twenty-five facets and feeds no score,
+    and this walk sets no other facet, so the population the verdict facet
+    partitions is the caller's whole scoped book both before and after — the
+    same claims, in the same order. What moved is which bucket one of them is
+    in, which is exactly and only what `verdict_digest` is for. The digest used
+    to be taken over the fully-filtered list, where a settle, a stage edit or a
+    reassignment moved it just as surely and produced this same 400 saying the
+    reserve verdicts had been recomputed, which was false in all three cases;
+    `test_a_population_change_mid_walk_is_walked_rather_than_refused` is the
+    other side of that correction.
+
+    Driven through the service rather than the route, because the page size is a
+    rule document's (`priority_weights.pageLimit`, fifty) and the seeded `light`
+    bucket is smaller than that — so over HTTP there is no second page to refuse.
+    `drill_through_claims` takes its parameter blocks as arguments precisely so a
+    caller can hand it different ones; `replace(weights, page_limit=2)` is that
+    seam, and it changes nothing about the mechanism under test.
+
+    The reserve is moved rather than the schedule row, and that is deliberate:
+    the point is the *detection*, not the mechanism. Driving it through the
+    GET-that-writes would make this a test of Story 9.7's defect rather than of
+    this story's answer to it.
+    """
+    ctx = await context_for(db, *BLINE)
+    thresholds = await thresholds_for(db)
+    weights = replace(await weights_for(db), page_limit=2)
+    filters = DrillFilters(reserve_verdict=ReserveVerdict.light)
+
+    first = await drill_through_claims(db, ctx, thresholds, weights, filters)
+    if first.next_cursor is None:
+        pytest.skip("the seeded 'light' bucket holds fewer than two claims")
+
+    # The control: nothing has moved, so the walk continues.
+    resumed = await drill_through_claims(
+        db, ctx, thresholds, weights, filters, cursor=first.next_cursor
+    )
+    assert resumed.items, "the control page should carry the next rows"
+
+    # The second control's page one, cut *before* the mutation so that it spans
+    # the same interval as the pinned walk. No verdict facet, therefore no pin.
+    unpinned = await drill_through_claims(db, ctx, thresholds, weights, DrillFilters())
+    assert unpinned.next_cursor is not None
+
+    moving = first.items[0].claim_id
+    engine = create_async_engine(seeded_db_url.replace("postgresql://", "postgresql+asyncpg://", 1))
+    try:
+        async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+            previous = (
+                await session.execute(
+                    sa.text("SELECT reserve FROM claim WHERE claim_id = :cid"),
+                    {"cid": moving},
+                )
+            ).scalar_one()
+            # Enough to move the claim out of the bucket: the verdict is a ratio
+            # of reserve to projected cost, and the reserve is a stored column.
+            await session.execute(
+                sa.text("UPDATE claim SET reserve = reserve * 20 WHERE claim_id = :cid"),
+                {"cid": moving},
+            )
+            await session.commit()
+
+        # A fresh session, or the mutation above is invisible to `db`'s snapshot.
+        async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+            ctx_after = await context_for(session, *BLINE)
+            with pytest.raises(InvalidCursor, match="recomputed"):
+                await drill_through_claims(
+                    session,
+                    ctx_after,
+                    thresholds,
+                    weights,
+                    filters,
+                    cursor=first.next_cursor,
+                )
+
+            # The second control. Same mutation, same interval, same session —
+            # and no `filter[reserveVerdict]`, so nothing is pinned and the walk
+            # goes on. A refusal here would mean the 400 above was about the
+            # book having moved rather than about the verdicts.
+            unpinned_next = await drill_through_claims(
+                session,
+                ctx_after,
+                thresholds,
+                weights,
+                DrillFilters(),
+                cursor=unpinned.next_cursor,
+            )
+            assert unpinned_next.items, "an unpinned walk should continue"
+    finally:
+        async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+            await session.execute(
+                sa.text("UPDATE claim SET reserve = :reserve WHERE claim_id = :cid"),
+                {"cid": moving, "reserve": previous},
+            )
+            await session.commit()
+        await engine.dispose()
+
+
+@requires_db
+async def test_a_population_change_mid_walk_is_walked_rather_than_refused(
+    db: AsyncSession, seeded_db_url: str
+) -> None:
+    """The I/O matrix's "row leaves population mid-walk → no error expected",
+    asserted **with `filter[reserveVerdict]` set** — the one combination where
+    it used to be false.
+
+    The verdict pin shipped hashing the whole filtered, ranked list, so anything
+    that changed which claims were in that list changed the digest: a claim
+    settled, a stage edited, a caseload reassigned. Each produced a 400 reading
+    "The reserve verdicts behind that page have been recomputed since it was
+    cut", which was not true of any of them, and each contradicted the matrix row
+    above and the `Cursor` docstring's own promise that a stage edit is not
+    pinned. The digest is now taken beside a second one over the population the
+    facet partitions, and the refusal fires only when that population is
+    unchanged — i.e. only when a claim really did change bucket.
+
+    The departure here is `litigation_flag`, for the reason
+    `test_a_claim_leaving_the_list_mid_walk_skips_nobody` gives: it is the
+    widest facet the seeded book has, so the filtered list is long enough to
+    page. Which facet did it is not the point — any of them moves the
+    population, and none of them is a verdict rewrite.
+
+    The mutation is undone in a `finally`: `seeded_db_url` is module-scoped, and
+    a litigated claim left behind would be a trap for whatever is added after
+    this test.
+    """
+    ctx = await context_for(db, *BLINE)
+    thresholds = await thresholds_for(db)
+    # Two rows a page, `test_a_verdict_rewritten_mid_walk_...`' seam and its
+    # reason: the seeded `light` bucket is smaller than the document's fifty, so
+    # at the published page size there is no second page to refuse or to serve.
+    weights = replace(await weights_for(db), page_limit=2)
+    filters = DrillFilters(reserve_verdict=ReserveVerdict.light, litigation=False)
+
+    baseline: list[str] = []
+    cursor: str | None = None
+    while True:
+        page = await drill_through_claims(db, ctx, thresholds, weights, filters, cursor=cursor)
+        baseline.extend(row.claim_id for row in page.items)
+        cursor = page.next_cursor
+        if cursor is None:
+            break
+    if len(baseline) < 3:
+        pytest.skip("the seeded 'light' bucket holds too few unlitigated claims to page")
+
+    first = await drill_through_claims(db, ctx, thresholds, weights, filters)
+    assert first.next_cursor is not None
+    departing = first.items[0].claim_id
+
+    engine = create_async_engine(seeded_db_url.replace("postgresql://", "postgresql+asyncpg://", 1))
+    try:
+        async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+            previous = (
+                await session.execute(
+                    sa.text("SELECT litigation_flag FROM claim WHERE claim_id = :cid"),
+                    {"cid": departing},
+                )
+            ).scalar_one()
+            await session.execute(
+                sa.text("UPDATE claim SET litigation_flag = true WHERE claim_id = :cid"),
+                {"cid": departing},
+            )
+            await session.commit()
+
+        # A fresh session, or the mutation above is invisible to `db`'s snapshot.
+        async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+            ctx_after = await context_for(session, *BLINE)
+            walked = [row.claim_id for row in first.items]
+            cursor = first.next_cursor
+            while cursor is not None:
+                page = await drill_through_claims(
+                    session, ctx_after, thresholds, weights, filters, cursor=cursor
+                )
+                walked.extend(row.claim_id for row in page.items)
+                cursor = page.next_cursor
+                assert len(walked) < 500, "the walk is not terminating"
+    finally:
+        async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+            await session.execute(
+                sa.text("UPDATE claim SET litigation_flag = :lit WHERE claim_id = :cid"),
+                {"cid": departing, "lit": previous},
+            )
+            await session.commit()
+        await engine.dispose()
+
+    survivors = [claim_id for claim_id in baseline if claim_id != departing]
+
+    assert len(walked) == len(set(walked)), "no claim served twice"
+    # Every claim that never left, in the baseline ranking, plus the one that was
+    # already on page one when it left. This list has no cap, so nothing is
+    # promoted in behind the departure.
+    assert [claim_id for claim_id in walked if claim_id in set(survivors)] == survivors
+
+
+@requires_db
+async def test_the_payload_publishes_the_day_it_aged_the_claims_against(
+    seeded_db_url: str,
+) -> None:
+    """AC 2 — `/dashboard/trends`' field, retro-fitted onto this list.
+
+    Page one resolves it to today; every later page reuses the day the cursor
+    pinned, which is what makes page two a page of the list page one was. A walk
+    resumed from a week-old cursor therefore publishes `daysOpen` and
+    `priorityScore` computed against a week-old date — already true, and until
+    now unstated.
+    """
+    pages = await walk(seeded_db_url, *BLINE)
+
+    assert pages[0]["asOf"] == utc_today().isoformat()
+    assert {page["asOf"] for page in pages} == {utc_today().isoformat()}
+
+
+@requires_db
+async def test_the_endpoint_does_not_accept_as_of_as_an_input(seeded_db_url: str) -> None:
+    """`asOf` is published, never accepted (the story's Never list).
+
+    Asserted against the published contract rather than by sending one: an
+    unknown query parameter is silently ignored, so an "it had no effect" test
+    would keep passing the day somebody declared it.
+    """
+    async with make_client(seeded_db_url) as client:
+        await login_as(client, *BLINE)
+        schema = (await client.get("/openapi.json")).json()
+
+    names = {p["name"] for p in schema["paths"]["/dashboard/claims"]["get"]["parameters"]}
+    assert "asOf" not in names
+    assert "as_of" not in names

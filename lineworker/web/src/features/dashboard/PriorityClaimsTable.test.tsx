@@ -1,9 +1,11 @@
 import { MemoryRouter } from "react-router";
 
 import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
+
+import { queryKeys } from "@/api/queryKeys";
 
 import { createQueryClient } from "@/api/queryClient";
 import {
@@ -59,6 +61,30 @@ function renderPage(routes: Parameters<typeof stubApi>[0]) {
       </QueryClientProvider>
     </MemoryRouter>,
   );
+}
+
+/**
+ * The same render, with the query client handed back (Story 9.8).
+ *
+ * The three cases below are about what happens when the **base query
+ * refetches** — onto a new first cursor, or onto a failure — and a refetch is
+ * something only the cache can start. `createQueryClient` sets
+ * `refetchOnWindowFocus: false` and a 30-second `staleTime`, so there is no
+ * event a test could dispatch to provoke one honestly; invalidating the key the
+ * component reads is the same thing the app does after an edit, and it is the
+ * only way to reach these states without mocking the hook.
+ */
+function renderPageWithClient(routes: Parameters<typeof stubApi>[0]) {
+  stubApi(routes);
+  const client = createQueryClient();
+  render(
+    <MemoryRouter>
+      <QueryClientProvider client={client}>
+        <DashboardPage />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  );
+  return client;
 }
 
 afterEach(() => {
@@ -385,4 +411,134 @@ test("the heading offers the whole population, uncapped", async () => {
     "href",
     "/dashboard/claims?filter%5Bpriority%5D=true",
   );
+});
+
+
+// --- Story 9.8: the two paging surfaces the SPA got wrong ---------------
+
+/**
+ * `PRIORITY_CLAIMS` with a **different** first cursor and nothing else changed.
+ *
+ * A re-cut page one is the ordinary outcome of a base refetch: the ranking is
+ * recomputed, the page is cut again, and the token that names its end is a
+ * different string. Same rows here deliberately — the subject is the cursor
+ * moving, and changing the rows too would let a test pass because the rows
+ * changed rather than because the expansion reset.
+ */
+const PRIORITY_CLAIMS_RECUT = {
+  status: 200,
+  body: {
+    ...PRIORITY_CLAIMS.body,
+    nextCursor:
+      "eyJrIjpbNDEuMCwiV0MtMjE1MzEiXSwibCI6MTAsInYiOjEsInQiOjUsImEiOjIsImQiOiIyMDI2LTA4LTE4In0",
+  },
+};
+
+test("a base refetch onto a new first cursor resets the expansion and fetches nothing", async () => {
+  const user = userEvent.setup();
+  const cursorsRequested: string[] = [];
+  let baseReads = 0;
+  const client = renderPageWithClient({
+    priorityClaims: (url) => {
+      const cursor = new URL(url, "http://test").searchParams.get("cursor");
+      if (cursor !== null) {
+        cursorsRequested.push(cursor);
+        return PRIORITY_CLAIMS_PAGE_TWO;
+      }
+      baseReads += 1;
+      return baseReads === 1 ? PRIORITY_CLAIMS : PRIORITY_CLAIMS_RECUT;
+    },
+  });
+
+  await screen.findAllByTestId("priority-row");
+  await user.click(screen.getByTestId("priority-claims-more"));
+  await waitFor(() => {
+    expect(screen.getAllByTestId("priority-row")).toHaveLength(
+      PRIORITY_CLAIMS.body.items.length + PRIORITY_CLAIMS_PAGE_TWO.body.items.length,
+    );
+  });
+  expect(cursorsRequested).toHaveLength(1);
+
+  // The base query refetches and mints a different first cursor.
+  await act(async () => {
+    await client.invalidateQueries({ queryKey: queryKeys.dashboard.priorityClaims });
+  });
+
+  // **The accumulated pages go, coherently.** They were cut from a ranking that
+  // no longer applies, and rendering them beside a freshly cut page one would
+  // show rows from two different lists as though they were one.
+  await waitFor(() => {
+    expect(screen.getAllByTestId("priority-row")).toHaveLength(
+      PRIORITY_CLAIMS.body.items.length,
+    );
+  });
+
+  // **And the new cursor was never fetched.** This is the half that was broken:
+  // the infinite query is keyed on the first cursor, so the swing put the
+  // component on a fresh empty entry while `expanded` was still true, and
+  // `enabled: expanded && firstCursor !== null` fired a page-two request the
+  // supervisor never clicked.
+  //
+  // Asserted as "no request for the *new* cursor" rather than as a call count,
+  // because `priorityClaimPages` is a sub-key of `priorityClaims` — see
+  // `queryKeys` — so invalidating the base key also invalidates the still-active
+  // pages entry, and TanStack refetches it under its **old** cursor before the
+  // base answer arrives and the key swings. That is pre-existing and harmless
+  // (its result is discarded with the entry); what must never happen is a page
+  // two of the *new* list arriving unasked.
+  expect(cursorsRequested).not.toContain(PRIORITY_CLAIMS_RECUT.body.nextCursor);
+  expect(new Set(cursorsRequested)).toEqual(new Set([PRIORITY_CLAIMS.body.nextCursor]));
+
+  // The affordance comes back, because there is more to walk — from the top of
+  // the new list, which is the only honest place to resume.
+  expect(await screen.findByTestId("priority-claims-more")).toBeVisible();
+});
+
+test("a failed base refetch keeps the walked rows behind an inline warning", async () => {
+  const user = userEvent.setup();
+  let baseReads = 0;
+  const client = renderPageWithClient({
+    priorityClaims: (url) => {
+      if (url.includes("cursor=")) return PRIORITY_CLAIMS_PAGE_TWO;
+      baseReads += 1;
+      // 404 rather than a 5xx: `createQueryClient` never retries below 500, so
+      // this is one failed attempt rather than three and a delay.
+      return baseReads === 1 ? PRIORITY_CLAIMS : { status: 404, body: {} };
+    },
+  });
+
+  await screen.findAllByTestId("priority-row");
+  await user.click(screen.getByTestId("priority-claims-more"));
+  const walked = PRIORITY_CLAIMS.body.items.length + PRIORITY_CLAIMS_PAGE_TWO.body.items.length;
+  await waitFor(() => {
+    expect(screen.getAllByTestId("priority-row")).toHaveLength(walked);
+  });
+
+  await act(async () => {
+    await client.invalidateQueries({ queryKey: queryKeys.dashboard.priorityClaims });
+  });
+
+  // The warning appears…
+  const warning = await screen.findByTestId("priority-claims-stale");
+  expect(warning).toHaveAttribute("role", "alert");
+  // …and it is a *warning*, not a replacement. TanStack keeps the last
+  // successful `data` through a failed refetch, and the error branch used to be
+  // tested first — so a refetch failure wiped every row the supervisor had
+  // walked, up to a whole worklist, and took the accumulated pages with them.
+  expect(renderedClaimIds()).toHaveLength(walked);
+  // The full-height alert is reserved for the case where there is nothing to
+  // show at all.
+  expect(screen.queryByTestId("priority-claims-error")).toBeNull();
+});
+
+test("a first load that fails with nothing on screen still gets the full alert", async () => {
+  // The other side of the branch above, kept explicit: the destructive-looking
+  // alert is correct when it destroys nothing, and a fix that turned every
+  // failure into a footnote under an empty table would be the quieter lie the
+  // original branch was written against.
+  renderPage({ priorityClaims: { status: 404, body: {} } });
+
+  expect(await screen.findByTestId("priority-claims-error")).toBeVisible();
+  expect(screen.queryByTestId("priority-claims-stale")).toBeNull();
+  expect(screen.queryAllByTestId("priority-row")).toHaveLength(0);
 });

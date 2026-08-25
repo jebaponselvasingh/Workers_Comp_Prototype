@@ -19,17 +19,27 @@ cut. Marking after slicing would let a fourth claim sprout a marker simply
 because someone asked for page 2. The rule itself lives next to the score
 in `priority.py`, where Epic 5 will find it.
 
-**Why the cursor is opaque and offset-based.** Keyset pagination needs the
-sort key in the query, and this sort key is Python arithmetic over a JDM
-parameter block — re-implementing it in SQL is exactly what AD-2 forbids. So
-the cursor records where in the *fully scored, fully sorted* group a page
-ended, **together with everything that shaped that ordering**: the filter,
-the stage, both rule-document versions, the day the claims were aged
-against, and the page size. Every one of them can change the list underneath
-a caller who is halfway down it — a filter narrows it, a rule version
-re-ranks it, a request that crosses UTC midnight re-ages it, and a different
-`limit` turns the same offset into a different window. A cursor that does
-not describe the list being asked for is a 400, not a best-effort re-page.
+**Why the cursor is opaque and keyset-based.** It used to be an offset, on
+the argument that "keyset pagination needs the sort key in the query, and
+this sort key is Python arithmetic over a JDM parameter block". That argument
+is true of a *SQL* keyset and false of this one (Story 9.8): the group is
+already fully scored and fully sorted, in Python, by `priority.order_key`, so
+resuming after a key is a `bisect_right` into a list that exists — no
+`ORDER BY` over the score, no materialized rank, the score still computed
+exactly once (AD-2). What the change buys is the defect the offset had: a
+claim that leaves a group between two requests slides every row below it up
+one, so an offset of ten starts at what was row eleven and exactly one card
+is skipped, silently, with a 200.
+
+So the cursor records the **key** the page ended on, **together with
+everything that shaped that ordering**: the filter, the stage, both
+rule-document versions, the day the claims were aged against, and the page
+size. Every one of them can change the list underneath a caller who is
+halfway down it — a filter narrows it, a rule version re-ranks it, a request
+that crosses UTC midnight re-ages it, and a different `limit` cuts a
+different window. A cursor that does not describe the list being asked for is
+a 400, not a best-effort re-page. A cursor minted before Story 9.8 carries an
+offset and no key, and is refused for that reason rather than reinterpreted.
 
 **Checked or reused — and which is which matters.** The two rule-document
 versions are *checked*, because a superseded document must not go on
@@ -43,19 +53,32 @@ tautology — the version it recorded is exactly the version effective on the
 date it recorded — which is how this arrangement was wrong on its first
 outing.
 
-**Why every group is always the truth.** `stage` narrows nothing; it names
-which group the cursor addresses. A response where three groups were empty
-because the caller asked about the fourth would be indistinguishable from a
-caseload that really had nothing in those stages — and "no claims in this
-stage" is a message this story owes the user honestly (NFR-3).
+**Why every group is always the truth, and where `groups` is the exception.**
+`stage` narrows nothing; it names which group the cursor addresses. A response
+where three groups were *silently* empty because the caller asked about the
+fourth would be indistinguishable from a caseload that really had nothing in
+those stages — and "no claims in this stage" is a message this console owes
+the user honestly (NFR-3).
+
+`groups` (Story 9.8) is how a caller asks for less **and says so**. The
+"Show more" path reads one group and discards three, so at `pageLimit: 50` an
+incremental page ranks, marks and serialises up to two hundred fully-derived
+cards to deliver fifty. Naming the groups makes the narrowing explicit in the
+request and in the response — an omitted group is *absent*, not empty, so no
+client can mistake "you did not ask" for "there is nothing". Omitting the
+parameter is the initial load and returns all four, unchanged. The two totals
+are unaffected either way: they are counted over the whole scored book, not
+summed from whichever groups came back.
 """
 
 import base64
 import binascii
 import json
+from bisect import bisect_right
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
+from math import isfinite
 from typing import Any
 
 import sqlalchemy as sa
@@ -115,6 +138,25 @@ class Cursor:
     **Compared.** These say which *rules* ranked the list, and a page cut
     under superseded rules is not a page of the list being asked for.
 
+    **The position is a key, not an offset** (Story 9.8). `last_score` and
+    `last_claim_id` are the two halves of `priority.order_key` for the last card
+    of the page just served, and the next page resumes strictly after that key.
+    A claim that leaves the group between two requests — settled, re-staged,
+    edited out from under the filter — no longer slides the window and skips its
+    neighbour. See the module docstring for why this is not the AD-2 breach the
+    old offset's comment said it would be.
+
+    **What that guarantee covers, exactly.** A claim that *leaves* the group is
+    handled: the rows below it no longer slide up, so nothing is skipped. A
+    claim whose **order key changes** mid-walk is not, and no field here can fix
+    it — an edit that raises a severity score moves a claim from below the
+    caller's key to above it, and the next page resumes strictly after that key,
+    so the claim is never served: the walk ends one card short of its own
+    `total`, with a 200. That is a narrower defect than the offset's (it takes
+    an edit to the ranking inputs rather than any departure at all), it is the
+    residual limit of resuming on a key over a mutable ranking, and it is
+    recorded in `deferred-work.md` rather than implied away here.
+
     - `queue_filter` and `stage` — a different list outright.
     - `rules_version` / `thresholds_version` — the same claims, re-scored.
       The weights are the obvious half; the thresholds are the easy half to
@@ -137,35 +179,57 @@ class Cursor:
       `MAX_CURSOR_AGE`, describes no list this service ever cut — but it is
       never used to choose a rule document.
     - `limit` — the same reuse argument, for a much more common case. Page 1
-      at `limit=10` ends at offset 10; a follow-up that forgot to repeat the
-      limit would read `[10:60]` and hand the caller the ten rows they
-      already had.
+      at `limit=10` ends after ten cards; a follow-up that forgot to repeat the
+      limit would cut fifty from that key and hand the caller a window they
+      never asked for, on a list whose "Show more" they will click again.
     """
 
     queue_filter: QueueFilter
     stage: Stage
-    offset: int
+    last_score: float
+    last_claim_id: str
     rules_version: int
     thresholds_version: int
     as_of: date
     limit: int
 
+    @property
+    def resume_after(self) -> tuple[float, str]:
+        """The `order_key` value the next page resumes strictly after.
+
+        The score is stored un-negated so a reader of the decoded JSON sees the
+        number the payload published, and negated here because that is the sort
+        form `order_key` returns.
+        """
+        return (-self.last_score, self.last_claim_id)
+
 
 def encode_cursor(cursor: Cursor) -> str:
     """Base64url of a compact JSON object, unpadded.
 
-    Opaque by intent rather than by encryption: it carries no claim data and
-    nothing a caller could use to widen their scope (scope is never in the
-    request — AD-7), so obscurity is not doing security work here. What the
-    encoding buys is that clients treat it as a token to hand back rather
-    than an offset to increment, which is what will let a later story swap
-    the strategy without breaking them.
+    Opaque by intent rather than by encryption: it carries nothing a caller
+    could use to widen their scope (scope is never in the request — AD-7), so
+    obscurity is not doing security work here. What the encoding bought is
+    that clients treat it as a token to hand back rather than a position to
+    increment — which is exactly what let Story 9.8 swap offset for keyset
+    without a single client change.
+
+    **Since that story it does carry one claim's business id**, as half the
+    resumption key. Not a widening: it is a claim the caller was handed a
+    moment earlier under the repository's scope filter, already on their
+    screen in the `claimId` of the card beside it. Substituting somebody
+    else's id yields a position in the caller's *own* ranked group and no card
+    they could not already read.
     """
     payload = json.dumps(
         {
             "f": cursor.queue_filter.value,
             "s": cursor.stage.value,
-            "o": cursor.offset,
+            # `k`, not `o`. The rename is the compatibility break, deliberately:
+            # a pre-9.8 cursor carries `o` and no `k`, so it fails the `KeyError`
+            # branch in `decode_cursor` rather than being read as a position it
+            # does not name.
+            "k": [cursor.last_score, cursor.last_claim_id],
             "v": cursor.rules_version,
             "t": cursor.thresholds_version,
             "d": cursor.as_of.isoformat(),
@@ -174,6 +238,37 @@ def encode_cursor(cursor: Cursor) -> str:
         separators=(",", ":"),
     )
     return base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
+
+
+def _resume_key(raw: object) -> tuple[float, str]:
+    """A cursor's `k` member back into `(score, claim_id)`, or a refusal.
+
+    Restated in each of the three ranked services rather than shared, which is
+    this codebase's rule for cursor codecs: `encode_cursor`, `decode_cursor` and
+    their bounds already live once per service, and a shared parser would be the
+    first thread of a `pagination` module nobody has decided to write.
+
+    Every part is checked rather than coerced, because a cursor is unsigned
+    base64 JSON and forging one is trivial: the member must be a two-element
+    array; the score must be a finite real number — `bool` is an `int` in Python
+    and is refused explicitly, and `NaN` is refused because every comparison
+    against it is false; the claim id must be a string, because a mixed-type
+    tuple comparison raises rather than orders.
+
+    `TypeError`/`ValueError` rather than a bespoke exception, so the caller's
+    existing `except` tuple turns every unreadable cursor into the one
+    `InvalidCursor` this module publishes.
+    """
+    if not isinstance(raw, list | tuple) or len(raw) != 2:
+        raise TypeError("the cursor's resumption key is not a two-element array")
+    score, claim_id = raw
+    if isinstance(score, bool) or not isinstance(score, int | float):
+        raise TypeError(f"the cursor's score is {type(score).__name__}, not a number")
+    if not isfinite(score):
+        raise ValueError("the cursor's score is not a finite number")
+    if not isinstance(claim_id, str):
+        raise TypeError(f"the cursor's claim id is {type(claim_id).__name__}, not a string")
+    return (float(score), claim_id)
 
 
 def decode_cursor(raw: str, as_of: date | None = None) -> Cursor:
@@ -201,14 +296,22 @@ def decode_cursor(raw: str, as_of: date | None = None) -> Cursor:
       reaches the loader — but a claim aged against the year 1900 or 3000
       ranks by arithmetic nobody asked for, and "reload from page one" is
       the truthful answer.
+    - `k` is the resumption key, and `_resume_key` refuses anything that is
+      not a finite number beside a string. `NaN` is the sharp case: `json`
+      spells it, every comparison against it is false, and `bisect_right`
+      would then resume wherever the probe sequence landed rather than where
+      the ordering says. Since Story 9.8 this key replaces the offset, so a
+      cursor issued before that change carries no `k` and is refused here.
     """
     try:
         padded = raw + "=" * (-len(raw) % 4)
         data = json.loads(base64.urlsafe_b64decode(padded.encode()))
+        last_score, last_claim_id = _resume_key(data["k"])
         cursor = Cursor(
             queue_filter=QueueFilter(data["f"]),
             stage=Stage(data["s"]),
-            offset=int(data["o"]),
+            last_score=last_score,
+            last_claim_id=last_claim_id,
             rules_version=int(data["v"]),
             thresholds_version=int(data["t"]),
             as_of=date.fromisoformat(data["d"]),
@@ -223,8 +326,6 @@ def decode_cursor(raw: str, as_of: date | None = None) -> Cursor:
         UnicodeDecodeError,
     ) as exc:
         raise InvalidCursor("The pagination cursor is not readable.") from exc
-    if cursor.offset < 0:
-        raise InvalidCursor("The pagination cursor names a negative position.")
     if not MIN_PAGE_LIMIT <= cursor.limit <= MAX_PAGE_LIMIT:
         raise InvalidCursor(
             f"The pagination cursor names a page size of {cursor.limit}; "
@@ -291,6 +392,19 @@ class ClaimQueue:
     cursor carries both: the weights decide what a signal is worth, the
     thresholds decide whether the claim has it, and "which rules produced
     this ordering?" is only answered by naming both.
+
+    **`groups` holds only the stages the request asked for** (Story 9.8).
+    With no `groups` parameter that is all four, which is every call the
+    console made before this story. A narrowed request omits the rest rather
+    than emptying them — see the module docstring — and `filtered_total` is
+    still the whole filtered book, because it is counted from the scored rows
+    and not summed from whatever came back.
+
+    **`as_of` is the day these cards were aged against**, `/dashboard/trends`'
+    field verbatim. Page one resolves it to today; every later page reuses the
+    day the cursor pinned, so a queue walked across UTC midnight publishes
+    `daysOpen` values and an ordering computed against a date up to
+    `MAX_CURSOR_AGE` in the past. That was already true and simply unstated.
     """
 
     groups: Mapping[Stage, StageGroup]
@@ -298,6 +412,7 @@ class ClaimQueue:
     thresholds_version: int
     unfiltered_total: int
     filtered_total: int
+    as_of: date
 
 
 def _rows_to_cards(
@@ -385,28 +500,45 @@ def _ranked_group(
     ]
 
 
+def _order_key(card: QueueCard) -> tuple[float, str]:
+    """One finished card, through `priority.order_key`. The symbol, not the shape.
+
+    `bisect_right` needs exactly the key `_ranked_group` sorted by, and writing
+    `(-score, claim_id)` here would be a second spelling of the ordering — the
+    failure `order_key`'s own docstring exists to prevent, since two spellings
+    agree on every score and can disagree on every tie with nothing to say so.
+
+    Called O(log n) times per group, only on the cards the search probes.
+    """
+    return order_key((card.claim, card.priority_score))
+
+
 def _page(
     cards: Sequence[QueueCard],
     stage: Stage,
     queue_filter: QueueFilter,
-    offset: int,
+    resume_after: tuple[float, str] | None,
     limit: int,
     rules_version: int,
     thresholds_version: int,
     as_of: date,
 ) -> StageGroup:
-    # A cursor is only ever issued for an offset that has claims behind it,
-    # so an offset at or past the end describes a list this one is not. The
-    # alternative — an empty page beside a non-zero `total` and a null
-    # `nextCursor` — reads as a group that is simultaneously populated and
-    # finished, which a client can only render as a lie.
-    if offset > 0 and offset >= len(cards):
-        raise InvalidCursor(
-            f"That page starts at {offset} but the {stage.value!r} group now holds "
-            f"{len(cards)} claims; reload the queue from the first page."
-        )
-    window = cards[offset : offset + limit]
-    exhausted = offset + limit >= len(cards)
+    # **Keyset, after the fold** — Story 9.8. `cards` is already sorted by
+    # `priority.order_key`, so resuming is a binary search for the first card
+    # strictly after the key the last page ended on. `bisect_right` rather than
+    # `bisect_left`, because the cursor names a card that was *served*.
+    #
+    # No refusal for a position past the end any more, and its absence is the
+    # fix rather than an omission. Under offsets, an offset at or past the end
+    # described a list this one was not, and serving it would have meant an empty
+    # page beside a non-zero `total` — a group simultaneously populated and
+    # finished, which a client can only render as a lie. Under a key it means
+    # something true and different: every claim below the caller's position has
+    # left the group, so the walk has ended. An empty final page with a null
+    # `nextCursor` beside a truthful `total` says exactly that.
+    start = 0 if resume_after is None else bisect_right(cards, resume_after, key=_order_key)
+    window = cards[start : start + limit]
+    exhausted = start + limit >= len(cards)
     return StageGroup(
         items=tuple(window),
         # Null only when the group is finished — never "null because this
@@ -419,7 +551,8 @@ def _page(
                 Cursor(
                     queue_filter=queue_filter,
                     stage=stage,
-                    offset=offset + limit,
+                    last_score=window[-1].priority_score,
+                    last_claim_id=window[-1].claim.claim_id,
                     rules_version=rules_version,
                     thresholds_version=thresholds_version,
                     as_of=as_of,
@@ -437,6 +570,7 @@ async def claim_queue(
     *,
     queue_filter: QueueFilter = QueueFilter.all,
     stage: Stage | None = None,
+    groups: Sequence[Stage] | None = None,
     cursor: str | None = None,
     limit: int | None = None,
     as_of: date | None = None,
@@ -461,7 +595,32 @@ async def claim_queue(
 
     An explicit `as_of` argument sets `today` — it is how a test pins the
     clock, including for the document lookup.
+
+    **`groups` narrows what is ranked, and never what is true** (Story 9.8).
+    `None` means all four, which is the initial load and every call this console
+    made before this story. A "Show more" names the one group it is walking, and
+    the other three are then not sorted, not marked and not built into cards —
+    the fold above them still runs, because the scores it produces are what
+    `unfiltered_total`, `filtered_total` and the requested group's own ranking
+    are computed from, and reducing *that* is Story 9.10's payload rather than
+    this one's.
+
+    A stage named in `groups` but absent from `STAGE_ORDER` cannot happen — the
+    parameter is typed on the enum — and a duplicate is idempotent, so no
+    validation is spent on either. An **empty** `groups` is refused rather than
+    answered: `None` already means "all four", so an empty sequence can only be
+    a caller that built the list and put nothing in it, and answering it would
+    publish four null groups beside a non-zero `filteredTotal` — a payload
+    indistinguishable from an error and readable as "your whole queue is
+    missing". The route cannot produce one (an absent query parameter binds to
+    `None`, and there is no wire spelling for a zero-length list), so this is a
+    programming error and a `ValueError` rather than an `InvalidCursor`.
     """
+    if groups is not None and len(groups) == 0:
+        raise ValueError(
+            "`groups` names the stage groups to return and cannot be empty; "
+            "omit it to ask for all four."
+        )
     decoded = decode_cursor(cursor, as_of) if cursor is not None else None
     today = as_of or utc_today()
     thresholds = await thresholds_for(db, today)
@@ -477,6 +636,22 @@ async def claim_queue(
         if stage is not None and decoded.stage is not stage:
             raise InvalidCursor(
                 f"That page belongs to the {decoded.stage.value!r} group, not {stage.value!r}."
+            )
+        # And the same ruling against `groups`, which is the parameter that
+        # decides what comes back. Without this check a cursor into the settled
+        # group replayed beside `groups=intake` passes every comparison above —
+        # the filter, both versions, the date, the page size all describe the
+        # list it was cut from — and then the loop below never reaches the group
+        # it names, so `resume_after` is never applied: the caller gets intake
+        # *page one* with a fresh cursor, and the group they were walking is
+        # absent from the payload entirely. A silently restarted walk with a
+        # 200, which is the one answer this cursor is not allowed to give.
+        if groups is not None and decoded.stage not in groups:
+            asked = ", ".join(s.value for s in STAGE_ORDER if s in groups)
+            raise InvalidCursor(
+                f"That page belongs to the {decoded.stage.value!r} group, and this "
+                f"request asked for {asked}; ask for the group the cursor names, "
+                "or reload the queue from the first page."
             )
         if decoded.rules_version != weights.version:
             raise InvalidCursor(
@@ -502,15 +677,18 @@ async def claim_queue(
     # one.
     page_size = limit or (decoded.limit if decoded is not None else weights.page_limit)
 
-    groups: dict[Stage, StageGroup] = {}
-    for group_stage in STAGE_ORDER:
+    wanted = STAGE_ORDER if groups is None else tuple(s for s in STAGE_ORDER if s in groups)
+    pages: dict[Stage, StageGroup] = {}
+    for group_stage in wanted:
         cards = _ranked_group(scored, group_stage, queue_filter, weights)
-        offset = decoded.offset if decoded is not None and decoded.stage is group_stage else 0
-        groups[group_stage] = _page(
+        resume_after = (
+            decoded.resume_after if decoded is not None and decoded.stage is group_stage else None
+        )
+        pages[group_stage] = _page(
             cards,
             group_stage,
             queue_filter,
-            offset,
+            resume_after,
             page_size,
             weights.version,
             thresholds.version,
@@ -518,12 +696,29 @@ async def claim_queue(
         )
 
     return ClaimQueue(
-        groups=groups,
+        groups=pages,
         rules_version=weights.version,
         thresholds_version=thresholds.version,
         # `scored` is every scoped row, before `matches` narrowed anything;
-        # the group totals are what survived it. Both are counted here so
-        # the SPA does neither.
+        # the second is what the predicate left. Both are counted here so the
+        # SPA does neither.
+        #
+        # `filtered_total` is counted directly rather than summed from the four
+        # group totals, and since Story 9.8 it has to be: a narrowed request
+        # holds one group, and a sum over it would report the treatment group's
+        # size as the size of the whole filtered queue. The two are equal when
+        # all four are present — every claim has exactly one stage in
+        # `STAGE_ORDER` — so this is the same number, computed from the fact
+        # rather than from the payload. It is not free on the narrowed path: a
+        # request naming one group folds `matches` over the whole scored book
+        # here as well as over that group, so the pass `groups` saves on ranking,
+        # marking and card-building is paid back once as a predicate sweep —
+        # cheaper than the three group builds it replaces, and the price of a
+        # `filteredTotal` that is still about the queue rather than about the
+        # page.
         unfiltered_total=len(scored),
-        filtered_total=sum(group.total for group in groups.values()),
+        filtered_total=sum(
+            1 for claim, flags, _score in scored if matches(queue_filter, claim, flags)
+        ),
+        as_of=aged_on,
     )

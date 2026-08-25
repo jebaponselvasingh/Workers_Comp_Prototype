@@ -1513,8 +1513,15 @@ export const PRIORITY_CLAIMS = {
         litigationFlag: false,
       },
     ],
+    // A **keyset** cursor since Story 9.8: base64url of
+    // `{"k":[62.0,"WC-20130"],"l":10,"v":1,"t":5,"a":2,"d":"2026-08-18"}` —
+    // `k` is `priority.order_key`'s two halves for the last row of this page.
+    // The client treats it as an opaque token and never decodes it, so the
+    // fixture could be any string; it is a real one because a fixture that
+    // could not have been minted by the server is a fixture nobody can check
+    // the e2e oracle against.
     nextCursor:
-      "eyJvIjoxMCwibCI6MTAsInYiOjEsInQiOjUsImEiOjIsImQiOiIyMDI2LTA4LTE4In0",
+      "eyJrIjpbNjIuMCwiV0MtMjAxMzAiXSwibCI6MTAsInYiOjEsInQiOjUsImEiOjIsImQiOiIyMDI2LTA4LTE4In0",
     total: 38,
     cap: 30,
     truncated: true,
@@ -1522,6 +1529,11 @@ export const PRIORITY_CLAIMS = {
     medRiskSeverityMin: 35,
     fraudFlagScoreMin: 55,
     rulesVersion: 2,
+    // The day these rows were aged against (Story 9.8). Page one resolves it to
+    // today; a cursor page reuses the day the cursor pinned, which is why the
+    // field is on the payload at all — the Next Best Action column is a column
+    // of deadlines and nothing on the wire used to say what date decided them.
+    asOf: "2026-08-18",
   },
 };
 
@@ -1793,6 +1805,9 @@ export const DRILL_CLAIMS = {
       },
     ],
     nextCursor: "drill-cursor-page-2",
+    // See `PRIORITY_CLAIMS.asOf` (Story 9.8): the day these rows were aged
+    // against, which a cursor page reuses from the cursor.
+    asOf: "2026-08-18",
     total: 32,
     appliedFilters: [{ key: "severityBand", value: "high", display: null }],
     rulesVersion: 1,
@@ -2116,6 +2131,9 @@ export const CLAIM_QUEUE = {
     thresholdsVersion: 1,
     unfilteredTotal: 3,
     filteredTotal: 3,
+    // The day these cards were aged against (Story 9.8). See
+    // `PRIORITY_CLAIMS.asOf`.
+    asOf: "2026-08-18",
   },
 };
 

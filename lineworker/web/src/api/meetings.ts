@@ -117,16 +117,34 @@ export function useMeetings(options?: {
     // "there is no next page" and would otherwise fetch for ever against a
     // cursor of null — `useStageGroupPages`' rule.
     getNextPageParam: (last: MeetingList) => last.nextCursor ?? undefined,
-    select: (data: InfiniteData<MeetingList>) => ({
-      items: data.pages.flatMap((page) => page.items),
-      total: data.pages[0].total,
-      // The greeting's "📅 N upcoming meetings", server-derived by the same
-      // rule that decides each card's `status` (AD-10). Off the *first* page
-      // because it describes the whole book and every page carries the same
-      // number — and it is deliberately unaffected by `day`, so the summary's
-      // one request serves the greeting too.
-      upcomingCount: data.pages[0].upcomingCount,
-    }),
+    select: (data: InfiniteData<MeetingList>) => {
+      const items = data.pages.flatMap((page) => page.items);
+      return {
+        items,
+        // **Off the first page, which is the only one that carries it** (Story
+        // 9.8). The server counts the book on a cursor-less read and sends
+        // `null` on every later page, because this hook already reads it here
+        // and keeps it — recounting the whole diary on each "Show more" bought a
+        // number nothing rendered. `useEmailLogs` does the same for the same
+        // reason.
+        //
+        // The wire type is therefore `number | null`, and the `??` is what makes
+        // the type published here a plain `number` rather than a comment
+        // asserting one: `pages[0]` is by construction the cursor-less read, so
+        // the fallback is unreachable, and had it merely been asserted away the
+        // sub-tab's `${total} meetings` and the notes tab's heading would render
+        // the string "null" at whoever proved the assertion wrong. `items.length`
+        // rather than `0` because it is the one count this hook can still tell
+        // the truth about — the rows it is handing over.
+        total: data.pages[0].total ?? items.length,
+        // The greeting's "📅 N upcoming meetings", server-derived by the same
+        // rule that decides each card's `status` (AD-10). Off the *first* page
+        // because it describes the whole book and every page carries the same
+        // number — and it is deliberately unaffected by `day`, so the summary's
+        // one request serves the greeting too.
+        upcomingCount: data.pages[0].upcomingCount,
+      };
+    },
     staleTime: 15_000,
   });
 }
